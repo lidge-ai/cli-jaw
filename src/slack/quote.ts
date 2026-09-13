@@ -7,7 +7,13 @@ import { readExactSlackMessage, readSlackMessageSnapshot, slackMessageRevision, 
 import { buildSlackBlockPayloads } from './blocks.js';
 import { verifiedSlackWorkspace } from './verified-workspace.js';
 import { sendSlackText } from './send-only-client.js';
-import { slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+
+function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
+    if (principal.kind === 'turn') return principal.grant.destination;
+    const dest = slackToolContext(principal)?.destination;
+    return slackToolContext(principal)?.enforceDestination === true && dest ? dest : null;
+}
 import { getRtsOutputStore, RTS_OUTPUT_MARKER } from './rts-output-store.js';
 import { slackCredentialKey } from './tool-context.js';
 
@@ -34,10 +40,11 @@ function quoteContent(blocks: unknown): string {
 /** Explicit text leaves quote source data literally, without mention/Markdown execution. */
 export async function publishSlackQuote(token: string, principal: SlackToolPrincipal, input: SlackQuoteInput,
     options: SlackCallOptions & { currentCredential?: () => string | null } = {}, rtsInvocation?: string): Promise<SlackQuoteReceipt> {
-    const destination = principal.kind === 'turn' ? principal.grant.destination : input.destination;
+    const pinnedDest = enforcedSlackDest(principal);
+    const destination = pinnedDest ?? input.destination;
     if (!destination || destination.channel !== 'slack') throw slackToolDenied('slack_quote_destination_required', 400);
-    if (principal.kind === 'turn' && input.destination && (input.destination.targetId !== destination.targetId
-        || (input.destination.threadId ?? '') !== (destination.threadId ?? ''))) throw slackToolDenied('slack_destination_mismatch');
+    if (pinnedDest && input.destination && (input.destination.targetId !== pinnedDest.targetId
+        || (input.destination.threadId ?? '') !== (pinnedDest.threadId ?? ''))) throw slackToolDenied('slack_destination_mismatch');
     const sensitive = { ...options, sensitiveResponse: true };
     return withSlackToolAccess<SlackQuoteReceipt>(token, principal, input.source.channel, async signal => {
         const callOptions = { ...sensitive, ...(signal ? { signal } : {}) };

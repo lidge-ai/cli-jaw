@@ -282,6 +282,19 @@ test('large mutating readback persists an omission receipt without losing acknow
 });
 
 
+function autoEnforced(threadId = '1710000000.000200'): SlackToolPrincipal {
+    // C_HIT = C1 / 1710000000.000200. Auto + enforceDestination is kind:operator.
+    assert.equal(reserveSlackToolGrant({
+        teamId: 'T1', actorId: 'U1', credentialKey: slackCredentialKey(TOKEN),
+        destination: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', threadId },
+        enforceDestination: true,
+    }, { requestId: 'mw-hit', scope: 'mention-watch:slack:C1:1710000000.000200', chatSessionId: 'sess-hit' }), true);
+    const secret = activateSlackToolGrant('mw-hit', 'mention-watch:slack:C1:1710000000.000200', 'sess-hit');
+    assert.ok(secret);
+    const grant = resolveSlackToolGrant(secret); assert.ok(grant);
+    return { kind: 'operator', source: 'full-local', context: grant };
+}
+
 test('turn writes inherit the captured thread and cannot override it', async t => {
     const f = fixture(t); const principal = turn('10.000001');
     const bodies: Record<string, unknown>[] = [];
@@ -294,6 +307,31 @@ test('turn writes inherit the captured thread and cannot override it', async t =
     assert.equal(bodies.length, 1);
     const owned = f.store.resource('T1', 'message', '11.000001');
     assert.equal(owned?.actor, 'U1'); assert.equal(owned?.metadata.threadTs, '10.000001');
+});
+
+test('Auto plus enforced grant cannot leave C1 / 1710000000.000200 via chat.postMessage', async t => {
+    const f = fixture(t); const principal = autoEnforced();
+    const bodies: Record<string, unknown>[] = [];
+    f.reply(async (_method, body) => { bodies.push(body); return json({ ok: true, ts: '12.000001' }); });
+    assert.equal((await f.runtime.execute(write, input, principal)).ok, true);
+    assert.equal(bodies[0]?.thread_ts, '1710000000.000200');
+    await assert.rejects(
+        f.runtime.execute(write, { ...input, channel: 'C2', invocationId: 'other-channel' }, principal),
+        (error: unknown) => (error as { code?: string }).code === 'slack_destination_mismatch',
+    );
+    const bad = action(async ctx => { await ctx.api('chat.postMessage', { channel: 'C1', text: 'bad', thread_ts: '1710000000.000300' }); return ctx.result('verified'); });
+    const refused = await f.runtime.execute(bad, { ...input, invocationId: 'other-thread' }, principal);
+    assert.equal(refused.error, 'slack_destination_thread_mismatch');
+    assert.equal(bodies.length, 1);
+});
+
+test('Interactive Auto without enforceDestination may still name another dest', async t => {
+    const f = fixture(t);
+    const bodies: Record<string, unknown>[] = [];
+    f.reply(async (_method, body) => { bodies.push(body); return json({ ok: true, ts: '13.000001' }); });
+    const result = await f.runtime.execute(write, { ...input, channel: 'C2', invocationId: 'interactive-other' }, { kind: 'operator', source: 'full-local' });
+    assert.equal(result.ok, true);
+    assert.equal(bodies[0]?.channel, 'C2');
 });
 
 for (const defect of ['absent', 'actor', 'thread', 'credential'] as const) test(`message mutation rejects ${defect} ownership before write`, async t => {

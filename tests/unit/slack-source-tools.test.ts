@@ -366,6 +366,35 @@ test('ordinary quote under full-local still requires an explicit destination', a
     assert.equal((fake.posts[0] as { channel?: string } | undefined)?.channel, 'CEXPLICIT');
 });
 
+test('Auto plus enforced grant cannot quote off C_HIT / 1710000000.000200', async () => {
+    const dest = {
+        channel: 'slack' as const,
+        targetKind: 'channel' as const,
+        peerKind: 'channel' as const,
+        targetId: 'CHIT0000001',
+        threadId: '1710000000.000200',
+    };
+    assert.ok(reserveSlackToolGrant({
+        teamId: 'T1', actorId: 'U1', destination: dest, credentialKey: slackCredentialKey(TOKEN),
+        enforceDestination: true,
+    }, { requestId: 'mw-quote', scope: 'mention-watch:slack:CHIT0000001:1710000000.000200', chatSessionId: 'sess-hit' }));
+    const secret = activateSlackToolGrant('mw-quote', 'mention-watch:slack:CHIT0000001:1710000000.000200', 'sess-hit')!;
+    const grant = resolveSlackToolGrant(secret)!;
+    const auto = { kind: 'operator' as const, source: 'full-local' as const, context: grant };
+    await assert.rejects(publishSlackQuote(TOKEN, auto, {
+        source: { channel: 'C1', ts: SOURCE.ts },
+        destination: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'COTHER00001', threadId: '1710000000.000300' },
+    }), (error: unknown) => (error as { code?: string }).code === 'slack_destination_mismatch');
+    const fake = fixture();
+    const posted = await publishSlackQuote(TOKEN, auto, {
+        source: { channel: 'C1', ts: SOURCE.ts },
+        destination: dest,
+    }, { fetchImpl: fake.fetchImpl });
+    assert.equal(posted.ok, true);
+    assert.equal((fake.posts[0] as { channel?: string } | undefined)?.channel, 'CHIT0000001');
+    assert.equal((fake.posts[0] as { thread_ts?: string } | undefined)?.thread_ts, '1710000000.000200');
+});
+
 test('full-local search.quote with a valid action token still needs a privacy store', async () => {
     const turn = principal();
     assert.ok(turn.kind === 'turn');

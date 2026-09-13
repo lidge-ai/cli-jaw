@@ -7,7 +7,14 @@ import { SlackActionRateLimiter } from './action-rate.js';
 import { slackApi, addSlackReaction, removeSlackReaction, deleteSlackMessage, readBoundedResponse, type SlackFetch, type SlackApiResult } from './api.js';
 import { readSlackAuthSnapshot } from './verified-workspace.js';
 import { slackCredentialKey } from './tool-context.js';
-import { slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+import type { RemoteTarget } from '../messaging/types.js';
+
+function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
+    if (principal.kind === 'turn') return principal.grant.destination;
+    const dest = slackToolContext(principal)?.destination;
+    return slackToolContext(principal)?.enforceDestination === true && dest ? dest : null;
+}
 import { redactOutboundPayload } from '../messaging/redact.js';
 import { validateSlackDownloadUrl, type SlackInboundUrlOptions } from './inbound-url.js';
 const WRITE_METHODS = new Set(['reactions.add','reactions.remove','chat.update','chat.delete','chat.postMessage','chat.scheduleMessage','chat.deleteScheduledMessage','pins.add','pins.remove','bookmarks.add','bookmarks.edit','bookmarks.remove','canvases.create','canvases.edit','canvases.access.set','slackLists.create','slackLists.items.create','slackLists.items.update','slackLists.access.set']);
@@ -17,8 +24,9 @@ export class SlackActionRuntime {
     private readonly rate: SlackActionRateLimiter;
     constructor(private readonly options: ActionRuntimeOptions) { this.rate = options.rateLimiter ?? new SlackActionRateLimiter(); }
     async execute(definition: ActionDefinition, raw: Record<string, unknown>, principal: SlackToolPrincipal, requestSignal?: AbortSignal): Promise<ActionResult> {
-        if (principal.kind === 'turn' && definition.mutates) {
-            const thread = principal.grant.destination.threadId ?? '';
+        const pinnedDest = enforcedSlackDest(principal);
+        if (pinnedDest && definition.mutates) {
+            const thread = pinnedDest.threadId ?? '';
             if (raw['threadTs'] !== undefined && raw['threadTs'] !== thread) throw slackToolDenied('slack_destination_thread_mismatch');
             if (['schedule.create', 'schedule.update', 'interaction.url', 'interaction.choice'].includes(definition.operation) && thread) raw = { ...raw, threadTs: thread };
         }
@@ -27,7 +35,7 @@ export class SlackActionRuntime {
         if (!token) throw slackToolDenied('slack_unavailable', 503);
         if (definition.requiresInbound && !this.options.inboundReady?.()) throw slackToolDenied('slack_interaction_inbound_unavailable', 409);
         if (definition.mutates && !args.invocationId) throw slackToolDenied('slack_invocation_required', 400);
-        if (definition.mutates && principal.kind === 'turn' && args.channel !== principal.grant.destination.targetId) throw slackToolDenied('slack_destination_mismatch');
+        if (definition.mutates && pinnedDest && args.channel !== pinnedDest.targetId) throw slackToolDenied('slack_destination_mismatch');
         const identity = await readSlackAuthSnapshot(token, { ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}), ...(requestSignal ? { signal: requestSignal } : {}) });
         if (!identity?.userId) throw slackToolDenied('slack_bot_identity_unverified', 409);
         if (definition.scopes.length && identity.scopes === null) throw slackToolDenied('slack_action_scopes_unverified', 403);
@@ -79,8 +87,8 @@ export class SlackActionRuntime {
                     if (Array.isArray(body['channel_ids']) && body['channel_ids'].some(value => value !== args.channel)) throw slackToolDenied('slack_action_target_contract', 400);
                     await this.rate.admit(workspace, method, signal); checkCurrent();
                     if (WRITE_METHODS.has(method)) {
-                        if (principal.kind === 'turn') {
-                            const thread = principal.grant.destination.threadId ?? '';
+                        if (pinnedDest) {
+                            const thread = pinnedDest.threadId ?? '';
                             if (['chat.postMessage', 'chat.scheduleMessage'].includes(method)) {
                                 if (body['thread_ts'] !== undefined && body['thread_ts'] !== thread) throw slackToolDenied('slack_destination_thread_mismatch');
                                 body = { ...body, ...(thread ? { thread_ts: thread } : {}) };
@@ -121,12 +129,12 @@ export class SlackActionRuntime {
                     return result as SlackApiResult<T>;
                 },
                 remember(kind, id, metadata = {}) {
-                    ids.add(id); store.remember({ workspace, kind, id, actor, channel: args.channel, botUserId: identity.userId!, credentialKey, metadata: redactOutboundPayload({ ...metadata, ...(principal.kind === 'turn' ? { threadTs: principal.grant.destination.threadId ?? '' } : {}) }) });
+                    ids.add(id); store.remember({ workspace, kind, id, actor, channel: args.channel, botUserId: identity.userId!, credentialKey, metadata: redactOutboundPayload({ ...metadata, ...(pinnedDest ? { threadTs: pinnedDest.threadId ?? '' } : {}) }) });
                 },
                 resource(kind, id) {
                     const row = store.resource(workspace, kind, id);
                     if (!row || row.channel !== args.channel || row.botUserId !== identity.userId || (principal.kind !== 'operator' && row.actor !== actor)) return undefined;
-                    if (principal.kind === 'turn' && (row.metadata['threadTs'] ?? '') !== (principal.grant.destination.threadId ?? '')) return undefined;
+                    if (pinnedDest && (row.metadata['threadTs'] ?? '') !== (pinnedDest.threadId ?? '')) return undefined;
                     if (kind === 'schedule' && row.credentialKey !== credentialKey) throw slackToolDenied('slack_schedule_credential_changed', 409);
                     return row;
                 },
