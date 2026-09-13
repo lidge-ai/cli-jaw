@@ -1130,7 +1130,7 @@ A file-backed restart is `tests/integration/messaging-ingress-restart.test.ts`: 
 `sendSlackText` waits a short Slack `ratelimited`/429 and retries that chunk once. A long Retry-After still surfaces. The chunk loop does not restart.
 `sendChannelOutput` emits `outbound.send` on the current messaging ALS. Empty ALS stays empty — no second id.
 
-`forwarder-origin.ts` — 채널 forwarder의 공통 origin 필터다. 자기 채널에서 시작한 턴과 producer가 직접 배달하는 `heartbeat` 결과를 건너뛴다. 하트비트는 지정 destination으로 직접 보내므로, forwarder까지 보내면 last-active 대화에 중복 발화가 생긴다.
+`forwarder-origin.ts` — 채널 forwarder의 공통 origin 필터다. 자기 채널에서 시작한 턴과 producer가 직접 배달하는 `heartbeat` 결과를 건너뛴다. 하트비트는 지정 destination으로 직접 보낸다. Forwarder는 last-active를 읽지 않는다; 핀이 없으면 침묵이다. 하트비트를 forwarder에 태우면 지정 destination에 중복 발화가 생긴다.
 
 
 Telegram/Discord/Slack 채널의 활성 타겟 상태와 outbound routing을 공유한다. `settings.messaging.lastActive/latestSeen`를 유지하고, `core/runtime-settings.ts`의 restart 경로가 이 레이어를 다시 초기화한다. Persisted target은 channel/target/peer kind와 optional thread/guild/parent 필드까지 검증한 뒤 복원한다.
@@ -1267,7 +1267,7 @@ Telegram file upload / retry helper. 텍스트가 아닌 media send와 attachmen
 
 - Telegram과 Discord는 모두 `src/messaging/runtime.ts`에 자기 transport를 등록한다.
 - Telegram/Discord 설정 변경은 `core/runtime-settings.ts`를 통해 같은 restart 경로를 탄다.
-- `settings.messaging.lastActive/latestSeen`는 forward 대상 복원용 공통 저장소다.
+- `settings.messaging.lastActive/latestSeen`는 Interactive omit-target 과 inbound vouch 용이다. `agent_done` forward 대상이 아니다.
 - **턴 주소(`turnTarget`)는 저장되지 않는다.** 인바운드 턴의 프롬프트에 `reply_to=` 로
   실려 나가고 에이전트가 `/api/channel/send` 의 `turn_conversation` 으로 돌려준다.
   `lastActive/latestSeen` 은 채널당 하나뿐인 휘발 슬롯이라 "누가 마지막에 말했나"를
