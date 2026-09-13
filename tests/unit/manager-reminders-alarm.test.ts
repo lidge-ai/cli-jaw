@@ -50,16 +50,19 @@ test('dispatchReminderNotification maps channel results to typed notification st
         const store = new RemindersStore({ dbPath: join(dir, 'dashboard.db') });
         const reminder = store.createLocal({ title: 'Send me', notes: 'body', remindAt: '2026-05-09T00:00:00.000Z', link: { instanceId: 'port:1', messageId: 'm1', port: 1 } });
         const events: unknown[] = [];
+        const seen: Array<Record<string, unknown>> = [];
         const delivered = await dispatchReminderNotification(reminder, {
-            send: async () => ({ ok: true }),
+            send: async (req) => { seen.push(req as Record<string, unknown>); return { ok: true }; },
             observability: { publish: event => events.push(event) },
             now: () => new Date('2026-05-09T00:00:01.000Z'),
         });
         assert.equal(delivered.status, 'delivered');
         assert.equal(events.length, 1);
+        assert.equal(seen[0]?.preferConfiguredTarget, true);
+        assert.equal(seen[0]?.allowActiveFallback, false);
 
         const noChannel = await dispatchReminderNotification(reminder, {
-            send: async () => ({ ok: false, error: 'No target available for telegram' }),
+            send: async () => ({ ok: false, error: 'No target available for slack' }),
         });
         assert.equal(noChannel.status, 'no_channel');
         store.close();
