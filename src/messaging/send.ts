@@ -117,18 +117,18 @@ export type ChannelSendRequest = {
      *  fidelity. Absent means the caller would rather be told it is unsupported
      *  than have the message quietly arrive as something else. */
     interactiveFallback?: 'text';
-    /** Non-interactive senders (heartbeats, scheduled jobs) set this to false so a
-     *  missing target FAILS instead of silently resolving to whoever spoke last.
-     *  The last-active chain exists for CONVERSATIONAL replies where "this
-     *  conversation" is the obvious destination (#397); a scheduled report has no
-     *  such context, so inheriting one delivers it to an unrelated thread (#437).
-     *  Absent keeps the historical behaviour — every existing caller is unchanged. */
+    /** Interactive senders (live operator/agent reply) leave this unset so omit-target
+     *  still walks last-active / turnTarget / latest-seen (#397, #474).
+     *  Scheduled senders (reminders, web-ai drain, alerts) and producer-owned
+     *  senders (heartbeat job, mention-watch server post, channel forwarders) set
+     *  this to false so a missing target FAILS instead of inheriting a stranger's
+     *  thread (#437). Absent keeps the Interactive default. */
     allowActiveFallback?: boolean;
     /** Skip the two volatile slots and resolve straight to the configured
-     *  allowlist. For reminders, watcher notifications and alerts, which have a
-     *  destination in the operator sense (the channel that was set up to receive
-     *  them) but not a conversational one — so last-active is wrong while failing
-     *  outright would be worse than delivering somewhere stable (#438). */
+     *  allowlist. Scheduled callers must also set allowActiveFallback: false.
+     *  The pair plus a missing allowlist/home is silence, not last-active.
+     *  preferConfiguredTarget alone still last-resorts (historical #438); that
+     *  leftover is closed by the callers, not by inverting this default. */
     preferConfiguredTarget?: boolean;
     /** The conversation the CALLING TURN is answering for, echoed back by the
      *  agent from its per-turn prompt. Trusted only as far as the same allowlist
@@ -451,11 +451,14 @@ export async function sendChannelOutput(req: ChannelSendRequest): Promise<{ ok: 
 
     // Resolve target: explicit > validated lastActive > validated latestSeen > configured fallback > error
     //
-    // Gated on allowActiveFallback: a scheduled sender opts OUT of this chain
-    // entirely (#437). Without that opt-out a heartbeat with no target inherits
-    // whichever conversation last spoke to the bot, which is how two reports
-    // landed in an unrelated design thread on 2026-08-25.
-    if (!req.target && req.allowActiveFallback !== false) {
+    // Scheduled pair (preferConfiguredTarget + allowActiveFallback:false): configured
+    // dest only. That helper used to live inside the last-active gate, so opting out
+    // of last-active also skipped the allowlist (SEND-RESOLVE-01).
+    // Interactive omit-target still walks the chain below (#397, #474).
+    if (!req.target && req.preferConfiguredTarget === true && req.allowActiveFallback === false) {
+        const configured = getConfiguredFallbackTarget(channel);
+        if (configured) req.target = configured;
+    } else if (!req.target && req.allowActiveFallback !== false) {
         const configuredFirst = req.preferConfiguredTarget ? getConfiguredFallbackTarget(channel) : null;
         if (configuredFirst) req.target = configuredFirst;
         // The turn's OWN conversation outranks both volatile slots. Those slots

@@ -674,10 +674,7 @@ test('a configured-target send ignores an unrelated last-active conversation', a
     }, ['C_CONFIGURED']);
 });
 
-test('with nothing configured it still falls back rather than going silent', async () => {
-    // Failing outright would be worse than the old behaviour for an alert: an
-    // operator who never set an allowlist would simply stop hearing about
-    // problems. Delivery is best-effort, the PREFERENCE is what changed.
+test('preferConfiguredTarget alone still last-resorts when allowlist is empty', async () => {
     await withIsolatedSlack(async capture => {
         const { sendChannelOutput } = await import('../../src/messaging/send.js');
         const { setLastActiveTarget } = await import('../../src/messaging/runtime.js');
@@ -690,7 +687,45 @@ test('with nothing configured it still falls back rather than going silent', asy
 
         assert.equal(result.ok, true);
         assert.equal(capture.requests[0]?.target?.targetId, 'C_CURRENT');
+        assert.equal(capture.requests[0]?.target?.threadId, '1710000000.000100');
     });
+});
+
+test('scheduled pair plus empty allowlist sends zero transports', async () => {
+    await withIsolatedSlack(async capture => {
+        const { sendChannelOutput } = await import('../../src/messaging/send.js');
+        const { setLastActiveTarget } = await import('../../src/messaging/runtime.js');
+        setLastActiveTarget('slack', slackTarget('C_CURRENT'));
+
+        const result = await sendChannelOutput({
+            channel: 'slack', type: 'text', text: 'alert',
+            preferConfiguredTarget: true,
+            allowActiveFallback: false,
+        });
+
+        assert.equal(result.ok, false);
+        assert.equal(capture.requests.length, 0);
+        assert.match(String(result.error || ''), /No target available for slack/);
+    });
+});
+
+test('scheduled pair uses configured dest and ignores last-active', async () => {
+    await withIsolatedSlack(async capture => {
+        const { sendChannelOutput } = await import('../../src/messaging/send.js');
+        const { setLastActiveTarget } = await import('../../src/messaging/runtime.js');
+        setLastActiveTarget('slack', slackTarget('C_CURRENT'));
+
+        const result = await sendChannelOutput({
+            channel: 'slack', type: 'text', text: 'alert',
+            preferConfiguredTarget: true,
+            allowActiveFallback: false,
+        });
+
+        assert.equal(result.ok, true);
+        assert.equal(capture.requests.length, 1);
+        assert.equal(capture.requests[0]?.target?.targetId, 'C_CONFIGURED');
+        assert.notEqual(capture.requests[0]?.target?.targetId, 'C_CURRENT');
+    }, ['C_CONFIGURED']);
 });
 
 test('conversational sends are untouched by the new preference', async () => {
