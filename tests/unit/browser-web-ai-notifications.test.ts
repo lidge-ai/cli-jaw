@@ -35,13 +35,17 @@ test('WEB-AI-NOTIFY-002: drain sends pending events and marks them sent', async 
     updateSessionResult({ sessionId: s.sessionId, status: 'complete', answerText: 'gemini answer', url: s.url, conversationUrl: s.conversationUrl });
 
     const sentTexts: string[] = [];
+    const seen: Array<Record<string, unknown>> = [];
     const result = await drainPendingWebAiNotifications(async (req) => {
         sentTexts.push(String(req.text || ''));
+        seen.push(req as Record<string, unknown>);
         return { ok: true };
     });
 
     assert.deepEqual(result, { attempted: 1, sent: 1, failed: 0 });
     assert.equal(sentTexts.length, 1);
+    assert.equal(seen[0]?.preferConfiguredTarget, true);
+    assert.equal(seen[0]?.allowActiveFallback, false);
     assert.equal(listNotifications({ status: 'pending' }).length, 0);
     assert.equal(listNotifications({ status: 'sent' }).length, 1);
 });
@@ -52,7 +56,13 @@ test('WEB-AI-NOTIFY-003: drain records failed delivery without retrying in the s
     setSessionNotifyOnComplete(s.sessionId, true);
     updateSessionResult({ sessionId: s.sessionId, status: 'complete', answerText: 'failed answer', url: s.url, conversationUrl: s.conversationUrl });
 
-    const result = await drainPendingWebAiNotifications(async () => ({ ok: false, error: 'no target' }));
+    const seen: Array<Record<string, unknown>> = [];
+    const result = await drainPendingWebAiNotifications(async (req) => {
+        seen.push(req as Record<string, unknown>);
+        return { ok: false, error: 'no target' };
+    });
+    assert.equal(seen[0]?.preferConfiguredTarget, true);
+    assert.equal(seen[0]?.allowActiveFallback, false);
 
     assert.deepEqual(result, { attempted: 1, sent: 0, failed: 1 });
     const failed = listNotifications({ status: 'failed' })[0];

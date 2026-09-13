@@ -27,7 +27,9 @@ export async function drainPendingWebAiNotifications(
             text: formatWebAiNotification(event),
             // Drained when a watcher finishes, which can be long after the request
             // that started it — by then last-active names an unrelated thread (#438).
+            // Missing configured dest is failed delivery, not last-active.
             preferConfiguredTarget: true,
+            allowActiveFallback: false,
         });
         if (result.ok) {
             sent += 1;
