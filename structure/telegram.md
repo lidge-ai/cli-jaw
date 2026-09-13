@@ -69,6 +69,25 @@ supplies an omitted destination and rejects a different one even under Auto/full
 Interactive turn grants omit this flag and unrelated Auto sends are never
 process-globally locked.
 
+Mention-watch **answer** turns reserve the same `enforceDestination` grant, but bind
+`destination` to `slackThreadTarget(hit)`, `scope` to `mention-watch:<remoteKey>`,
+and `chatSessionId` to that thread's session. A reserve failure throws
+`slack_grant_unavailable`: the tick increments `failed` and does not record the hit
+as seen or quiet. The turn is not started ungated. The server post of the collected
+text already uses that hit target with `allowActiveFallback: false`. Job destination
+still gates whether the watch may run; it does not choose the answer thread.
+
+Outbound omit-target falls into three classes (no new `ChannelSendRequest` field):
+
+| Class | Who | Omit-target |
+|---|---|---|
+| Interactive | live operator / agent reply | last-active / `turnTarget` / latest-seen (#397, #474) |
+| Scheduled | reminders, web-ai drain, alerts | configured allowlist/home only; empty → silence |
+| Producer-owned | heartbeat job, mention-watch server post, channel forwarders | explicit dest or silence; never last-active |
+
+Scheduled callers set both `preferConfiguredTarget: true` and
+`allowActiveFallback: false`. The pair is what closes last-active; preferring
+configured dest alone still last-resorts.
 
 ### Slack group DMs and scope observations
 
@@ -350,7 +369,7 @@ initTelegram():
 - `broadcast` listener는 named handler 기준으로 제거된다
 - `forwardAll`이 꺼져 있으면 bot 메시지는 받고, agent_done forward는 하지 않는다
 - outbound 텍스트는 Telegram HTML로 변환한 뒤 4096자 청크로 보내고, 전송 시도 뒤 추출된 이미지를 순서대로 photo relay한다
-- `getLastTarget()`이 Telegram target을 반환하면 chat id와 `message_thread_id`를 함께 보존하고, 없으면 기존 `getLastChatId()` fallback을 사용한다
+- Telegram `agent_done` forwarder reads the run pin's `target` (or sends nothing). It does not call `getLastTarget()` / `getLastChatId()`.
 
 ---
 
@@ -364,7 +383,7 @@ initTelegram():
 
 ### 핵심 포인트
 
-- global forwarder는 error 결과와 `shouldSkip(data)`가 거르는 Discord-origin 결과를 제외하고, `forwardAll !== false`일 때 last active Discord target으로 text → attachment 순서로 보낸다.
+- global forwarder skips errors and `shouldSkip(data)` Discord-origin results. When `forwardAll !== false` it sends text → attachment to the run pin's Discord `target`, or nowhere. It does not read last-active.
 - Discord-origin `dcOrchestrate()`는 queue 완료와 direct result 경로에서 text chunk를 먼저 보낸 뒤 `relayDiscordImages()`를 호출한다. global origin skip과 분리되어 원래 채널 reply에도 이미지가 붙는다.
 - attachment 전송은 새 채널 API를 만들지 않고 기존 `sendDiscordFile()`의 target resolution/text-channel check와 `{ ok, error }` 결과를 재사용한다. guard/전송 실패 이미지는 warn 후 건너뛰며 text 응답은 유지된다.
 
