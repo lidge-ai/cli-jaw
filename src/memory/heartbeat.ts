@@ -573,19 +573,36 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             // now is the session minted: doing it in the guard would create a
             // permanent, undeletable row for every thread merely looked at.
             const placement = mentionThreadPlacement(hit, 'mint');
-            const collected = await sessionLanes.runDetachedTurn(
-                placement.scope,
-                () => orchestrateAndCollectData(prompt, {
-                    origin: 'heartbeat', requestId: crypto.randomUUID(),
-                    scope: placement.scope, chatSessionId: placement.chatSessionId,
-                }),
+            const requestId = crypto.randomUUID();
+            const target = slackThreadTarget(hit);
+            const release = await reserveHeartbeatDestinationGrant(
+                { state: 'bound', target, verification: 'unverified' },
+                requestId,
+                { scope: placement.scope, chatSessionId: placement.chatSessionId },
             );
-            const text = applyOutputPolicy(String(collected.text), { scope: 'heartbeat', channel: 'slack' }).text;
-            const quietConfig = loadPolicyHooksConfig()?.flags?.heartbeatQuietOk;
-            const extraQuietMarkers = quietConfig?.enabled ? (quietConfig.markers || []) : [];
-            if (!text.trim() || isHeartbeatQuietOutput(text, extraQuietMarkers)) return null;
-            answerAnchors.set(hit.channelId + '/' + hit.ts, anchor);
-            return text;
+            if (!release) {
+                log.error(`[heartbeat:${job["name"]}] refuse: slack_grant_unavailable — mention-watch answer not run`);
+                throw new Error('slack_grant_unavailable');
+            }
+            try {
+                const collected = await sessionLanes.runDetachedTurn(
+                    placement.scope,
+                    () => orchestrateAndCollectData(prompt, {
+                        origin: 'heartbeat', requestId,
+                        scope: placement.scope, chatSessionId: placement.chatSessionId,
+                        remoteKey: placement.remoteKey,
+                        target,
+                    }),
+                );
+                const text = applyOutputPolicy(String(collected.text), { scope: 'heartbeat', channel: 'slack' }).text;
+                const quietConfig = loadPolicyHooksConfig()?.flags?.heartbeatQuietOk;
+                const extraQuietMarkers = quietConfig?.enabled ? (quietConfig.markers || []) : [];
+                if (!text.trim() || isHeartbeatQuietOutput(text, extraQuietMarkers)) return null;
+                answerAnchors.set(hit.channelId + '/' + hit.ts, anchor);
+                return text;
+            } finally {
+                release();
+            }
         },
         send: async (hit, text) => {
             const key = hit.channelId + '/' + hit.ts;
@@ -763,6 +780,7 @@ export type HeartbeatJobDeps = {
 async function reserveHeartbeatDestinationGrant(
     binding: Extract<HeartbeatBinding, { state: 'bound' }>,
     requestId: string,
+    activation: { scope: string; chatSessionId: string } = { scope: HEARTBEAT_SCOPE, chatSessionId: 'default' },
 ): Promise<(() => void) | null> {
     if (binding.target.channel !== 'slack') return () => {};
     const token = String(settings["slack"]?.botToken ?? '').trim();
@@ -774,7 +792,7 @@ async function reserveHeartbeatDestinationGrant(
         destination: binding.target,
         credentialKey: slackCredentialKey(token),
         enforceDestination: true,
-    }, { requestId, scope: HEARTBEAT_SCOPE, chatSessionId: 'default' });
+    }, { requestId, scope: activation.scope, chatSessionId: activation.chatSessionId });
     return reserved ? () => revokeSlackToolGrant(requestId) : null;
 }
 
