@@ -13,6 +13,9 @@
 //     is what makes Slack redeliver them on the new socket. Acking then
 //     dropping would be permanent message loss.
 //   - link_disabled is terminal, not transient: do not reconnect into a wall.
+//   - A transient network outage is NOT terminal. The reconnect ceiling is
+//     unlimited by default, because a bounded one turns a few minutes of lost
+//     connectivity into a permanently deaf bot that only a restart can fix.
 
 import { log } from '../core/logger.js';
 import { slackApi, redactSlackTokens, type SlackFetch } from './api.js';
@@ -54,6 +57,24 @@ const DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEDUPE_SWEEP_AT = 5000;
 /** Slack sends `hello` promptly; without it the socket is not usable. */
 export const HELLO_DEADLINE_MS = 15000;
+/** Backoff ceiling: one handshake attempt per minute once the socket is down. */
+const MAX_RECONNECT_DELAY_MS = 60000;
+/**
+ * Exponent ceiling for the backoff doubling. The delay is clamped anyway, but
+ * an unbounded attempt counter would otherwise compute 2 ** 1000 forever.
+ */
+const RECONNECT_EXPONENT_CAP = 20;
+
+/**
+ * Unlimited unless a caller asks for a bounded client. A long-running server
+ * that gives up cannot recover on its own: the process stays healthy, the Web
+ * API still sends, and inbound is silently dead until someone restarts it.
+ * Tests and one-shot callers can still pass a finite ceiling.
+ */
+function normalizeReconnectCeiling(value: number | undefined): number {
+    if (value === undefined || !Number.isFinite(value) || value <= 0) return Number.POSITIVE_INFINITY;
+    return Math.floor(value);
+}
 
 /** Minimal socket surface used here — keeps the module testable without a real WebSocket. */
 export type SlackSocketLike = {
@@ -77,6 +98,11 @@ export type SlackSocketOptions = {
     fetchImpl?: SlackFetch;
     /** Injected for tests; defaults to the global WebSocket (Node 22+). */
     socketFactory?: (url: string) => SlackSocketLike;
+    /**
+     * Finite ceiling after which the client gives up. Omitted, zero, or
+     * non-finite means retry until connected, which is what a long-running
+     * server needs to survive an outage longer than the fast backoff.
+     */
     maxReconnectAttempts?: number;
     baseReconnectDelayMs?: number;
     onStateChange?: (state: SlackConnectionState, meta: { attempts: number }) => void;
@@ -98,7 +124,7 @@ export class SlackSocketClient {
     private readyWaiters = new Set<(result: 'connected' | 'stopped') => void>();
 
     constructor(private readonly options: SlackSocketOptions) {
-        this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
+        this.maxReconnectAttempts = normalizeReconnectCeiling(options.maxReconnectAttempts);
         this.baseReconnectDelayMs = options.baseReconnectDelayMs ?? 1000;
     }
 
@@ -419,16 +445,21 @@ export class SlackSocketClient {
             this.reconnectPending = true;
             return;
         }
-        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        if (Number.isFinite(this.maxReconnectAttempts) && this.reconnectAttempts >= this.maxReconnectAttempts) {
             log.error(`[slack:socket] max reconnect attempts (${this.maxReconnectAttempts}) reached — giving up`);
             this.setState('disconnected');
             return;
         }
         this.clearReconnectTimer();
-        const delay = Math.min(this.baseReconnectDelayMs * 2 ** this.reconnectAttempts, 60000);
+        const delay = Math.min(
+            this.baseReconnectDelayMs * 2 ** Math.min(this.reconnectAttempts, RECONNECT_EXPONENT_CAP),
+            MAX_RECONNECT_DELAY_MS,
+        );
         this.reconnectAttempts++;
         this.setState('reconnecting');
-        log.info(`[slack:socket] reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+        log.info(Number.isFinite(this.maxReconnectAttempts)
+            ? `[slack:socket] reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
+            : `[slack:socket] reconnect in ${delay}ms (attempt ${this.reconnectAttempts}, retrying until connected)`);
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             void this.connect();
