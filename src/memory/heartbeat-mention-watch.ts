@@ -163,6 +163,8 @@ export async function runMentionWatchTick(
     const rotationAnchor = readRotation(ns);
     const scan = await scanSlackMentions(deps.token, {
         userId: watch.userId,
+        ...(watch.userIds?.length ? { userIds: watch.userIds } : {}),
+        ...(watch.conditions?.length ? { conditions: watch.conditions } : {}),
         channelIds: allowed,
         selfUserId: deps.selfUserId,
         maxHits: watch.maxHits ?? MENTION_WATCH_DEFAULT_MAX_HITS,

@@ -743,16 +743,20 @@ export function mentionThreadYield(
  *  out of code: hard-coding one person's opinions here would make the feature
  *  unusable for anyone else, and the stance is exactly the part that changes.
  *  Code supplies only the message that needs answering. */
-function buildMentionWatchPrompt(
+export function buildMentionWatchPrompt(
     job: Record<string, any>,
     watch: HeartbeatMentionWatch,
     hit: MentionHit,
 ): string {
     const author = hit.authorId ? `<@${hit.authorId}>` : 'unknown';
+    const subjectId = hit.subjectId || watch.userId;
+    const verb = hit.match === 'talk'
+        ? 'spoke in a message you are asked to answer on their behalf.'
+        : 'was mentioned in a message you are asked to answer on their behalf.';
     return [
         `[heartbeat:${job["name"]}] Slack mention watch`,
         '',
-        `<@${watch.userId}> was mentioned in a message you are asked to answer on their behalf.`,
+        `<@${subjectId}> ${verb}`,
         `channel: ${hit.channelId}`,
         `thread: ${hit.threadTs}`,
         `author: ${author}`,

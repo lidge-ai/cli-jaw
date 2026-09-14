@@ -29,6 +29,17 @@ import {
     type SettingsPersistenceShape,
 } from './settings-merge.js';
 export { detectAllCli, detectCli } from './cli-detection.js';
+import {
+    areMentionWatchConditionsValid,
+    areMentionWatchUserIdsValid,
+} from '../slack/mention-watch-match.js';
+import type { HeartbeatMentionWatchCondition } from '../slack/mention-watch-match.js';
+export {
+    HEARTBEAT_MENTION_WATCH_MAX_CONDITIONS,
+    HEARTBEAT_MENTION_WATCH_MAX_SUBJECTS,
+    isHeartbeatMentionWatchCondition,
+} from '../slack/mention-watch-match.js';
+export type { HeartbeatMentionWatchCondition, MentionWatchMatch } from '../slack/mention-watch-match.js';
 
 // ─── Version (single source of truth: package.json) ──
 import { dirname } from 'path';
@@ -1450,13 +1461,17 @@ export interface HeartbeatJob {
  *  channel outside it would be found and then refused with a 403. */
 export interface HeartbeatMentionWatch {
     channel: 'slack';
-    /** The person whose mentions to watch. */
+    /** Ledger and fresh-start identity. Extra subjects live in `userIds`. */
     userId: string;
+    /** Extra people whose mentions (or talk, when conditions say so) count. */
+    userIds?: string[];
     channelIds: string[];
     /** Cap on threads answered in one tick. */
     maxHits?: number;
     /** Slack ts floor, so enabling this does not answer last month's backlog. */
     since?: string;
+    /** OR of mention/talk rules. Absent or empty keeps mention-of-subjects. */
+    conditions?: HeartbeatMentionWatchCondition[];
 }
 
 export interface HeartbeatDestination {
@@ -1494,6 +1509,8 @@ export function isHeartbeatMentionWatch(value: unknown): value is HeartbeatMenti
     const maxHits = w['maxHits'];
     if (maxHits !== undefined && (typeof maxHits !== 'number' || !Number.isInteger(maxHits) || maxHits < 1)) return false;
     if (w['since'] !== undefined && (typeof w['since'] !== 'string' || !w['since'].trim())) return false;
+    if (w['userIds'] !== undefined && !areMentionWatchUserIdsValid(w['userIds'])) return false;
+    if (w['conditions'] !== undefined && !areMentionWatchConditionsValid(w['conditions'], ids)) return false;
     return true;
 }
 

@@ -631,6 +631,10 @@ Mounted at `/api/dashboard/telegram-hub` (`loopbackOnly` middleware).
   비활성화했다 다시 켠 작업은 리듬을 유지해야 한다.
 - mention watch 틱은 스케줄러의 `AbortSignal`을 받는다. 이미 `deps.signal`을 읽고
   `stoppedBecause: 'aborted'`를 보고하던 경로가 이제 실제로 연결돼 있다.
+  선택 `userIds`/`conditions`(`mention`|`talk`)는 기본을 `userId` 멘션으로 두고
+  talk는 opt-in이며 inbound `mentionOnly`와는 다른 게이트다.
+  선택 `userIds`/`conditions`(`mention`|`talk`)는 기본을 `userId` 멘션으로 두고
+  talk는 opt-in이며 inbound `mentionOnly`와는 다른 게이트다.
 - mention watch 틱에는 **답변 단계 wall-clock 예산**(10분)이 있다. 틱 전체가 아니라
   스캔이 끝난 시점부터 잰다 — 스캔은 60채널 × 4윈도우 × 2초 페이싱으로 정당하게 수 분을
   자므로, 전체 틱 기준이면 답변 0건으로 예산이 만료될 수 있다. 예산은 **시작되는 것**을

@@ -1,4 +1,5 @@
-// Messaging access-policy substrate (M4-A0). No production caller this cycle.
+// Messaging access-policy substrate. Privileged remote commands and optional
+// mention-watch `authors` are the production callers; default-deny is unchanged.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

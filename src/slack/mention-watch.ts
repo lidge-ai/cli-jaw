@@ -16,8 +16,13 @@
 
 import { fetchSlackHistory, SLACK_HISTORY_DEFAULT_LIMIT, SLACK_HISTORY_MAX_LIMIT } from './history.js';
 import type { SlackHistoryMessage } from './history.js';
-import { mentionsUser } from './events.js';
 import type { SlackFetch } from './api.js';
+import {
+    classifyMentionWatch,
+    mentionWatchSubjects,
+    type HeartbeatMentionWatchCondition,
+    type MentionWatchMatch,
+} from './mention-watch-match.js';
 
 export type MentionHit = {
     channelId: string;
@@ -35,6 +40,8 @@ export type MentionHit = {
     threadIsSynthetic?: boolean;
     authorId: string | null;
     text: string;
+    match?: MentionWatchMatch;
+    subjectId?: string | null;
 };
 
 export type MentionScanState = {
@@ -55,6 +62,10 @@ export type MentionScanState = {
 export type MentionScanOptions = {
     /** The person whose mentions we are looking for. */
     userId: string;
+    /** Extra subjects; omit or empty keeps `userId` only. */
+    userIds?: string[] | undefined;
+    /** OR of mention/talk rules. Omit or empty keeps mention-of-subjects. */
+    conditions?: HeartbeatMentionWatchCondition[] | undefined;
     /** Channels to scan. REQUIRED and non-empty.
      *
      *  Enumerating the workspace was the obvious alternative and it does not
@@ -176,21 +187,6 @@ function newer(a: string, b: string | undefined): boolean {
     return Number(a) > Number(b);
 }
 
-function isCandidate(
-    message: SlackHistoryMessage,
-    userId: string,
-    selfUserId: string | null | undefined,
-): boolean {
-    if (!message.text) return false;
-    // Our own posts mention people all the time; answering those would make the
-    // bot reply to itself in a loop.
-    if (selfUserId && message.user === selfUserId) return false;
-    if (message.botId && !message.user) return false;
-    // Joins, leaves, topic changes. They can carry a mention and are not a
-    // request for anything.
-    if (message.subtype) return false;
-    return mentionsUser(message.text, userId);
-}
 
 /** De-duplicated channel list plus whatever did not fit. The bound keeps one
  *  tick's call count knowable: channels x window budget, worst case.
@@ -231,6 +227,7 @@ export async function scanSlackMentions(
     const pacingMs = options.pacingMs ?? MENTION_WATCH_DEFAULT_PACING_MS;
     const maxWindows = Math.max(1, options.maxWindowsPerChannel ?? MENTION_WATCH_MAX_WINDOWS_PER_CHANNEL);
     const sleep = options.sleep ?? defaultSleep;
+    const subjects = mentionWatchSubjects({ userId: options.userId, userIds: options.userIds });
     const hits: MentionHit[] = [];
     const cursors = new Map<string, string>();
     const resumeBounds = new Map<string, string | null>();
@@ -351,10 +348,16 @@ export async function scanSlackMentions(
         let frontier: string | undefined;
         let frontierOpen = reachedCursor;
         for (const message of ordered) {
-            const candidate = isCandidate(message, options.userId, options.selfUserId);
+            const classified = classifyMentionWatch(message, {
+                subjects,
+                selfUserId: options.selfUserId,
+                channelId,
+                conditions: options.conditions,
+            });
+            const candidate = classified !== null;
             const alreadyHandled = candidate && options.state.seen(channelId, message.ts);
             const carried = candidate && !alreadyHandled && hits.length < maxHits;
-            if (carried) {
+            if (carried && classified) {
                 hits.push({
                     channelId,
                     ts: message.ts,
@@ -365,6 +368,8 @@ export async function scanSlackMentions(
                     ...(message.threadTs ? {} : { threadIsSynthetic: true }),
                     authorId: message.user ?? null,
                     text: message.text,
+                    match: classified.match,
+                    subjectId: classified.subjectId,
                 });
             }
             // Either an unanswered hit this tick could not carry, or one carried

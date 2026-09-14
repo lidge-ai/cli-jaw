@@ -38,7 +38,7 @@ cli-jaw/
 │   └── mime-detect.ts        ← MIME 타입 감지 헬퍼 (67L)
 ├── src/
 │   ├── core/                 ← 의존 0 인프라 계층 (31 files, 3847L)
-│   │   ├── config.ts         ← JAW_HOME, settings, APP_VERSION + migrateSettings legacy Claude model normalization + avatar settings deep merge + default `settings.pi` + corrupt settings backup + CLI 탐지 re-export hub (1576L)
+│   │   ├── config.ts         ← JAW_HOME, settings, APP_VERSION + migrateSettings legacy Claude model normalization + avatar settings deep merge + default `settings.pi` + corrupt settings backup + CLI 탐지 re-export hub (1593L)
 │   │   ├── cli-detection.ts  ← CLI 탐지 + `pi` npm-exec fallback + `kiro-code`(`kiro-cli` binary) 탐지 + local package release/debug candidates (57L)
 │   │   ├── compact.ts        ← compact 헬퍼 (COMPACT_MARKER_CONTENT, managed summary builder, cutoff logic, harvestGitGrep + harvestChatGrep 1KB/1KB budget split) (782L)
 │   │   ├── instance.ts       ← 인스턴스 ID, node/jaw 경로, 유닛명 sanitize (61L)
@@ -318,10 +318,10 @@ cli-jaw/
 │   ├── memory/               ← 데이터 영속화 + advanced memory runtime (18 files)
 │   │   ├── advanced.ts       ← Advanced Memory re-export stub (1L)
 │   │   ├── bootstrap.ts      ← legacy memory/bootstrap import + structured root 초기화 (588L)
-│   │   ├── heartbeat.ts      ← Heartbeat 잡 스케줄 + cron/anchored-every timer orchestration + minute-slot dedupe + in-flight skip + generation/abort teardown + per-job map prune + 틱마다 run record fold + mention-watch 답변 예산 + script env 채널 시크릿 차단 + fs.watch (1135L)
+│   │   ├── heartbeat.ts      ← Heartbeat 잡 스케줄 + cron/anchored-every timer orchestration + minute-slot dedupe + in-flight skip + generation/abort teardown + per-job map prune + 틱마다 run record fold + mention-watch 답변 예산 + script env 채널 시크릿 차단 + fs.watch (1139L)
 │   │   ├── heartbeat-run-record.ts ← 틱 결과 어휘 (execution/delivery 분리) + 연속 실패·연속 skip 2-카운터 fold + failing 임계값 (80L)
 │   │   ├── heartbeat-schedule.ts ← Heartbeat schedule normalize + cron validate/match + timezone validate + immediate cron loop helper (410L)
-│   │   ├── heartbeat-mention-watch.ts ← Slack mention 항목 loop + busy yield + 답변 단계 wall-clock 예산 + scanIncomplete/hitCapReached drain 신호 + server-owned thread send + WatchNamespace 경유 ledger 접근 (285L)
+│   │   ├── heartbeat-mention-watch.ts ← Slack mention 항목 loop + busy yield + 답변 단계 wall-clock 예산 + scanIncomplete/hitCapReached drain 신호 + server-owned thread send + WatchNamespace 경유 ledger 접근 (287L)
 │   │   ├── mention-watch-ledger.ts ← v2 ledger 단일 접근 경로 (WatchNamespace = job+workspace+user, 모든 SQL이 3파트 predicate 유지, A/B 대칭 테스트가 최종 보증) (104L) ✨
 │   │   ├── legacy-mention-watch-quarantine.ts ← v1 ledger 격리 상태 기계 (durable pending, downgrade 재출현 시 재격리, fresh-start 승인은 archive→delete→CAS 단일 트랜잭션) (115L) ✨
 │   │   ├── identity.ts       ← `shared/soul.md` 관리 + soul runtime helper (87L)
@@ -367,7 +367,8 @@ cli-jaw/
 │   │   ├── conversation.ts   ← 대화/스레드 컨텍스트 (conversations.info + replies cursor 최대 10페이지 + parent/최신 50, 참여자는 author 유도, method별 억제·시작률) (464L)
 │   │   ├── context.ts        ← 프롬프트 컨텍스트 블록 조립 (채널 id·thread_ts 무절단, 섹션별 코드포인트 예산 ~9200 총 overhead, 신뢰 경계 문구 보존) (273L)
 │   │   ├── history.ts        ← 동적 조회 (conversations.history/replies form-encoded 래퍼 + cursor 정규화 + 재시도 + 에이전트용 포맷/redact) (376L)
-│   │   ├── mention-watch.ts  ← 가입 채널 backward mention scan + frontier/resume/round-robin/429 stop/60-channel overflow + hitCapReached 보고 (381L)
+│   │   ├── mention-watch.ts  ← 가입 채널 backward mention scan + frontier/resume/round-robin/429 stop/60-channel overflow + hitCapReached 보고 (386L)
+│   │   ├── mention-watch-match.ts ← mention/talk 조건 + extra subjects + authors/authorDeny (evaluateMessagingAccess는 authors가 있을 때만) (171L)
 │   │   ├── attachment-recovery.ts ← app_mention 봉투에 없는 첨부를 channel+ts 재조회로 복구 (oldest+inclusive+limit=1) (53L)
 │   │   ├── commands.ts       ← slash command → 공유 parseCommand/executeCommand 파이프라인 (185L)
 │   │   ├── slack-file.ts     ← files.getUploadURLExternal → upload → completeUploadExternal 3단계 업로드 (파일명·캡션 모두 아웃바운드 마스킹) (158L)
