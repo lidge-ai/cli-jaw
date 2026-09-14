@@ -1,9 +1,9 @@
 // Messaging access policy substrate (M4-A0).
 //
-// No production caller in this milestone — the same shape as the M3a journal
-// before any transport imported it. M4-A1 is what will ask this module whether
-// a remote actor may run /stop or /approve. Until then the tests are the only
-// clients, and default-deny is the only safe unused default.
+// Production callers: privileged remote /stop /approve (M4-A1) and, when a
+// mention-watch condition names `authors`, the mention-watch matcher.
+// Default-deny remains the unused-default. There is no denylist on this
+// policy — mention-watch `authorDeny` is a local string list, not a mode here.
 
 export type MessagingAccessMode = 'deny' | 'allowlist' | 'paired' | 'all';
 
