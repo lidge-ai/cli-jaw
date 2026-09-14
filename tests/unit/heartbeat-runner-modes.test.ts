@@ -230,6 +230,29 @@ test('a destination that opts into the conversation root posts there', async () 
     assert.equal(sentRequests[0]?.['target']?.threadId, undefined);
 });
 
+test('a configured destination carries its own authority to the send', async () => {
+    // Regression: the target here is operator-written config, but the send left
+    // fullAccess unset and fell through to the explicit-target allowlist. With
+    // slack.channelIds empty the only remaining vouchers are the last-active slot
+    // and an existing binding, so a correctly configured job aimed at a channel
+    // nobody had recently addressed the bot in was refused with 'Invalid or
+    // disallowed target'. Two live instances sat like that: the daily scrum job
+    // failed three runs in a row, and the daily digest thread had no binding at
+    // all. Widening the allowlist is not the fix — that list also gates inbound.
+    sent.length = 0; sentRequests.length = 0;
+    await runJob({
+        id: 'authority', name: 'authority', enabled: true, schedule: { minutes: 5 }, prompt: 'check',
+        destination: { channel: 'slack', targetId: 'C_REPORTS', threadId: '1787571776.141519' },
+    });
+    assert.equal(sentRequests.length, 1);
+    assert.equal(sentRequests[0]?.['fullAccess'], true,
+        'a destination the operator wrote must not rank below whoever spoke most recently');
+    assert.equal(sentRequests[0]?.['target']?.targetId, 'C_REPORTS');
+    assert.equal(sentRequests[0]?.['target']?.threadId, '1787571776.141519');
+    assert.equal(sentRequests[0]?.['allowActiveFallback'], false,
+        'authority is permission to reach the named conversation, never licence to pick another');
+});
+
 test('a Slack destination with no thread and no root opt-in is held', async () => {
     // "Channel but no thread" is indistinguishable from a form nobody finished.
     // Guessing the root put scheduled reports at the bottom of channels their
