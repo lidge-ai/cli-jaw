@@ -993,10 +993,24 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         // active-channel fallback that used to stand in for a missing
         // destination is gone: it delivered to whoever spoke to the bot most
         // recently, which is not a property of this job at all (#437, #745).
+        //
+        // `fullAccess` because this target is not caller input. It came from
+        // `resolveHeartbeatBinding(job.destination)` — operator-written config in
+        // heartbeat.json, already refused unless it names a thread or says
+        // `channel_root` on purpose — which is the same authority class as the
+        // `slack.channelIds` allowlist and is never readable from HTTP JSON.
+        // Without it the send fell through to `authorizeExplicitTarget`, whose
+        // only remaining vouchers are the last-active slot and an existing
+        // binding. So a correctly configured job posting to a channel nobody had
+        // recently addressed the bot in got `Invalid or disallowed target`, and
+        // the operator's explicit choice ranked BELOW whoever spoke most
+        // recently. Widening `slack.channelIds` is not the alternative: that
+        // list also gates inbound, so naming the report channels there would
+        // stop the bot answering mentions everywhere else.
         const sendResult = !decision.send
             ? { ok: true as const }
             : await sendChannelOutput({ channel: destinationBinding.target.channel, type: 'text', text: formatted,
-                target: destinationBinding.target, allowActiveFallback: false })
+                target: destinationBinding.target, allowActiveFallback: false, fullAccess: true })
                 // A transport that THROWS is still a delivery failure, not a failed
                 // job. Without this it lands in the catch below beside a crashed
                 // runner and counts against the execution streak.

@@ -344,6 +344,43 @@ test('a failed handshake keeps retrying instead of stalling forever', async () =
     client.stop();
 });
 
+test('the default client keeps retrying past the old ten-attempt ceiling', async () => {
+    // Regression: a network outage that outlasted ten attempts left the socket
+    // permanently 'disconnected' while the process stayed up and health still
+    // reported Slack inbound as active, so messages arrived nowhere until
+    // someone restarted the service by hand.
+    let fetchCalls = 0;
+    const fetchImpl = (async () => {
+        fetchCalls++;
+        return {
+            ok: true, status: 200,
+            text: async () => JSON.stringify({ ok: false, error: 'internal_error' }),
+        // justified: minimal Response surface for the socket handshake
+        } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test',
+        fetchImpl,
+        baseReconnectDelayMs: 0,
+        socketFactory: () => ({
+            send: () => { /* no-op */ },
+            close: () => { /* no-op */ },
+            addEventListener: () => { /* no-op */ },
+        }),
+        onEnvelope: () => { /* no-op */ },
+    });
+    await client.start();
+    await new Promise(resolve => setTimeout(resolve, 150));
+
+    const attempts = client.getReconnectAttempts();
+    const state = client.getState();
+    client.stop();
+    assert.ok(attempts > 10, `retries stopped at ${attempts}`);
+    assert.equal(state, 'reconnecting', 'client stopped trying to reach Slack');
+    assert.ok(fetchCalls > 10, `handshake stopped retrying (fetchCalls=${fetchCalls})`);
+});
+
 // ─── reconnect-window guard ─────────────────────────
 
 test('a frame arriving before hello is NOT acked and NOT dispatched', async () => {
