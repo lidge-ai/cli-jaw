@@ -368,7 +368,7 @@ cli-jaw/
 │   │   ├── context.ts        ← 프롬프트 컨텍스트 블록 조립 (채널 id·thread_ts 무절단, 섹션별 코드포인트 예산 ~9200 총 overhead, 신뢰 경계 문구 보존) (273L)
 │   │   ├── history.ts        ← 동적 조회 (conversations.history/replies form-encoded 래퍼 + cursor 정규화 + 재시도 + 에이전트용 포맷/redact) (376L)
 │   │   ├── mention-watch.ts  ← 가입 채널 backward mention scan + frontier/resume/round-robin/429 stop/60-channel overflow + hitCapReached 보고 (386L)
-│   │   ├── mention-watch-match.ts ← mention/talk 조건 + extra subjects + authors/authorDeny (evaluateMessagingAccess는 authors가 있을 때만) (172L)
+│   │   ├── mention-watch-match.ts ← mention/talk 조건 + extra subjects + authors/authorDeny (evaluateMessagingAccess는 authors가 있을 때만) (171L)
 │   │   ├── attachment-recovery.ts ← app_mention 봉투에 없는 첨부를 channel+ts 재조회로 복구 (oldest+inclusive+limit=1) (53L)
 │   │   ├── commands.ts       ← slash command → 공유 parseCommand/executeCommand 파이프라인 (185L)
 │   │   ├── slack-file.ts     ← files.getUploadURLExternal → upload → completeUploadExternal 3단계 업로드 (파일명·캡션 모두 아웃바운드 마스킹) (158L)

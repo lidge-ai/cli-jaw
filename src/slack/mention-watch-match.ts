@@ -137,14 +137,18 @@ function conditionMatches(
     return subjectId ? { match: 'talk', subjectId } : null;
 }
 
+export type MentionWatchClassifyInput = {
+    subjects: readonly string[];
+    // `| undefined` is required under exactOptionalPropertyTypes: callers
+    // forward optional scan fields that may be absent.
+    selfUserId?: string | null | undefined;
+    channelId: string;
+    conditions?: readonly HeartbeatMentionWatchCondition[] | undefined;
+};
+
 export function classifyMentionWatch(
     message: SlackHistoryMessage,
-    input: {
-        subjects: readonly string[];
-        selfUserId?: string | null;
-        channelId: string;
-        conditions?: readonly HeartbeatMentionWatchCondition[];
-    },
+    input: MentionWatchClassifyInput,
 ): MentionWatchClassification | null {
     if (isSkipped(message, input.selfUserId)) return null;
     if (!input.subjects.length) return null;
@@ -161,12 +165,7 @@ export function classifyMentionWatch(
 
 export function isMentionWatchCandidate(
     message: SlackHistoryMessage,
-    input: {
-        subjects: readonly string[];
-        selfUserId?: string | null;
-        channelId: string;
-        conditions?: readonly HeartbeatMentionWatchCondition[];
-    },
+    input: MentionWatchClassifyInput,
 ): boolean {
     return classifyMentionWatch(message, input) !== null;
 }
