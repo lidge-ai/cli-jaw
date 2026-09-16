@@ -96,6 +96,8 @@ export function withSettingsSchema(settings: Record<string, unknown>): Record<st
     return {
         settingsSchemaVersion: 4,
         multiSessionDefaultMigration: null,
+        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'left-in-place' },
+        maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'left-in-place', from: 1 },
         ...settings,
         multiSession: { enabled: true, maxConcurrent: 4, ...multiSession },
         messaging: { enabledChannels: [], homeChannel: 'telegram', ...messaging },

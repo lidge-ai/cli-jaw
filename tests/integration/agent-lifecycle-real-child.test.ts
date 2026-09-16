@@ -70,7 +70,6 @@ test('AGENT-INT: a scoped stop kills one live child and leaves the other running
             cli: 'claude',
             permissions: 'auto',
             perCli: { claude: { transport: 'print' } },
-            nativeTransportMigration: { id: 'native-transport-default-v1', status: 'applied' },
             workingDir: workspace,
             // Two scopes have to be able to run at once, or the second prompt
             // queues behind the first and there is never a pair of live pids.

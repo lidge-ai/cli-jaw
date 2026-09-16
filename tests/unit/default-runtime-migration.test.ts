@@ -86,6 +86,8 @@ test('DRM-004: a current-schema pending reload is not rewritten', () => {
         settingsSchemaVersion: config.SETTINGS_SCHEMA_VERSION,
         runtimeDefaultMigration: pending(),
         multiSessionDefaultMigration: { id: 'multi-session-default-v3', state: 'pending' },
+        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'left-in-place' },
+        maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'left-in-place', from: 1 },
         multiSession: { enabled: false, maxConcurrent: 1, midRunPolicy: 'steer', channels: { telegram: false, discord: false, slack: true } },
         messaging: { enabledChannels: ['telegram'], homeChannel: 'telegram', latestSeen: {}, lastActive: {} },
         cli: 'claude',
