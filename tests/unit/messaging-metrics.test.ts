@@ -103,7 +103,7 @@ test('jaw messaging doctor --json reports local ingress counts', () => {
             metrics: { counters: unknown[] };
         };
         assert.equal(body.ingress.dead_letter, 1);
-        assert.equal(body.ingress.oldestOpenReceivedAt, 1_700_000_000_000);
+        assert.equal(body.ingress.oldestOpenReceivedAt, null);
         assert.ok(Array.isArray(body.events));
         assert.ok(Array.isArray(body.metrics.counters));
     } finally {

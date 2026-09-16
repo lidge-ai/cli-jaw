@@ -252,7 +252,7 @@ the reply ledger still protects a later orphan completion.
 
 ### `src/messaging/durable-ingress.ts`
 
-- 세 채널 inbound가 공유하는 SQLite journal. Telegram poller는 handler 전에 `admitIngress`, offset 전진 전에 `settleIngress`를 부른다.
+- 세 채널 inbound가 공유하는 SQLite journal. Telegram poller는 handler 전에 `admitIngress`, offset 전진 전에 `settleIngress`를 부른다. Slack ACK는 preflight admit 뒤이고, settle은 handle early-return과 ingress lane(`processSlackMessageEvent`)이다. ACK 뒤 Slack 실패는 `dead_letter`다. `oldestOpenReceivedAt`은 `received`/`processing`만 본다.
 - 운영 조회/재생은 `jaw messaging ingress`. replay는 row를 `received`로 표시할 뿐이고, 재실행은 vendor 재전송이다.
 - 운영자 Telegram DM의 dispatch approval은 Approve/Deny 버튼(`appr:`/`aprd:` opaque id)을 붙인다. Discord·Slack 운영자 DM도 같은 opaque 버튼을 붙인다. Slack 일반 keyboard send는 여전히 unsupported다.
 
