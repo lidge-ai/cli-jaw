@@ -19,6 +19,7 @@ import { currentSessionScope, withSessionScope } from '../core/session-context.j
 
 import { clearPromptCache } from '../prompt/builder.js';
 import { spawnAgent, killAgentById } from '../agent/spawn.js';
+import { readStopCause } from '../agent/spawn/stop-cause.js';
 import { stripStallTruncationNotice } from '../agent/error-classifier.js';
 import {
     createWorklog,
@@ -542,10 +543,14 @@ export async function orchestrate(
     const { promise } = withSessionScope({ scope, chatSessionId }, spawn);
     const result = await promise as Record<string, any>;
     const nativeOutcome: RuntimeTurnOutcome | undefined = result['runtimeOutcome'];
-    const nativeTags = nativeOutcome ? {
-        runtimeFinality: nativeOutcome.finalText === null ? 'absent' as const : 'present' as const,
-        runtimeStatus: nativeOutcome.status,
-    } : {};
+    const stopCause = readStopCause(result['stopCause']);
+    const nativeTags = {
+        ...(nativeOutcome ? {
+            runtimeFinality: nativeOutcome.finalText === null ? 'absent' as const : 'present' as const,
+            runtimeStatus: nativeOutcome.status,
+        } : {}),
+        ...(stopCause ? { stopCause } : {}),
+    };
     // Native absence/empty/whitespace is not a provisional-text fallback. Clear
     // compatibility text BEFORE any transform can decorate it into an answer;
     // the private outcome (and durable MESSAGE bytes) remain untouched.

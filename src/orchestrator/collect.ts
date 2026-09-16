@@ -167,12 +167,8 @@ export function orchestrateAndCollectData(
                 // `executionInterrupted` flag) versus a run that finished and
                 // simply had nothing to say.
                 //
-                // `stopped` stays ONE bucket on purpose. A watchdog timeout, a
-                // user Stop and a native steer-kill are pressed into the same
-                // status by `lifecycleRuntimeOutcome`, so splitting them here
-                // would mean inventing a distinction the payload does not carry.
                 const stopped = data['runtimeStatus'] === 'stopped' || data['executionInterrupted'] === true;
-                const fallback = superseded ? '' : t(stopped ? 'tg.stopped' : 'tg.noResponse', {}, locale);
+                const fallback = superseded ? '' : t(stopped ? stoppedLocaleKey(data['stopCause']) : 'tg.noResponse', {}, locale);
                 resolve({ text: native
                     ? terminalText || ownTerminalDiagnostic || fallback
                     : data["text"] || collected || fallback,
@@ -203,4 +199,11 @@ export async function orchestrateAndCollect(
     locale: string = 'ko',
 ): Promise<string> {
     return (await orchestrateAndCollectData(prompt, meta, locale)).text;
+}
+
+export function stoppedLocaleKey(cause: unknown): string {
+    if (cause === 'watchdog') return 'tg.stoppedWatchdog';
+    if (cause === 'user_stop') return 'tg.stoppedUser';
+    if (cause === 'steer_kill') return 'tg.stoppedSteer';
+    return 'tg.stopped';
 }
