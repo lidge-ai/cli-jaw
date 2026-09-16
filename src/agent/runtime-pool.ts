@@ -55,6 +55,7 @@ export interface CodexAppLease extends RuntimeLease<ManagedRuntime, string> {
 
 export interface PiLease extends RuntimeLease<ManagedRuntime, string | null> {
     session: PiRpcSession;
+    retire(reason?: Error): Promise<void>;
 }
 
 export interface PiAcquireOptions {
@@ -74,6 +75,7 @@ export interface PiAcquireOptions {
     instructions?: string;
     forceNew?: boolean;
     waitMs?: number;
+    signal?: AbortSignal;
 }
 
 export interface CursorAcquireOptions {
@@ -352,6 +354,22 @@ function piSessionForLease(session: PiRpcSession, instructions?: string): PiRpcS
     };
 }
 
+function retirePiEntry(
+    store: EngineStore,
+    key: string,
+    entry: ReadyEntry<ManagedRuntime, unknown>,
+    reason: Error,
+): Promise<void> {
+    if (store.entries.get(key) !== entry) return Promise.resolve();
+    entry.dead = true;
+    return Promise.resolve(entry.runtime.close()).then(() => {
+        removeEntry(store, key, entry, reason);
+    }, (error: unknown) => {
+        removeEntry(store, key, entry, reason);
+        throw error;
+    });
+}
+
 function makePiLease(
     store: EngineStore,
     key: string,
@@ -377,6 +395,11 @@ function makePiLease(
                 return;
             }
             drainWaiters(entry, 'wake');
+        },
+        retire(reason = new Error('pi lease retired')) {
+            if (released) return Promise.resolve();
+            released = true;
+            return retirePiEntry(store, key, entry, reason);
         },
         cancel: () => cancelLease(entry),
     };
@@ -577,7 +600,7 @@ export async function acquirePiRuntime(opts: PiAcquireOptions): Promise<PiLease>
             return createPiEntry(store, key, creating, opts);
         }
         if (entry.state === 'creating') {
-            await waitForEntry(entry, waitMs);
+            await waitForEntry(entry, waitMs, opts.signal);
             continue;
         }
         const session = (entry.runtime as PiManagedRuntime).session;
@@ -591,7 +614,7 @@ export async function acquirePiRuntime(opts: PiAcquireOptions): Promise<PiLease>
             entry.lastUsedAt = Date.now();
             return makePiLease(store, key, entry, session, true, opts.instructions);
         }
-        await waitForEntry(entry, waitMs);
+        await waitForEntry(entry, waitMs, opts.signal);
     }
 }
 
