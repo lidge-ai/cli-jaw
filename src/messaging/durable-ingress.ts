@@ -434,12 +434,27 @@ export class IngressJournal {
         return out;
     }
 
-    /** Oldest still-open row. Completed tombstones are history, not backlog. */
+    /** Oldest live row. Completed and dead_letter are history, not backlog. */
     oldestOpenReceivedAt(): number | null {
         const row = this.database.prepare(
-            "SELECT MIN(received_at) AS n FROM ingress_events WHERE state != 'completed'",
+            "SELECT MIN(received_at) AS n FROM ingress_events WHERE state IN ('received', 'processing')",
         ).get() as { n: number | null } | undefined;
         return typeof row?.n === 'number' ? row.n : null;
+    }
+
+    /**
+     * Age-only drain of processing rows left by a crash or an ACK that never
+     * reached handle. `session_generation` is per-conversation, not a boot epoch.
+     */
+    abandonStaleProcessing(opts: { maxAgeMs?: number } = {}): number {
+        const maxAgeMs = opts.maxAgeMs ?? 60 * 60 * 1000;
+        const cutoff = this.now() - maxAgeMs;
+        return this.database.prepare(`
+            UPDATE ingress_events
+            SET state = 'dead_letter', last_error = 'abandoned_stale_processing', next_attempt_at = NULL
+            WHERE state = 'processing'
+              AND COALESCE(started_at, received_at) < ?
+        `).run(cutoff).changes;
     }
 
     listByState(state: IngressState, limit = 100): IngressEventRecord[] {
@@ -500,8 +515,8 @@ export type IngressAdmission =
 /**
  * The append/claim half of the durable-ingress protocol, shared by every transport so
  * the ordering is written once. A transport calls this before handling an event and
- * `settleIngress` after, and the caller's own acknowledgement (Telegram's offset,
- * Slack's ACK) must come after that settle.
+ * `settleIngress` after. Telegram's offset follows settle. Slack's ACK follows
+ * preflight admit, not settle — Socket Mode would otherwise miss the 3s window.
  *
  * `admit: false` means the event completed on an earlier run and must not be handled
  * again. Anything else is admitted — including a row a crash left mid-flight, because
@@ -553,6 +568,7 @@ export function settleIngress(
     journal: IngressJournal | null,
     admission: IngressAdmission,
     error?: unknown,
+    opts?: { onError?: 'retry' | 'dead_letter' },
 ): void {
     if (!journal || !admission.admit || !admission.journaled) return;
     const { channel, accountId, eventId } = admission.envelope;
@@ -560,9 +576,13 @@ export function settleIngress(
         journal.markCompleted(channel, accountId, eventId);
         return;
     }
-    // Back to received rather than dead-lettered: the transport is about to redeliver,
-    // so the redelivery is itself the retry.
     const message = error instanceof Error ? error.message : String(error);
+    if (opts?.onError === 'dead_letter') {
+        journal.markDeadLetter(channel, accountId, eventId, message);
+        return;
+    }
+    // Back to received rather than dead-lettered: the transport is about to redeliver,
+    // so the redelivery is itself the retry. Slack cannot use this after ACK.
     journal.markRetryScheduled(channel, accountId, eventId, Date.now(), message);
 }
 
@@ -578,6 +598,7 @@ export function initIngressJournal(
     options: IngressJournalOptions = {},
 ): IngressJournal {
     journal = new IngressJournal(database, options);
+    journal.abandonStaleProcessing();
     assertChildRetentionPredicatesRegistered(database);
     return journal;
 }

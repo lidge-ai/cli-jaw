@@ -204,7 +204,7 @@ cli-jaw/
 │   │   ├── fold.ts           ← 정규화 폴딩 엔진 (escape 디코드 + invisible 제거 + NFKC, 오프셋 맵 추적) (276L) ✨
 │   │   ├── redact.ts         ← 채널 크리덴셜 마스킹 (Slack/TG/Discord 토큰 + URL 경로 capability) (620L) ✨
 │   │   ├── chunk.ts          ← 공유 메시지 분할 (무손실 + 서로게이트 안전 + 펜스/언어태그 보존, 단 delimiter가 한도 이내일 때) (389L) ✨
-│   │   ├── channel-health.ts ← 채널 헬스 체크 helper + additive ingress/metrics snapshot (226L) ✨
+│   │   ├── channel-health.ts ← 채널 헬스 체크 helper + additive ingress/metrics snapshot (228L) ✨
 │   │   ├── channel-validate.ts ← 온보딩 마법사 라이브 크리덴셜 검증 (telegram getMe / discord users@me / slack auth.test+connections.open, 토큰 비로깅) (141L) ✨
 │   │   ├── send-result.ts    ← send result type helper (14L) ✨
 │   │   ├── session-key.ts    ← 세션 키 헬퍼 (56L)
@@ -219,7 +219,7 @@ cli-jaw/
 │   │   ├── outbound-outbox.ts ← reserve-before-send outbox + ambiguous FSM (256L)
 │   │   ├── trace-context.ts  ← ALS MessagingTraceContext; reuses journal trace_id (73L)
 │   │   ├── metrics.ts       ← in-process counters/histograms; labels channel/state/result only (97L)
-│   │   ├── durable-ingress.ts ← inbound journal FSM + admit/settle + session_generation + operator list/replay (592L)
+│   │   ├── durable-ingress.ts ← inbound journal FSM + admit/settle + session_generation + operator list/replay (613L)
 │   │   ├── ingress-audit.ts  ← append-only replay audit JSONL (49L)
 │   │   ├── inbound-envelope.ts ← InboundEnvelope normalizers (229L)
 │   │   ├── ack-reaction.ts   ← inbound ACK reaction lifecycle (serialized transitions + per-channel defaults + nested ack merge) (269L)
@@ -354,7 +354,7 @@ cli-jaw/
 │   │   └── discord-file.ts   ← Discord 파일 전송 (107L)
 │   ├── slack/                ← Slack 인터페이스 (41 files, Socket Mode + Web API, SDK 없음)
 │   │   ├── socket.ts         ← Socket Mode client (apps.connections.open → wss, ack-before-work, envelope dedupe TTL, hello deadline, backoff 재연결) (468L)
-│   │   ├── bot.ts            ← Slack 봇 lifecycle + attachPort 성공 후 best-effort 자기선출/영속화 + envelope routing + orchestrate 경로 + queued-result waiter + top-level/thread 1회 context prefetch (1935L)
+│   │   ├── bot.ts            ← Slack 봇 lifecycle + attachPort 성공 후 best-effort 자기선출/영속화 + envelope routing + orchestrate 경로 + queued-result waiter + top-level/thread 1회 context prefetch (2015L)
 │   │   ├── api.ts            ← Slack Web API fetch wrapper (HTTP 200 + ok:false를 실패로 처리, credential/URL redaction, Retry-After) (442L)
 │   │   ├── format.ts         ← CommonMark → mrkdwn 변환 + code-fence 보존 chunking (222L)
 │   │   ├── blocks.ts         ← Block Kit validation and per-table message splitting (143L)

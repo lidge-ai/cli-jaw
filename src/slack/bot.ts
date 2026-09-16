@@ -59,7 +59,7 @@ import {
 } from './token-claim.js';
 import { runSlackAutoJoin, mergeSlackAutoJoin } from './auto-join.js';
 import { createHash } from 'node:crypto';
-import { admitIngress, getIngressJournal } from '../messaging/durable-ingress.js';
+import { admitIngress, getIngressJournal, settleIngress, type IngressAdmission } from '../messaging/durable-ingress.js';
 import { getQueueNoticeStore } from '../messaging/queue-notice-store.js';
 import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
@@ -1369,7 +1369,52 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
 
     const admission = admitIngress(journal, inbound, slackPayloadDigest(event), undefined, inbound ? currentGenerationForEnvelope(inbound) : 0);
     if (!admission.admit) return 'duplicate';
+    stashSlackAdmission(envelope, admission);
     return 'committed';
+}
+
+const SLACK_ADMISSION_TTL_MS = 10 * 60 * 1000;
+const slackAdmissions = new Map<string, { admission: IngressAdmission; expiresAt: number }>();
+
+function slackAdmissionKey(envelope: SlackEnvelope): string {
+    if (envelope.envelope_id) return `eid:${envelope.envelope_id}`;
+    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    const team = String(settings['slack']?.teamId || '');
+    if (event?.channel && event?.ts && team) return `ev:${team}:${event.channel}:${event.ts}`;
+    return '';
+}
+
+function stashSlackAdmission(envelope: SlackEnvelope, admission: IngressAdmission): void {
+    const key = slackAdmissionKey(envelope);
+    if (!key || !admission.admit || !admission.journaled) return;
+    const now = Date.now();
+    for (const [held, row] of slackAdmissions) {
+        if (row.expiresAt <= now) slackAdmissions.delete(held);
+    }
+    if (slackAdmissions.size >= 256) {
+        const first = slackAdmissions.keys().next().value;
+        if (first) slackAdmissions.delete(first);
+    }
+    slackAdmissions.set(key, { admission, expiresAt: now + SLACK_ADMISSION_TTL_MS });
+}
+
+function takeSlackAdmission(envelope: SlackEnvelope): IngressAdmission | undefined {
+    const key = slackAdmissionKey(envelope);
+    if (!key) return undefined;
+    const row = slackAdmissions.get(key);
+    slackAdmissions.delete(key);
+    if (!row || row.expiresAt <= Date.now()) return undefined;
+    return row.admission;
+}
+
+function settleSlackAdmission(admission: IngressAdmission | undefined, error?: unknown): void {
+    if (!admission) return;
+    settleIngress(
+        getIngressJournal(),
+        admission,
+        error,
+        error === undefined ? undefined : { onError: 'dead_letter' },
+    );
 }
 
 /** Identity of the event body. Never the body itself: the journal is not an archive. */
@@ -1387,6 +1432,18 @@ function slackInteractiveUserId(payload: Record<string, unknown>): string {
     return '';
 }
 export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTransport = slackApprovalIngress): Promise<void> {
+    const admission = takeSlackAdmission(envelope);
+    let settled = false;
+    const settleOk = (): void => {
+        if (settled) return;
+        settled = true;
+        settleSlackAdmission(admission);
+    };
+    const settleErr = (error: unknown): void => {
+        if (settled) return;
+        settled = true;
+        settleSlackAdmission(admission, error);
+    };
     if (envelope.type === 'slash_commands') {
         await handleSlackSlashCommand(envelope.payload || {});
         return;
@@ -1429,7 +1486,10 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
     }
     const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
     const event = payload?.event;
-    if (!event) return;
+    if (!event) {
+        settleOk();
+        return;
+    }
 
     const receiveGate = gateConfig();
     const workflowSelection = captureSlackWorkflow(event, receiveGate);
@@ -1437,12 +1497,16 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         ...event,
         __jawSelf: Boolean(event.user && event.user === getSlackSelfUserId()),
     }, String(event.text || '')) : { handled: false };
-    if (approval.handled) return;
+    if (approval.handled) {
+        settleOk();
+        return;
+    }
 
     const target = buildSlackTarget(event);
     const decision = shouldProcessSlackEvent(event, receiveGate, envelope.type);
     if (!decision.process) {
         log.info(`[slack:in] skipped (${decision.reason})`);
+        settleOk();
         return;
     }
     // Carried to the admission site so the durable commit happens only after a
@@ -1462,6 +1526,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         );
         if (claimSlackEvent(eventKey)) {
             log.info('[slack:in] skipped (duplicate_event)');
+            settleOk();
             return;
         }
         reservedEventKey = eventKey;
@@ -1529,7 +1594,10 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                 }
             }
         }
-        if (!text && !hasFiles) return;
+        if (!text && !hasFiles) {
+            settleOk();
+            return;
+        }
         if (text) log.info(`[slack:in] ${event.channel}: ${redactOutboundText(text).slice(0, 80)}`);
 
         if (!hasFiles && workflowSelection.kind === 'none' && isResetIntent(text)) {
@@ -1540,19 +1608,31 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                     ? t('ws.agentBusy', {}, currentLocale())
                     : t('tg.resetDone', {}, currentLocale()));
             }
+            settleOk();
             return;
         }
 
-        prefetchHandedOff = enqueueSlackIngress(slackIngressLaneKey(target), signal =>
-            processSlackMessageEvent(event, target, text, signal, {
-                workflowSelection,
-                ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
-                prefetchToken,
-                ...(prefetchOwner ? { prefetchOwner } : {}),
-                preResolvedScope,
-                ...(reservedEventKey ? { eventKey: reservedEventKey } : {}),
-                ...(reservationGeneration !== undefined ? { reservationGeneration } : {}),
-            }));
+        prefetchHandedOff = enqueueSlackIngress(slackIngressLaneKey(target), async signal => {
+            try {
+                await processSlackMessageEvent(event, target, text, signal, {
+                    workflowSelection,
+                    ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
+                    prefetchToken,
+                    ...(prefetchOwner ? { prefetchOwner } : {}),
+                    preResolvedScope,
+                    ...(reservedEventKey ? { eventKey: reservedEventKey } : {}),
+                    ...(reservationGeneration !== undefined ? { reservationGeneration } : {}),
+                });
+                settleOk();
+            } catch (error) {
+                settleErr(error);
+                throw error;
+            }
+        });
+        if (!prefetchHandedOff) settleErr(new Error('enqueue_refused'));
+    } catch (error) {
+        settleErr(error);
+        throw error;
     } finally {
         if (prefetchToken && prefetchOwner && !prefetchHandedOff) {
             releaseThreadPrefetch(
