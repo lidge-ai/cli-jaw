@@ -96,6 +96,11 @@ export function cancelPiExecution(child: ChildProcess): boolean {
     cancel(); return true;
 }
 
+/** Overwrite the oneshot cancel port. Employee binds this to `session.cancel()` before `runPiTurn`. */
+export function bindPiExecutionCancel(child: ChildProcess, cancel: () => void): void {
+    Object.defineProperty(child, PI_EXECUTION_CANCEL, { configurable: true, value: () => { cancel(); } });
+}
+
 /** Per execution, never a PID registry. A receipt is evidence, not cwd ownership. */
 function createPiExecutionCleanup() {
     const handles: Partial<Record<'rpc' | 'version', PiOwnedHandle>> = {};
@@ -1033,33 +1038,62 @@ export function spawnPersistentPiRpc(profile: PiProfile, pi: PiSettings, options
     return session;
 }
 
-export function spawnPiRpc(profile: PiProfile, pi: PiSettings, options: {
-    prompt: string;
+export type OpenPiRpcOptions = {
     model: string;
     effort?: string;
     cwd: string;
-    sysPrompt?: string;
     sessionId?: string;
-    onEvent?: (event: PiRuntimeEvent) => void;
-    onRawRecord?: (record: unknown) => void;
     root?: string;
     env?: NodeJS.ProcessEnv;
-}): { child: ChildProcess; done: Promise<PiPromptResult & { code: number; sessionId?: string | null }>;
-    cleanup: Promise<PiExecutionCleanupReceipt> } {
+    onEvent?: (event: PiRuntimeEvent) => void;
+    onRawRecord?: (record: unknown) => void;
+};
+
+export type PiOneshotResult = PiPromptResult & { code: number; sessionId?: string | null };
+
+export interface PiOneshotRpc {
+    readonly child: ChildProcess;
+    readonly alive: boolean;
+    readonly abortEffective: boolean;
+    sessionId: string | null;
+    readonly prepared: Promise<void>;
+    readonly cleanup: Promise<PiExecutionCleanupReceipt>;
+    sendPrompt(message: string, opts?: {
+        effort?: string;
+        onEvent?: (event: PiRuntimeEvent) => void;
+        onRawRecord?: (record: unknown) => void;
+    }): Promise<PiOneshotResult>;
+    abort(): Promise<void>;
+    close(): Promise<void> | void;
+    kill(): void;
+}
+
+export function sendPiRpcPrompt(
+    opened: PiOneshotRpc,
+    message: string,
+    opts?: { effort?: string; onEvent?: (event: PiRuntimeEvent) => void; onRawRecord?: (record: unknown) => void },
+): Promise<PiOneshotResult> {
+    return opened.sendPrompt(message, opts);
+}
+
+/** Version probe + RPC up, no prompt write. Employee and the spawnPiRpc wrapper share this. */
+export function openPiRpc(profile: PiProfile, pi: PiSettings, options: OpenPiRpcOptions): PiOneshotRpc {
     const effort = options.effort;
-    const onEvent = options.onEvent, onRawRecord = options.onRawRecord;
-    const fullPrompt = options.sysPrompt ? `${options.sysPrompt}\n\n${options.prompt}` : options.prompt;
-    const hasHistory = fullPrompt.includes('[Recent Context]');
-    const { child, owner, startVersionProbe } = launchPiRpcExecution(profile, pi, options);
+    let onEvent = options.onEvent, onRawRecord = options.onRawRecord;
+    const { cmd, child, owner, startVersionProbe } = launchPiRpcExecution(profile, pi, options);
     let stderr = '';
     const stderrReader = createTextStreamReader();
-    let sessionId: string | null = null;
-    let doneSettled = false, promptDispatched = false;
+    let sessionId: string | null = options.sessionId || null;
+    let doneSettled = false, promptDispatched = false, promptStarted = false;
+    let abortEffective = false;
     let turn: PiTurnAccumulator | null = null;
     let version: ReturnType<typeof startPiVersionProbe> | undefined;
     let promptId = 0;
     let finish!: (code?: number, status?: RuntimeTurnOutcome['status'], error?: Error) => void;
-    const done = new Promise<PiPromptResult & { code: number; sessionId?: string | null }>((resolve, reject) => {
+    let resolvePrepared!: () => void;
+    let rejectPrepared!: (error: Error) => void;
+    const prepared = new Promise<void>((resolve, reject) => { resolvePrepared = resolve; rejectPrepared = reject; });
+    const done = new Promise<PiOneshotResult>((resolve, reject) => {
         finish = (code = 0, status?: RuntimeTurnOutcome['status'], error?: Error) => {
             if (doneSettled) return;
             doneSettled = true;
@@ -1112,10 +1146,6 @@ export function spawnPiRpc(profile: PiProfile, pi: PiSettings, options: {
             if (stderr.length < PI_RPC_STDERR_MAX_CHARS) stderr += stderrReader.write(chunk);
         });
         child.on('close', (code, signal) => {
-            // The shared reader also drains the decoder here, which this path did not
-            // do before: a partial UTF-8 sequence at EOF now surfaces as U+FFFD rather
-            // than vanishing. finish() stays after the flush so a trailing terminal
-            // record can still settle the turn as complete.
             stdoutLines.flush();
             finish(code ?? 1, signal || child.killed ? 'stopped' : 'error');
         });
@@ -1133,20 +1163,94 @@ export function spawnPiRpc(profile: PiProfile, pi: PiSettings, options: {
         else owner.teardown(true);
         return sent;
     };
-    Object.defineProperty(child, PI_EXECUTION_CANCEL, { value: () => { child.kill('SIGTERM'); } });
+    bindPiExecutionCancel(child, () => { child.kill('SIGTERM'); });
     version = startVersionProbe();
     void version.done.then(observation => {
-        if (doneSettled) return;
+        if (doneSettled) { rejectPrepared(new Error('pi rpc execution settled before prepare')); return; }
         if (child.killed || child.exitCode !== null || child.signalCode !== null) {
-            finish(1, child.killed ? 'stopped' : 'error'); return;
+            finish(1, child.killed ? 'stopped' : 'error');
+            rejectPrepared(new Error('pi rpc execution closed during preparation'));
+            return;
         }
         turn = new PiTurnAccumulator(observation.status === 0 && piSupportsSettled(observation.stdout));
+        abortEffective = observation.status === 0 && loadPiAbortEffective(profile.id, resolvePiCommandIdentity(cmd, observation));
         write('get_state');
         if (effort) write('set_thinking_level', { level: effort });
-        console.log(`[jaw:pi] prompt len=${fullPrompt.length}, hasHistory=${hasHistory}, effort=${effort || 'none'}, sessionId=${options.sessionId || 'new'}`);
-        promptId = write('prompt', { message: fullPrompt });
-        promptDispatched = true;
-    }).catch(error => finish(1, child.killed ? 'stopped' : 'error', error as Error));
+        resolvePrepared();
+    }).catch(error => {
+        finish(1, child.killed ? 'stopped' : 'error', error as Error);
+        rejectPrepared(error as Error);
+    });
     owner.seal();
-    return { child, done, cleanup: owner.cleanup };
+    const session: PiOneshotRpc = {
+        child,
+        get alive() { return !doneSettled && child.exitCode == null && !child.killed; },
+        get abortEffective() { return abortEffective && !doneSettled; },
+        get sessionId() { return sessionId; },
+        set sessionId(value) { sessionId = value; },
+        prepared,
+        cleanup: owner.cleanup,
+        sendPrompt(message, opts = {}) {
+            if (promptStarted) return Promise.reject(new Error('pi rpc prompt already active'));
+            promptStarted = true;
+            if (opts.onEvent) onEvent = opts.onEvent;
+            if (opts.onRawRecord) onRawRecord = opts.onRawRecord;
+            const sendEffort = opts.effort ?? effort;
+            void prepared.then(() => {
+                if (doneSettled) return;
+                if (child.killed || child.exitCode !== null || child.signalCode !== null) {
+                    finish(1, child.killed ? 'stopped' : 'error');
+                    return;
+                }
+                if (sendEffort && sendEffort !== effort) write('set_thinking_level', { level: sendEffort });
+                console.log(`[jaw:pi] prompt len=${message.length}, hasHistory=${message.includes('[Recent Context]')}, effort=${sendEffort || 'none'}, sessionId=${sessionId || 'new'}`);
+                promptId = write('prompt', { message });
+                promptDispatched = true;
+            }, () => { /* finish() already settled done */ });
+            return done;
+        },
+        async abort() {
+            if (doneSettled) return;
+            if (!promptDispatched) {
+                finish(0, 'stopped');
+                return;
+            }
+            if (!abortEffective) return;
+            try { write('abort'); } catch { /* kill follows on oneshot cancel */ }
+        },
+        close() { session.kill(); return owner.cleanup.then(() => undefined); },
+        kill() { child.kill('SIGTERM'); },
+    };
+    return session;
+}
+
+export function spawnPiRpc(profile: PiProfile, pi: PiSettings, options: {
+    prompt: string;
+    model: string;
+    effort?: string;
+    cwd: string;
+    sysPrompt?: string;
+    sessionId?: string;
+    onEvent?: (event: PiRuntimeEvent) => void;
+    onRawRecord?: (record: unknown) => void;
+    root?: string;
+    env?: NodeJS.ProcessEnv;
+}): { child: ChildProcess; done: Promise<PiOneshotResult>;
+    cleanup: Promise<PiExecutionCleanupReceipt> } {
+    const opened = openPiRpc(profile, pi, {
+        model: options.model,
+        cwd: options.cwd,
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+        ...(options.root ? { root: options.root } : {}),
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+        ...(options.onRawRecord ? { onRawRecord: options.onRawRecord } : {}),
+    });
+    const fullPrompt = options.sysPrompt ? `${options.sysPrompt}\n\n${options.prompt}` : options.prompt;
+    const done = sendPiRpcPrompt(opened, fullPrompt, {
+        ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+        ...(options.onRawRecord ? { onRawRecord: options.onRawRecord } : {}),
+    });
+    return { child: opened.child, done, cleanup: opened.cleanup };
 }

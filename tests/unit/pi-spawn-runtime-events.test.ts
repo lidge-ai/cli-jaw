@@ -89,11 +89,42 @@ async function protocol(callbacks: Callbacks, turnGate = fixture.turnGate) {
 const pi = await import('../../src/agent/pi-runtime.ts');
 test.mock.module('../../src/agent/pi-runtime.js', { namedExports: {
     ...pi,
+    openPiRpc: (_profile: unknown, _settings: unknown, callbacks: Callbacks) => {
+        fixture.direct++;
+        assert.ok(callbacks.cwd);
+        fixture.directPaths.push(callbacks.cwd);
+        const canonical = realpathSync(callbacks.cwd);
+        assert.ok(ownedFixturePaths.has(callbacks.cwd) || (dirname(canonical) === realpathSync(tmpdir())
+            && basename(canonical).startsWith('jaw-emp-pi-fixture-worker-')),
+            `unexpected test cwd: ${callbacks.cwd}`);
+        ownedFixturePaths.add(callbacks.cwd);
+        fixture.onDirectCreate?.(callbacks.cwd);
+        fixture.calls.push(callbacks);
+        if (fixture.mode === 'direct-failure') throw new Error('fixture direct creation failed');
+        const turnGate = fixture.turnGate;
+        const cleanup = fixture.cleanupGate ?? (fixture.cleanupMode === 'reject'
+            ? Promise.reject(new Error('fixture cleanup receipt rejected'))
+            : Promise.resolve(fixture.cleanupMode === 'retain' ? retained : removable));
+        void cleanup.catch(() => {});
+        const openedChild = child();
+        return {
+            child: openedChild,
+            prepared: Promise.resolve(),
+            ...(fixture.cleanupMode === 'missing' ? {} : { cleanup }),
+            sessionId: null as string | null,
+            get alive() { return true; },
+            get abortEffective() { return false; },
+            sendPrompt: (_message: string, opts?: Callbacks) =>
+                Promise.resolve().then(() => protocol({ ...callbacks, ...opts }, turnGate)),
+            abort: async () => {},
+            close() {},
+            kill() {},
+        };
+    },
     spawnPiRpc: (_profile: unknown, _settings: unknown, callbacks: Callbacks) => {
         fixture.direct++;
         assert.ok(callbacks.cwd);
         fixture.directPaths.push(callbacks.cwd);
-        // Only controlled test workspaces or the product allocation for our fixed worker label.
         const canonical = realpathSync(callbacks.cwd);
         assert.ok(ownedFixturePaths.has(callbacks.cwd) || (dirname(canonical) === realpathSync(tmpdir())
             && basename(canonical).startsWith('jaw-emp-pi-fixture-worker-')),
@@ -105,7 +136,7 @@ test.mock.module('../../src/agent/pi-runtime.js', { namedExports: {
         const cleanup = fixture.cleanupGate ?? (fixture.cleanupMode === 'reject'
             ? Promise.reject(new Error('fixture cleanup receipt rejected'))
             : Promise.resolve(fixture.cleanupMode === 'retain' ? retained : removable));
-        void cleanup.catch(() => {}); // The baseline may not consume it; do not make an unhandled rejection the RED oracle.
+        void cleanup.catch(() => {});
         return { child: child(), done: Promise.resolve().then(() => protocol(callbacks, turnGate)),
             ...(fixture.cleanupMode === 'missing' ? {} : { cleanup }) };
     },
@@ -119,8 +150,9 @@ test.mock.module('../../src/agent/runtime-pool.js', { namedExports: {
         if (fixture.mode === 'acquire-failure') throw new Error('fixture acquire failed');
         return {
             reused: false, sessionId: 'provider-session-private',
-            session: { child: child(), sessionId: 'provider-session-private', alive: true,
-                sendPrompt: (_prompt: string, callbacks: Callbacks) => Promise.resolve().then(() => protocol(callbacks)) },
+            session: { child: child(), sessionId: 'provider-session-private', alive: true, abortEffective: false,
+                sendPrompt: (_prompt: string, callbacks: Callbacks) => Promise.resolve().then(() => protocol(callbacks)),
+                abort: async () => {}, close() {}, kill() {} },
             release: () => { fixture.releases++; }, cancel: async () => { fixture.cancels++; if(fixture.cancelGate) await fixture.cancelGate; },
         };
     },
@@ -216,7 +248,8 @@ for (const employee of [false, true]) {
         assert.equal(fixture.lifecycle.length, 1); assert.equal(typeof fixture.lifecycle[0]?.onRuntimeEnd, 'function');
         assert.equal(fixture.lifecycle[0]?.ctx.fullText, 'Hello Pi');
         assert.equal(fixture.lifecycle[0]?.ctx.sessionId, 'provider-session-private');
-        assert.equal(fixture.lifecycle[0]?.ctx.runtimeOutcome, undefined, 'Pi preserves its existing legacy outcome contract');
+        assert.equal(fixture.lifecycle[0]?.ctx.runtimeOutcome?.status, 'done');
+        assert.equal(fixture.lifecycle[0]?.ctx.runtimeOutcome?.partialText, 'adapter fallback must not overwrite stream');
         assert.equal(fixture.lifecycle[0]?.ctx.toolLog.filter(tool => tool.label === 'bash').length, 1);
         assertCanonicalContext(employee);
         const traceId = fixture.events[0]!.runId;
