@@ -22,6 +22,7 @@ test('install path scripts preserve executable cli-jaw entrypoint', () => {
     assert.ok(linker.includes('function ensureRepoBinExecutable()'), 'postbuild linker should have a standalone executable-bit repair helper');
     assert.ok(linker.indexOf('ensureRepoBinExecutable();') < linker.indexOf('if (!isNvmNode())'), 'postbuild must repair executable bit before non-nvm link skip');
     assert.ok(linker.includes('chmod ok; skip linking because node is not from nvm'), 'non-nvm skip message should confirm chmod still ran');
+    assert.ok(linker.includes('is a real install, not a symlink'), 'nvm linker must skip a real global install instead of failing the build');
 });
 
 test('cli bin link checker enforces package bin metadata and POSIX execute bit', () => {

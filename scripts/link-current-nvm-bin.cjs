@@ -56,6 +56,16 @@ function main() {
         return;
     }
 
+    try {
+        const existingPackage = fs.lstatSync(globalPackageDir);
+        if (!existingPackage.isSymbolicLink()) {
+            console.log(`[jaw:link] chmod ok; skip linking because ${globalPackageDir} is a real install, not a symlink`);
+            return;
+        }
+    } catch (error) {
+        if (!error || error.code !== 'ENOENT') throw error;
+    }
+
     fs.mkdirSync(path.dirname(globalPackageDir), { recursive: true });
     fs.mkdirSync(nodeBinDir, { recursive: true });
 
