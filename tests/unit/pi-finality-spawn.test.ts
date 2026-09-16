@@ -78,6 +78,9 @@ async function until(predicate:()=>boolean,label:string):Promise<void>{
 const directDirectories: string[] = [];
 let onText: (() => void) | undefined;
 test.mock.module('../../src/agent/pi-runtime.js',{namedExports:{...pi,
+    openPiRpc:(...args: Parameters<typeof pi.openPiRpc>) => {
+        directDirectories.push(args[2].cwd); const opened=pi.openPiRpc(...args);trackChild(opened.child);return opened;
+    },
     spawnPiRpc:(...args: Parameters<typeof pi.spawnPiRpc>) => {
         directDirectories.push(args[2].cwd); const execution=pi.spawnPiRpc(...args);trackChild(execution.child);return execution;
     },

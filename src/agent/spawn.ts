@@ -134,8 +134,9 @@ import {
     type KiroStreamEvent,
 } from './kiro-runtime.js';
 import { resolveCursorModelVariant } from './cursor-runtime.js';
-import { normalizePiSettings, spawnPiRpc, type PiExecutionCleanupReceipt } from './pi-runtime.js';
+import { bindPiExecutionCancel, normalizePiSettings, openPiRpc, type PiExecutionCleanupReceipt } from './pi-runtime.js';
 import * as piExecutionControls from './pi-runtime.js';
+import { PiRuntimeSession } from './runtime/pi-runtime-session.js';
 import { piFailureOutcome } from './runtime/pi-turn.js';
 import { getEmployeeMcpServers } from './mcp-passthrough.js';
 
@@ -2590,8 +2591,35 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             if (event.kind === 'session') ctx.sessionId = event.sessionId;
         };
         type PiTurnResult = { text: string; stderr: string; code: number; sessionId?: string | null; runtimeOutcome?: RuntimeTurnOutcome };
-        const runPiTurn = (child: ChildProcess, done: Promise<PiTurnResult>, lease: PiLease | null,
-            directCleanup: Promise<PiExecutionCleanupReceipt> | null): void => {
+        let piFacade: PiRuntimeSession | null = null;
+        let piSendStarted = false;
+        const piTurnContext = () => ({
+            runId: traceRunId, sessionId: chatSessionId, scope: scopeKey,
+            turnId: traceRunId, audience: traceAudience, isCurrent: () => true,
+        });
+        const mapPiSend = (child: ChildProcess, send: Promise<RuntimeTurnOutcome>): Promise<PiTurnResult> =>
+            send.then((outcome): PiTurnResult => ({
+                text: outcome.finalText ?? outcome.partialText ?? '',
+                stderr: '',
+                code: typeof child.exitCode === 'number' ? child.exitCode
+                    : outcome.status === 'error' ? 1 : 0,
+                sessionId: ctx.sessionId ?? piFacade?.nativeSessionId ?? null,
+                runtimeOutcome: outcome,
+            }));
+        const endPiRuntime = (end: import('./runtime/projection.js').RuntimeEnd) => {
+            if (piFacade?.claimTurnOutcome(traceRunId)) {
+                if (!piFacade.finalizeTurn(traceRunId, end)) {
+                    console.warn('[jaw:pi] owned finalizer rejected the terminal');
+                    activity.close(end);
+                }
+                return;
+            }
+            if (piSendStarted) console.warn('[jaw:pi] missing owned finalizer');
+            activity.close(end);
+        };
+        const runPiTurn = (child: ChildProcess, lease: PiLease | null,
+            directCleanup: Promise<PiExecutionCleanupReceipt> | null,
+            start: () => Promise<PiTurnResult>): void => {
             let leaseCancel: Promise<void> | null = null;
             let cleanupDone = false, queueRequested = false;
             let selectedResult: SpawnPromiseResult | undefined;
@@ -2663,6 +2691,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     }
                 }
             };
+            const done = start();
             done.then(async (result) => {
                 if (setupError !== undefined) throw setupError;
                 if (result.runtimeOutcome !== undefined) handoffRuntimeOutcome(ctx, result.runtimeOutcome);
@@ -2678,7 +2707,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 const wasSteer = isLifecycleSteerReason(killReason);
                 const smokeResult = detectSmokeResponse(ctx.fullText, ctx.toolLog, result.code, cli);
                 return handleAgentExit({
-                    onRuntimeEnd: (end) => { activity.close(end); },
+                    onRuntimeEnd: endPiRuntime,
                     ctx, code: result.code, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
@@ -2709,7 +2738,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 if (ctx.stderrBuf.length < 4000) ctx.stderrBuf += err.message;
                 console.error('[jaw:pi] runtime failed:', err.message);
                 return handleAgentExit({
-                    onRuntimeEnd: (end) => { activity.close(end); },
+                    onRuntimeEnd: endPiRuntime,
                     ctx, code: 1, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
@@ -2730,7 +2759,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     processQueue: requestQueue,
                 });
             }).catch((handleErr: Error) => {
-                activity.close({ kind: 'turn-end', status: 'error', finalText: null, error: 'Lifecycle failed' });
+                endPiRuntime({ kind: 'turn-end', status: 'error', finalText: null, error: 'Lifecycle failed' });
                 console.error('[jaw:lifecycle] handleAgentExit failed (Pi):', handleErr.message);
                 try { finalizeTraceRun(traceRunId, 'error', 'Lifecycle failed', { onlyIfRunning: true }); }
                 catch { console.warn('[runtime] Pi lifecycle trace finalization failed'); }
@@ -2755,12 +2784,12 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         };
 
         if (opts.agentId) {
-            let execution: ReturnType<typeof spawnPiRpc>;
+            let opened: ReturnType<typeof openPiRpc>;
             try {
-                execution = spawnPiRpc(profile, pi, {
-                    prompt: piPrompt, model: runtimeModel,
+                opened = openPiRpc(profile, pi, {
+                    model: runtimeModel,
                     ...(piSessionId ? { sessionId: piSessionId } : {}),
-                    effort, cwd: spawnCwd, sysPrompt: piSysPrompt, env: spawnEnv,
+                    effort, cwd: spawnCwd, env: spawnEnv,
                     onEvent: onPiEvent, onRawRecord: onPiRawRecord,
                 });
             } catch (error) {
@@ -2769,9 +2798,22 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 cleanupPiEmployee();
                 throw error;
             }
-            const { child, done, cleanup } = execution;
-            runPiTurn(child, done, null, cleanup ?? null);
-            return { child, promise: resultPromise };
+            piFacade = new PiRuntimeSession(opened, {
+                lifetime: 'oneshot',
+                provider: 'pi',
+                deferTurnEnd: true,
+                projection: activity,
+                getTurnContext: piTurnContext,
+                ...(effort ? { effort } : {}),
+                onPiEvent,
+                onRawRecord: onPiRawRecord,
+            });
+            bindPiExecutionCancel(opened.child, () => { void piFacade!.cancel(); });
+            runPiTurn(opened.child, null, opened.cleanup, () => {
+                piSendStarted = true;
+                return mapPiSend(opened.child, piFacade!.send({ text: `${piSysPrompt}\n\n${piPrompt}` }, () => {}));
+            });
+            return { child: opened.child, promise: resultPromise };
         }
 
         const profileFp = crypto.createHmac('sha256', piProfileFingerprintKey)
@@ -2812,12 +2854,20 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             }
             ctx.sessionId = lease.session.sessionId;
             console.log(`[jaw:pi:pool] reused=${lease.reused} sessionId=${lease.session.sessionId || 'new'}`);
-            let done: Promise<PiTurnResult>;
-            try {
-                done = lease.session.sendPrompt(piPrompt, { effort, onEvent: onPiEvent, onRawRecord: onPiRawRecord })
-                    .then((result): PiTurnResult => ({ ...result, code: 0, sessionId: lease.session.sessionId }));
-            } catch (error) { done = Promise.reject(error); }
-            runPiTurn(lease.session.child, done, lease, null);
+            piFacade = new PiRuntimeSession(lease.session, {
+                lifetime: 'pooled',
+                provider: 'pi',
+                deferTurnEnd: true,
+                projection: activity,
+                getTurnContext: piTurnContext,
+                ...(effort ? { effort } : {}),
+                onPiEvent,
+                onRawRecord: onPiRawRecord,
+            });
+            runPiTurn(lease.session.child, lease, null, () => {
+                piSendStarted = true;
+                return mapPiSend(lease.session.child, piFacade!.send({ text: piPrompt }, () => {}));
+            });
         }).catch((err: Error) => {
             mainRun!.starting = false;
             console.error(`[jaw:pi:pool] acquire failed: ${err.message}`);

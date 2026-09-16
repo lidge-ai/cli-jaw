@@ -407,32 +407,21 @@ limits; version output never enters Activity, MESSAGE or channel delivery.
 
 ### Two stop ports, by definition rather than by drift
 
-Pi has two stop ports and that is deliberate. A pooled boss turn stops through
-`cancelTurn` → `requestCancel` → `lease.cancel()` → `cancelLease`
-(`runtime-pool.ts`), which writes an in-band RPC `abort` when the probed
-`abortEffective` capability allows it and otherwise kills the session. Ending the
-turn there must not end the child, because the pool reuses that session. A
-one-shot employee stops through `cancelOwnedPiProcess` → `cancelPiExecution` →
-the execution's own cancellation port, which signals the child through the
-cleanup owner. For a one-shot the turn IS the process, so ending the child is
-the stop. `spawnPersistentPiRpc` therefore installs no process-cancellation
-symbol and `spawnPiRpc` writes no `abort` frame.
-
-The abort-versus-kill decision itself is not duplicated: `cancelLease` is generic
-over `ManagedRuntime` and shared by every pooled runtime, with the Pi wrapper
-supplying only `interrupt` and `kill`. Every employee-reaching stop path tries the
-Pi cancellation port before any generic terminate, and no in-flight pooled turn
-reaches a generic terminate at all, because `cancelTurn` is installed before the
-run's process handle.
-
-An audit has read this pair as duplication (#701). It is not. Collapsing it would
-mean either routing employees through the pool, which costs them their isolated
-cwd and session, or giving a one-shot an in-band abort that must still be
-followed by the same teardown. Routing pooled Pi through `runNativeRuntime` would
-make it worse rather than better: that runner cancels through `session.cancel()`
-rather than `lease.cancel()`, so it would remove Pi from the shared `cancelLease`
-policy described above. Bringing Pi into the native runtime family is tracked
-separately as #738, and is a different goal from unifying cancellation.
+Pi joins the native runtime family through `PiRuntimeSession`
+(`src/agent/runtime/pi-runtime-session.ts`) with ACP-style `claimTurnOutcome` /
+`finalizeTurn`. `turnId` is the host `traceRunId`. `cancel()` is one helper, two
+outcomes: **pooled** abort-and-reuse (`cancelLease`); **oneshot** abort-then-kill.
+A pooled boss turn still stops through `cancelTurn` → `requestCancel` →
+`lease.cancel()` → `cancelLease`. A one-shot employee stops through
+`cancelOwnedPiProcess` → `cancelPiExecution` → oneshot `session.cancel()` after
+`bindPiExecutionCancel` (wrap → defineProperty → `runPiTurn`). `runPiTurn` arms
+cancel/watchdog first, then `start()`; every user prompt goes through
+`PiRuntimeSession.send()`. Employee opens with `openPiRpc` (no prompt write);
+`spawnPiRpc` remains a compatibility wrapper. `PiLease.retire` and acquire
+`AbortSignal` exist for tests this slice; spawn does not pass a signal and the
+stale path stays `lease.release()`. Do not put pooled Pi through
+`runNativeRuntime` — that runner cancels through `session.cancel()` rather than
+`lease.cancel()`. `interrupt` vs `clearWorkerSlotsOnStop` stays open (D7).
 
 ## Native Code sessions
 

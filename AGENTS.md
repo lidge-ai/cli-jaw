@@ -247,8 +247,13 @@ RPC exit enter the same bounded paired cleanup owner; persistent first failure
 claims its result before cleanup. Pi worker deletion requires both the immutable
 physical receipt and captured fresh-directory identity, never live workingDir
 inequality. Uncertainty retains data, with no late automatic deletion. The old
-3s resolver and opaque-wrapper/aggregate-shutdown limits remain explicit. Sync
-runtime-integration and root notes; do not add numeric tree signals or a registry.
+3s resolver and opaque-wrapper/aggregate-shutdown limits remain explicit.
+`PiRuntimeSession` is the native adapter: ACP claim/finalize, host `turnId`,
+two-outcome `cancel()` (pooled `cancelLease` / oneshot abort-then-kill),
+`runPiTurn` arm-then-`start()`, employee `openPiRpc` then `send`. `PiLease.retire`
+and acquire `AbortSignal` are test-only this slice. Do not route pooled Pi
+through `runNativeRuntime`. Sync runtime-integration and root notes; do not add
+numeric tree signals or a registry.
 
 Interactive TUI Activity is implemented in `src/cli/tui/activity*.ts` and
 `bin/commands/tui/activity*.ts`. Default Activity/explicit Legacy is independent of
