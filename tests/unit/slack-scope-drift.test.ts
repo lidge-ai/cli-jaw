@@ -49,7 +49,7 @@ test('the six scopes from the bug report are reported by name', () => {
     const status = getSlackScopeStatus();
 
     assert.equal(status.unknown, false);
-    assert.equal(status.ok, false);
+    assert.equal(status.ok, true, 'optional identity scopes are not an outage');
     assert.deepEqual(status.missingRequired, [], 'core messaging still works — a degradation, not an outage');
     assert.deepEqual(status.missingCapabilities, IDENTITY_SCOPES);
 
@@ -78,6 +78,7 @@ test('an unobserved header is "cannot check", not "nothing missing"', () => {
     const status = getSlackScopeStatus();
 
     assert.equal(status.unknown, true);
+    assert.equal(status.ok, true);
     assert.equal(status.checkedAt, null);
     // ok stays true so a header-stripping proxy cannot manufacture a false
     // alarm, but the unknown flag is what consumers must branch on.
@@ -163,6 +164,7 @@ test('#478: an optional-only gap reports at info, never warn', () => {
     const status = getSlackScopeStatus();
 
     assert.deepEqual(status.missingRequired, [], 'the transport itself is intact');
+    assert.equal(status.ok, true);
     const lines = describeSlackScopeGaps(status);
     assert.equal(lines.length, 1);
     assert.equal(lines[0]!.level, 'info', 'messaging works — this must not read as a break');
@@ -199,10 +201,26 @@ test('missing MPIM history describes group DM degradation without a core outage'
     recordSlackScopeObservation(ALL.filter(s => s !== 'mpim:history').join(','));
     const status = getSlackScopeStatus();
     assert.equal(status.unknown, false);
+    assert.equal(status.ok, true);
     assert.deepEqual(status.missingRequired, []);
     assert.deepEqual(status.missingCapabilities, ['mpim:history']);
     const lines = describeSlackScopeGaps(status);
     assert.equal(lines.length, 1); assert.equal(lines[0]!.level, 'info');
     assert.match(lines[0]!.text, /group DM reception is unavailable/);
     assert.doesNotMatch(lines[0]!.text, /messaging is unaffected/);
+});
+
+test('#758: optional-only gap keeps ok true', () => {
+    resetSlackScopeStatus();
+    recordSlackScopeObservation(ALL.filter(s => s !== 'mpim:history').join(','));
+    const status = getSlackScopeStatus();
+    assert.deepEqual(
+        {
+            ok: status.ok,
+            unknown: status.unknown,
+            missingRequired: status.missingRequired,
+            missingCapabilities: status.missingCapabilities,
+        },
+        { ok: true, unknown: false, missingRequired: [], missingCapabilities: ['mpim:history'] },
+    );
 });
