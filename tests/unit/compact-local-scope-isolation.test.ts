@@ -13,6 +13,10 @@ import type { CliCommandContext } from '../../src/cli/command-context.ts';
 // every runtime whose bucket key has no scope in it. A compact triggered by that scope
 // must not throw away the conversation the default session is still using.
 
+// This file seeds the print singleton `claude`. Pin print so factory-native
+// homes do not resolve compact to `native-v1:claude` and leave the seeded row.
+settings.perCli.claude.transport = 'print';
+
 function defaultSessionId(): string | null {
     const row = db.prepare("SELECT session_id FROM session WHERE id = 'default'").get() as { session_id?: string } | undefined;
     return row?.session_id ?? null;

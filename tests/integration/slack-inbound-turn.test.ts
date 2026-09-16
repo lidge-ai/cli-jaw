@@ -104,6 +104,8 @@ test('SLACK-INT: a mention crosses from socket envelope to posted reply', { time
         settings: {
             cli: 'claude',
             permissions: 'auto',
+            perCli: { claude: { transport: 'print' } },
+            nativeTransportMigration: { id: 'native-transport-default-v1', status: 'applied' },
             workingDir: workspace,
             messaging: { enabledChannels: ['slack'], homeChannel: 'slack' },
             slack: {

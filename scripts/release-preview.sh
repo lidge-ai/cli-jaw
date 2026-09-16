@@ -219,10 +219,14 @@ git commit -m "[agent] chore: preview v$VERSION" --allow-empty
 
 echo "⬆️  Pushing preview branch..."
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" = "preview" ]; then
-  git push origin preview
-else
+if [ "$CURRENT_BRANCH" != "preview" ]; then
   echo "ℹ️  Current branch is $CURRENT_BRANCH; pushing HEAD to origin/preview."
+fi
+git fetch origin preview --quiet || true
+PREVIEW_LEASE="$(git rev-parse --verify origin/preview 2>/dev/null || true)"
+if [ -n "$PREVIEW_LEASE" ]; then
+  git push --force-with-lease="refs/heads/preview:$PREVIEW_LEASE" origin HEAD:preview
+else
   git push origin HEAD:preview
 fi
 

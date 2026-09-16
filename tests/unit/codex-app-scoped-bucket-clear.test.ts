@@ -66,6 +66,8 @@ test.mock.module('../../src/core/chat-sessions.ts', {
 
 const coreCompact = await import('../../src/core/compact.js');
 const cliCompact = await import('../../src/cli/compact.js');
+const { resolveRuntimeTransport, runtimeSessionBucket } = await import('../../src/agent/runtime/selection.js');
+const { settings } = await import('../../src/core/config.js');
 
 function reset(): void {
     prefixClears.length = 0;
@@ -91,7 +93,9 @@ test('switching into another CLI leaves the Codex App rows untouched', async () 
         fromCli: 'codex-app', toCli: 'claude', toModel: 'sonnet',
     });
     assert.deepEqual(prefixClears, [], 'a non-codex switch must not touch scoped rows');
-    assert.deepEqual(singleClears, ['claude']);
+    assert.deepEqual(singleClears, [
+        runtimeSessionBucket('claude', resolveRuntimeTransport(settings.perCli?.claude?.transport)),
+    ]);
 });
 
 test('a run-owned auto compact invalidates only its own scope', async () => {

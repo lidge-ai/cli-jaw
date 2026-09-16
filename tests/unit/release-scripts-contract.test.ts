@@ -23,7 +23,7 @@ for (const scriptPath of ['scripts/release-preview.sh']) {
         const branch = 'preview';
 
         assert.ok(
-            new RegExp(`git push origin HEAD:${branch}`).test(script),
+            new RegExp(`git push(?: --force-with-lease="[^"]+")? origin HEAD:${branch}`).test(script),
             `${scriptPath} must push HEAD to ${branch}, not the local ${branch} ref`,
         );
 
