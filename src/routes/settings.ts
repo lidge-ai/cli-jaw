@@ -62,6 +62,8 @@ const SERVER_OWNED_SETTINGS_KEYS = [
     'settingsSchemaVersion',
     'runtimeDefaultMigration',
     'multiSessionDefaultMigration',
+    'nativeTransportMigration',
+    'maxConcurrentDefaultMigration',
     'slackEnvironmentVariables',
 ] as const;
 

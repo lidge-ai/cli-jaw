@@ -42,6 +42,8 @@ export function stripServerOwnedSettingsFields(settings: Record<string, unknown>
         settingsSchemaVersion: _schema,
         runtimeDefaultMigration: _migration,
         multiSessionDefaultMigration: _sessionMigration,
+        nativeTransportMigration: _nativeTransportMigration,
+        maxConcurrentDefaultMigration: _maxConcurrentDefaultMigration,
         slackEnvironmentVariables: _slackEnvironmentVariables,
         ...userOwned
     } = settings;

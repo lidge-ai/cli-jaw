@@ -221,6 +221,8 @@ export function runMigration(projectDir: string) {
 export const SETTINGS_SCHEMA_VERSION = 4;
 export const RUNTIME_DEFAULT_MIGRATION_ID = 'codex-app-default-v2' as const;
 export const MULTI_SESSION_DEFAULT_MIGRATION_ID = 'multi-session-default-v3' as const;
+export const NATIVE_TRANSPORT_MIGRATION_ID = 'native-transport-default-v1' as const;
+export const MAX_CONCURRENT_DEFAULT_MIGRATION_ID = 'max-concurrent-default-v1' as const;
 // The schema version that introduced the session-default flip. Its migration marker is
 // keyed to this boundary, not to SETTINGS_SCHEMA_VERSION, so later schema bumps do not
 // re-ask a question the user has already answered.
@@ -241,6 +243,19 @@ export type MultiSessionDefaultMigration = {
     state: 'pending' | 'accepted' | 'kept' | 'already-enabled';
 };
 
+export type NativeTransportMigration = {
+    id: typeof NATIVE_TRANSPORT_MIGRATION_ID;
+    state: 'applied' | 'already-native' | 'partial' | 'left-in-place';
+    skipped?: Array<{ cli: 'cursor' | 'grok' | 'claude'; reason: string }>;
+};
+
+export type MaxConcurrentDefaultMigration = {
+    id: typeof MAX_CONCURRENT_DEFAULT_MIGRATION_ID;
+    state: 'applied' | 'already-at-target' | 'left-in-place';
+    from?: number;
+    to?: number;
+};
+
 // What multiSession meant before this flip. A document written by a schema that predates
 // the new defaults must resolve absent keys to these, not to the new ones — otherwise the
 // upgrade turns sessions on for someone who never asked (110 §4b-1).
@@ -259,6 +274,8 @@ function createDefaultSettings() {
         settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
         runtimeDefaultMigration: null as RuntimeDefaultMigration | null,
         multiSessionDefaultMigration: null as MultiSessionDefaultMigration | null,
+        nativeTransportMigration: null as NativeTransportMigration | null,
+        maxConcurrentDefaultMigration: null as MaxConcurrentDefaultMigration | null,
         port: '',  // persisted by server on startup; CLI commands use as fallback
         cli: isRetiredCliSelection(environmentDefaultCli) ? environmentDefaultCli : DEFAULT_CLI,
         fallbackOrder: [],
@@ -371,9 +388,9 @@ function createDefaultSettings() {
             // get this silently: the merge substitutes the legacy baseline for its
             // cohort and asks (110 §4b).
             enabled: true,
-            // Two, not more: the observable unit is that a second tab does not wait for
-            // the first. Beyond that is the user's CPU and token budget to spend.
-            maxConcurrent: 2,
+            // 20 is the product default. Existing documents do not inherit it until
+            // maxConcurrentDefaultMigration runs.
+            maxConcurrent: 20,
             midRunPolicy: 'steer' as const,
             channels: { telegram: false, discord: false, slack: true },
         },
@@ -473,6 +490,8 @@ export function freshInstallSchemaFields(): {
     settingsSchemaVersion: number;
     multiSession: typeof DEFAULT_SETTINGS.multiSession;
     multiSessionDefaultMigration: MultiSessionDefaultMigration | null;
+    nativeTransportMigration: NativeTransportMigration | null;
+    maxConcurrentDefaultMigration: MaxConcurrentDefaultMigration | null;
 } {
     // Same question as the loader asks, answered the same way: `init` running against a
     // home that already has a database is re-initialising, not installing.
@@ -483,6 +502,8 @@ export function freshInstallSchemaFields(): {
         // Null only for a home with no history — there is nothing to migrate from and
         // nothing to ask about. An established home carries the pending marker instead.
         multiSessionDefaultMigration: defaults.multiSessionDefaultMigration,
+        nativeTransportMigration: defaults.nativeTransportMigration,
+        maxConcurrentDefaultMigration: defaults.maxConcurrentDefaultMigration,
     };
 }
 
@@ -530,7 +551,19 @@ export function isEstablishedHome(): boolean {
  */
 export function settingsForHomeWithoutSettingsFile(): ReturnType<typeof createDefaultSettings> {
     const next = createDefaultSettings();
-    if (!isEstablishedHome()) return next;
+    if (!isEstablishedHome()) {
+        next.nativeTransportMigration = {
+            id: NATIVE_TRANSPORT_MIGRATION_ID,
+            state: 'already-native',
+        };
+        next.maxConcurrentDefaultMigration = {
+            id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
+            state: 'already-at-target',
+            from: next.multiSession.maxConcurrent,
+            to: next.multiSession.maxConcurrent,
+        };
+        return next;
+    }
     for (const cli of SWITCHABLE_NATIVE_CLIS) {
         next.perCli[cli] = { ...next.perCli[cli]!, transport: 'print' };
     }
@@ -538,6 +571,15 @@ export function settingsForHomeWithoutSettingsFile(): ReturnType<typeof createDe
     next.multiSessionDefaultMigration = {
         id: MULTI_SESSION_DEFAULT_MIGRATION_ID,
         state: 'pending',
+    };
+    next.nativeTransportMigration = {
+        id: NATIVE_TRANSPORT_MIGRATION_ID,
+        state: 'left-in-place',
+    };
+    next.maxConcurrentDefaultMigration = {
+        id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
+        state: 'left-in-place',
+        from: 1,
     };
     return next;
 }
@@ -643,6 +685,8 @@ export function migrateSettings(s: Record<string, any>, sourceVersion = readSett
     } else {
         validateMultiSessionDefaultMigration(s["multiSessionDefaultMigration"]);
     }
+    validateNativeTransportMigration(s["nativeTransportMigration"]);
+    validateMaxConcurrentDefaultMigration(s["maxConcurrentDefaultMigration"]);
 
     // A pending marker means the user has not answered yet, so sessions being on
     // contradicts it. The dedicated accept route moves both together, but it is not the
@@ -1055,6 +1099,73 @@ function validateMultiSessionDefaultMigration(value: unknown): void {
     }
 }
 
+const NATIVE_TRANSPORT_MIGRATION_STATES = ['applied', 'already-native', 'partial', 'left-in-place'] as const;
+const MAX_CONCURRENT_DEFAULT_MIGRATION_STATES = ['applied', 'already-at-target', 'left-in-place'] as const;
+
+function validateNativeTransportMigration(value: unknown): void {
+    if (value === null || value === undefined) return;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('invalid_native_transport_migration');
+    }
+    const migration = value as Record<string, unknown>;
+    const allowed = new Set(['id', 'state', 'skipped']);
+    const keys = Object.keys(migration);
+    const validState = NATIVE_TRANSPORT_MIGRATION_STATES.includes(
+        migration['state'] as (typeof NATIVE_TRANSPORT_MIGRATION_STATES)[number],
+    );
+    if (keys.some((key) => !allowed.has(key))
+        || !keys.includes('id')
+        || !keys.includes('state')
+        || migration['id'] !== NATIVE_TRANSPORT_MIGRATION_ID
+        || !validState) {
+        throw new Error('invalid_native_transport_migration');
+    }
+    if (!('skipped' in migration)) return;
+    if (!Array.isArray(migration['skipped'])) {
+        throw new Error('invalid_native_transport_migration');
+    }
+    for (const item of migration['skipped']) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error('invalid_native_transport_migration');
+        }
+        const row = item as Record<string, unknown>;
+        const rowKeys = Object.keys(row);
+        if (rowKeys.some((key) => key !== 'cli' && key !== 'reason')
+            || !rowKeys.includes('cli')
+            || !rowKeys.includes('reason')
+            || !SWITCHABLE_NATIVE_CLIS.includes(row['cli'] as typeof SWITCHABLE_NATIVE_CLIS[number])
+            || typeof row['reason'] !== 'string') {
+            throw new Error('invalid_native_transport_migration');
+        }
+    }
+}
+
+function validateMaxConcurrentDefaultMigration(value: unknown): void {
+    if (value === null || value === undefined) return;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('invalid_max_concurrent_default_migration');
+    }
+    const migration = value as Record<string, unknown>;
+    const allowed = new Set(['id', 'state', 'from', 'to']);
+    const keys = Object.keys(migration);
+    const validState = MAX_CONCURRENT_DEFAULT_MIGRATION_STATES.includes(
+        migration['state'] as (typeof MAX_CONCURRENT_DEFAULT_MIGRATION_STATES)[number],
+    );
+    if (keys.some((key) => !allowed.has(key))
+        || !keys.includes('id')
+        || !keys.includes('state')
+        || migration['id'] !== MAX_CONCURRENT_DEFAULT_MIGRATION_ID
+        || !validState) {
+        throw new Error('invalid_max_concurrent_default_migration');
+    }
+    if ('from' in migration && !Number.isInteger(migration['from'])) {
+        throw new Error('invalid_max_concurrent_default_migration');
+    }
+    if ('to' in migration && !Number.isInteger(migration['to'])) {
+        throw new Error('invalid_max_concurrent_default_migration');
+    }
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1113,6 +1224,89 @@ function assertCurrentSchemaMessagingShape(raw: Record<string, unknown>): void {
     if (!isMessengerChannel(messaging["homeChannel"])) {
         throw new Error('invalid_messaging_home_channel');
     }
+}
+
+export type SettingsDefaultMigrationResult = { didChange: boolean };
+
+function hasNamedMigrationStamp(value: unknown, id: string): boolean {
+    return isPlainRecord(value) && value['id'] === id;
+}
+
+function nativeTransportSkipReason(cli: typeof SWITCHABLE_NATIVE_CLIS[number]): string {
+    return cli === 'claude' ? 'unsupported_claude_policy' : 'restrictive_permissions';
+}
+
+function canFlipNativeTransport(
+    cli: typeof SWITCHABLE_NATIVE_CLIS[number],
+    permissions: unknown,
+): boolean {
+    return cli === 'claude'
+        ? permissions === 'auto' || permissions === 'safe'
+        : permissions === 'auto';
+}
+
+/** Boot-only. Do not call from migrateSettings, ENOENT, init, or the unreadable catch. */
+export function applyNativeTransportDefaultMigration(s: Record<string, any>): SettingsDefaultMigrationResult {
+    if (hasNamedMigrationStamp(s['nativeTransportMigration'], NATIVE_TRANSPORT_MIGRATION_ID)) {
+        return { didChange: false };
+    }
+    if (!isPlainRecord(s['perCli'])) s['perCli'] = {};
+    const skipped: NonNullable<NativeTransportMigration['skipped']> = [];
+    let flipped = false;
+    for (const cli of SWITCHABLE_NATIVE_CLIS) {
+        const current = isPlainRecord(s['perCli'][cli]) ? s['perCli'][cli] : {};
+        if (resolveRuntimeTransport(current['transport']) === 'native') continue;
+        if (!canFlipNativeTransport(cli, s['permissions'])) {
+            skipped.push({ cli, reason: nativeTransportSkipReason(cli) });
+            continue;
+        }
+        s['perCli'][cli] = { ...current, transport: 'native' };
+        flipped = true;
+    }
+    s['nativeTransportMigration'] = skipped.length > 0
+        ? { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'partial', skipped }
+        : {
+            id: NATIVE_TRANSPORT_MIGRATION_ID,
+            state: flipped ? 'applied' : 'already-native',
+        };
+    return { didChange: true };
+}
+
+/** Boot-only. Rewrites stored 2 to the product default; leaves 1 and every other integer. */
+export function applyMaxConcurrentDefaultMigration(s: Record<string, any>): SettingsDefaultMigrationResult {
+    if (hasNamedMigrationStamp(s['maxConcurrentDefaultMigration'], MAX_CONCURRENT_DEFAULT_MIGRATION_ID)) {
+        return { didChange: false };
+    }
+    const block = isPlainRecord(s['multiSession']) ? s['multiSession'] : {};
+    const n = typeof block['maxConcurrent'] === 'number' && Number.isInteger(block['maxConcurrent'])
+        ? block['maxConcurrent']
+        : resolveMaxConcurrent(s);
+    const target = DEFAULT_SETTINGS.multiSession.maxConcurrent;
+    if (n === 2) {
+        s['multiSession'] = { ...block, maxConcurrent: target };
+        s['maxConcurrentDefaultMigration'] = {
+            id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
+            state: 'applied',
+            from: 2,
+            to: target,
+        };
+        return { didChange: true };
+    }
+    if (n === target) {
+        s['maxConcurrentDefaultMigration'] = {
+            id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
+            state: 'already-at-target',
+            from: target,
+            to: target,
+        };
+        return { didChange: true };
+    }
+    s['maxConcurrentDefaultMigration'] = {
+        id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
+        state: 'left-in-place',
+        from: n,
+    };
+    return { didChange: true };
 }
 
 export function loadSettings() {
@@ -1222,13 +1416,19 @@ export function loadSettings() {
             engine: raw.search?.engine === 'fts5' ? 'fts5' : 'like',
         };
         const merged = migrateSettings(layered, sourceVersion);
+        // Silent v4 stamps. Schema stays 4, so sourceVersion < SETTINGS_SCHEMA_VERSION
+        // will not persist a flip on an existing current-schema document.
+        const nativeTransportDefault = applyNativeTransportDefaultMigration(merged);
+        const maxConcurrentDefault = applyMaxConcurrentDefaultMigration(merged);
         // #64 safety: auto-correct stale workingDir (e.g. copied instance)
         // but allow valid paths to persist (dynamic project targeting)
         // Any document below the current schema was rewritten by the migration above, so
         // it has to reach disk. Leaving it unsaved would keep memory at v3 while the file
         // stayed older, and the next boot would run the migration again — including
         // recreating a marker the user had already resolved.
-        let needsSave = sourceVersion < SETTINGS_SCHEMA_VERSION || hadPlanning;
+        let needsSave = sourceVersion < SETTINGS_SCHEMA_VERSION || hadPlanning
+            || nativeTransportDefault.didChange
+            || maxConcurrentDefault.didChange;
         if (typeof merged["workingDir"] === 'string' && merged["workingDir"] !== JAW_HOME && !fs.existsSync(merged["workingDir"])) {
             console.warn(`[jaw:workingDir] stale path ${merged["workingDir"]}, resetting to JAW_HOME`);
             merged["workingDir"] = JAW_HOME;

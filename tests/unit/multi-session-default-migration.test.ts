@@ -134,12 +134,12 @@ test('ON-29: a fresh install starts on and stays on across a restart', () => {
     }
     const first = load();
     assert.equal(first["multiSession"].enabled, true);
-    assert.equal(first["multiSession"].maxConcurrent, 2);
+    assert.equal(first["multiSession"].maxConcurrent, 20);
     assert.equal(first["multiSessionDefaultMigration"], null, 'nothing to migrate from');
 
     const second = load();
     assert.equal(second["multiSession"].enabled, true);
-    assert.equal(second["multiSession"].maxConcurrent, 2);
+    assert.equal(second["multiSession"].maxConcurrent, 20);
 });
 
 // The case the final audit found: an install whose settings file was deleted, lost to a
@@ -202,7 +202,7 @@ test('a home holding only postinstall artifacts is still a new install (#401)', 
     const s = load();
 
     assert.equal(s["multiSession"].enabled, true, 'a brand-new install gets the current defaults');
-    assert.equal(s["multiSession"].maxConcurrent, 2);
+    assert.equal(s["multiSession"].maxConcurrent, 20);
     assert.equal(
         s["multiSessionDefaultMigration"], null,
         'there is nothing to migrate from, so there is nothing to ask about',

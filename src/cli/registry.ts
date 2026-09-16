@@ -250,7 +250,7 @@ export function buildDefaultPerCli() {
         out[key] = {
             model: entry.defaultModel,
             effort: entry.defaultEffort || '',
-            ...(isSwitchableNativeCli(key) ? { transport: 'print' as const } : {}),
+            ...(isSwitchableNativeCli(key) ? { transport: 'native' as const } : {}),
             ...('defaultProvider' in entry ? { provider: entry.defaultProvider } : {}),
         };
     }

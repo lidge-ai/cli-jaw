@@ -71,6 +71,8 @@ test('RDM-001: generic PUT rejects each schema-owned field before apply', async 
             { settingsSchemaVersion: 2 },
             { runtimeDefaultMigration: pending() },
             { settingsSchemaVersion: 2, runtimeDefaultMigration: pending() },
+            { nativeTransportMigration: { id: 'native-transport-default-v1', state: 'applied' } },
+            { maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'applied', from: 2, to: 20 } },
         ]) {
             const { response } = await request(app.base, 'PUT', '/api/settings', body);
             assert.equal(response.status, 400);

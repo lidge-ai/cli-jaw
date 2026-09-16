@@ -171,6 +171,8 @@ test('Advanced Export/Import strips only schema-owned fields for round-trip PUT'
         workingDir: '/work',
         settingsSchemaVersion: 2,
         runtimeDefaultMigration: { id: 'codex-app-default-v2', state: 'pending' },
+        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'applied' },
+        maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'applied', from: 2, to: 20 },
         slackEnvironmentVariables: ['SLACK_BOT_TOKEN'],
         nested: { keep: true },
     };

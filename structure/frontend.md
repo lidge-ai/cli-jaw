@@ -420,7 +420,7 @@ Classic's t3 shell uses system UI/mono fonts, alpha surface/border tokens, a 44p
 
 Model defaults uses `ModelProvider.tsx` → `PerCliRow.tsx` →
 `runtime-transport-field.tsx` for explicit Cursor/Grok/Claude native opt-in or
-print compatibility. Absence stays print; the field reads only its own pending
+print compatibility. Absence migrates to native once on load; the field still renders a stored print honestly and reads only its own pending
 dirty entry or server original, not a model-draft shadow. ModelProvider owns
 save/reset singleflight, guarded inputs, captured-entry acknowledgement and
 instance/read generations. See [runtime preference and save ownership](runtime-integration.md#manager-runtime-preference-and-save-ownership)

@@ -59,6 +59,6 @@ test('SDS-002: the resolvers answer with the schema value', () => {
     assert.equal(resolveMemoryRetentionDays({}), DEFAULT_SETTINGS.memory.retentionDays);
     // And the schema value is not accidentally the old call-site literal for the
     // key where the two disagreed.
-    assert.equal(DEFAULT_SETTINGS.multiSession.maxConcurrent, 2);
+    assert.equal(DEFAULT_SETTINGS.multiSession.maxConcurrent, 20);
 });
 

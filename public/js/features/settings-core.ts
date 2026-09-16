@@ -61,7 +61,7 @@ async function resolvePendingMultiSessionMigration(snapshot: SettingsData): Prom
     // second lane so a second tab does not queue behind the first. Turning it on without
     // the lane would change what the screen shows and nothing about how it runs.
     const action = window.confirm(
-        '이제 대화 세션을 여러 개 열 수 있습니다. 켜면 동시 실행도 2로 올라가서, 두 번째 세션이 첫 번째가 끝나기를 기다리지 않습니다. 지금 켤까요?',
+        '이제 대화 세션을 여러 개 열 수 있습니다. 켜면 동시 실행도 20으로 올라가서, 두 번째 세션이 첫 번째가 끝나기를 기다리지 않습니다. 지금 켤까요?',
     ) ? 'accept' : 'keep';
     try {
         const token = await getAuthToken();

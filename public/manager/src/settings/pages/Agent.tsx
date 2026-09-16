@@ -436,7 +436,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             {(settingsData['multiSessionDefaultMigration'] as Record<string, unknown> | undefined)?.['state'] === 'pending' ? (
                 <div className="settings-inline-notice" role="status">
                     <strong>다중 세션 안내</strong>
-                    <p>대화 세션을 여러 개 열 수 있습니다. 켜면 동시 실행도 2로 올라가서, 두 번째 세션이 첫 번째가 끝나기를 기다리지 않습니다. 지금 설정은 그대로 유지됩니다.</p>
+                    <p>대화 세션을 여러 개 열 수 있습니다. 켜면 동시 실행도 20으로 올라가서, 두 번째 세션이 첫 번째가 끝나기를 기다리지 않습니다. 지금 설정은 그대로 유지됩니다.</p>
                     <div className="settings-inline-actions">
                         <button type="button" className="settings-action settings-action-save" disabled={sessionMigrationBusy} onClick={() => void resolveSessionMigration('accept')}>다중 세션 켜기</button>
                         <button type="button" className="settings-action settings-action-secondary" disabled={sessionMigrationBusy} onClick={() => void resolveSessionMigration('keep')}>지금 설정 유지</button>

@@ -28,9 +28,9 @@ test.beforeEach(t => {
     config.persistAndCommit({ value: { ...next, perCli }, shape: 'absent' });
 });
 
-test('factory explicitly seeds print only for the three switchable engines', () => {
+test('factory explicitly seeds native only for the three switchable engines', () => {
     const defaults = buildDefaultPerCli();
-    for (const engine of engines) assert.equal(Reflect.get(defaults[engine]!, 'transport'), 'print');
+    for (const engine of engines) assert.equal(Reflect.get(defaults[engine]!, 'transport'), 'native');
     for (const engine of ['pi', 'codex-app', 'copilot']) assert.equal(Object.hasOwn(defaults[engine]!, 'transport'), false);
 });
 

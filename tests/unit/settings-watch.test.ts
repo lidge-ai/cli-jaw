@@ -114,16 +114,27 @@ test('SWA-006: external JSON cannot overwrite schema-owned fields but can update
         fromCli: 'claude',
         toCli: 'codex-app',
     };
+    const nativeTransportMigration = { id: 'native-transport-default-v1', state: 'applied' };
+    const maxConcurrentDefaultMigration = {
+        id: 'max-concurrent-default-v1',
+        state: 'applied',
+        from: 2,
+        to: 20,
+    };
     replaceSettings({
         ...settings,
         settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
         runtimeDefaultMigration: migration,
+        nativeTransportMigration,
+        maxConcurrentDefaultMigration,
         cli: 'codex-app',
     }, 'absent');
     const reloaded = reloadSettingsFromDisk({
         readImpl: () => JSON.stringify({
             settingsSchemaVersion: 99,
             runtimeDefaultMigration: { ...migration, state: 'kept' },
+            nativeTransportMigration: { ...nativeTransportMigration, state: 'already-native' },
+            maxConcurrentDefaultMigration: { ...maxConcurrentDefaultMigration, state: 'left-in-place', from: 1 },
             cli: 'pi',
         }),
         lastSavedRaw: null,
@@ -133,6 +144,8 @@ test('SWA-006: external JSON cannot overwrite schema-owned fields but can update
     // this process owns, not the one an outside writer asked for.
     assert.equal(settings["settingsSchemaVersion"], SETTINGS_SCHEMA_VERSION);
     assert.deepEqual(settings["runtimeDefaultMigration"], migration);
+    assert.deepEqual(settings["nativeTransportMigration"], nativeTransportMigration);
+    assert.deepEqual(settings["maxConcurrentDefaultMigration"], maxConcurrentDefaultMigration);
     assert.equal(settings["cli"], 'pi');
     const change = events.find(e => e.type === 'settings_change');
     assert.deepEqual(change?.data["changedKeys"], ['cli', 'runtime']);

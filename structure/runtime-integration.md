@@ -61,7 +61,7 @@ and imply the runtime told us which one it was.
 
 ### Independent display preference
 
-`presentation.mode` is `activity` by default or explicitly `legacy`. Both fresh and upgraded documents without the field use Activity; explicit Legacy and future siblings survive merge/load/watch. This policy does not change the separate existing-user print transport policy. API rejects invalid blocks/modes; watch ingress keeps current mode on rejected fields. A sole own presentation patch skips fallback reset, singleton session sync while preserving serialized persistence/rollback and the existing messaging dispatcher, which finds no affected transport. Mixed/empty patches retain existing behavior. Registered native ownership and live identity remain current.
+`presentation.mode` is `activity` by default or explicitly `legacy`. Both fresh and upgraded documents without the field use Activity; explicit Legacy and future siblings survive merge/load/watch. This policy does not change the one-shot native-transport migration (`nativeTransportMigration`); D6 conservative paths stay print. API rejects invalid blocks/modes; watch ingress keeps current mode on rejected fields. A sole own presentation patch skips fallback reset, singleton session sync while preserving serialized persistence/rollback and the existing messaging dispatcher, which finds no affected transport. Mixed/empty patches retain existing behavior. Registered native ownership and live identity remain current.
 
 Manager Display offers Activity first and Legacy as a reversible choice, with current-instance singleflight, guarded disabled edits and captured dirty acknowledgement. Classic applies a bounded generation-fenced settings refresh on settings_change, not loadSettings/runtime prompts. Failed latest reads retain the applied mode. This is preference plumbing; full Activity renderer/admission/history and TUI adoption are separate following layers, not certified by the setting alone.
 
@@ -94,9 +94,9 @@ Discovery and replay use the trace API's explicit `session` query. Pages contain
 
 The existing raw drawer passes captured server session identity to summary/list/detail reads and invalidates stale/closed requests. Sparse sequence is not a row offset. This storage/API layer does not enable print projection, Activity preferences or full history UI; it cannot make historical requests actionable. Existing instance auth is retained, not a new tenant ACL. Slack final/ACK/queue behavior is unchanged.
 
-`perCli.<cli>.transport` accepts `print` or `native` only for Cursor, Grok and Claude. All three still default to print. Cursor and Grok main have native ACP paths with literal auto permissions; Claude main uses the optional Agent SDK. Restrictive Cursor/Grok and unsupported worker selections are rejected with code78 before prompt-file regeneration, bucket/bootstrap/snapshot, fallback or pool work. Builtin Codex App and Pi retain their existing paths and keys. Main-adapter support and worker support are independent flags, not binary/authentication readiness.
+`perCli.<cli>.transport` accepts `print` or `native` only for Cursor, Grok and Claude. All three default to native. Existing documents migrate absent/print once; established missing-file and unreadable homes stay print. Cursor and Grok main have native ACP paths with literal auto permissions; Claude main uses the optional Agent SDK. Restrictive Cursor/Grok and unsupported worker selections are rejected with code78 before prompt-file regeneration, bucket/bootstrap/snapshot, fallback or pool work. Builtin Codex App and Pi retain their existing paths and keys. Main-adapter support and worker support are independent flags, not binary/authentication readiness.
 
-Existing documents with no transport field are pinned to print before fresh defaults are merged. Existing corrupt/unreadable or established missing-file homes also stay print; persistence-blocked behavior is unchanged. A genuinely fresh init records factory choices explicitly. Invalid API fields are rejected; watcher input drops only the invalid transport and preserves current mode/siblings. A real watcher mode change invalidates existing ownership generations after settings commit and before publication.
+Existing documents with no transport field are pinned to print before fresh defaults are merged, then eligible keys flip to native (`nativeTransportMigration`). Existing corrupt/unreadable or established missing-file homes stay print; persistence-blocked behavior is unchanged. A genuinely fresh init records factory choices explicitly. Invalid API fields are rejected; watcher input drops only the invalid transport and preserves current mode/siblings. A real watcher mode change invalidates existing ownership generations after settings commit and before publication.
 
 Print keys are byte-for-byte unchanged. Switchable native sessions use `native-v1:` before the entire opaque legacy key and never update the print singleton. Spawn captures this identity once; lifecycle saves and explicit compact paths receive the captured transport/bucket. Scoped new/reset removes exact print/native keys only, including bare/default aliases for the default scope; colon-containing scopes are not a hierarchy. Instance-wide clear retains its existing Codex all-lane exception. Explicit native outcomes skip print-era automatic compact/count/high-turn-reset heuristics; native providers manage their own context. Explicit CLI switching retains its prior fresh-start semantics.
 
@@ -105,9 +105,9 @@ Print keys are byte-for-byte unchanged. Switchable native sessions use `native-v
 ### Manager runtime preference and save ownership
 
 Manager Settings → Model defaults (`public/manager/src/settings/pages/ModelProvider.tsx`)
-exposes Runtime transport only for Cursor, Grok and Claude. Native session is an
-explicit opt-in; missing transport displays Print compatibility without creating a
-patch. Explicit native remains native, print is reversible, and an unknown value
+exposes Runtime transport only for Cursor, Grok and Claude. Native is the default;
+missing transport migrates once on load, and Manager still displays a stored print
+honestly without creating a patch. Explicit native remains native, print is reversible, and an unknown value
 gets a generic error/label rather than silently selecting the first option. The
 unknown sentinel is UI-only and cannot be submitted. Cursor/Grok native require
 Auto (YOLO; `permissions: "auto"`) and do not support native workers; Claude native supports Auto (YOLO) / Safe. The

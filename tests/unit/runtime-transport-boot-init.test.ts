@@ -51,7 +51,7 @@ test('future-native factory is real, and a genuinely fresh boot persists its cho
     assertModes(JSON.parse(readFileSync(config.SETTINGS_PATH, 'utf8')), ['native', 'native', 'native']);
 });
 
-test('current existing document pins absent transports to print BEFORE future defaults merge', () => {
+test('current existing document migrates absent transports to native after the print pin', () => {
     const existing = document();
     for (const cli of engines) delete existing.perCli[cli]!.transport;
     existing.perCli.cursor = { ...existing.perCli.cursor!, model: 'stored-model', effort: 'low' };
@@ -59,25 +59,28 @@ test('current existing document pins absent transports to print BEFORE future de
         cursor: { ...existing.perCli.cursor, auth: { profile: 'stored-auth' } },
     } };
     writeSettings(input);
-    const before = readFileSync(config.SETTINGS_PATH, 'utf8');
     const loaded = config.loadSettings();
-    assertModes(loaded, ['print', 'print', 'print']);
+    assertModes(loaded, ['native', 'native', 'native']);
     assert.equal(loaded.perCli.cursor.model, 'stored-model');
     assert.equal(loaded.perCli.cursor.effort, 'low');
     assert.deepEqual(loaded.perCli.cursor.auth, { profile: 'stored-auth' });
     assert.equal(pickerCalls, 0);
-    assert.equal(readFileSync(config.SETTINGS_PATH, 'utf8'), before);
+    const written = JSON.parse(readFileSync(config.SETTINGS_PATH, 'utf8'));
+    assertModes(written, ['native', 'native', 'native']);
+    assert.equal(written.perCli.cursor.model, 'stored-model');
+    assert.deepEqual(written.perCli.cursor.auth, { profile: 'stored-auth' });
 });
 
-test('legacy missing perCli remains print and explicit choices survive boot', () => {
+test('legacy missing perCli and unstamped print become native', () => {
     writeSettings({ cli: 'claude' });
-    assertModes(config.loadSettings(), ['print', 'print', 'print']);
+    assertModes(config.loadSettings(), ['native', 'native', 'native']);
     const existing = document();
+    existing.nativeTransportMigration = null;
     existing.perCli.cursor!.transport = 'native';
     existing.perCli.grok!.transport = 'print';
     delete existing.perCli.claude!.transport;
     writeSettings(existing);
-    assertModes(config.loadSettings(), ['native', 'print', 'print']);
+    assertModes(config.loadSettings(), ['native', 'native', 'native']);
     assert.equal(pickerCalls, 0);
 });
 
@@ -87,7 +90,7 @@ test('boot invalid transport is removed before defaults without losing siblings'
         cursor: { model: 'stored-model', effort: 'high', transport: { bad: true }, auth: { profile: 'keep' } },
     } });
     const loaded = config.loadSettings();
-    assert.equal(loaded.perCli.cursor.transport, 'print');
+    assert.equal(loaded.perCli.cursor.transport, 'native');
     assert.equal(loaded.perCli.cursor.model, 'stored-model');
     assert.deepEqual(loaded.perCli.cursor.auth, { profile: 'keep' });
     assert.equal(config.isSettingsPersistenceBlocked(), false);
@@ -100,8 +103,15 @@ test('established missing-file home is conservative while retaining migration sh
     const loaded = config.loadSettings();
     assertModes(loaded, ['print', 'print', 'print']);
     assert.equal(loaded.multiSession.enabled, false);
+    assert.equal(loaded.multiSession.maxConcurrent, 1);
     assert.equal(loaded.multiSessionDefaultMigration?.state, 'pending');
+    assert.equal(loaded.nativeTransportMigration?.state, 'left-in-place');
+    assert.equal(loaded.maxConcurrentDefaultMigration?.state, 'left-in-place');
     assert.equal(config.isSettingsPersistenceBlocked(), false);
+    const again = config.loadSettings();
+    assertModes(again, ['print', 'print', 'print']);
+    assert.equal(again.multiSession.maxConcurrent, 1);
+    assert.equal(JSON.parse(readFileSync(config.SETTINGS_PATH, 'utf8')).nativeTransportMigration.state, 'left-in-place');
 });
 
 test('corrupt and future-version existing files stay print and preserve persistence latch', () => {
@@ -134,9 +144,14 @@ function initAt(home: string, force = false) {
         process.argv = [process.execPath, ${JSON.stringify(initPath)}, 'init', '--non-interactive'${force ? ", '--force'" : ''}];
         await import(${JSON.stringify(pathToFileURL(initPath).href)});
         const loaded = config.loadSettings();
+        const again = config.loadSettings();
         console.log('TRANSPORT_FIXTURE=' + JSON.stringify({
             modes: ['cursor', 'grok', 'claude'].map(cli => loaded.perCli[cli].transport),
             factory: ['cursor', 'grok', 'claude'].map(cli => config.DEFAULT_SETTINGS.perCli[cli].transport),
+            nativeTransport: loaded.nativeTransportMigration,
+            maxConcurrentDefault: loaded.maxConcurrentDefaultMigration,
+            maxConcurrent: loaded.multiSession.maxConcurrent,
+            secondModes: ['cursor', 'grok', 'claude'].map(cli => again.perCli[cli].transport),
         }));
     `;
     const child = spawnSync(process.execPath, ['--import', 'tsx', '--experimental-test-module-mocks', '--input-type=module', '-e', script], {
@@ -147,7 +162,14 @@ function initAt(home: string, force = false) {
     assert.equal(child.status, 0, child.stdout + child.stderr);
     const resultLine = child.stdout.split('\n').find(line => line.startsWith('TRANSPORT_FIXTURE='));
     assert.ok(resultLine, child.stdout);
-    return JSON.parse(resultLine.slice('TRANSPORT_FIXTURE='.length)) as { modes: string[]; factory: string[] };
+    return JSON.parse(resultLine.slice('TRANSPORT_FIXTURE='.length)) as {
+        modes: string[];
+        factory: string[];
+        nativeTransport?: { state?: string };
+        maxConcurrentDefault?: { state?: string };
+        maxConcurrent?: number;
+        secondModes?: string[];
+    };
 }
 
 test('actual fresh init writes explicit factory transports which survive reload', t => {
@@ -166,7 +188,7 @@ test('actual existing --force init is not classified fresh under a future-native
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ cli: 'claude', perCli: { cursor: { transport: 'native', model: 'old' } } }));
     const result = initAt(home, true);
     assert.deepEqual(result.factory, ['native', 'native', 'native']);
-    assert.deepEqual(result.modes, ['print', 'print', 'print'], 'existing force-reset policy may reset, never silently gain native');
+    assert.deepEqual(result.modes, ['native', 'native', 'native'], 'unstamped --force rewrite then loadSettings is the stamped migrator');
 });
 
 test('actual init without settings in an established home writes conservative choices', t => {
@@ -174,6 +196,14 @@ test('actual init without settings in an established home writes conservative ch
     t.after(() => rmSync(home, { recursive: true, force: true }));
     writeFileSync(join(home, 'jaw.db'), 'established-marker');
     const result = initAt(home);
-    assertModes(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')), ['print', 'print', 'print']);
+    const written = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8'));
+    assertModes(written, ['print', 'print', 'print']);
+    assert.equal(written.nativeTransportMigration?.state, 'left-in-place');
+    assert.equal(written.maxConcurrentDefaultMigration?.state, 'left-in-place');
+    assert.equal(written.multiSession.maxConcurrent, 1);
     assert.deepEqual(result.modes, ['print', 'print', 'print']);
+    assert.equal(result.nativeTransport?.state, 'left-in-place');
+    assert.equal(result.maxConcurrentDefault?.state, 'left-in-place');
+    assert.equal(result.maxConcurrent, 1);
+    assert.deepEqual(result.secondModes, ['print', 'print', 'print']);
 });

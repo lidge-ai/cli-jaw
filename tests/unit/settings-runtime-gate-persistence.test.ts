@@ -37,6 +37,12 @@ function document(
         settingsSchemaVersion: 4,
         runtimeDefaultMigration: cli === 'claude' ? pending() : null,
         multiSessionDefaultMigration: null,
+        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'already-native' },
+        maxConcurrentDefaultMigration: {
+            id: 'max-concurrent-default-v1',
+            state: 'left-in-place',
+            from: 2,
+        },
         multiSession: {
             enabled: true,
             maxConcurrent: 2,

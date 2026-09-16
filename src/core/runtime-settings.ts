@@ -6,6 +6,7 @@ import {
 import { syncCodexContextWindow } from './codex-config.js';
 import {
     settings, persistAndCommit, snapshotSettingsState, migrateSettings, normalizeProjectDirs,
+    DEFAULT_SETTINGS,
     RUNTIME_DEFAULT_MIGRATION_ID, type RuntimeDefaultMigration,
     MULTI_SESSION_DEFAULT_MIGRATION_ID, type MultiSessionDefaultMigration,
     type SettingsStateCandidate, type SettingsWrite, slackEnvironmentManagedPatchPaths,
@@ -141,7 +142,7 @@ export function resolveMultiSessionDefaultMigration(
         // policy and the channel gates survive it.
         multiSession: {
             enabled: true,
-            ...(keepsOwnConcurrency ? {} : { maxConcurrent: 2 }),
+            ...(keepsOwnConcurrency ? {} : { maxConcurrent: DEFAULT_SETTINGS.multiSession.maxConcurrent }),
         },
         multiSessionDefaultMigration,
     };

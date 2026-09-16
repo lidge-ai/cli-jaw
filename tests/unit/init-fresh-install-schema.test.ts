@@ -57,9 +57,11 @@ test('init writes a document that names its schema and carries what that schema 
         const sessions = written['multiSession'] as Record<string, unknown> | undefined;
         assert.ok(sessions, 'a document claiming this schema must carry the block this schema writes');
         assert.equal(sessions?.['enabled'], true, 'a new install starts with sessions on');
-        assert.equal(sessions?.['maxConcurrent'], 2);
+        assert.equal(sessions?.['maxConcurrent'], 20);
         assert.equal(written['multiSessionDefaultMigration'], null,
             'there is no prior state to migrate from, so there is nothing to ask about');
+        assert.equal((written['nativeTransportMigration'] as { state?: string } | undefined)?.state, 'already-native');
+        assert.equal((written['maxConcurrentDefaultMigration'] as { state?: string } | undefined)?.state, 'already-at-target');
     });
 });
 

@@ -55,7 +55,7 @@ function seed(state: 'pending' | 'accepted' | 'kept' | 'already-enabled', multiS
 test('MSR-001: accept turns sessions on and lifts the single lane', async () => {
     seed('pending');
     const patch = runtimeSettings.resolveMultiSessionDefaultMigration(config.settings, 'accept');
-    assert.deepEqual(patch["multiSession"], { enabled: true, maxConcurrent: 2 });
+    assert.deepEqual(patch["multiSession"], { enabled: true, maxConcurrent: 20 });
     assert.equal((patch["multiSessionDefaultMigration"] as { state: string }).state, 'accepted');
 });
 
