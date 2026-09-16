@@ -2447,7 +2447,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             //   - error: code !== 0 && !wasKilled → classifyExitError
             //   - trace: if (traceText) traceText = `⏹️ [interrupted]…`
             handleAgentExit({
-                ctx, code: acpCode, cli, model, agentLabel, mainManaged, origin,
+                ctx, code: acpCode, childExitCode: code, cli, model, agentLabel, mainManaged, origin,
                 onRuntimeEnd: end => ctx.printActivity?.finish(end),
                 resumeKey,
                 prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,

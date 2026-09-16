@@ -198,6 +198,7 @@
   "tg.stoppedWatchdog": "停止しました — ウォッチドッグの制限時間に達しました",
   "tg.stoppedUser": "停止しました — ユーザーが停止しました",
   "tg.stoppedSteer": "停止しました — 新しい入力がこの実行を置き換えました",
+  "tg.stoppedUnattributed": "停止しました — Jawが停止を送る前にランタイムが終了しました",
   "tg.connected": "Jaw Agent に接続しました。メッセージを送ると AI Agent が応答します。",
   "tg.resetDone": "リセット完了。",
   "cli.fileNotFound": "ファイルが見つかりません: {path}",

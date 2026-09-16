@@ -198,6 +198,7 @@
   "tg.stoppedWatchdog": "已停止 — 运行触及看门狗超时",
   "tg.stoppedUser": "已停止 — 用户停止了这次运行",
   "tg.stoppedSteer": "已停止 — 新输入替换了这次运行",
+  "tg.stoppedUnattributed": "已停止 — 运行在 Jaw 发出停止之前退出了",
   "tg.connected": "Jaw Agent 已连接！发送消息后，AI Agent 会回复。",
   "tg.resetDone": "重置完成。",
   "cli.fileNotFound": "找不到文件：{path}",

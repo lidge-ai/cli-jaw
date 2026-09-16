@@ -205,5 +205,6 @@ export function stoppedLocaleKey(cause: unknown): string {
     if (cause === 'watchdog') return 'tg.stoppedWatchdog';
     if (cause === 'user_stop') return 'tg.stoppedUser';
     if (cause === 'steer_kill') return 'tg.stoppedSteer';
+    if (cause === 'unattributed') return 'tg.stoppedUnattributed';
     return 'tg.stopped';
 }

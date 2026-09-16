@@ -42,3 +42,40 @@ test('pipeline: orchestrate_done carries stopCause; runtimeStatus stays stopped;
         resetRequestRegistryForTest();
     }
 });
+
+test('pipeline: orchestrate() keeps unattributed on orchestrate_done and omits it from request_settled', async () => {
+    resetRequestRegistryForTest();
+    const capture: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const listener = (type: string, data: Record<string, unknown>) => { capture.push({ type, data }); };
+    addBroadcastListener(listener);
+    try {
+        const identity = { requestId: 'stop-cause-unattr', scope: 'stop-cause-unattr-scope', chatSessionId: 'default', origin: 'slack' };
+        const outcome: RuntimeTurnOutcome = { status: 'stopped', finalText: null, partialText: '' };
+        admitRequest(identity.requestId, identity.scope);
+        await orchestrate('native task', {
+            ...identity,
+            _skipInsert: true,
+            _skipReplayDrain: true,
+            _spawnAgent: () => ({
+                child: null,
+                promise: Promise.resolve({
+                    text: '',
+                    code: 130,
+                    runtimeOutcome: outcome,
+                    stopCause: 'unattributed',
+                }),
+            }),
+        });
+        const done = capture.find(entry => entry.type === 'orchestrate_done');
+        const settledEvent = capture.find(entry => entry.type === 'request_settled');
+        assert.ok(done, 'orchestrate_done');
+        assert.equal(done.data['runtimeStatus'], 'stopped');
+        assert.equal(done.data['stopCause'], 'unattributed');
+        assert.ok(settledEvent, 'request_settled');
+        assert.equal(settledEvent.data['runtimeStatus'], 'stopped');
+        assert.equal('stopCause' in settledEvent.data, false);
+    } finally {
+        removeBroadcastListener(listener);
+        resetRequestRegistryForTest();
+    }
+});

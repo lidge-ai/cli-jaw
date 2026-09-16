@@ -288,6 +288,7 @@ export interface ExitHandlerParams {
     onRuntimeEnd?: (end: Extract<RuntimeEventBody, { kind: 'turn-end' }>) => void;
     ctx: ExitContext;
     code: number | null;
+    childExitCode?: number | null;
     cli: string;
     model: string;
     effectiveProvider?: string;
@@ -350,7 +351,12 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         retryState, fallbackState, fallbackMaxRetries, processQueue,
     } = params;
 
-    const stopCause = classifyStopCause({ stallReason: ctx.stallReason, wasSteer, wasKilled });
+    const stopCause = classifyStopCause({
+        stallReason: ctx.stallReason,
+        wasSteer,
+        wasKilled,
+        exitCode: params.childExitCode ?? params.code,
+    });
     const nativeOutcome = lifecycleRuntimeOutcome(ctx, wasKilled || wasSteer || Boolean(ctx.stallReason));
     const code = runtimeOutcomeExitCode(nativeOutcome, processCode);
     const nativeRequestId = ctx.requestId ?? opts.requestId;
