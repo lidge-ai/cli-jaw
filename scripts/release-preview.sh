@@ -138,7 +138,7 @@ echo "Preview version: $PREVIEW_VERSION  (base $RAW_VERSION + $BUMP_KIND bump)"
 echo "Dist-tag:        preview"
 
 # ─── Collect changelog from commits since last tag ─────
-PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | head -1)
+PREV_TAG=$(set +o pipefail; git tag --sort=-v:refname | grep -E '^v[0-9]' | head -1)
 if [ -n "$PREV_TAG" ]; then
   CHANGELOG=$(git log "$PREV_TAG"..HEAD -n 30 --pretty=format:"- %s" --no-merges)
   COMMIT_COUNT=$(git rev-list "$PREV_TAG"..HEAD --count)
