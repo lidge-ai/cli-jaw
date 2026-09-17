@@ -22,6 +22,28 @@ type SkillRegistry = {
 };
 
 /**
+ * Skill ids this home refuses to activate, from `skills.disabled` in settings.json.
+ *
+ * Auto-activation is otherwise unconditional, so deleting an unwanted skill from
+ * skills/ only lasts until the next boot copies it back from skills_ref/. An
+ * instance that must route all browser work through another tool (Aside) needs a
+ * durable way to say so. Read the file directly: this module runs during startup,
+ * before the settings module is guaranteed to be loaded.
+ */
+function disabledSkillIds(): Set<string> {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(join(JAW_HOME, 'settings.json'), 'utf8')) as {
+            skills?: { disabled?: unknown };
+        };
+        const list = parsed.skills?.disabled;
+        if (!Array.isArray(list)) return new Set<string>();
+        return new Set(list.filter((value): value is string => typeof value === 'string'));
+    } catch {
+        return new Set<string>();
+    }
+}
+
+/**
  * Phase 6 — 2×3 Skill Classification at Install
  *
  * Priority: ~/.codex/skills/ (live Codex) > bundled skills_ref/ (fallback)
@@ -38,6 +60,7 @@ export function copyDefaultSkills() {
     fs.mkdirSync(refDir, { recursive: true });
 
     let copied = 0;
+    const disabledSkills = disabledSkillIds();
 
     // Phase 1 dedup: these skills were merged into others — never copy from Codex
     const DEDUP_EXCLUDED = new Set([
@@ -66,6 +89,7 @@ export function copyDefaultSkills() {
         for (const skill of skills) {
             const src = join(codexSkills, skill.name);
 
+            if (disabledSkills.has(skill.name)) continue;
             if (CODEX_ACTIVE.has(skill.name)) {
                 const dst = join(activeDir, skill.name);
                 if (!fs.existsSync(dst)) {
@@ -209,6 +233,7 @@ export function copyDefaultSkills() {
     const AUTO_ACTIVATE = new Set([...CODEX_ACTIVE, ...OPENCLAW_ACTIVE]);
     let autoCount = 0;
     for (const id of AUTO_ACTIVATE) {
+        if (disabledSkills.has(id)) continue;
         const src = join(refDir, id);
         const dst = join(activeDir, id);
         if (!fs.existsSync(src)) continue;
@@ -228,6 +253,15 @@ export function copyDefaultSkills() {
         }
     }
     if (autoCount > 0) console.log(`[skills] Total auto-activated/synced: ${autoCount}`);
+
+    // A disabled skill that is already sitting in skills/ would still be loaded,
+    // so removal happens here rather than only at the copy site.
+    for (const id of disabledSkills) {
+        const dst = join(activeDir, id);
+        if (!fs.existsSync(dst)) continue;
+        fs.rmSync(dst, { recursive: true, force: true });
+        console.log(`[skills] disabled by settings, removed from active: ${id}`);
+    }
 
     reportNamespaceMigration(normalizeSkillNamespace(activeDir, JAW_HOME));
 
