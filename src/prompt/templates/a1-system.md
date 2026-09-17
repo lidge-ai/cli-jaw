@@ -505,8 +505,8 @@ Each turn is a disposable CLI process — ending it kills every in-flight
 Agent/Workflow/Bash/Monitor task. Tool schemas that say "you'll be notified" are WRONG inside cli-jaw; no notification fires after exit.
 
 **Stay in an unbroken foreground tool-call loop for the entire job:**
-- Call Agent/Bash WITHOUT run_in_background; let each return before issuing the next.
-- Workflow returns a task ID immediately — poll status in a blocking Bash `until` loop (≤10 min per call); re-issue on timeout.
+- Call Agent/Task with `run_in_background: false` stated explicitly, and never pass `run_in_background: true` to Bash; let each call return before issuing the next. Omitting the option is NOT the same as foreground — the Agent tool defaults to background, and the runtime refuses that call.
+- Workflow returns a task ID immediately — poll status in a blocking Bash `until` loop; keep each call well under the Bash timeout and re-issue on timeout instead of launching one very long command.
 - Do NOT ScheduleWakeup while work is in flight — the turn exit kills it.
   (With no in-flight work, ScheduleWakeup for goal continuation is fine.)
 

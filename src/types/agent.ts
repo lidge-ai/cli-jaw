@@ -89,6 +89,10 @@ export interface SpawnContext {
   duration: number | null;
   tokens: Record<string, number> | null;
   stderrBuf: string;
+  /** Why this turn failed, in the runtime's own words, when the runtime knows
+   *  more than the exit code does. Internally generated, never relayed child
+   *  output; lifecycle prefers it over the stderr classification. */
+  runtimeDiagnostic?: string;
   hasActiveSubAgent?: boolean;
   showReasoning?: boolean;
   outputTextStarted?: boolean;

@@ -212,11 +212,22 @@ test('SDK ambient defaults appearing after lazy import do not replace the query'
     let creates = 0;
     const base = options({ createSession: async () => { creates++; return fakeSession().session; } });
     const first = await acquire(access, base); first.release();
-    const importedEnv = { ...base.prepared.env, NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261' };
+    const importedEnv = { ...base.prepared.env, NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261',
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
     const second = await acquire(access, { ...base, prepared: { ...base.prepared, env: importedEnv } });
     assert.equal(second.reused, true); assert.equal(creates, 1); second.release();
     const changed = await acquire(access, { ...base, prepared: { ...base.prepared, env: { ...importedEnv, CLAUDE_AGENT_SDK_VERSION: 'explicit-other' } } });
     assert.equal(changed.reused, false); assert.equal(creates, 2); changed.release();
+});
+
+test('explicit caller background-task setting is preserved in the SDK snapshot', async t => {
+    const { access } = accessFixture(); t.after(() => drain(access));
+    let captured!: ClaudeSessionOptions;
+    const base = options({ createSession: async input => { captured = input; return fakeSession().session; } });
+    base.prepared.env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'] = '0';
+    const lease = await acquire(access, base);
+    assert.equal(captured.prepared.env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'], '0');
+    lease.release();
 });
 
 for (const factoryMode of ['default', 'public factory with spread'] as const) {
@@ -405,7 +416,8 @@ test('prepared snapshot is captured before await and canonical cwd/env order reu
     const f = fakeSession(), started = deferred(), finish = deferred(); let captured!: ClaudeSessionOptions;
     const base = options({ createSession: async input => { captured = input; started.resolve(); await finish.promise; return f.session; } });
     const expected = { ...base.prepared, cwd: realpathSync(base.prepared.cwd), env: { ...base.prepared.env,
-        NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261' } };
+        NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261',
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } };
     const pending = acquire(access, base); await started.promise;
     base.prepared.model = 'mutated'; base.prepared.env.PRIVATE_KEY = 'mutated'; base.binding = binding('mutated');
     finish.resolve(); const one = await pending;
