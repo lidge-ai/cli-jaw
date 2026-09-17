@@ -503,13 +503,49 @@ function ensureDashboardConnectorAnchor(fileContent: string, rendered: string): 
     );
 }
 
-function ensureSessionPollAnchor(fileContent: string, rendered: string): string | null {
-    return appendAnchorIfMissing(
+/**
+ * Stock session-poll blocks a correction is allowed to replace.
+ *
+ * Append-only was not enough. The block states how a turn must call Agent/Bash,
+ * and the shipped wording contradicted the native runtime: it said to call them
+ * WITHOUT run_in_background, while the runtime refuses an Agent/Task call that
+ * does not say `false` and ends the whole turn when a task is backgrounded.
+ * Every install already carrying that block would have kept it forever, because
+ * the anchor was only ever added when missing. Replacement stays limited to
+ * blocks this project shipped; anything else is user-authored and preserved.
+ */
+const KNOWN_SESSION_POLL_ANCHOR_HASHES = new Set<string>([
+    // Shipped through v2.17.53 — "Call Agent/Bash WITHOUT run_in_background",
+    // which produced denied Agent calls and turn-killing background Bash.
+    'c15c336d5ca8c566e207fb46ceb6f82b',
+]);
+
+function migrateSessionPollAnchor(fileContent: string, rendered: string): string | null {
+    const result = upsertKnownAnchorBlock(
         fileContent,
         rendered,
         SESSION_POLL_ANCHOR_OPEN,
         SESSION_POLL_ANCHOR_CLOSE,
+        KNOWN_SESSION_POLL_ANCHOR_HASHES,
     );
+    switch (result.action) {
+        case 'appended':
+            log.info('[prompt] A-1.md: appended session-poll anchor (user edits preserved)');
+            return result.content;
+        case 'replaced':
+            log.info('[prompt] A-1.md: updated session-poll anchor to the current contract');
+            return result.content;
+        case 'preserved-user-edit':
+            log.warn('[prompt] A-1.md: session-poll anchor was edited locally — left as-is. '
+                + 'It may still tell the model to call Agent/Bash without run_in_background.');
+            return null;
+        case 'preserved-malformed':
+            log.warn('[prompt] A-1.md: session-poll anchor markers are malformed or duplicated — '
+                + 'left as-is. Fix the markers to receive contract updates.');
+            return null;
+        default:
+            return null;
+    }
 }
 
 // ─── Initialize prompt files ─────────────────────────
@@ -546,11 +582,8 @@ export function initPromptFiles() {
                     userText = appendedConnector;
                     log.info('[prompt] A-1.md: appended dashboard-connector-intent anchor (user edits preserved)');
                 }
-                const appendedSessionPoll = ensureSessionPollAnchor(userText, a1Content);
-                if (appendedSessionPoll) {
-                    userText = appendedSessionPoll;
-                    log.info('[prompt] A-1.md: appended session-poll anchor (user edits preserved)');
-                }
+                const appendedSessionPoll = migrateSessionPollAnchor(userText, a1Content);
+                if (appendedSessionPoll) userText = appendedSessionPoll;
                 if (appendedDesktop || appendedConnector || appendedSessionPoll) {
                     fs.writeFileSync(A1_PATH, userText);
                 } else {

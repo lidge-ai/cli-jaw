@@ -79,6 +79,7 @@ function fixture(worker = false) {
     let retireCount = 0, releaseCount = 0, exitCount = 0;
     const session = {
         nativeSessionId: 'provider-id',
+        lastError: null as string | null,
         send: async (...args: Parameters<NativeRuntimeSession['send']>) => {
             const result = await send(...args); admitted = true; admittedOutcome = result; return result;
         },
@@ -108,7 +109,7 @@ function fixture(worker = false) {
             origin: 'web', model: 'test', prompt: 'prompt', opts: {}, persistenceOwner: { global: 0, scope: 0 } },
         isCurrent: () => true, isCurrentOwner: () => true, starting() {}, ready() {}, finished() {}, consumeKillReason: () => null,
     } as ClaudeNativeRunOptions;
-    return { options, child, start: () => startClaudeNativeRun(options), setSend: (fn: typeof send) => { send = fn; },
+    return { options, child, session, start: () => startClaudeNativeRun(options), setSend: (fn: typeof send) => { send = fn; },
         setRetire: (fn: typeof retire) => { retire = fn; },
         context: () => turnContext, counts: () => ({ retireCount, releaseCount, exitCount }) };
 }
@@ -366,6 +367,24 @@ test('successful parent result cannot mark a tool done when no native tool termi
     assert.equal(result.code, 0); assert.equal(result.runtimeOutcome?.finalText, 'answer');
     assert.equal(result.tools?.[0]?.status, 'stopped');
     assert.equal(traceTools.at(-1)?.status, 'stopped');
+});
+
+test('admitted background-task failure supplies the foreground-only runtime diagnostic', async () => {
+    const f = fixture();
+    const failed: RuntimeTurnOutcome = { status: 'error', finalText: null, partialText: '' };
+    f.setSend(async () => {
+        f.session.lastError = 'claude_background_tasks_unsupported';
+        return failed;
+    });
+    const lifecycle = exit;
+    exit = async params => {
+        assert.equal(params.ctx.runtimeDiagnostic,
+            'Claude native supports foreground tasks only. Set run_in_background:false.');
+        await lifecycle(params);
+    };
+    const result = await f.start().promise;
+    assert.equal(result.code, 1);
+    assert.deepEqual(result.runtimeOutcome, failed);
 });
 
 test('worker send failure permits directory cleanup only after successful awaited retirement', async () => {

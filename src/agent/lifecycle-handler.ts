@@ -247,6 +247,14 @@ function runtimeCompatibilityText(finalText: string | null): string {
     return finalText === null || finalText.trim().length === 0 ? '' : finalText;
 }
 
+/** What a failure is called. The classifier can only name the classes it can
+ *  recognize in stderr, and a native runtime that failed on its own terms
+ *  already knows better; prefer its sentence when it supplied one. */
+function failureMessage(ctx: ExitContext, cli: string, code: number): string {
+    const owned = ctx.runtimeDiagnostic?.trim();
+    return owned || classifyExitError(cli, code, ctx.stderrBuf).message;
+}
+
 /** Tag agent_done with the trace run that produced it so the web UI can drop
  *  SSE replays of already-finished turns instead of mid-turn-finalizing the
  *  in-flight one. */
@@ -265,6 +273,10 @@ export interface ExitContext {
     toolLog: ToolEntry[];
     traceLog: string[];
     stderrBuf: string;
+    /** Why this turn failed, in the runtime's own words, when the runtime knows
+     *  more than the exit code does. Generated internally — never relayed child
+     *  output — so it is safe to show a user and to store in the trace. */
+    runtimeDiagnostic?: string;
     metadata?: Record<string, unknown>;
     liveScope?: string | null;
     traceRunId?: string | null;
@@ -715,10 +727,17 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             // Only compatibility text collapses whitespace; never the outcome.
             handoffRuntimeOutcome(ctx, { ...nativeOutcome, finalText: finalContent });
             ctx.runtimeTerminalAttempted = true;
+            const compatibilityText = runtimeCompatibilityText(finalContent);
+            // A failed native turn with nothing to show reached the user as the
+            // bare "no response" placeholder (orchestrator/collect.ts) even when
+            // the runtime had already named its own cause. Carry that sentence
+            // instead. Real text always wins, and a stopped run stays silent.
+            const terminalText = compatibilityText || (nativeOutcome.status === 'error'
+                && ctx.runtimeDiagnostic?.trim() ? `❌ ${ctx.runtimeDiagnostic.trim()}` : '');
             broadcast('agent_done', {
                 ...donePin,
                 ...(nativeTraceRunId ? { traceRunId: nativeTraceRunId } : {}),
-                text: runtimeCompatibilityText(finalContent),
+                text: terminalText,
                 runtimeFinality: finalContent === null ? 'absent' : 'present',
                 runtimeStatus: nativeOutcome.status,
                 ...(nativeRequestId !== undefined ? { requestId: nativeRequestId } : {}),
@@ -1224,7 +1243,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const resolvedCode = code;
     finalizeRun(
         traceStatus,
-        traceStatus === 'error' ? classifyExitError(runtimeCli, resolvedCode ?? 1, ctx.stderrBuf).message : null,
+        traceStatus === 'error' ? failureMessage(ctx, runtimeCli, resolvedCode ?? 1) : null,
     );
     const liveOwnedAtFinish = ownsLiveRun();
     if (mainManaged && !wasSteer && liveOwnedAtFinish) clearLiveRun(liveScope);
@@ -1239,7 +1258,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         console.log(`[jaw:${agentLabel}] exited code=${code}, text=${ctx.fullText.length} chars`);
     }
     const diagnostic = resolvedCode !== 0 && resolvedCode !== null
-        ? classifyExitError(runtimeCli, resolvedCode, ctx.stderrBuf).message
+        ? failureMessage(ctx, runtimeCli, resolvedCode)
         : ctx.stderrBuf.trim().slice(0, 500);
     const resolvedOutcome: RuntimeTurnOutcome | undefined = nativeOutcome === undefined
         ? undefined : { ...nativeOutcome, finalText: runtimeFinalText };

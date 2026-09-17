@@ -240,7 +240,13 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         }, event,
         settle: async (lease, outcome, problem) => {
             ctx.stallWatchdog?.stop(); ctx.fullText = outcome.partialText;
+            // A session that fails mid-turn — a backgrounded task, a stale owner,
+            // a reader fault — settles HERE, not through `failed`, and the shared
+            // runner has no Claude-specific reason to offer. `facade.lastError`
+            // already names the cause, so hand it to lifecycle instead of letting
+            // the turn reach the user as a bare "no response" (#757 follow-up).
             if (problem) ctx.stderrBuf = problem;
+            if (outcome.status === 'error') ctx.runtimeDiagnostic = problem || diagnostic();
             if (lease) ctx.sessionId = lease.session.nativeSessionId || null;
             if (worker && lease) { await lease.retire(new Error('Claude worker assignment complete')); cleanupSafe = true; }
             const recordedReason = consumeCapturedKillReason(lease?.child.pid);

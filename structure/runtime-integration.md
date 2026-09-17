@@ -57,6 +57,22 @@ inventing a distinction the payload does not carry; carrying a real cause needs 
 new field on `orchestrate_done` from `pipeline.ts`. Do not add three strings here
 and imply the runtime told us which one it was.
 
+A runtime that DOES know why it failed now says so. `ExitContext.runtimeDiagnostic`
+carries a sentence the runtime generated itself — never relayed child output — and
+`lifecycle-handler.ts` prefers it over the stderr classification for the trace error
+and for the resolved diagnostic. When a failed native turn has no compatibility text,
+that sentence becomes the `agent_done` text, so the collector reports a cause instead
+of `tg.noResponse`. A stopped run stays silent and any real answer still wins. The
+Claude adapter fills it in `settle` from `facade.lastError`, which is where a mid-turn
+session failure lands; `failed` already had its own path and is unchanged.
+
+Claude native cannot correlate a backgrounded task's result, so observing one ends the
+turn. The PreToolUse hook only refuses an EXPLICIT `run_in_background: true`, and Claude
+moves a long foreground Bash command to the background by itself, which killed turns
+whose command then completed normally. `claude-runtime-pool.ts` therefore seeds
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` into the prepared environment when the caller
+left it unset; an explicit value is preserved and stays part of the pooled profile.
+
 ## Transport selection and session identity
 
 ### Independent display preference

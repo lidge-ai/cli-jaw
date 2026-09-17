@@ -281,6 +281,15 @@ function snapshot(input: ClaudeAcquireOptions): ClaudeAcquireOptions {
     // Explicit values remain part of the profile and can still retire a query.
     if (prepared.env['NoDefaultCurrentDirectoryInExePath'] === undefined) prepared.env['NoDefaultCurrentDirectoryInExePath'] = '1';
     if (prepared.env['CLAUDE_AGENT_SDK_VERSION'] === undefined) prepared.env['CLAUDE_AGENT_SDK_VERSION'] = '0.3.261';
+    // A backgrounded task has no result this runtime can correlate, so observing
+    // one ends the whole turn (claude_background_tasks_unsupported in
+    // claude-sdk-session.ts). The PreToolUse hook only refuses an EXPLICIT
+    // run_in_background:true, and Claude moves a long foreground Bash command to
+    // the background on its own, which killed answered turns whose command then
+    // completed normally seconds later. Disabling the feature at its source keeps
+    // that command in the foreground instead. An explicit value is preserved and
+    // remains part of the pooled profile.
+    if (prepared.env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'] === undefined) prepared.env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'] = '1';
     if (input.forceNew) delete prepared.resumeSessionId;
     else if (input.storedSessionId) prepared.resumeSessionId = input.storedSessionId;
     return { ...input, prepared, persistenceOwner: Object.freeze({ ...input.persistenceOwner }), binding: { ...input.binding } };
