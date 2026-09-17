@@ -58,6 +58,7 @@ export function generateLaunchdPlist(o: PlistOptions): string {
         <string>serve</string>
         <string>--port</string>
         <string>${xmlEsc(o.port)}</string>
+        <string>--no-open</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

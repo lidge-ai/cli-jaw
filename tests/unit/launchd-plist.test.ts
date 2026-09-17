@@ -124,3 +124,7 @@ test('P04C-011: extra env values are XML-escaped like every other field', () => 
     assert.match(rendered, /<string>a &amp; b &lt; c<\/string>/);
 });
 
+test('P04C-012: launchd serve never auto-opens a browser on (re)start', () => {
+    const plist = generateLaunchdPlist(defaults);
+    assert.match(plist, /<string>--no-open<\/string>/, 'a KeepAlive respawn must not pop a browser window');
+});

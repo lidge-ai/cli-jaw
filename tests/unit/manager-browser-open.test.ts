@@ -121,3 +121,11 @@ test('dashboard opener failure is logged without crashing the manager', () => {
     assert.ok(browserOpen.includes('failed to open browser automatically'), 'failure must be visible to the user');
     assert.ok(browserOpen.includes('open manually'), 'manual URL fallback must be printed');
 });
+
+test('a background service runtime never auto-opens a browser', () => {
+    assert.equal(shouldOpenBrowserByDefault({ CLI_JAW_RUNTIME: 'launchd' }, 'darwin', inertProbes), false);
+    assert.equal(shouldOpenBrowserByDefault({ CLI_JAW_RUNTIME: 'systemd', DISPLAY: ':0' }, 'linux', inertProbes), false);
+    assert.equal(shouldOpenBrowserByDefault({ JAW_NO_BROWSER: '1' }, 'darwin', inertProbes), false);
+    assert.equal(shouldOpenBrowserByDefault({ JAW_OPEN_BROWSER: '0' }, 'darwin', inertProbes), false);
+    assert.equal(shouldOpenBrowserByDefault({}, 'darwin', inertProbes), true);
+});
