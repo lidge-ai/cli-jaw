@@ -87,10 +87,23 @@ export async function runServiceLifecycle(action: 'stop' | 'restart', deps: Serv
 
 // ─── Args ────────────────────────────────────────────
 export async function main(): Promise<void> {
+// The service being installed belongs to JAW_HOME, so its port has to come from
+// that home. Defaulting to 3457 made `jaw --home <other> service install` write a
+// unit that starts the other home's server on the main instance's port, and two
+// servers then fight over 3457.
+const homePort = (() => {
+    try {
+        const parsed = JSON.parse(readFileSync(join(JAW_HOME, 'settings.json'), 'utf8')) as { port?: unknown };
+        const value = typeof parsed.port === 'number' ? String(parsed.port) : parsed.port;
+        return typeof value === 'string' && value.trim() ? value.trim() : '3457';
+    } catch {
+        return '3457';
+    }
+})();
 const { values: opts, positionals: pos } = parseArgs({
     args: process.argv.slice(3),
     options: {
-        port: { type: 'string', default: '3457' },
+        port: { type: 'string', default: homePort },
         backend: { type: 'string' },
     },
     strict: false,
