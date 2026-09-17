@@ -31,6 +31,8 @@ import {
 import type { WatchNamespace } from './mention-watch-ledger.js';
 import { scanSlackMentions, MENTION_WATCH_DEFAULT_MAX_HITS } from '../slack/mention-watch.js';
 import type { MentionHit } from '../slack/mention-watch.js';
+import { classifyMentionWatch, mentionWatchSubjects } from '../slack/mention-watch-match.js';
+import { readMentionWatchInbox, clearMentionWatchInbox } from '../slack/mention-watch-inbox.js';
 import type { HeartbeatMentionWatch } from '../core/config.js';
 
 export type MentionWatchTickResult = {
@@ -160,6 +162,63 @@ export async function runMentionWatchTick(
     }
     if (allowed.length === 0) return result;
 
+    // Thread replies first, from the live capture.
+    //
+    // The scan below reads conversations.history, which never returns a thread
+    // reply. Anything tagged inside a thread reaches this process only on the
+    // event stream, and mention-watch-inbox.ts is where it was kept. Drained
+    // BEFORE the scan so a rate limit that ends the tick cannot starve it — the
+    // captured rows cost no API calls, and a message someone is waiting on
+    // outranks a backward walk through history.
+    const inboxOwned = new Set(allowed);
+    const subjects = mentionWatchSubjects(watch);
+    const inboxHits: MentionHit[] = [];
+    const inboxSettled: MentionHit[] = [];
+    for (const row of readMentionWatchInbox(ns.workspaceId, watch.userId)) {
+        // Another job owns this channel. Leaving the row alone is the point:
+        // deleting it here would consume a mention this job may not answer.
+        if (!inboxOwned.has(row.channelId)) continue;
+        // The floor an operator set when the job was (re)started. Without it a
+        // fresh start would answer everything captured before it.
+        if (watch.since && Number(row.ts) <= Number(watch.since)) {
+            clearMentionWatchInbox(ns.workspaceId, watch.userId, row.channelId, row.ts);
+            continue;
+        }
+        if (hasSeenMention(ns, row.channelId, row.ts)) {
+            clearMentionWatchInbox(ns.workspaceId, watch.userId, row.channelId, row.ts);
+            continue;
+        }
+        // Same classifier the scan uses, so capture stays liberal and exactly one
+        // place decides what deserves an answer.
+        const classified = classifyMentionWatch({
+            ts: row.ts,
+            text: row.text,
+            ...(row.threadTs ? { threadTs: row.threadTs } : {}),
+            ...(row.authorId ? { user: row.authorId } : {}),
+            ...(row.botId ? { botId: row.botId } : {}),
+            ...(row.subtype ? { subtype: row.subtype } : {}),
+        }, {
+            subjects,
+            selfUserId: deps.selfUserId,
+            channelId: row.channelId,
+            ...(watch.conditions?.length ? { conditions: watch.conditions } : {}),
+        });
+        if (!classified) {
+            clearMentionWatchInbox(ns.workspaceId, watch.userId, row.channelId, row.ts);
+            continue;
+        }
+        inboxHits.push({
+            channelId: row.channelId,
+            ts: row.ts,
+            threadTs: row.threadTs || row.ts,
+            ...(row.threadTs ? {} : { threadIsSynthetic: true }),
+            authorId: row.authorId ?? null,
+            text: row.text,
+            match: classified.match,
+            subjectId: classified.subjectId,
+        });
+    }
+
     const rotationAnchor = readRotation(ns);
     const scan = await scanSlackMentions(deps.token, {
         userId: watch.userId,
@@ -201,7 +260,12 @@ export async function runMentionWatchTick(
     // The answering clock starts HERE, after the scan, for the reason given on
     // `answerBudgetMs`.
     const answeringSince = now();
-    for (const hit of scan.hits) {
+    // The scan can surface a top-level message the capture already holds. One
+    // answer per message, and the captured copy wins because it is the one with a
+    // row to retire.
+    const fromInbox = new Set(inboxHits.map(hit => hit.channelId + '/' + hit.ts));
+    const pending = [...inboxHits, ...scan.hits.filter(hit => !fromInbox.has(hit.channelId + '/' + hit.ts))];
+    for (const hit of pending) {
         if (deps.signal?.aborted) { result.stoppedBecause = 'aborted'; break; }
         // Before the answer, never after: checking afterwards would spend a full
         // orchestrator turn to discover the tick was already over. An unanswered
@@ -228,6 +292,7 @@ export async function runMentionWatchTick(
             // Deliberate silence is a decision about this message, so record it:
             // otherwise every tick asks again and pays for the same answer.
             recordSeenMention(ns, hit.channelId, hit.ts, now());
+            if (fromInbox.has(hit.channelId + '/' + hit.ts)) inboxSettled.push(hit);
             result.quiet += 1;
             continue;
         }
@@ -239,7 +304,15 @@ export async function runMentionWatchTick(
             continue;
         }
         recordSeenMention(ns, hit.channelId, hit.ts, now());
+        if (fromInbox.has(hit.channelId + '/' + hit.ts)) inboxSettled.push(hit);
         result.answered += 1;
+    }
+
+    // Captured rows are retired only once their message is settled. A row left
+    // behind by a failed send or an exhausted budget is exactly what the next
+    // tick needs to find.
+    for (const hit of inboxSettled) {
+        clearMentionWatchInbox(ns.workspaceId, watch.userId, hit.channelId, hit.ts);
     }
 
     if (scan.rateLimited) result.stoppedBecause ??= 'rate_limited';

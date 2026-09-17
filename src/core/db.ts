@@ -281,6 +281,32 @@ const BASELINE_TABLES_SQL = `
         PRIMARY KEY (job_id, workspace_id, user_id)
     );
 
+    -- Live capture of third-party mentions, filled from the Socket Mode stream.
+    --
+    -- The polling scan reads conversations.history, and history NEVER returns
+    -- thread replies. A mention posted inside a thread is therefore invisible to
+    -- it, no matter how often it runs. The event stream already carries every
+    -- such message into this process, so the honest fix is to keep it instead of
+    -- dropping it at the gate and then trying to find it again over HTTP.
+    --
+    -- Rows are claims, not receipts: the tick deletes one only after it has
+    -- decided what to do with that message. A crash before that leaves the row
+    -- for the next tick, which matches the at-least-once guarantee the seen
+    -- ledger already provides.
+    CREATE TABLE IF NOT EXISTS mention_watch_inbox (
+        workspace_id TEXT NOT NULL,
+        subject_id   TEXT NOT NULL,
+        channel_id   TEXT NOT NULL,
+        message_ts   TEXT NOT NULL,
+        thread_ts    TEXT,
+        author_id    TEXT,
+        bot_id       TEXT,
+        subtype      TEXT,
+        text         TEXT NOT NULL,
+        captured_at  INTEGER NOT NULL,
+        PRIMARY KEY (workspace_id, subject_id, channel_id, message_ts)
+    );
+
     -- v1 rows cannot be migrated: nobody recorded WHICH workspace and user they
     -- belonged to, and guessing is exactly the misattribution the v2 key exists
     -- to prevent. Leaving them behind is not free either — a watch that starts
@@ -1084,6 +1110,29 @@ export const upsertMentionWatchRotationV2 = db.prepare(
     + 'VALUES (?, ?, ?, ?, ?) '
     + 'ON CONFLICT(job_id, workspace_id, user_id) DO UPDATE SET '
     + 'last_channel_id = excluded.last_channel_id, updated_at = excluded.updated_at');
+
+// ─── Mention watch inbox: live capture ────────────
+// Reached only through src/slack/mention-watch-inbox.ts. Keyed by subject rather
+// than by job, because two jobs may watch the same person over different channel
+// sets and neither should consume the other's rows for a channel it does not own.
+export const insertMentionWatchInbox = db.prepare(
+    'INSERT OR IGNORE INTO mention_watch_inbox '
+    + '(workspace_id, subject_id, channel_id, message_ts, thread_ts, author_id, bot_id, subtype, text, captured_at) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+/** Oldest first: the mention that has waited longest is answered first, and a
+    maxHits cut then drops the newest rather than starving the backlog. */
+export const listMentionWatchInbox = db.prepare(
+    'SELECT channel_id, message_ts, thread_ts, author_id, bot_id, subtype, text FROM mention_watch_inbox '
+    + 'WHERE workspace_id = ? AND subject_id = ? '
+    + 'ORDER BY CAST(message_ts AS REAL) ASC LIMIT ?');
+export const deleteMentionWatchInbox = db.prepare(
+    'DELETE FROM mention_watch_inbox WHERE workspace_id = ? AND subject_id = ? '
+    + 'AND channel_id = ? AND message_ts = ?');
+/** Age-based, because an undrained row means no job owns that channel any more —
+    a watch was narrowed or disabled — and such a row would otherwise sit there
+    forever being re-read by every tick. */
+export const pruneMentionWatchInbox = db.prepare(
+    'DELETE FROM mention_watch_inbox WHERE captured_at < ?');
 
 // ─── Legacy v1 quarantine ─────────────────────────
 // Reached only through src/memory/legacy-mention-watch-quarantine.ts.

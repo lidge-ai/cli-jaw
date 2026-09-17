@@ -65,6 +65,7 @@ import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
 import { slackInboundEnvelope } from '../messaging/inbound-envelope.js';
 import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, type SlackMessageEvent } from './events.js';
+import { captureMentionWatchInbox } from './mention-watch-inbox.js';
 import {
     markThreadParticipated, threadParticipationKind,
     claimThreadPrefetch, commitThreadPrefetch,
@@ -1330,13 +1331,21 @@ function raceContextDeadline(work: Promise<string>, ms: number): Promise<string>
  * never recorded as delivered.
  */
 export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
-    const journal = getIngressJournal();
-    if (!journal) return 'committed';
     if (envelope.type !== 'events_api') return 'committed';
 
     const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
     const event = payload?.event;
     if (!event?.channel || !event?.ts) return 'committed';
+
+    // BEFORE the gate, and before the journal short-circuit, because this is the
+    // only place a third-party mention is ever seen. The gate is about to drop it
+    // — correctly, since the bot was not addressed — and conversations.history
+    // will never show it again if it lives inside a thread. Capturing here is
+    // what makes a thread reply answerable at all.
+    captureMentionWatchInbox(event);
+
+    const journal = getIngressJournal();
+    if (!journal) return 'committed';
 
     const decision = shouldProcessSlackEvent(event, gateConfig(), envelope.type);
     if (!decision.process) {

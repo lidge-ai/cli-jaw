@@ -62,6 +62,18 @@ test('no conditions: self posts, bot-only, subtypes, and empty text are skipped'
     assert.equal(isMentionWatchCandidate(msg({ text: '' }), base), false);
 });
 
+test('an agent posting as a real user is still a bot, so it is skipped', () => {
+    // A granular-permission app carries BOTH a user id and a bot id. Reading only
+    // the userless shape let agent accounts through, and a watch that answers an
+    // agent answers something that answers back — the 2026-09-17 runaway.
+    const base = { subjects: [SUJI], channelId: CHANNEL };
+    const agent = msg({ text: `<@${SUJI}> 결정할 게 1건 있습니다`, user: 'U0BJUMYBELB', botId: 'B0BK0V44WR0' });
+    assert.equal(isMentionWatchCandidate(agent, base), false);
+    // The human case the watch exists for is untouched.
+    const human = msg({ text: `<@${SUJI}> 이거 봐주세요`, user: OTHER });
+    assert.deepEqual(classify(human), { match: 'mention', subjectId: SUJI });
+});
+
 test('userIds: a tag of the extra subject is a hit; subjectId is that person', () => {
     const hit = classify(msg({ text: `<@${OTHER}> 봐주세요`, user: 'U_AUTHOR' }), {
         subjects: mentionWatchSubjects({ userId: SUJI, userIds: [OTHER] }),

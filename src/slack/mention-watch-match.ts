@@ -93,7 +93,18 @@ function isSkipped(
 ): boolean {
     if (!message.text) return true;
     if (selfUserId && message.user === selfUserId) return true;
-    if (message.botId && !message.user) return true;
+    // Any bot author, not just one posting without a user id.
+    //
+    // An app that installs with granular permissions posts as a real user AND
+    // carries bot_id, so the old `botId && !user` shape let every agent account
+    // through. That is not a cosmetic gap: agents address each other's operators
+    // constantly, so a watch answering them answers a machine that answers back,
+    // and the pair keeps tagging the same person. A runaway thread on
+    // 2026-09-17 is what this line costs when it is wrong.
+    //
+    // Humans never carry bot_id, so this cannot suppress the messages the watch
+    // exists for.
+    if (message.botId) return true;
     if (message.subtype) return true;
     return false;
 }
