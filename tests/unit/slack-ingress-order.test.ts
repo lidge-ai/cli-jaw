@@ -1,6 +1,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { settings } from '../../src/core/config.ts';
+import type { SlackWorkflowMetadata } from '../../src/slack/workflow.ts';
 
 type SubmitMeta = { scope: string; chatSessionId: string; remoteKey?: string; midRunPolicy?: string };
 let disposition: 'new_run' | 'steered' = 'new_run';
@@ -82,6 +83,26 @@ test('different Slack scopes may enter concurrently', async () => {
     assert.deepEqual(entered.sort(), ['one', 'two']);
     release.resolve();
     await Promise.all([first.laneTail, second.laneTail]);
+});
+
+test('parallel workflow lanes isolate both execution scope and prompt-history session', async () => {
+    const workflow: SlackWorkflowMetadata = {
+        skillId: 'example', skillSha256: 'a'.repeat(64), channelId: 'C1',
+        senderUserId: 'U1', senderBotId: 'B1', messageTs: '100.1',
+        threadTs: '100.1', markers: ['EXAMPLE_V1'], parallelLane: true,
+    };
+    const first = admitSlackRun({
+        target: target('C1'), prompt: 'ticket one', displayText: 'ticket one', chatId: 'C1',
+        workflow, preResolvedScope: 'slack:C1:lane:100.1', runReply: async () => {},
+    });
+    const second = admitSlackRun({
+        target: target('C1'), prompt: 'ticket two', displayText: 'ticket two', chatId: 'C1',
+        workflow: { ...workflow, messageTs: '100.2', threadTs: '100.2' },
+        preResolvedScope: 'slack:C1:lane:100.2', runReply: async () => {},
+    });
+    await Promise.all([first.laneTail, second.laneTail]);
+    assert.notEqual(first.sessionContext.scope, second.sessionContext.scope);
+    assert.notEqual(first.sessionContext.chatSessionId, second.sessionContext.chatSessionId);
 });
 
 test('a synthetic top-level reply address forces followup without changing real threads', async () => {

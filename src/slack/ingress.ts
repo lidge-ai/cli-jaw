@@ -238,12 +238,18 @@ export function admitSlackRun(params: {
     const multiSessionEnabled = settings["multiSession"]?.enabled === true;
     const gateEnabled = multiSessionEnabled && channelGateOn('slack');
     const remoteKey = gateEnabled ? buildRemoteBindingKey(params.target) : undefined;
-    const chatSessionId = multiSessionEnabled && !gateEnabled
+    const conversationChatSessionId = multiSessionEnabled && !gateEnabled
         ? 'default'
         : remoteKey ? resolveOrCreateRemoteSession(remoteKey) : getActiveChatSession();
     const scope = params.preResolvedScope !== undefined
         ? params.preResolvedScope ?? 'default'
-        : scopeForChatSession(chatSessionId, remoteKey, gateEnabled);
+        : scopeForChatSession(conversationChatSessionId, remoteKey, gateEnabled);
+    // Parallel workflow lanes also need their own prompt-history session. A
+    // distinct scope alone isolates process admission and native resume, but a
+    // shared chatSessionId still injects sibling tickets as Recent Context.
+    const chatSessionId = params.workflow?.parallelLane === true && params.preResolvedScope
+        ? resolveOrCreateRemoteSession(`workflow-lane:${params.preResolvedScope}`)
+        : conversationChatSessionId;
     const result = submitMessage(params.prompt, {
         ...(params.toolSource ? { ownedExecution: true as const, onAdmitted: (binding: { requestId: string; scope: string; chatSessionId: string }) => { if (!reserveSlackToolGrant(params.toolSource!, binding)) throw new Error('slack_tool_context_unavailable'); } } : {}),
         origin: 'slack', displayText: params.displayText, skipOrchestrate: true,
