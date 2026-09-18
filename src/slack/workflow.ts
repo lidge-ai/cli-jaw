@@ -15,6 +15,8 @@ export type SlackWorkflowMetadata = Readonly<{
     messageTs: string;
     threadTs: string;
     markers: readonly string[];
+    /** True when an admitting rule asks for a run lane per message. */
+    parallelLane?: boolean;
 }>;
 export type SlackWorkflowRoute =
     | { kind: 'none' }
@@ -53,11 +55,13 @@ export function readSlackWorkflowMetadata(value: unknown, target?: RemoteTarget)
             || !row['markers'].every(marker => typeof marker === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(marker))) return undefined;
         if (target && (target.channel !== 'slack' || target.targetId !== row['channelId']
             || (target.threadId && target.threadId !== row['threadTs']))) return undefined;
+        if (Object.hasOwn(row, 'parallelLane') && typeof row['parallelLane'] !== 'boolean') return undefined;
         return Object.freeze({
             skillId: row['skillId'], skillSha256: row['skillSha256'] as string,
             channelId: row['channelId'] as string, senderUserId: row['senderUserId'] as string,
             senderBotId: row['senderBotId'] as string, messageTs: row['messageTs'] as string,
             threadTs: row['threadTs'] as string, markers: Object.freeze([...row['markers']] as string[]),
+            ...(row['parallelLane'] === true ? { parallelLane: true } : {}),
         });
     } catch { return undefined; }
 }
@@ -106,6 +110,7 @@ export async function prepareSlackWorkflow(
         skillId, skillSha256: createHash('sha256').update(skill).digest('hex'),
         channelId: rule.channelId, senderUserId: rule.userId, senderBotId: rule.botId,
         messageTs, threadTs, markers: Object.freeze([...new Set(matches.map(match => match.textMarker))].sort()),
+        ...(matches.some(match => match.parallelLane === true) ? { parallelLane: true } : {}),
     });
     return { kind: 'ready', metadata, skill };
 }

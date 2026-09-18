@@ -101,10 +101,15 @@ export type TrustedBotTrigger = {
     userId: string;
     textMarker: string;
     workflowSkill?: string;
+    /** Give every message this rule admits its own run lane, so a batch of
+     *  workflow tickets posted to one channel runs concurrently instead of
+     *  queueing behind the conversation's single lane. Off by default: an
+     *  ordinary conversation must keep one lane so replies stay ordered. */
+    parallelLane?: boolean;
 };
 
 const TRUSTED_TRIGGER_KEYS = ['channelId', 'botId', 'userId', 'textMarker'] as const;
-const TRUSTED_TRIGGER_ALLOWED_KEYS = new Set<string>([...TRUSTED_TRIGGER_KEYS, 'workflowSkill']);
+const TRUSTED_TRIGGER_ALLOWED_KEYS = new Set<string>([...TRUSTED_TRIGGER_KEYS, 'workflowSkill', 'parallelLane']);
 const TRUSTED_TRIGGER_PATTERNS: Record<(typeof TRUSTED_TRIGGER_KEYS)[number], RegExp> = {
     channelId: /^[CG][A-Z0-9]{2,}$/,
     botId: /^B[A-Z0-9]{2,}$/,
@@ -144,12 +149,22 @@ export function readTrustedBotTriggers(value: unknown): TrustedBotTrigger[] {
             }
             workflowSkill = field;
         }
+        let parallelLane: boolean | undefined;
+        if (Object.hasOwn(row, 'parallelLane')) {
+            const field = row['parallelLane'];
+            if (typeof field !== 'boolean') return [];
+            // A lane per message only makes sense for workflow turns; a plain
+            // trigger without a skill keeps conversation ordering.
+            if (field && workflowSkill === undefined) return [];
+            parallelLane = field;
+        }
         rules.push({
             channelId: row['channelId'] as string,
             botId: row['botId'] as string,
             userId: row['userId'] as string,
             textMarker: row['textMarker'] as string,
             ...(workflowSkill !== undefined ? { workflowSkill } : {}),
+            ...(parallelLane !== undefined ? { parallelLane } : {}),
         });
     }
     return rules;

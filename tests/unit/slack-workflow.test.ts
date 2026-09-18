@@ -70,3 +70,17 @@ test('restored source metadata is scoped, and silent control is unconfirmed rath
     assert.equal(isWorkflowReplyUnconfirmed('Job receipt: example', {}), false);
     assert.equal(workflowDiagnosticText('Reason\n[SILENT]', 'Unconfirmed'), 'Unconfirmed\n\nReason');
 });
+
+test('a lane request survives capture, restore and rejection of a forged flag', async t => {
+    const f = await fixture(t); await writeFile(f.file, '# Example');
+    const laned = { ...config, trustedBotTriggers: [{ ...rule, parallelLane: true }] };
+    const prepared = await prepareSlackWorkflow(event, laned, f.skills);
+    if (prepared.kind !== 'ready') throw new Error('route missing');
+    assert.equal(prepared.metadata.parallelLane, true);
+    assert.deepEqual(readSlackWorkflowMetadata(JSON.parse(JSON.stringify(prepared.metadata))), prepared.metadata);
+    assert.equal(readSlackWorkflowMetadata({ ...prepared.metadata, parallelLane: 'true' }), undefined);
+    const plain = await prepareSlackWorkflow(event, config, f.skills);
+    if (plain.kind !== 'ready') throw new Error('route missing');
+    assert.equal('parallelLane' in plain.metadata, false);
+});
+

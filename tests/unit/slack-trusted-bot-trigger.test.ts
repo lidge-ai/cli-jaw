@@ -155,3 +155,13 @@ test('an invalid list is distinguishable from an absent one', () => {
     assert.deepEqual(readTrustedBotTriggers(undefined), []);
     assert.equal(readTrustedBotTriggers([RULE]).length, 1);
 });
+
+test('a workflow rule may ask for a lane per message; a plain rule may not', () => {
+    const workflowRule = { ...RULE, workflowSkill: 'hellobot-marketing-video-ima2', parallelLane: true };
+    assert.deepEqual(readTrustedBotTriggers([workflowRule]), [workflowRule]);
+    assert.deepEqual(readTrustedBotTriggers([{ ...workflowRule, parallelLane: false }]), [{ ...workflowRule, parallelLane: false }]);
+    // Without a workflow skill there is no ticket to isolate; the conversation keeps one lane.
+    assert.deepEqual(readTrustedBotTriggers([{ ...RULE, parallelLane: true }]), []);
+    assert.deepEqual(readTrustedBotTriggers([{ ...workflowRule, parallelLane: 'yes' }]), []);
+});
+

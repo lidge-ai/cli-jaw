@@ -24,6 +24,7 @@ import {
 } from '../messaging/runtime.js';
 import { slackTargetFromId, resolveSlackThreadPlacement } from '../messaging/slack-target.js';
 import { isRemoteTarget, type RemoteTarget } from '../messaging/types.js';
+import { buildRemoteBindingKey } from '../messaging/session-key.js';
 import { matchesRunPin } from '../messaging/run-pin.js';
 import { sessionLanes } from '../orchestrator/session-lanes.js';
 import { createSlackReplyDeliveryLedger } from './reply-delivery.js';
@@ -1179,6 +1180,17 @@ async function runSlackMessageEvent(
         prompt = renderSlackWorkflow(workflow, prompt);
         log.info('[slack:workflow] routed', workflow.metadata);
     }
+    // A trigger rule with `parallelLane` gives this one message its own run
+    // lane: a batch of workflow tickets posted to one channel then runs
+    // concurrently (bounded by multiSession.maxConcurrent) instead of queueing
+    // behind the conversation's single lane. Nothing else changes — the reply
+    // target, chat session and delivery keys are untouched, and every message
+    // outside this rule keeps the conversation lane it has today.
+    const laneScope = workflow.kind === 'ready' && workflow.metadata.parallelLane === true
+        && opts.preResolvedScope === undefined && settings["multiSession"]?.enabled === true
+        ? `${buildRemoteBindingKey(target)}:lane:${workflow.metadata.messageTs}`
+        : undefined;
+    if (laneScope) log.info('[slack:workflow] lane', { scope: laneScope });
     const sourceToken = getSlackSendClient().token;
     const workspace = sourceToken && opts.socketTeamId ? await verifiedSlackWorkspace(sourceToken).catch(() => null) : null;
     if (signal.aborted) return;
@@ -1191,7 +1203,8 @@ async function runSlackMessageEvent(
         ...(opts.eventKey ? { eventKey: opts.eventKey } : {}),
         ...(opts.reservationGeneration !== undefined
             ? { reservationGeneration: opts.reservationGeneration } : {}),
-        ...(opts.preResolvedScope !== undefined ? { preResolvedScope: opts.preResolvedScope } : {}),
+        ...(laneScope !== undefined ? { preResolvedScope: laneScope }
+            : opts.preResolvedScope !== undefined ? { preResolvedScope: opts.preResolvedScope } : {}),
         // The ACK anchor is the user's own message. Only this caller has the raw
         // event, so the scope inputs are resolved here rather than re-derived.
         ...(event.ts ? { ackTs: event.ts } : {}),
