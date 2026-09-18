@@ -17,6 +17,9 @@ export type SlackWorkflowMetadata = Readonly<{
     markers: readonly string[];
     /** True when an admitting rule asks for a run lane per message. */
     parallelLane?: boolean;
+    runtimeCli?: "codex" | "claude" | "cursor" | "grok" | "opencode";
+    runtimeModel?: string;
+    runtimeEffort?: "low" | "medium" | "high" | "xhigh";
 }>;
 export type SlackWorkflowRoute =
     | { kind: 'none' }
@@ -56,12 +59,18 @@ export function readSlackWorkflowMetadata(value: unknown, target?: RemoteTarget)
         if (target && (target.channel !== 'slack' || target.targetId !== row['channelId']
             || (target.threadId && target.threadId !== row['threadTs']))) return undefined;
         if (Object.hasOwn(row, 'parallelLane') && typeof row['parallelLane'] !== 'boolean') return undefined;
+        if (Object.hasOwn(row, 'runtimeCli') && !['codex', 'claude', 'cursor', 'grok', 'opencode'].includes(String(row['runtimeCli']))) return undefined;
+        if (Object.hasOwn(row, 'runtimeModel') && (typeof row['runtimeModel'] !== 'string' || !/^[A-Za-z0-9._:/-]{1,128}$/.test(row['runtimeModel']))) return undefined;
+        if (Object.hasOwn(row, 'runtimeEffort') && !['low', 'medium', 'high', 'xhigh'].includes(String(row['runtimeEffort']))) return undefined;
         return Object.freeze({
             skillId: row['skillId'], skillSha256: row['skillSha256'] as string,
             channelId: row['channelId'] as string, senderUserId: row['senderUserId'] as string,
             senderBotId: row['senderBotId'] as string, messageTs: row['messageTs'] as string,
             threadTs: row['threadTs'] as string, markers: Object.freeze([...row['markers']] as string[]),
             ...(row['parallelLane'] === true ? { parallelLane: true } : {}),
+            ...(row['runtimeCli'] !== undefined ? { runtimeCli: row['runtimeCli'] as NonNullable<SlackWorkflowMetadata['runtimeCli']> } : {}),
+            ...(row['runtimeModel'] !== undefined ? { runtimeModel: row['runtimeModel'] as string } : {}),
+            ...(row['runtimeEffort'] !== undefined ? { runtimeEffort: row['runtimeEffort'] as NonNullable<SlackWorkflowMetadata['runtimeEffort']> } : {}),
         });
     } catch { return undefined; }
 }
@@ -111,6 +120,9 @@ export async function prepareSlackWorkflow(
         channelId: rule.channelId, senderUserId: rule.userId, senderBotId: rule.botId,
         messageTs, threadTs, markers: Object.freeze([...new Set(matches.map(match => match.textMarker))].sort()),
         ...(matches.some(match => match.parallelLane === true) ? { parallelLane: true } : {}),
+        ...(rule.workflowCli ? { runtimeCli: rule.workflowCli } : {}),
+        ...(rule.workflowModel ? { runtimeModel: rule.workflowModel } : {}),
+        ...(rule.workflowEffort ? { runtimeEffort: rule.workflowEffort } : {}),
     });
     return { kind: 'ready', metadata, skill };
 }

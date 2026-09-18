@@ -61,7 +61,7 @@ type SubmitMeta = {
     scope?: string;
     chatSessionId?: string;
     remoteKey?: string;
-    overrides?: { model?: string; systemPrompt?: string };
+    overrides?: { cli?: string; model?: string; effort?: string; systemPrompt?: string };
     replyViaTarget?: boolean;
     external?: boolean;
     midRunPolicy?: ActiveRunPolicy;
@@ -274,7 +274,8 @@ export function submitMessage(
 
     // Reject before recording input, steering, interrupting or enqueueing. The
     // synchronous response must not advertise a rejected admission as steered.
-    const admissionCli = resolveMainCli(null, settings, getSession() as MainSessionRecord | undefined);
+    const admissionCli = meta.overrides?.cli
+        ?? resolveMainCli(null, settings, getSession() as MainSessionRecord | undefined);
     if (isRetiredCliSelection(admissionCli)) {
         const diagnostic = retiredRuntimeDiagnostic(admissionCli);
         settleOnce(requestId, 'failed', { error: diagnostic, scope, sessionId: chatSessionId });

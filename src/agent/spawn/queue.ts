@@ -23,7 +23,7 @@ type QueueItem = {
     target?: RemoteTarget;
     chatId?: string | number;
     requestId?: string;
-    overrides?: { model?: string; systemPrompt?: string };   // P4 per-topic override, carried through the queue
+    overrides?: { cli?: string; model?: string; effort?: string; systemPrompt?: string };   // P4 per-topic override, carried through the queue
     replyViaTarget?: boolean;
     collect?: boolean;
     priority?: 'head';
@@ -38,7 +38,7 @@ type QueueMessageMeta = {
     scope?: string;
     chatSessionId?: string;
     remoteKey?: string;
-    overrides?: { model?: string; systemPrompt?: string };
+    overrides?: { cli?: string; model?: string; effort?: string; systemPrompt?: string };
     replyViaTarget?: boolean;
     collect?: boolean;
     front?: boolean;

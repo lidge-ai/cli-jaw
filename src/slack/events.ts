@@ -101,6 +101,10 @@ export type TrustedBotTrigger = {
     userId: string;
     textMarker: string;
     workflowSkill?: string;
+    /** Runtime override applies only to the selected trusted workflow turn. */
+    workflowCli?: "codex" | "claude" | "cursor" | "grok" | "opencode";
+    workflowModel?: string;
+    workflowEffort?: "low" | "medium" | "high" | "xhigh";
     /** Give every message this rule admits its own run lane, so a batch of
      *  workflow tickets posted to one channel runs concurrently instead of
      *  queueing behind the conversation's single lane. Off by default: an
@@ -109,7 +113,10 @@ export type TrustedBotTrigger = {
 };
 
 const TRUSTED_TRIGGER_KEYS = ['channelId', 'botId', 'userId', 'textMarker'] as const;
-const TRUSTED_TRIGGER_ALLOWED_KEYS = new Set<string>([...TRUSTED_TRIGGER_KEYS, 'workflowSkill', 'parallelLane']);
+const TRUSTED_TRIGGER_ALLOWED_KEYS = new Set<string>([
+    ...TRUSTED_TRIGGER_KEYS, 'workflowSkill', 'parallelLane',
+    'workflowCli', 'workflowModel', 'workflowEffort',
+]);
 const TRUSTED_TRIGGER_PATTERNS: Record<(typeof TRUSTED_TRIGGER_KEYS)[number], RegExp> = {
     channelId: /^[CG][A-Z0-9]{2,}$/,
     botId: /^B[A-Z0-9]{2,}$/,
@@ -158,6 +165,13 @@ export function readTrustedBotTriggers(value: unknown): TrustedBotTrigger[] {
             if (field && workflowSkill === undefined) return [];
             parallelLane = field;
         }
+        const workflowCli = row['workflowCli'];
+        const workflowModel = row['workflowModel'];
+        const workflowEffort = row['workflowEffort'];
+        if (workflowCli !== undefined && !['codex', 'claude', 'cursor', 'grok', 'opencode'].includes(String(workflowCli))) return [];
+        if (workflowModel !== undefined && (typeof workflowModel !== 'string' || !/^[A-Za-z0-9._:/-]{1,128}$/.test(workflowModel))) return [];
+        if (workflowEffort !== undefined && !['low', 'medium', 'high', 'xhigh'].includes(String(workflowEffort))) return [];
+        if ((workflowCli !== undefined || workflowModel !== undefined || workflowEffort !== undefined) && workflowSkill === undefined) return [];
         rules.push({
             channelId: row['channelId'] as string,
             botId: row['botId'] as string,
@@ -165,6 +179,9 @@ export function readTrustedBotTriggers(value: unknown): TrustedBotTrigger[] {
             textMarker: row['textMarker'] as string,
             ...(workflowSkill !== undefined ? { workflowSkill } : {}),
             ...(parallelLane !== undefined ? { parallelLane } : {}),
+            ...(workflowCli !== undefined ? { workflowCli: workflowCli as NonNullable<TrustedBotTrigger['workflowCli']> } : {}),
+            ...(workflowModel !== undefined ? { workflowModel } : {}),
+            ...(workflowEffort !== undefined ? { workflowEffort: workflowEffort as NonNullable<TrustedBotTrigger['workflowEffort']> } : {}),
         });
     }
     return rules;

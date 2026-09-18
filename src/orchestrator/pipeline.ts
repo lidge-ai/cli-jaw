@@ -517,7 +517,7 @@ export async function orchestrate(
     // P4 per-topic config: apply a transient per-request model/systemPrompt override
     // (from a hub ThreadRoute) via the existing SpawnOpts.model/sysPrompt — no session
     // persistence, so it affects only this request's agent run.
-    const overrides = meta["overrides"] as { model?: string; systemPrompt?: string } | undefined;
+    const overrides = meta["overrides"] as { cli?: string; model?: string; effort?: string; systemPrompt?: string } | undefined;
     const lifecycle = runtimeActivityLifecycle(meta);
     const spawn = () => runSpawnAgent(prompt, {
         origin,
@@ -537,6 +537,8 @@ export async function orchestrate(
             ? { steerContext: meta["_steerContext"] as string }
             : {}),
         ...(overrides?.model ? { model: overrides.model } : {}),
+        ...(overrides?.cli ? { cli: overrides.cli } : {}),
+        ...(overrides?.effort ? { effort: overrides.effort } : {}),
         ...(overrides?.systemPrompt ? { sysPrompt: overrides.systemPrompt } : {}),
     });
     const { promise } = withSessionScope({ scope, chatSessionId }, spawn);

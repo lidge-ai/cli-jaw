@@ -248,6 +248,12 @@ export function admitSlackRun(params: {
         ...(params.toolSource ? { ownedExecution: true as const, onAdmitted: (binding: { requestId: string; scope: string; chatSessionId: string }) => { if (!reserveSlackToolGrant(params.toolSource!, binding)) throw new Error('slack_tool_context_unavailable'); } } : {}),
         origin: 'slack', displayText: params.displayText, skipOrchestrate: true,
         ...(params.workflow ? { slackWorkflow: params.workflow } : {}),
+        ...(params.workflow?.runtimeCli || params.workflow?.runtimeModel || params.workflow?.runtimeEffort
+            ? { overrides: {
+                ...(params.workflow.runtimeCli ? { cli: params.workflow.runtimeCli } : {}),
+                ...(params.workflow.runtimeModel ? { model: params.workflow.runtimeModel } : {}),
+                ...(params.workflow.runtimeEffort ? { effort: params.workflow.runtimeEffort } : {}),
+            } } : {}),
         target: params.target, chatId: params.chatId,
         // A tool turn keeps the default steer policy: its grant is reserved at
         // admission (gateway onAdmitted) under the same requestId the kill-steer

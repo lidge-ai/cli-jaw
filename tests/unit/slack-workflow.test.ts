@@ -84,3 +84,16 @@ test('a lane request survives capture, restore and rejection of a forged flag', 
     assert.equal('parallelLane' in plain.metadata, false);
 });
 
+test('a trusted workflow runtime override survives capture and private metadata restore', async t => {
+    const f = await fixture(t); await writeFile(f.file, '# Example');
+    const routed = { ...config, trustedBotTriggers: [{ ...rule,
+        workflowCli: 'codex' as const, workflowModel: 'gpt-5.6-luna', workflowEffort: 'xhigh' as const }] };
+    const prepared = await prepareSlackWorkflow(event, routed, f.skills);
+    if (prepared.kind !== 'ready') throw new Error('route missing');
+    assert.deepEqual(prepared.metadata, {
+        ...prepared.metadata,
+        runtimeCli: 'codex', runtimeModel: 'gpt-5.6-luna', runtimeEffort: 'xhigh',
+    });
+    assert.deepEqual(readSlackWorkflowMetadata(JSON.parse(JSON.stringify(prepared.metadata))), prepared.metadata);
+    assert.equal(readSlackWorkflowMetadata({ ...prepared.metadata, runtimeEffort: 'unbounded' }), undefined);
+});

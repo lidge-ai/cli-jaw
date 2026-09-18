@@ -196,6 +196,16 @@ test('enabled workflow reaches real gateway and collector with captured skill, o
     assert.equal(bodies().length, 1);
 });
 
+test('operator-configured workflow runtime reaches only that admitted request', async context => {
+    settings['slack'].trustedBotTriggers = [{ ...RULE,
+        workflowCli: 'codex', workflowModel: 'gpt-5.6-luna', workflowEffort: 'xhigh' }];
+    await run();
+    await until(context, () => admissions.length === 1);
+    assert.deepEqual(admissions[0]!.meta['overrides'], {
+        cli: 'codex', model: 'gpt-5.6-luna', effort: 'xhigh',
+    });
+});
+
 for (const kind of ['disabled', 'ambiguous'] as const) test(`${kind} skill blocks before gateway or model admission`, async () => {
     settings['slack'].trustedBotTriggers = kind === 'disabled'
         ? [{ ...RULE, workflowSkill: 'example-disabled' }]
