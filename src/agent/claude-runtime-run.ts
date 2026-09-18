@@ -94,6 +94,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         traceRunId, sessionId: ctx.sessionId, cost: ctx.cost, tools: ctx.toolLog });
     const diagnostic = () => facade?.lastError === 'claude_background_tasks_unsupported'
         ? 'Claude native supports foreground tasks only. Set run_in_background:false.'
+        : facade?.lastError === 'claude_sdk_frame_malformed'
+            ? 'Claude completed tool activity but returned an SDK frame cli-jaw could not parse. Existing delivered files may still be valid; inspect the run trace instead of changing model or login.'
         : 'Claude native runtime failed. Check the selected model, permissions and existing CLI login.';
     const ensureFallbackStarted = () => {
         if (started || ended || fallbackProjection) return;

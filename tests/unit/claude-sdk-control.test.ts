@@ -96,6 +96,14 @@ test('terminal committed before Stop remains done while falsy close failure reje
     assert.equal((await turn).status, 'done');
     await assert.rejects(f.session.close(), /claude_close_failed/); assert.equal(f.closed, 1);
 });
+test('malformed SDK frames retain a specific safe failure code', async () => {
+    const f = await sessionFixture('malformed');
+    const turn = f.session.send({ text: 'a' }, () => {});
+    f.push({ type: 'result', subtype: 'success', is_error: false, result: 'done', usage: { input_tokens: -1 } });
+    assert.equal((await turn).status, 'error');
+    assert.equal(f.session.lastError, 'claude_sdk_frame_malformed');
+    await f.session.close();
+});
 test('already-aborted acquisition never creates a query', async () => {
     const signal = AbortSignal.abort(); let factories = 0;
     await assert.rejects(createClaudeSdkSession({ signal,

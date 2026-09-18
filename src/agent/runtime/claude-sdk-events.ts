@@ -92,12 +92,15 @@ export class ClaudeSdkEvents {
     }
 
     private usage(raw: unknown): void {
-        if (raw === undefined) return;
+        // The SDK may omit usage or emit null for an unavailable snapshot/field.
+        // Usage is diagnostic metadata, so absence must not turn an otherwise
+        // completed tool workflow into a failed turn.
+        if (raw === undefined || raw === null) return;
         const usage = object(raw), tokens: Record<string, number> = {};
         for (const [wire, field] of [['input_tokens', 'input_tokens'], ['output_tokens', 'output_tokens'],
             ['cache_read_input_tokens', 'cached_input_tokens']] as const) {
             const value = usage[wire];
-            if (value === undefined) continue;
+            if (value === undefined || value === null) continue;
             if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) malformed();
             tokens[field] = value;
         }

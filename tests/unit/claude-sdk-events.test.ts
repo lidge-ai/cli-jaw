@@ -350,8 +350,9 @@ test('result usage is a single validated snapshot, with cache reads separate fro
     assert.ok(h.events.findIndex(e => e.kind === 'usage') < h.events.findIndex(e => e.kind === 'turn-end'));
 });
 
-test('absent or unknown usage never manufactures token counts', () => {
-    for (const usage of [undefined, {}, { cache_creation_input_tokens: 40 }]) {
+test('absent, null or unknown usage never manufactures token counts', () => {
+    for (const usage of [undefined, null, {}, { input_tokens: null, output_tokens: null, cache_read_input_tokens: null },
+        { cache_creation_input_tokens: 40 }]) {
         const h = harness(); h.mapper.accept({ ...result(), usage });
         assert.equal(h.events.filter(e => e.kind === 'usage').length, 0);
     }

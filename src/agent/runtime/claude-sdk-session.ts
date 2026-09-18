@@ -339,7 +339,13 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
                 }
             }
             if (!this.closing) this.fail('claude_eof');
-        } catch { if (!this.closing) this.fail('claude_reader_failed'); }
+        } catch (error) {
+            if (!this.closing) this.fail(
+                error instanceof Error && error.message === 'Malformed Claude SDK frame'
+                    ? 'claude_sdk_frame_malformed'
+                    : 'claude_reader_failed',
+            );
+        }
         finally { this.input.close(); }
     }
     private accept(raw: Record<string, unknown>, turn: Turn): void {
