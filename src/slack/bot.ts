@@ -1186,8 +1186,10 @@ async function runSlackMessageEvent(
     // behind the conversation's single lane. Nothing else changes — the reply
     // target, chat session and delivery keys are untouched, and every message
     // outside this rule keeps the conversation lane it has today.
+    // The caller always pre-resolves the conversation scope; a lane request
+    // replaces that resolution for this one message.
     const laneScope = workflow.kind === 'ready' && workflow.metadata.parallelLane === true
-        && opts.preResolvedScope === undefined && settings["multiSession"]?.enabled === true
+        && settings["multiSession"]?.enabled === true
         ? `${buildRemoteBindingKey(target)}:lane:${workflow.metadata.messageTs}`
         : undefined;
     if (laneScope) log.info('[slack:workflow] lane', { scope: laneScope });
