@@ -864,6 +864,12 @@ async function slackOrchestrate(
                     () => orchestrateAndCollectData(prompt, {
                         origin: 'slack', target, chatId, requestId: ctx.requestId,
                         ...(dedupe.workflow ? { slackWorkflow: dedupe.workflow } : {}),
+                        ...(dedupe.workflow?.runtimeCli || dedupe.workflow?.runtimeModel || dedupe.workflow?.runtimeEffort
+                            ? { overrides: {
+                                ...(dedupe.workflow.runtimeCli ? { cli: dedupe.workflow.runtimeCli } : {}),
+                                ...(dedupe.workflow.runtimeModel ? { model: dedupe.workflow.runtimeModel } : {}),
+                                ...(dedupe.workflow.runtimeEffort ? { effort: dedupe.workflow.runtimeEffort } : {}),
+                            } } : {}),
                         ...(dedupe.toolSource ? { _strictRequestOwnership: true } : {}),
                         ...(ctx.remoteKey ? { remoteKey: ctx.remoteKey } : {}),
                         chatSessionId: ctx.chatSessionId, scope: ctx.scope, _skipInsert: true,

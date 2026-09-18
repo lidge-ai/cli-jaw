@@ -204,6 +204,9 @@ test('operator-configured workflow runtime reaches only that admitted request', 
     assert.deepEqual(admissions[0]!.meta['overrides'], {
         cli: 'codex', model: 'gpt-5.6-luna', effort: 'xhigh',
     });
+    assert.deepEqual(collections[0]!.meta['overrides'], {
+        cli: 'codex', model: 'gpt-5.6-luna', effort: 'xhigh',
+    });
 });
 
 for (const kind of ['disabled', 'ambiguous'] as const) test(`${kind} skill blocks before gateway or model admission`, async () => {
