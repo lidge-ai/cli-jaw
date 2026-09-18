@@ -1171,7 +1171,13 @@ async function runSlackMessageEvent(
     // continuation, so control text travels undecorated. Reset is already
     // intercepted upstream and never reaches here.
     if (workflow.kind === 'ready' || !isContinueIntent(prompt)) {
-        const block = await buildInboundContextBlock(event, identity, signal, opts, commitPrefetch);
+        // A configured workflow ticket is self-contained. Injecting recent
+        // top-level channel history puts sibling tickets into the same prompt,
+        // which can make one lane execute other experiments and collide with
+        // their owners. Ordinary human/chat turns keep their existing context.
+        const block = workflow.kind === 'ready'
+            ? ''
+            : await buildInboundContextBlock(event, identity, signal, opts, commitPrefetch);
         // An empty block lands EXACTLY on the previous behavior: config off and
         // total lookup failure must be indistinguishable from before this
         // feature existed.
