@@ -147,6 +147,8 @@
     "sidecar:bundle": "bash scripts/bundle-sidecar.sh darwin arm64",
     "electron:dist:mac": "npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons",
     "electron:resign:mac": "codesign --force --deep --sign - electron/dist/mac-arm64/cli-jaw.app",
+    "electron:dist:mac:signed": "npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && npm --prefix electron run dist:mac -- --config.mac.notarize=true && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons && npm run verify:mac-signature",
+    "verify:mac-signature": "node scripts/verify-mac-signature.mjs electron/dist/mac-arm64/cli-jaw.app",
     "electron:start": "npm --prefix electron run start",
     "check:cli-bin-links": "node scripts/check-cli-bin-links.cjs",
     "check:electron-sidecar-no-jwc": "node scripts/check-electron-sidecar-no-jwc.cjs",
