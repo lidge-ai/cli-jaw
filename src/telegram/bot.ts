@@ -95,6 +95,7 @@ import { sendWithRetryPolicy } from '../messaging/retry.js';
 import { deliveryFailed, deliverySent, type TransportSendResult } from '../messaging/delivery-outcome.js';
 import { handleApprovalCommand, handleApprovalCallback, registerProductionTransport, type DispatchApprovalTransport } from '../core/dispatch-approval-ingress.js';
 import { parseApprovalCallbackData } from '../messaging/approval-presentation.js';
+import { answerCallbackQueryBestEffort } from './callback-query.js';
 
 // ─── State ───────────────────────────────────────────
 
@@ -748,7 +749,7 @@ async function _initTelegramInner(): Promise<TransportStartOutcome> {
 
     // Inline-keyboard elicitation answers (single_select fences → buttons).
     bot.callbackQuery(/^(appr|aprd):/, async (ctx) => {
-        await ctx.answerCallbackQuery();
+        await answerCallbackQueryBestEffort(() => ctx.answerCallbackQuery());
         const data = ctx.callbackQuery.data ?? '';
         const parsed = parseApprovalCallbackData(data);
         const chatId = ctx.chat?.id !== undefined ? String(ctx.chat.id) : '';
@@ -767,13 +768,16 @@ async function _initTelegramInner(): Promise<TransportStartOutcome> {
 
     bot.callbackQuery(/^elic:/, async (ctx) => {
         const cbChatId = ctx.chat?.id;
-        if (!cbChatId) { await ctx.answerCallbackQuery(); return; }
-        const result = handleElicitationCallback(String(cbChatId), ctx.callbackQuery.data ?? '');
-        if (result.kind === 'stale') {
-            await ctx.answerCallbackQuery({ text: t('tg.elicitationExpired', {}, currentLocale()) });
+        if (!cbChatId) {
+            await answerCallbackQueryBestEffort(() => ctx.answerCallbackQuery());
             return;
         }
-        await ctx.answerCallbackQuery({ text: redactOutboundText(result.ack) });
+        const result = handleElicitationCallback(String(cbChatId), ctx.callbackQuery.data ?? '');
+        if (result.kind === 'stale') {
+            await answerCallbackQueryBestEffort(() => ctx.answerCallbackQuery({ text: t('tg.elicitationExpired', {}, currentLocale()) }));
+            return;
+        }
+        await answerCallbackQueryBestEffort(() => ctx.answerCallbackQuery({ text: redactOutboundText(result.ack) }));
         // Best-effort: freeze the tapped question's keyboard so the choice reads as taken.
         await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => { });
         if (result.kind === 'complete') {
