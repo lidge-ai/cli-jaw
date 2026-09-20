@@ -5,5 +5,22 @@
 <dict>
   <key>com.apple.security.automation.apple-events</key>
   <true/>
+  <!-- Electron's V8 JIT is refused outright under Hardened Runtime without these. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!--
+    node-pty and better-sqlite3 ship as unpacked .node binaries loaded at
+    runtime. Library validation would reject them because they are not signed
+    with the same Team ID as the host process at load time.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- The bundled sidecar server listens locally and calls out to providers. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
 </dict>
 </plist>
