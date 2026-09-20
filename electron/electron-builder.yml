@@ -6,6 +6,10 @@ directories:
 files:
   - out/**/*
   - package.json
+# Runs before electron-builder signs the bundle. extraResources (the sidecar
+# server tree) is never walked by its signing pass, so those Mach-O binaries
+# have to be signed here or notarization rejects the upload.
+afterPack: build/sign-extra-binaries.mjs
 afterSign: build/after-sign.mjs
 asar: true
 asarUnpack:
