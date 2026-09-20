@@ -14,7 +14,7 @@
  * The release script asserts the end state here instead of trusting the exit
  * code of the step that produced it.
  */
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -25,17 +25,20 @@ if (!existsSync(appPath)) {
   fail(`No app bundle at ${appPath}. Did the build step run?`);
 }
 
-/** Run a command and return stdout+stderr regardless of exit status. */
+/**
+ * Run a command and return stdout AND stderr regardless of exit status.
+ *
+ * codesign and spctl write their reports to stderr and exit 0. Reading only
+ * stdout on the success path makes every check see an empty string, which then
+ * reads as "no Authority, no timestamp, no hardened runtime" -- a fully signed,
+ * notarized, stapled bundle gets reported as unsigned. Capture both streams on
+ * both paths.
+ */
 function probe(cmd, args) {
-  try {
-    const stdout = execFileSync(cmd, args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { ok: true, text: `${stdout}` };
-  } catch (error) {
-    return { ok: false, text: `${error.stdout ?? ''}${error.stderr ?? ''}` };
-  }
+  const result = spawnSync(cmd, args, { encoding: 'utf8' });
+  const text = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  if (result.error) return { ok: false, text: `${text}${result.error.message}` };
+  return { ok: result.status === 0, text };
 }
 
 function fail(message) {
