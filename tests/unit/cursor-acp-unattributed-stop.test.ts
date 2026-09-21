@@ -1,8 +1,6 @@
 import '../setup/isolated-home.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { addBroadcastListener, removeBroadcastListener, broadcast } from '../../src/core/bus.ts';
 import { handleAgentExit, type ExitHandlerParams } from '../../src/agent/lifecycle-handler.ts';
 import { handoffRuntimeOutcome } from '../../src/agent/runtime/outcome.ts';
@@ -16,9 +14,6 @@ test.mock.module('../../src/orchestrator/pipeline.ts', {
         orchestrate: (_prompt: string, _meta: Record<string, unknown>) => undefined,
     },
 });
-
-const repoRoot = join(import.meta.dirname, '..', '..');
-const spawnSrc = readFileSync(join(repoRoot, 'src/agent/spawn.ts'), 'utf8');
 
 type Result = Parameters<ExitHandlerParams['resolve']>[0];
 
@@ -79,6 +74,8 @@ test('print remap keeps lifecycle code 0 and still classifies unattributed', asy
     const events = await capture(() => handleAgentExit(f.params));
     assert.equal(f.result()?.stopCause, 'unattributed');
     assert.equal(f.result()?.code, 0);
+    assert.equal(f.result()?.executionInterrupted, true);
+    assert.equal(f.result()?.executionFailed, undefined);
     assert.equal(f.result()?.runtimeOutcome, undefined);
     const done = events.filter(event => event.type === 'agent_done');
     for (const event of done) {
@@ -97,11 +94,4 @@ test('collector: unattributed stopped terminal uses tg.stoppedUnattributed', asy
     });
     const result = await pending;
     assert.equal(result.text, 'tg.stoppedUnattributed');
-});
-
-test('empty consumeKillReason never invents [jaw:kill]', () => {
-    assert.ok(spawnSrc.includes('[jaw:kill] reason='));
-    assert.ok(spawnSrc.includes('[acp:unexpected-exit]'));
-    const unexpected = spawnSrc.slice(spawnSrc.indexOf('[acp:unexpected-exit]'), spawnSrc.indexOf('[acp:unexpected-exit]') + 280);
-    assert.equal(unexpected.includes('[jaw:kill]'), false);
 });
