@@ -20,7 +20,7 @@ import {
 } from '../messaging/channel-validate.js';
 
 export type SlackScopeStatus = {
-    /** False only when a check actually ran and found a gap. */
+    /** False only when a check actually ran and found a **required** gap. */
     ok: boolean;
     /**
      * True when no `x-oauth-scopes` has ever been observed, so the answer is
@@ -69,7 +69,7 @@ export function recordSlackScopeObservation(
     const missingRequired = missingSlackScopes(granted);
     const missingCapabilities = missingSlackCapabilityScopes(granted);
     current = {
-        ok: missingRequired.length === 0 && missingCapabilities.length === 0,
+        ok: missingRequired.length === 0,
         unknown: false,
         missingRequired,
         missingCapabilities,

@@ -174,13 +174,17 @@ test('a valid but unhandled envelope type is still acked', async () => {
     h.client.stop();
 });
 
-test('a failed ack skips dispatch so Slack can retry', async () => {
+test('a failed ack leaves the envelope eligible for one retry dispatch', async () => {
     // Acking is what tells Slack the delivery landed. If the ack itself fails
     // the delivery WILL be retried, so running the agent now would duplicate
     // that work.
     const handled: SlackEnvelope[] = [];
-    const listeners = new Map<string, (event: unknown) => void>();
-    let sendShouldFail = false;
+    const sockets: Array<Map<string, (event: unknown) => void>> = [];
+    const reconnected = Promise.withResolvers<Map<string, (event: unknown) => void>>();
+    const preflightEntered = Promise.withResolvers<void>();
+    const firstPreflight = Promise.withResolvers<'committed'>();
+    let preflightCalls = 0;
+    let ackAttempts = 0;
     const fetchImpl = (async () => ({
         ok: true, status: 200,
         text: async () => JSON.stringify({ ok: true, url: 'wss://example.invalid/link' }),
@@ -190,26 +194,124 @@ test('a failed ack skips dispatch so Slack can retry', async () => {
     const client = new SlackSocketClient({
         appToken: 'xapp-test',
         fetchImpl,
-        baseReconnectDelayMs: 50_000, // keep the retry out of this test's way
-        socketFactory: () => ({
-            send: () => { if (sendShouldFail) throw new Error('socket closing'); },
-            close: () => { /* no-op */ },
-            addEventListener: (type, listener) => { listeners.set(type, listener); },
-        }),
+        baseReconnectDelayMs: 0,
+        maxReconnectAttempts: 2,
+        socketFactory: () => {
+            const listeners = new Map<string, (event: unknown) => void>();
+            const failAck = sockets.length === 0;
+            sockets.push(listeners);
+            if (sockets.length === 2) reconnected.resolve(listeners);
+            return {
+                send: () => {
+                    ackAttempts += 1;
+                    if (failAck) throw new Error('socket closing');
+                },
+                close: () => { /* no-op */ },
+                addEventListener: (type, listener) => { listeners.set(type, listener); },
+            };
+        },
+        preflightEnvelope: async () => {
+            preflightCalls += 1;
+            if (preflightCalls === 1) {
+                preflightEntered.resolve();
+                return firstPreflight.promise;
+            }
+            return 'committed';
+        },
         onEnvelope: (e) => { handled.push(e); },
     });
-    await client.start();
-    listeners.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
-    await new Promise(resolve => setImmediate(resolve));
+    try {
+        await client.start();
+        sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
 
-    sendShouldFail = true;
-    listeners.get('message')!({
-        data: JSON.stringify(eventsEnvelope('ACKFAIL', { type: 'message', channel: 'D1', text: 'hi' })),
+        const envelope = eventsEnvelope('ACKFAIL', { type: 'message', channel: 'D1', text: 'hi' });
+        sockets[0]!.get('message')!({ data: JSON.stringify(envelope) });
+        await preflightEntered.promise;
+        sockets[0]!.get('message')!({ data: JSON.stringify({ ...envelope, retry_attempt: 1 }) });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(preflightCalls, 1, 'a pending duplicate entered durable preflight');
+        assert.equal(ackAttempts, 0, 'a pending duplicate was acknowledged before durable preflight committed');
+        assert.equal(handled.length, 0);
+
+        firstPreflight.resolve('committed');
+        const retrySocket = await reconnected.promise;
+        retrySocket.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
+        retrySocket.get('message')!({ data: JSON.stringify({ ...envelope, retry_attempt: 1 }) });
+        await new Promise(resolve => setImmediate(resolve));
+
+        assert.equal(handled.length, 1, 'same envelope retry was not dispatched exactly once');
+        assert.equal(ackAttempts, 2, 'first ACK must fail and the retry ACK must succeed');
+    } finally {
+        client.stop();
+    }
+});
+
+test('a delayed preflight cannot ack or dispatch through a replacement socket', async () => {
+    const handled: SlackEnvelope[] = [];
+    const sockets: Array<{
+        listeners: Map<string, (event: unknown) => void>;
+        sent: string[];
+    }> = [];
+    const reconnected = Promise.withResolvers<Map<string, (event: unknown) => void>>();
+    const preflightEntered = Promise.withResolvers<void>();
+    const firstPreflight = Promise.withResolvers<'committed'>();
+    let preflightCalls = 0;
+    const fetchImpl = (async () => ({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ ok: true, url: 'wss://example.invalid/link' }),
+    } as unknown as Response)) as unknown as typeof fetch;
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test',
+        fetchImpl,
+        baseReconnectDelayMs: 0,
+        maxReconnectAttempts: 2,
+        socketFactory: () => {
+            const listeners = new Map<string, (event: unknown) => void>();
+            const row = { listeners, sent: [] as string[] };
+            sockets.push(row);
+            if (sockets.length === 2) reconnected.resolve(listeners);
+            return {
+                send: data => { row.sent.push(data); },
+                close: () => { /* no-op */ },
+                addEventListener: (type, listener) => { listeners.set(type, listener); },
+            };
+        },
+        preflightEnvelope: async () => {
+            preflightCalls += 1;
+            if (preflightCalls === 1) {
+                preflightEntered.resolve();
+                return firstPreflight.promise;
+            }
+            return 'committed';
+        },
+        onEnvelope: envelope => { handled.push(envelope); },
     });
-    await new Promise(resolve => setImmediate(resolve));
+    try {
+        await client.start();
+        sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
+        const envelope = eventsEnvelope('LATE', { type: 'message', channel: 'D1', text: 'hi' });
+        sockets[0]!.listeners.get('message')!({ data: JSON.stringify(envelope) });
+        await preflightEntered.promise;
+        sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'warning' }) });
+        firstPreflight.resolve('committed');
+        await new Promise(resolve => setImmediate(resolve));
 
-    assert.equal(handled.length, 0, 'agent work started despite a failed ack');
-    client.stop();
+        const retrySocket = await reconnected.promise;
+        retrySocket.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(sockets.map(row => row.sent.length), [0, 0], 'late preflight acknowledged on a replacement socket');
+        assert.equal(handled.length, 0, 'late preflight dispatched after losing socket ownership');
+
+        retrySocket.get('message')!({ data: JSON.stringify({ ...envelope, retry_attempt: 1 }) });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(sockets.map(row => row.sent.length), [0, 1]);
+        assert.equal(handled.length, 1);
+    } finally {
+        client.stop();
+    }
 });
 
 test('extractTextFromBlocks survives pathological nesting depth', () => {

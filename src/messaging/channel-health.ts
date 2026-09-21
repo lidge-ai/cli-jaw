@@ -24,9 +24,11 @@ export type TransportCapability = {
 
 export type IngressHealthSnapshot = {
     received: number;
+    /** Current in-flight admits. Stale processing is abandoned at journal boot. */
     processing: number;
     completed: number;
     dead_letter: number;
+    /** Oldest received/processing row. Completed and dead_letter are excluded. */
     oldestOpenReceivedAt: number | null;
 };
 

@@ -387,3 +387,44 @@ test('a locked database still throws instead of looking like a duplicate', () =>
         rmSync(home, { recursive: true, force: true });
     }
 });
+
+test('oldestOpenReceivedAt ignores completed and dead_letter', () => {
+    const database = freshDb();
+    const journal = journalFor(database);
+    journal.append(envelope({ eventId: 'done' }), 'd1');
+    journal.markProcessing('telegram', '777', 'done');
+    journal.markCompleted('telegram', '777', 'done');
+    journal.append(envelope({ eventId: 'dead', receivedAt: 1_600_000_000_000 }), 'd2');
+    journal.markProcessing('telegram', '777', 'dead');
+    journal.markDeadLetter('telegram', '777', 'dead', 'boom');
+    assert.equal(journal.oldestOpenReceivedAt(), null);
+    journal.append(envelope({ eventId: 'live', receivedAt: 1_800_000_000_000 }), 'd3');
+    journal.markProcessing('telegram', '777', 'live');
+    assert.equal(journal.oldestOpenReceivedAt(), 1_800_000_000_000);
+});
+
+test('abandonStaleProcessing moves old processing to dead_letter', () => {
+    const database = freshDb();
+    const journal = journalFor(database, () => 1_700_000_000_000);
+    journal.append(envelope({ eventId: 'stale' }), 'd');
+    journal.markProcessing('telegram', '777', 'stale');
+    const later = new IngressJournal(database, { now: () => 1_700_000_000_000 + 61 * 60 * 1000, bootId: 'boot-later' });
+    assert.equal(later.abandonStaleProcessing(), 1);
+    const row = later.find('telegram', '777', 'stale');
+    assert.equal(row?.state, 'dead_letter');
+    assert.equal(row?.lastError, 'abandoned_stale_processing');
+    assert.equal(later.oldestOpenReceivedAt(), null);
+});
+
+test('initIngressJournal abandons stale processing on the same database', () => {
+    const database = freshDb();
+    const seeded = journalFor(database, () => 0);
+    seeded.append(envelope({ eventId: 'boot-stale' }), 'd');
+    seeded.markProcessing('telegram', '777', 'boot-stale');
+    __resetIngressJournalForTests();
+    const booted = initIngressJournal(database, { now: () => 61 * 60 * 1000, bootId: 'boot-init' });
+    const row = booted.find('telegram', '777', 'boot-stale');
+    assert.equal(row?.state, 'dead_letter');
+    assert.equal(row?.lastError, 'abandoned_stale_processing');
+    __resetIngressJournalForTests();
+});

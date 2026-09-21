@@ -163,6 +163,40 @@ test('shutdown aborts files.info, stream, and pre-admit phases with zero admissi
     }
 });
 
+test('reset drops queued ingress before a noncooperative predecessor settles', async t => {
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    const dropped: string[] = [];
+    let queuedRan = false;
+    const realSetTimeout = globalThis.setTimeout;
+    let observedDrainTimeout = false;
+    t.mock.method(globalThis, 'setTimeout', (...args: Parameters<typeof setTimeout>) => {
+        const [callback, delay, ...rest] = args;
+        if (delay === 5_000) observedDrainTimeout = true;
+        return realSetTimeout(callback, delay === 5_000 ? 0 : delay, ...rest);
+    });
+    assert.equal(enqueueSlackIngress('drop-lane', async () => {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+    }), true);
+    await firstStarted.promise;
+    assert.equal(enqueueSlackIngress('drop-lane', async () => {
+        queuedRan = true;
+    }, {
+        onDropped: reason => { dropped.push(reason); },
+    }), true);
+
+    await resetSlackIngress();
+
+    assert.equal(observedDrainTimeout, true, 'test did not exercise the bounded reset timeout');
+    assert.equal(queuedRan, false);
+    assert.deepEqual(dropped, ['ingress_cancelled']);
+    releaseFirst.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(queuedRan, false, 'dropped work ran after its predecessor settled');
+    assert.deepEqual(dropped, ['ingress_cancelled'], 'drop callback ran more than once');
+});
+
 let fileOutcome = {
     saved: [{ id: 'F1', name: 'one.txt', filePath: '/tmp/one.txt', size: 3 }],
     failed: [{ id: 'F2', name: 'two.txt', code: 'size_exceeded' }],

@@ -20,6 +20,9 @@ import type { SlackWorkflowMetadata } from './workflow.js';
 const ingressTails = new Map<string, Promise<void>>();
 const controllers = new Set<AbortController>();
 const tracked = new Set<Promise<void>>();
+type SlackIngressDropReason = 'ingress_cancelled' | 'stale_generation';
+type QueuedIngressEntry = { drop: (reason: SlackIngressDropReason) => void };
+const queuedIngress = new Set<QueuedIngressEntry>();
 const downloadWaiters: Array<() => void> = [];
 let activeDownloads = 0;
 let generation = 0;
@@ -183,14 +186,34 @@ export function slackIngressLaneKey(target: RemoteTarget): string {
 export function enqueueSlackIngress(
     laneKey: string,
     task: (signal: AbortSignal) => Promise<void>,
+    options: {
+        onDropped?: (reason: SlackIngressDropReason) => void;
+    } = {},
 ): boolean {
     if (resetting) return false;
     const taskGeneration = generation;
     const controller = new AbortController();
     controllers.add(controller);
+    let state: 'queued' | 'running' | 'dropped' = 'queued';
+    const entry: QueuedIngressEntry = {
+        drop(reason: SlackIngressDropReason): void {
+            if (state !== 'queued') return;
+            state = 'dropped';
+            queuedIngress.delete(entry);
+            try { options.onDropped?.(reason); }
+            catch (error) { log.error('[slack:ingress] drop callback failed:', logErrorText(error)); }
+        },
+    };
+    queuedIngress.add(entry);
     const previous = ingressTails.get(laneKey);
     const run = async () => {
-        if (controller.signal.aborted || taskGeneration !== generation) return;
+        if (state === 'dropped') return;
+        if (controller.signal.aborted || taskGeneration !== generation) {
+            entry.drop(controller.signal.aborted ? 'ingress_cancelled' : 'stale_generation');
+            return;
+        }
+        state = 'running';
+        queuedIngress.delete(entry);
         await task(controller.signal);
     };
     const result = previous ? previous.catch(() => undefined).then(run) : Promise.resolve().then(run);
@@ -285,6 +308,7 @@ export async function resetSlackIngress(): Promise<void> {
     resetting = true;
     generation += 1;
     for (const controller of controllers) controller.abort();
+    for (const entry of [...queuedIngress]) entry.drop('ingress_cancelled');
     const pending = [...tracked];
     if (pending.length) {
         const drain = Promise.allSettled(pending).then(() => undefined);
