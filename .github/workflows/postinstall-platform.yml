@@ -289,7 +289,10 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup WSL
-        uses: Vampire/setup-wsl@v7
+        # v7's Ubuntu 24.04.4 .wsl delivery stalled before installation on
+        # three independent heads. Pin the prior 24.04.0 AppX delivery path;
+        # keep genuine WSL2 and every downstream installer assertion unchanged.
+        uses: Vampire/setup-wsl@887f39deb6c0976365e546926fe66f41b77d65ff # v6.1.0
         # Bounds a hang, rather than buying a pass: the job may still take 25
         # minutes, but provisioning that stops answering fails in 5 instead of
         # consuming the whole budget and reporting as a cancellation.

@@ -6,6 +6,10 @@ directories:
 files:
   - out/**/*
   - package.json
+# Runs before electron-builder signs the bundle. extraResources (the sidecar
+# server tree) is never walked by its signing pass, so those Mach-O binaries
+# have to be signed here or notarization rejects the upload.
+afterPack: build/sign-extra-binaries.mjs
 afterSign: build/after-sign.mjs
 asar: true
 asarUnpack:
@@ -40,10 +44,21 @@ mac:
     - target: zip
       arch:
         - arm64
-  identity: null
+  # Signing is decided by the environment, not hard-coded here.
+  #
+  # With CSC_LINK / CSC_IDENTITY_AUTO_DISCOVERY present, electron-builder finds
+  # the Developer ID Application identity and signs for real; `notarize` is then
+  # switched on from the command line (see electron:dist:mac:signed). Without
+  # those, `electron:dist:mac` exports CSC_IDENTITY_AUTO_DISCOVERY=false and the
+  # after-sign hook falls back to an ad-hoc signature, which is what local dev
+  # builds have always produced.
+  #
+  # hardenedRuntime must stay on in both paths: notarization rejects a bundle
+  # without it, and leaving it off only for unsigned builds would mean the
+  # entitlements above go untested until release day.
   gatekeeperAssess: false
   notarize: false
-  hardenedRuntime: false
+  hardenedRuntime: true
 dmg:
   sign: false
 win:
