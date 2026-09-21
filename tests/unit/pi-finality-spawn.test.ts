@@ -39,6 +39,10 @@ for await(const line of readline.createInterface({input:process.stdin})) {
  if(r.type==='get_state') send({id:r.id,type:'response',command:r.type,success:true,data:{sessionId:'private-session'}});
  if(r.type==='prompt') {
   note('prompt');
+  if(process.env.PI_SPAWN_REJECT) {
+   send({id:r.id,type:'response',command:'prompt',success:false,error:process.env.PI_SPAWN_REJECT});
+   continue;
+  }
   send({type:'agent_start'});
   send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'PROVISIONAL /goal done'}});
   if(process.env.PI_SPAWN_HOLD==='1') continue;
@@ -114,13 +118,14 @@ const { createChatSession, setActiveChatSession } = await import('../../src/core
 const {spawnAgent,killActiveAgent,killAgentById,waitForExitSettled,activeMainProcesses} = await import('../../src/agent/spawn.ts');
 const {db,getMaxMessageId,getSteerSalvageAfter} = await import('../../src/core/db.ts');
 const {subscribe} = await import('../../src/core/event-bus.ts');
+const {addBroadcastListener,removeBroadcastListener} = await import('../../src/core/bus.ts');
 const {clearGoalTimers} = await import('../../src/agent/lifecycle-handler.ts');
 const {poolStats} = await import('../../src/agent/runtime-pool.ts');
 let serial = 0;
 test.beforeEach(context => {
     failRawTrace=false;failActivityJournal=false;rawFailures=0;journalFailures=0;directDirectories.length=0;onText=undefined;delete process.env.PI_SPAWN_HOLD;
     delete process.env.PI_SPAWN_HOLD_VERSION;delete process.env.PI_SPAWN_VERSION_LEDGER;delete process.env.PI_SPAWN_VERSION_RELEASE;
-    delete process.env.PI_SPAWN_IGNORE_RPC_TERM;
+    delete process.env.PI_SPAWN_IGNORE_RPC_TERM;delete process.env.PI_SPAWN_REJECT;
     config.settings.workingDir = root;mkdirSync(join(root,'prompts'),{recursive:true});
     mkdirSync(join(config.JAW_HOME,'prompts'),{recursive:true});
     config.settings.fallbackOrder=[];config.settings.activeOverrides={};
@@ -147,7 +152,7 @@ test.after(() => {
     if(previousBin===undefined) delete process.env.PI_CODING_AGENT_BIN;else process.env.PI_CODING_AGENT_BIN=previousBin;
     delete process.env.PI_SPAWN_HOLD;delete process.env.PI_SPAWN_HOLD_VERSION;
     delete process.env.PI_SPAWN_VERSION_LEDGER;delete process.env.PI_SPAWN_VERSION_RELEASE;
-    delete process.env.PI_SPAWN_IGNORE_RPC_TERM;
+    delete process.env.PI_SPAWN_IGNORE_RPC_TERM;delete process.env.PI_SPAWN_REJECT;
     if(cleanupSafe)rmSync(root,{recursive:true,force:true});
 });
 function options() {
@@ -174,6 +179,20 @@ test('actual pooled Pi-to-lifecycle final uses only typed final and canonical ja
         assert.equal(trace.getTraceRun(traceId)?.session_id, opts.chatSessionId);
         assert.ok(journal.readActivityPage({runId:traceId,sessionId:opts.chatSessionId,after:0,limit:40})?.events.length);
     } finally {unsub();}
+});
+test('pooled Pi prompt rejection reaches the existing lifecycle rate-limit classifier',async () => {
+    process.env.PI_SPAWN_REJECT='429 retry after 2 seconds';
+    const opts=options();
+    let terminal:Record<string,unknown>|undefined;
+    const listener=(type:string,data:Record<string,unknown>)=>{if(type==='agent_done'&&data.requestId===opts.requestId)terminal=data;};
+    addBroadcastListener(listener);
+    try {
+        const result=await spawnAgent('fixture',{...opts,_retryAttempt:3}).promise;
+        assert.equal(result.code,1);
+        assert.deepEqual(result.runtimeOutcome,{status:'error',finalText:null,partialText:''});
+        assert.equal(result.diagnostic,'⚡ API 용량 초과 (429)');
+        assert.equal(terminal?.errorKind,'rate_limit');
+    } finally {removeBroadcastListener(listener);}
 });
 test('throwing exit observer cannot bypass lifecycle cleanup or final MESSAGE',async () => {
     const opts=options();

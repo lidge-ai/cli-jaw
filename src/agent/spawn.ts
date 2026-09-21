@@ -2618,6 +2618,10 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             runId: traceRunId, sessionId: chatSessionId, scope: scopeKey,
             turnId: traceRunId, audience: traceAudience, isCurrent: () => true,
         });
+        const onPiFailure = (error: Error): void => {
+            const remaining = 4000 - ctx.stderrBuf.length;
+            if (remaining > 0) ctx.stderrBuf += error.message.slice(0, remaining);
+        };
         const mapPiSend = (child: ChildProcess, send: Promise<RuntimeTurnOutcome>): Promise<PiTurnResult> =>
             send.then((outcome): PiTurnResult => ({
                 text: outcome.finalText ?? outcome.partialText ?? '',
@@ -2830,6 +2834,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 ...(effort ? { effort } : {}),
                 onPiEvent,
                 onRawRecord: onPiRawRecord,
+                onFailure: onPiFailure,
             });
             bindPiExecutionCancel(opened.child, () => { void piFacade!.cancel(); });
             runPiTurn(opened.child, null, opened.cleanup, () => {
@@ -2899,6 +2904,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 ...(effort ? { effort } : {}),
                 onPiEvent,
                 onRawRecord: onPiRawRecord,
+                onFailure: onPiFailure,
             });
             runPiTurn(lease.session.child, lease, null, () => {
                 piSendStarted = true;

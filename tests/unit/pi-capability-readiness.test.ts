@@ -65,7 +65,16 @@ mock.module('node:child_process', { namedExports: { ...cp,
         });
         if (role === 'rpc' && owner.config.stdinWriteFailure) {
             assert.ok(child.stdin);
-            child.stdin.write = () => { throw new Error('owned post-spawn stdin write failure'); };
+            const originalWrite = child.stdin.write.bind(child.stdin);
+            const failure = owner.config.stdinWriteFailure;
+            child.stdin.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+                const promptOnly = failure === 'prompt';
+                if (!promptOnly || String(chunk).includes('"type":"prompt"')) {
+                    throw new Error(promptOnly ? 'owned prompt stdin write failure' : 'owned post-spawn stdin write failure');
+                }
+                owner.config.promptPreludeWriteSeen = true;
+                return Reflect.apply(originalWrite, child.stdin, [chunk, ...args]) as boolean;
+            }) as typeof child.stdin.write;
         }
         return child;
     },
@@ -297,17 +306,21 @@ for (const mode of ['persistent', 'direct'] as const) {
         }));
 }
 
-for (const mode of ['persistent', 'direct'] as const) for (const failure of ['overflow-stdout', 'overflow-stderr', 'spawn-error', 'spawn-throw', 'stdin-write']) {
+for (const mode of ['persistent', 'direct'] as const) for (const failure of ['overflow-stdout', 'overflow-stderr', 'spawn-error', 'spawn-throw', 'stdin-write', 'prompt-write']) {
     test(`P8 ${mode} ${failure} after owned launch is an asynchronous null-final failure, never a prompt`,
         { timeout: 12000, skip: process.platform === 'win32' }, async () => owned({
             versionMode: failure.startsWith('overflow') ? failure : 'immediate',
             versionSpawnError: failure === 'spawn-error', versionSpawnThrow: failure === 'spawn-throw',
-            stdinWriteFailure: failure === 'stdin-write',
+            stdinWriteFailure: failure === 'stdin-write' ? true : failure === 'prompt-write' ? 'prompt' : false,
         }, async f => {
             const r = start(f, mode); // Must return the actual RPC child, not throw after launch.
             assert.ok(r.child instanceof cp.ChildProcess);
             assert.deepEqual(outcome(await r.pending.done), { status: 'error', finalText: null, partialText: '' });
             assert.equal(prompts(f).length, 0); assert.ok(f.owner.children.every(x => x.closed));
+            if (failure === 'prompt-write') {
+                assert.equal(f.owner.config.promptPreludeWriteSeen, true,
+                    'preparation write must pass before the prompt-only write failure');
+            }
             assert.equal(r.text.join(''), '');
             if (r.session) { assert.equal(r.session.alive, false); assert.equal(r.session.abortEffective, false); await assert.rejects(r.session.sendPrompt('late')); }
             else {

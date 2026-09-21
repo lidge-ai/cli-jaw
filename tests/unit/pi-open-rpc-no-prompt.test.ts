@@ -19,6 +19,13 @@ rl.on('line', (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
   if (msg.type === 'get_state') send({ type: 'get_state', id: msg.id, success: true, state: { model: 'fixture' } });
+  if (msg.type === 'prompt') {
+    send({ type: 'response', command: 'prompt', id: msg.id, success: true });
+    send({ type: 'agent_end', willRetry: false, messages: [
+      { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'FINAL' }] },
+    ] });
+    send({ type: 'agent_settled' });
+  }
 });
 `);
 chmodSync(binary, 0o755);
@@ -62,4 +69,22 @@ test('openPiRpc does not write prompt until session.send', { timeout: 7000 }, as
     assert.ok(writes.some((line) => line.includes('"type":"prompt"')));
     opened.kill();
     void sending.catch(() => {});
+});
+
+test('settled oneshot remains a done claim after its transport closes', { timeout: 7000 }, async () => {
+    const opened = openPiRpc(DEFAULT_PI_PROFILE, DEFAULT_PI_SETTINGS, {
+        model: 'fixture', cwd: root, root, env: { ...process.env, PI_CODING_AGENT_BIN: binary },
+    });
+    const runtime = new PiRuntimeSession(opened, {
+        lifetime: 'oneshot',
+        deferTurnEnd: true,
+        getTurnContext: () => ({ turnId: 'closed-oneshot-turn' }),
+    });
+    const outcome = await runtime.send({ text: 'FINAL' }, () => {});
+    assert.equal(opened.alive, false, 'oneshot transport naturally closes before application finalization');
+    assert.deepEqual(outcome, { status: 'done', finalText: 'FINAL', partialText: 'FINAL' });
+    assert.deepEqual(runtime.claimTurnOutcome('closed-oneshot-turn'), outcome);
+    assert.equal(runtime.finalizeTurn('closed-oneshot-turn', {
+        kind: 'turn-end', status: 'done', finalText: 'FINAL',
+    }), true);
 });

@@ -35,6 +35,7 @@ export interface PiRuntimeSessionOptions {
     effort?: string;
     onPiEvent?: (event: PiRuntimeEvent) => void;
     onRawRecord?: (record: unknown) => void;
+    onFailure?: (error: Error) => void;
 }
 
 type Pending = { turnId: string; outcome: RuntimeTurnOutcome; claimed?: RuntimeTurnOutcome };
@@ -101,8 +102,11 @@ export class PiRuntimeSession implements NativeRuntimeSession {
             });
             outcome = outcomeFromResult(result, this.cancelled);
         } catch (error) {
-            if (error instanceof PiRuntimeError) {
-                outcome = snapshot(this.cancelled ? { status: 'stopped', finalText: null, partialText: error.runtimeOutcome.partialText } : error.runtimeOutcome);
+            const failure = error instanceof Error ? error : new Error(String(error));
+            try { this.options.onFailure?.(failure); }
+            catch { console.warn('[jaw:pi] failure observer failed'); }
+            if (failure instanceof PiRuntimeError) {
+                outcome = snapshot(this.cancelled ? { status: 'stopped', finalText: null, partialText: failure.runtimeOutcome.partialText } : failure.runtimeOutcome);
             } else {
                 outcome = snapshot({
                     status: this.cancelled ? 'stopped' : 'error',
@@ -122,7 +126,7 @@ export class PiRuntimeSession implements NativeRuntimeSession {
         const pending = this.pending;
         if (!pending || pending.turnId !== turnId) return null;
         if (!pending.claimed) {
-            if (!this.transport.alive && pending.outcome.status === 'done') {
+            if (this.options.lifetime === 'pooled' && !this.transport.alive && pending.outcome.status === 'done') {
                 pending.outcome = snapshot({ ...pending.outcome, status: 'error', finalText: null });
             }
             pending.claimed = snapshot(pending.outcome);
