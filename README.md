@@ -531,6 +531,8 @@ npm run electron:dev          # develop with hot reload
 npm run electron:dist:mac     # build macOS arm64 .dmg + .zip with bundled sidecar
 ```
 
+For an opt-in Developer ID build, configure your signing identity and notarization credentials for electron-builder, then run `npm run electron:dist:mac:signed`. This command requests notarization and checks the resulting app with `npm run verify:mac-signature`, including Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment and a stapled ticket. The ordinary `electron:dist:mac` command remains an ad-hoc local build. The GitHub Actions desktop release workflow still selects unsigned builds; these opt-in commands do not certify existing release downloads.
+
 The packaged app lands in `electron/dist/`. The GitHub Actions desktop release workflow builds macOS arm64 DMG/ZIP, Windows x64 NSIS/ZIP, and Linux AppImage artifacts on release publish or manual dispatch. Native modules such as `better-sqlite3` stay in the manager/sidecar server — the Electron main process never imports them.
 
 ---
