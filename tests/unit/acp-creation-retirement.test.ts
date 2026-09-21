@@ -139,7 +139,11 @@ for (const [engine, acquire] of [['cursor', acquireCursorRuntime], ['grok', acqu
     });
 
     test(`${engine} caller expiry never releases a factory that still has not returned`, async t => {
-        const f = fixture(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+        const f = fixture(t), clearKeepAlive = globalThis.clearTimeout;
+        // MockTimers removes the only ref'd timeout while the factory is pending.
+        const keepAlive = setTimeout(() => {}, 5_000);
+        t.after(() => clearKeepAlive(keepAlive));
+        t.mock.timers.enable({ apis: ['setTimeout'] });
         const pending = acquire({ ...f.held, waitMs: 10 });
         const rejected = assert.rejects(pending, /timed out/);
         await f.started.promise; t.mock.timers.tick(10); await rejected;
