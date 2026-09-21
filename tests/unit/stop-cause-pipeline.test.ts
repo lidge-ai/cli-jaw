@@ -16,6 +16,7 @@ let lifecycleSerial = 0;
 function lifecycleResult(options: {
     code: number | null;
     childExitCode?: number | null;
+    killReason?: string | null;
     outcome?: RuntimeTurnOutcome;
     wasKilled?: boolean;
     wasSteer?: boolean;
@@ -31,6 +32,7 @@ function lifecycleResult(options: {
     return new Promise((resolve, reject) => {
         void handleAgentExit({
             ctx, code: options.code, childExitCode: options.childExitCode,
+            killReason: options.killReason,
             cli: 'cursor', model: 'fixture', resumeKey: null,
             agentLabel: 'stop-cause-e2e', mainManaged: true, origin: 'slack', prompt: 'test',
             opts: { _skipSessionPersist: true, _isSmokeContinuation: true }, cfg: {},
@@ -160,30 +162,59 @@ test('raw ACP 130 reaches the collector as an unattributed stopped terminal', as
     }
 });
 
-test('explicit interrupt without a replacement event is displayed as user Stop', async () => {
+test('captured explicit Stop provenance reaches the terminal as user_stop', async () => {
     resetRequestRegistryForTest();
     try {
         const collected = await collectLifecycleResult('explicit-interrupt', () => lifecycleResult({
             code: 130,
+            killReason: 'explicit-user-stop',
             outcome: { status: 'stopped', finalText: null, partialText: '' },
             wasKilled: true,
             wasSteer: true,
         }));
         assert.equal(collected.text, 'tg.stoppedUser');
         assert.equal(collected.data['runtimeStatus'], 'stopped');
-        assert.equal(collected.data['stopCause'], 'steer_kill');
+        assert.equal(collected.data['stopCause'], 'user_stop');
     } finally {
         resetRequestRegistryForTest();
     }
 });
 
-test('replacement event still suppresses the interrupted turn terminal', async () => {
+test('gateway interrupt terminal settles before a later steer event with steer provenance', async () => {
     resetRequestRegistryForTest();
     try {
         const collected = await collectLifecycleResult(
             'replacement',
             () => lifecycleResult({
                 code: 130,
+                killReason: 'interrupt',
+                outcome: { status: 'stopped', finalText: null, partialText: '' },
+                wasKilled: true,
+                wasSteer: true,
+            }),
+        );
+        assert.equal(collected.text, 'tg.stoppedSteer');
+        assert.equal(collected.data['stopCause'], 'steer_kill');
+        assert.equal(collected.data['superseded'], undefined);
+        broadcast('steer_started', {
+            requestId: 'stop-cause-replacement-late',
+            scope: 'stop-cause-replacement-scope',
+            sessionId: 'default',
+            origin: 'slack',
+        });
+    } finally {
+        resetRequestRegistryForTest();
+    }
+});
+
+test('a replacement event observed before terminal still suppresses the old turn', async () => {
+    resetRequestRegistryForTest();
+    try {
+        const collected = await collectLifecycleResult(
+            'replacement-before-terminal',
+            () => lifecycleResult({
+                code: 130,
+                killReason: 'interrupt',
                 outcome: { status: 'stopped', finalText: null, partialText: '' },
                 wasKilled: true,
                 wasSteer: true,

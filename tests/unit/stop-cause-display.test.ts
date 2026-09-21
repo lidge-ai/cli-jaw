@@ -35,6 +35,19 @@ test('classifier: wasKilled only is user_stop', () => {
     assert.equal(classifyStopCause({ wasSteer: false, wasKilled: true }), 'user_stop');
 });
 
+test('classifier: captured explicit Stop provenance wins over lifecycle steer semantics', () => {
+    assert.equal(classifyStopCause({
+        killReason: 'explicit-user-stop',
+        wasSteer: true,
+        wasKilled: true,
+    }), 'user_stop');
+    assert.equal(classifyStopCause({
+        killReason: 'interrupt',
+        wasSteer: true,
+        wasKilled: true,
+    }), 'steer_kill');
+});
+
 test('classifier: none is undefined', () => {
     assert.equal(classifyStopCause({ wasSteer: false, wasKilled: false }), undefined);
 });
@@ -69,8 +82,7 @@ test('locale keys follow the four causes and fall back', async () => {
     const { stoppedLocaleKey } = await import('../../src/orchestrator/collect.ts');
     assert.equal(stoppedLocaleKey('watchdog'), 'tg.stoppedWatchdog');
     assert.equal(stoppedLocaleKey('user_stop'), 'tg.stoppedUser');
-    assert.equal(stoppedLocaleKey('steer_kill'), 'tg.stoppedUser');
-    assert.equal(stoppedLocaleKey('steer_kill', true), 'tg.stoppedSteer');
+    assert.equal(stoppedLocaleKey('steer_kill'), 'tg.stoppedSteer');
     assert.equal(stoppedLocaleKey('unattributed'), 'tg.stoppedUnattributed');
     assert.equal(stoppedLocaleKey(undefined), STOPPED);
 });
@@ -80,7 +92,7 @@ test('collector: four causes pick four keys; missing stays tg.stopped; supersede
     const cases: Array<{ id: string; cause?: string; want: string; steer?: boolean }> = [
         { id: 'req-wd', cause: 'watchdog', want: 'tg.stoppedWatchdog' },
         { id: 'req-user', cause: 'user_stop', want: 'tg.stoppedUser' },
-        { id: 'req-interrupt', cause: 'steer_kill', want: 'tg.stoppedUser' },
+        { id: 'req-interrupt', cause: 'steer_kill', want: 'tg.stoppedSteer' },
         { id: 'req-unattr', cause: 'unattributed', want: 'tg.stoppedUnattributed' },
         { id: 'req-missing', want: STOPPED },
         { id: 'req-super', cause: 'watchdog', want: '', steer: true },

@@ -168,7 +168,7 @@ export function orchestrateAndCollectData(
                 // simply had nothing to say.
                 //
                 const stopped = data['runtimeStatus'] === 'stopped' || data['executionInterrupted'] === true;
-                const fallbackKey = stopped ? stoppedLocaleKey(data['stopCause'], superseded) : 'tg.noResponse';
+                const fallbackKey = stopped ? stoppedLocaleKey(data['stopCause']) : 'tg.noResponse';
                 const fallback = superseded ? '' : t(fallbackKey, {}, locale);
                 resolve({ text: native
                     ? terminalText || ownTerminalDiagnostic || fallback
@@ -202,13 +202,10 @@ export async function orchestrateAndCollect(
     return (await orchestrateAndCollectData(prompt, meta, locale)).text;
 }
 
-export function stoppedLocaleKey(cause: unknown, replacementObserved = false): string {
+export function stoppedLocaleKey(cause: unknown): string {
     if (cause === 'watchdog') return 'tg.stoppedWatchdog';
     if (cause === 'user_stop') return 'tg.stoppedUser';
-    // `interrupt` is shared by the gateway's replacement policy and the explicit
-    // channel /stop command. Only steer_started proves that a new input replaced
-    // this run; without that event the truthful user-facing sentence is Stop.
-    if (cause === 'steer_kill') return replacementObserved ? 'tg.stoppedSteer' : 'tg.stoppedUser';
+    if (cause === 'steer_kill') return 'tg.stoppedSteer';
     if (cause === 'unattributed') return 'tg.stoppedUnattributed';
     return 'tg.stopped';
 }

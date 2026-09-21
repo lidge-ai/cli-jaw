@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+    EXPLICIT_USER_STOP_KILL_REASON,
+    isLifecycleExitSettleReason,
     isLifecycleSteerReason,
     STEER_KILL_REASON,
     INTERRUPT_KILL_REASON,
@@ -43,10 +45,19 @@ test('SI-002: killActiveAgent defaults reason to "user"', () => {
 // actively froze the bug in #681: an adapter that accepted only `'steer'` satisfied
 // them, so the incomplete classification passed review for months.
 
-test('SI-003: isLifecycleSteerReason accepts exactly the intentional-stop reasons', () => {
-    for (const reason of [STEER_KILL_REASON, INTERRUPT_KILL_REASON, DUP_REGISTRATION_KILL_REASON]) {
+test('SI-003: lifecycle control keeps explicit Stop in the intentional-stop class', () => {
+    for (const reason of [
+        STEER_KILL_REASON,
+        INTERRUPT_KILL_REASON,
+        EXPLICIT_USER_STOP_KILL_REASON,
+        DUP_REGISTRATION_KILL_REASON,
+    ]) {
         assert.equal(isLifecycleSteerReason(reason), true, `${reason} is an intentional stop`);
     }
+    for (const reason of [STEER_KILL_REASON, INTERRUPT_KILL_REASON, EXPLICIT_USER_STOP_KILL_REASON]) {
+        assert.equal(isLifecycleExitSettleReason(reason), true, `${reason} arms exit settlement`);
+    }
+    assert.equal(isLifecycleExitSettleReason(DUP_REGISTRATION_KILL_REASON), false);
 });
 
 test('SI-004: isLifecycleSteerReason rejects failures, shutdowns and absent reasons', () => {
@@ -61,7 +72,12 @@ test('SI-005: every intentional stop suppresses the stall truncation notice', ()
     // wasSteer is what tells the reader "you stopped this", so a runtime that
     // misclassifies an interrupt would also apologise for a timeout that never
     // happened (#405).
-    for (const reason of [STEER_KILL_REASON, INTERRUPT_KILL_REASON, DUP_REGISTRATION_KILL_REASON]) {
+    for (const reason of [
+        STEER_KILL_REASON,
+        INTERRUPT_KILL_REASON,
+        EXPLICIT_USER_STOP_KILL_REASON,
+        DUP_REGISTRATION_KILL_REASON,
+    ]) {
         assert.equal(
             shouldAnnounceStallTruncation({
                 stallReason: 'idle 90s', wasSteer: isLifecycleSteerReason(reason),
