@@ -28,6 +28,7 @@ import {
 import { loadHeartbeatFile, isHeartbeatMentionWatch, settings } from '../core/config.js';
 import { mentionsUser, type SlackMessageEvent } from './events.js';
 import { log } from '../core/logger.js';
+import { logErrorText } from '../messaging/redact.js';
 
 /** Rows older than this are dropped. Long enough that a watch held behind a
  *  restart or a busy agent still finds its backlog, short enough that a channel
@@ -114,7 +115,7 @@ export function captureMentionWatchInbox(event: SlackMessageEvent): void {
                 + where + ' for ' + [...stored].join(', '));
         }
     } catch (error) {
-        log.warn('[slack:mention-watch] capture failed: ' + (error as Error).message);
+        log.warn('[slack:mention-watch] capture failed: ' + logErrorText(error));
     }
 }
 
