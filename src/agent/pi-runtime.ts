@@ -1206,7 +1206,7 @@ export function openPiRpc(profile: PiProfile, pi: PiSettings, options: OpenPiRpc
                 console.log(`[jaw:pi] prompt len=${message.length}, hasHistory=${message.includes('[Recent Context]')}, effort=${sendEffort || 'none'}, sessionId=${sessionId || 'new'}`);
                 promptId = write('prompt', { message });
                 promptDispatched = true;
-            }, () => { /* finish() already settled done */ });
+            }).catch(error => finish(1, child.killed ? 'stopped' : 'error', error as Error));
             return done;
         },
         async abort() {
