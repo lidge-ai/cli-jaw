@@ -1,7 +1,7 @@
 export type StopCause = 'watchdog' | 'user_stop' | 'steer_kill' | 'unattributed';
 
 export function classifyStopCause(input: {
-    stallReason?: string;
+    stallReason?: string | undefined;
     wasSteer: boolean;
     wasKilled: boolean;
     exitCode?: number | null;

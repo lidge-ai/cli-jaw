@@ -363,13 +363,15 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         retryState, fallbackState, fallbackMaxRetries, processQueue,
     } = params;
 
-    const stopCause = classifyStopCause({
+    const candidateStopCause = classifyStopCause({
         stallReason: ctx.stallReason,
         wasSteer,
         wasKilled,
         exitCode: params.childExitCode ?? params.code,
     });
     const nativeOutcome = lifecycleRuntimeOutcome(ctx, wasKilled || wasSteer || Boolean(ctx.stallReason));
+    const nativeStopCause = nativeOutcome?.status === 'stopped' ? candidateStopCause : undefined;
+    const legacyUnattributedStop = nativeOutcome === undefined && candidateStopCause === 'unattributed';
     const code = runtimeOutcomeExitCode(nativeOutcome, processCode);
     const nativeRequestId = ctx.requestId ?? opts.requestId;
     if (mainManaged) revokeSlackToolGrant(nativeRequestId);
@@ -395,7 +397,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const ownsLiveRun = () => nativeOutcome === undefined
         || (typeof ctx.traceRunId === 'string' && getLiveRun(liveScope).traceRunId === ctx.traceRunId);
     const traceStatus = nativeOutcome === undefined
-        ? code === 0 ? 'done' : wasKilled ? 'interrupted' : 'error'
+        ? legacyUnattributedStop ? 'interrupted' : code === 0 ? 'done' : wasKilled ? 'interrupted' : 'error'
         : nativeOutcome.status === 'stopped' ? 'interrupted' : nativeOutcome.status;
     let runtimeFinalText: string | null = null;
     let runtimeEnded = false;
@@ -752,7 +754,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 ...(nativeRequestId !== undefined ? { requestId: nativeRequestId } : {}),
                 sessionId: chatSessionId, scope: scopeKey, toolLog: safeTools, origin, ...empTag,
                 ...(wasSteer ? { steered: true } : {}),
-                ...(stopCause ? { stopCause } : {}),
+                ...(nativeStopCause ? { stopCause: nativeStopCause } : {}),
                 ...(failed ? { error: true, errorKind, cli: runtimeCli } : {}),
             });
             if (finalContent !== null) {
@@ -1273,9 +1275,12 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const resolvedOutcome: RuntimeTurnOutcome | undefined = nativeOutcome === undefined
         ? undefined : { ...nativeOutcome, finalText: runtimeFinalText };
     const answerText = resolvedOutcome === undefined ? ctx.fullText : runtimeCompatibilityText(resolvedOutcome.finalText);
-    const executionInterrupted = resolvedOutcome === undefined && (wasKilled || wasSteer) && !ctx.stallReason;
+    const executionInterrupted = resolvedOutcome === undefined
+        && (legacyUnattributedStop || ((wasKilled || wasSteer) && !ctx.stallReason));
     const executionFailed = resolvedOutcome === undefined && !executionInterrupted
         && (traceStatus === 'error' || Boolean(ctx.stallReason));
+    const resolvedStopCause = resolvedOutcome?.status === 'stopped' || executionInterrupted
+        ? candidateStopCause : undefined;
     resolve({
         text: answerText, code: resolvedCode ?? 0,
         ...(executionInterrupted ? { executionInterrupted: true } : {}),
@@ -1290,7 +1295,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         ...(typeof ctx.metadata?.['agyPlannerOnly'] === 'boolean'
             ? { agyPlannerOnly: ctx.metadata['agyPlannerOnly'] } : {}),
         ...(params.outputLen ? { outputLen: params.outputLen } : {}),
-        ...(stopCause ? { stopCause } : {}),
+        ...(resolvedStopCause ? { stopCause: resolvedStopCause } : {}),
     });
 
     // ─── AI-initiated /goal done or /goal cancel ───

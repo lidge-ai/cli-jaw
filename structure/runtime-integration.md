@@ -54,9 +54,15 @@ owns that answer (#655).
 
 Machine `runtimeStatus` stays one `stopped` bucket. `stopCause` (`watchdog` /
 `user_stop` / `steer_kill` / `unattributed`) is the display discriminator on
-`orchestrate_done`. Native ACP 130 without a kill reason is `unattributed`, not
-a Jaw kill. The collector must not invent a cause: a missing or unknown value
-keeps `tg.stopped`. Do not split `runtimeStatus`.
+`orchestrate_done`. A raw ACP 130 without a kill reason is `unattributed`, not
+a Jaw kill. When that print-compatible exit has no native outcome, lifecycle
+marks the terminal with legacy `executionInterrupted`; pipeline then carries the
+cause so the collector reaches `tg.stoppedUnattributed` instead of
+`tg.noResponse`. The collector must not invent a cause: a missing or unknown
+value keeps `tg.stopped`. `interrupt` is also used by explicit channel `/stop`,
+so a `steer_kill` with no matching `steer_started` replacement is displayed as
+`user_stop`; an observed replacement still blanks the old turn because the new
+turn owns the answer. Do not split `runtimeStatus`.
 
 A runtime that DOES know why it failed now says so. `ExitContext.runtimeDiagnostic`
 carries a sentence the runtime generated itself — never relayed child output — and
