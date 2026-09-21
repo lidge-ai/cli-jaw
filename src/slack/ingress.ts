@@ -183,6 +183,9 @@ export function slackIngressLaneKey(target: RemoteTarget): string {
 export function enqueueSlackIngress(
     laneKey: string,
     task: (signal: AbortSignal) => Promise<void>,
+    options: {
+        onDropped?: (reason: 'ingress_cancelled' | 'stale_generation') => void;
+    } = {},
 ): boolean {
     if (resetting) return false;
     const taskGeneration = generation;
@@ -190,7 +193,10 @@ export function enqueueSlackIngress(
     controllers.add(controller);
     const previous = ingressTails.get(laneKey);
     const run = async () => {
-        if (controller.signal.aborted || taskGeneration !== generation) return;
+        if (controller.signal.aborted || taskGeneration !== generation) {
+            options.onDropped?.(controller.signal.aborted ? 'ingress_cancelled' : 'stale_generation');
+            return;
+        }
         await task(controller.signal);
     };
     const result = previous ? previous.catch(() => undefined).then(run) : Promise.resolve().then(run);

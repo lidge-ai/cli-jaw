@@ -174,13 +174,13 @@ test('a valid but unhandled envelope type is still acked', async () => {
     h.client.stop();
 });
 
-test('a failed ack skips dispatch so Slack can retry', async () => {
+test('a failed ack leaves the envelope eligible for one retry dispatch', async () => {
     // Acking is what tells Slack the delivery landed. If the ack itself fails
     // the delivery WILL be retried, so running the agent now would duplicate
     // that work.
     const handled: SlackEnvelope[] = [];
-    const listeners = new Map<string, (event: unknown) => void>();
-    let sendShouldFail = false;
+    const sockets: Array<Map<string, (event: unknown) => void>> = [];
+    const reconnected = Promise.withResolvers<Map<string, (event: unknown) => void>>();
     const fetchImpl = (async () => ({
         ok: true, status: 200,
         text: async () => JSON.stringify({ ok: true, url: 'wss://example.invalid/link' }),
@@ -190,26 +190,38 @@ test('a failed ack skips dispatch so Slack can retry', async () => {
     const client = new SlackSocketClient({
         appToken: 'xapp-test',
         fetchImpl,
-        baseReconnectDelayMs: 50_000, // keep the retry out of this test's way
-        socketFactory: () => ({
-            send: () => { if (sendShouldFail) throw new Error('socket closing'); },
-            close: () => { /* no-op */ },
-            addEventListener: (type, listener) => { listeners.set(type, listener); },
-        }),
+        baseReconnectDelayMs: 0,
+        maxReconnectAttempts: 2,
+        socketFactory: () => {
+            const listeners = new Map<string, (event: unknown) => void>();
+            const failAck = sockets.length === 0;
+            sockets.push(listeners);
+            if (sockets.length === 2) reconnected.resolve(listeners);
+            return {
+                send: () => { if (failAck) throw new Error('socket closing'); },
+                close: () => { /* no-op */ },
+                addEventListener: (type, listener) => { listeners.set(type, listener); },
+            };
+        },
         onEnvelope: (e) => { handled.push(e); },
     });
-    await client.start();
-    listeners.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
-    await new Promise(resolve => setImmediate(resolve));
+    try {
+        await client.start();
+        sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
 
-    sendShouldFail = true;
-    listeners.get('message')!({
-        data: JSON.stringify(eventsEnvelope('ACKFAIL', { type: 'message', channel: 'D1', text: 'hi' })),
-    });
-    await new Promise(resolve => setImmediate(resolve));
+        const envelope = eventsEnvelope('ACKFAIL', { type: 'message', channel: 'D1', text: 'hi' });
+        sockets[0]!.get('message')!({ data: JSON.stringify(envelope) });
+        const retrySocket = await reconnected.promise;
+        retrySocket.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        await new Promise(resolve => setImmediate(resolve));
+        retrySocket.get('message')!({ data: JSON.stringify({ ...envelope, retry_attempt: 1 }) });
+        await new Promise(resolve => setImmediate(resolve));
 
-    assert.equal(handled.length, 0, 'agent work started despite a failed ack');
-    client.stop();
+        assert.equal(handled.length, 1, 'same envelope retry was not dispatched exactly once');
+    } finally {
+        client.stop();
+    }
 });
 
 test('extractTextFromBlocks survives pathological nesting depth', () => {

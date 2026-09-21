@@ -163,6 +163,30 @@ test('shutdown aborts files.info, stream, and pre-admit phases with zero admissi
     }
 });
 
+test('reset reports a queued ingress drop without running the task', async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const dropped: string[] = [];
+    let queuedRan = false;
+    assert.equal(enqueueSlackIngress('drop-lane', async signal => {
+        firstStarted.resolve();
+        await new Promise<void>(resolve => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+    }), true);
+    await firstStarted.promise;
+    assert.equal(enqueueSlackIngress('drop-lane', async () => {
+        queuedRan = true;
+    }, {
+        onDropped: reason => { dropped.push(reason); },
+    }), true);
+
+    await resetSlackIngress();
+
+    assert.equal(queuedRan, false);
+    assert.deepEqual(dropped, ['ingress_cancelled']);
+});
+
 let fileOutcome = {
     saved: [{ id: 'F1', name: 'one.txt', filePath: '/tmp/one.txt', size: 3 }],
     failed: [{ id: 'F2', name: 'two.txt', code: 'size_exceeded' }],

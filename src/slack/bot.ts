@@ -1648,23 +1648,36 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
             return;
         }
 
-        prefetchHandedOff = enqueueSlackIngress(slackIngressLaneKey(target), async signal => {
-            try {
-                await processSlackMessageEvent(event, target, text, signal, {
-                    workflowSelection,
-                    ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
-                    prefetchToken,
-                    ...(prefetchOwner ? { prefetchOwner } : {}),
-                    preResolvedScope,
-                    ...(reservedEventKey ? { eventKey: reservedEventKey } : {}),
-                    ...(reservationGeneration !== undefined ? { reservationGeneration } : {}),
-                });
-                settleOk();
-            } catch (error) {
-                settleErr(error);
-                throw error;
-            }
-        });
+        prefetchHandedOff = enqueueSlackIngress(
+            slackIngressLaneKey(target),
+            async signal => {
+                try {
+                    await processSlackMessageEvent(event, target, text, signal, {
+                        workflowSelection,
+                        ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
+                        prefetchToken,
+                        ...(prefetchOwner ? { prefetchOwner } : {}),
+                        preResolvedScope,
+                        ...(reservedEventKey ? { eventKey: reservedEventKey } : {}),
+                        ...(reservationGeneration !== undefined ? { reservationGeneration } : {}),
+                    });
+                    settleOk();
+                } catch (error) {
+                    settleErr(error);
+                    throw error;
+                }
+            },
+            {
+                onDropped: reason => {
+                    if (prefetchToken && prefetchOwner) {
+                        releaseThreadPrefetch(
+                            event.channel || '', event.thread_ts || '', prefetchOwner, prefetchToken,
+                        );
+                    }
+                    settleErr(new Error(reason));
+                },
+            },
+        );
         if (!prefetchHandedOff) settleErr(new Error('enqueue_refused'));
     } catch (error) {
         settleErr(error);

@@ -344,7 +344,7 @@ export class SlackSocketClient {
 
         // An envelope this connection already saw is acked and dropped: the work
         // was done, only our acknowledgement failed to land.
-        if (envelope.envelope_id && this.isDuplicate(envelope.envelope_id)) {
+        if (envelope.envelope_id && this.hasSeenEnvelope(envelope.envelope_id)) {
             log.info(`[slack:socket] duplicate envelope ignored (retry_attempt=${envelope.retry_attempt ?? 0})`);
             this.ack(envelope.envelope_id);
             return;
@@ -353,7 +353,9 @@ export class SlackSocketClient {
         // Types we never act on are acked immediately, as before, so Slack stops
         // retrying payloads that have nowhere to go.
         if (!HANDLED_ENVELOPE_TYPES.has(envelope.type)) {
-            if (envelope.envelope_id) this.ack(envelope.envelope_id);
+            if (envelope.envelope_id && this.ack(envelope.envelope_id)) {
+                this.rememberEnvelope(envelope.envelope_id);
+            }
             return;
         }
 
@@ -375,12 +377,16 @@ export class SlackSocketClient {
             }
         }
 
-        if (envelope.envelope_id && !this.ack(envelope.envelope_id)) {
-            // The ack did not reach Slack, so this delivery WILL be retried. Running
-            // the agent now would duplicate that work.
-            log.warn('[slack:socket] ack failed — skipping dispatch, awaiting Slack retry');
-            this.recycleSocket();
-            return;
+        if (envelope.envelope_id) {
+            if (!this.ack(envelope.envelope_id)) {
+                // The ack did not reach Slack, so this delivery WILL be retried. Running
+                // the agent now would duplicate that work. Do not remember the id until
+                // the ack succeeds, or the retry would be mistaken for completed work.
+                log.warn('[slack:socket] ack failed — skipping dispatch, awaiting Slack retry');
+                this.recycleSocket();
+                return;
+            }
+            this.rememberEnvelope(envelope.envelope_id);
         }
 
         // Acked, but already handled on an earlier run: the ack is what Slack was
@@ -417,10 +423,16 @@ export class SlackSocketClient {
         this.scheduleReconnect();
     }
 
-    private isDuplicate(envelopeId: string): boolean {
+    private hasSeenEnvelope(envelopeId: string): boolean {
         const now = Date.now();
         const seenAt = this.seenEnvelopes.get(envelopeId);
         if (seenAt !== undefined && now - seenAt < DEDUPE_TTL_MS) return true;
+        if (seenAt !== undefined) this.seenEnvelopes.delete(envelopeId);
+        return false;
+    }
+
+    private rememberEnvelope(envelopeId: string): void {
+        const now = Date.now();
         this.seenEnvelopes.set(envelopeId, now);
         // Lazy sweep of EXPIRED entries only. Evicting an unexpired id to hit
         // a size target would let a busy workspace reprocess a delayed retry,
@@ -430,7 +442,6 @@ export class SlackSocketClient {
                 if (now - at >= DEDUPE_TTL_MS) this.seenEnvelopes.delete(id);
             }
         }
-        return false;
     }
 
     private scheduleReconnect(): void {
