@@ -324,7 +324,12 @@ interface CopilotSpawnContext extends SpawnContext {
 }
 
 import { hasChildExited, ownProcess } from './spawn/process-kill.js';
-import { DUP_REGISTRATION_KILL_REASON, isLifecycleSteerReason } from './spawn/kill-reason.js';
+import {
+    DUP_REGISTRATION_KILL_REASON,
+    isLifecycleExitSettleReason,
+    isLifecycleSteerReason,
+} from './spawn/kill-reason.js';
+import { stopCauseFromKillReason } from './spawn/stop-cause.js';
 import { buildSteerStartedEvent } from './spawn/steer-event.js';
 import {
     armExitSettle, captureExitSettler, settleCapturedExit, settleExit, waitForExitSettled,
@@ -629,8 +634,12 @@ function clearWorkerSlotsOnStop(scopeKey: string, reason: string) {
 }
 
 function clearMainLiveRunOnStop(scopeKey: string, reason: string): void {
-    if (reason !== 'api' && reason !== 'user' && reason !== 'steer' && reason !== 'interrupt') return;
+    if (!isImmediateScopeReleaseReason(reason)) return;
     clearLiveRun(scopeKey);
+}
+
+function isImmediateScopeReleaseReason(reason: string): boolean {
+    return reason === 'api' || reason === 'user' || isLifecycleExitSettleReason(reason);
 }
 
 export function killActiveAgent(scopeKey: string, reason: string): boolean;
@@ -660,19 +669,19 @@ export function killActiveAgent(scopeKeyOrReason = 'user', scopedReason?: string
     if (run?.cancelTurn && ['codex-app', 'pi', 'cursor', 'grok', 'claude'].includes(getActiveMainCli(scopeKey) || '')) {
         if (run.process?.pid) killReasons.set(run.process.pid, reason);
         console.log(`[jaw:kill] reason=${reason} scope=${scopeKey} cli=${getActiveMainCli(scopeKey)} action=lease.cancel`);
-        if (reason === 'steer' || reason === 'interrupt') armExitSettle(scopeKey);
+        if (isLifecycleExitSettleReason(reason)) armExitSettle(scopeKey);
         run.cancelTurn(reason);
-        if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') activeMainProcesses.delete(scopeKey);
+        if (isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
         return true;
     }
     const activeProcess = run?.process ?? null;
     if (!activeProcess) {
-        if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') activeMainProcesses.delete(scopeKey);
+        if (isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
         return hadTimer || cancelledPendingMain || cancelledClaude;
     }
     console.log(`[jaw:kill] reason=${reason} scope=${scopeKey} cli=${getActiveMainCli(scopeKey) || 'unknown'} signal=SIGTERM escalationMs=${DEFAULT_KILL_ESCALATION_MS}`);
     if (activeProcess.pid) killReasons.set(activeProcess.pid, reason);
-    if (reason === 'steer' || reason === 'interrupt') armExitSettle(scopeKey);
+    if (isLifecycleExitSettleReason(reason)) armExitSettle(scopeKey);
     const proc = activeProcess;
     // One owner runs the whole termination: tree walk, then escalation after the
     // grace that re-checks the ORIGINAL child. The previous escalation guarded on
@@ -698,7 +707,7 @@ export function killActiveAgent(scopeKeyOrReason = 'user', scopedReason?: string
     // Fix C1: 사용자 stop/steer 시 해당 scope busy가 즉시 false가 되도록 참조를 동기 해제.
     // 실제 child 종료는 위 setTimeout SIGKILL이 백그라운드에서 마무리.
     // exit handler의 setActiveProcess(null) / activeProcesses.delete 는 idempotent.
-    if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') {
+    if (isImmediateScopeReleaseReason(reason)) {
         activeMainProcesses.delete(scopeKey);
     }
     return true;
@@ -1806,7 +1815,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 activity: identity => opts.lifecycle?.onActivity?.('native-runtime', identity),
                 exited: code => opts.lifecycle?.onExit?.(code),
                 cancelling: reason => {
-                    if (reason === 'steer' || reason === 'interrupt') { armExitSettle(scopeKey); capturedExit ??= captureExitSettler(scopeKey); }
+                    if (isLifecycleExitSettleReason(reason)) { armExitSettle(scopeKey); capturedExit ??= captureExitSettler(scopeKey); }
                 },
                 exit: { cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin, resumeKey, prompt, opts,
                     cfg: { ...cfg, effort }, ownerGeneration, persistenceOwner, forceNew, empSid, isResume, effortDefault: effort,
@@ -1945,6 +1954,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 status: stopReason || ctx.stallReason ? 'stopped' as const : 'error' as const,
                 finalText: null, partialText: outcome.partialText,
             };
+            const stopCause = selected.status === 'stopped' ? stopCauseFromKillReason(stopReason) : undefined;
             handoffRuntimeOutcome(ctx, selected);
             try {
                 // Admit the captured run before compatibility consumers retire it.
@@ -1954,6 +1964,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     broadcast('agent_done', { ...runPin, traceRunId, cli,
                         text: selected.status === 'stopped' ? '' : `❌ ${diagnostic()}`, error: true,
                         runtimeStatus: selected.status, runtimeFinality: selected.finalText === null ? 'absent' : 'present',
+                        ...(stopCause ? { stopCause } : {}),
                     }, traceAudience);
                 }
             } finally {
@@ -1962,12 +1973,12 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         ...(selected.status === 'error' ? { error: diagnostic() } : {}) });
                 } finally { closeFailedTrace(selected); }
             }
-            return selectedResult ?? resultFor(selected);
+            return selectedResult ?? { ...resultFor(selected), ...(stopCause ? { stopCause } : {}) };
         };
         let nativeRun!: ReturnType<typeof runNativeRuntime<SpawnPromiseResult>>;
         const cancelHook = (reason: string) => {
             stopReason ??= reason;
-            if (reason === 'steer' || reason === 'interrupt') {
+            if (isLifecycleExitSettleReason(reason)) {
                 armExitSettle(scopeKey);
                 capturedExit ??= captureExitSettler(scopeKey);
             }
@@ -2075,6 +2086,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 try { opts.lifecycle?.onExit?.(code); } catch { console.warn(`[runtime:${cli}] exit observer failed`); }
                 await handleAgentExit({ onRuntimeEnd: endRuntime,
                     ctx, code, cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey, prompt, opts, cfg: { ...cfg, effort }, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume, wasKilled, wasSteer, smokeResult: detectSmokeResponse(outcome.finalText ?? '', ctx.toolLog, code, cli),
                     effortDefault: effort, costLine: '', resolve: value => { selectedResult ??= value; },
@@ -2448,6 +2460,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             //   - trace: if (traceText) traceText = `⏹️ [interrupted]…`
             handleAgentExit({
                 ctx, code: acpCode, childExitCode: code, cli, model, agentLabel, mainManaged, origin,
+                killReason: acpKillReason,
                 onRuntimeEnd: end => ctx.printActivity?.finish(end),
                 resumeKey,
                 prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
@@ -2616,7 +2629,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             };
             const cancelHook = (reason: string) => {
                 if (cleanupDone) return;
-                if (reason === 'steer' || reason === 'interrupt') piExit = captureExitSettler(scopeKey);
+                if (isLifecycleExitSettleReason(reason)) piExit = captureExitSettler(scopeKey);
                 void requestCancel();
             };
             if (lease && mainRun) mainRun.cancelTurn = cancelHook;
@@ -2680,6 +2693,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 return handleAgentExit({
                     onRuntimeEnd: (end) => { activity.close(end); },
                     ctx, code: result.code, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume: false, wasKilled, wasSteer, smokeResult,
@@ -2711,6 +2725,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 return handleAgentExit({
                     onRuntimeEnd: (end) => { activity.close(end); },
                     ctx, code: 1, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume: false, wasKilled, wasSteer, smokeResult: detectSmokeResponse('', [], 1, cli),
@@ -3216,6 +3231,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             await handleAgentExit({
                 onRuntimeEnd: (end) => { activity.close(end); },
                 ctx, code: exitCode, cli, model, agentLabel, mainManaged, origin,
+                killReason,
                 resumeKey,
                 prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                 isResume, wasKilled, wasSteer, smokeResult,
@@ -4094,6 +4110,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         //   - trace: if (traceText) traceText = `⏹️ [interrupted]…`
         handleAgentExit({
             ctx, code: effectiveExitCode, cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin,
+            killReason: stdKillReason,
             onRuntimeEnd: end => ctx.printActivity?.finish(end),
             resumeKey,
             prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,

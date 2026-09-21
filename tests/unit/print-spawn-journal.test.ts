@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import childProcess from 'node:child_process';
+import { EXPLICIT_USER_STOP_KILL_REASON } from '../../src/agent/spawn/kill-reason.ts';
 
 const home = process.env['CLI_JAW_HOME']!;
 const script = join(home, 'print-provider.mjs');
@@ -106,7 +107,7 @@ test('real print child traverses spawn, accepted parser, lifecycle and durable j
     } finally { unsubscribe(); }
 });
 
-for (const reason of ['user', 'steer']) test(`held print ${reason} preserves legacy MESSAGE and closes Activity once`, { timeout: 15_000 }, async t => {
+for (const reason of ['user', 'steer', EXPLICIT_USER_STOP_KILL_REASON]) test(`held print ${reason} preserves legacy MESSAGE and closes Activity once`, { timeout: 15_000 }, async t => {
     t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected network'); });
     t.mock.method(console, 'log', () => {}); t.mock.method(console, 'warn', () => {}); t.mock.method(console, 'error', () => {});
     const owner = createChatSession(`print-${reason}-owner`);
@@ -130,7 +131,7 @@ for (const reason of ['user', 'steer']) test(`held print ${reason} preserves leg
             scopeKey: scope, chatSessionId: owner.id, origin: 'web',
             _skipInsert: true, _skipHistory: true, _skipResume: true, _skipSessionPersist: true, _isSmokeContinuation: true });
         const rows = () => db.prepare("SELECT content FROM messages WHERE role='assistant' AND session_id=?").all(owner.id);
-        const expected = reason === 'steer' ? '⏹️ [interrupted]\n\nPRINT_PARTIAL_SENTINEL' : 'PRINT_PARTIAL_SENTINEL';
+        const expected = reason === 'user' ? 'PRINT_PARTIAL_SENTINEL' : '⏹️ [interrupted]\n\nPRINT_PARTIAL_SENTINEL';
         await Promise.race([accepted.promise, run.promise.then(() => { throw new Error('child ended before accepted partial'); })]);
         assert.equal(killActiveAgent(scope, reason), true);
         const barrier = reason === 'steer' ? waitForExitSettled(scope).then(() => {
@@ -140,6 +141,7 @@ for (const reason of ['user', 'steer']) test(`held print ${reason} preserves leg
         await barrier;
         const result = await run.promise;
         assert.equal(result.text, 'PRINT_PARTIAL_SENTINEL', 'legacy return text is not the prefixed MESSAGE');
+        assert.equal(result.stopCause, reason === 'steer' ? 'steer_kill' : 'user_stop');
         assert.deepEqual(rows(), [{ content: expected }]);
         const start = seen.find(e => e.event === 'agent_runtime' && e.data['kind'] === 'turn-start');
         assert.ok(start);

@@ -301,6 +301,8 @@ export interface ExitHandlerParams {
     ctx: ExitContext;
     code: number | null;
     childExitCode?: number | null;
+    /** Exact reason captured at cancellation admission; presentation provenance only. */
+    killReason?: string | null;
     cli: string;
     model: string;
     effectiveProvider?: string;
@@ -367,6 +369,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         stallReason: ctx.stallReason,
         wasSteer,
         wasKilled,
+        killReason: params.killReason,
         exitCode: params.childExitCode ?? params.code,
     });
     const nativeOutcome = lifecycleRuntimeOutcome(ctx, wasKilled || wasSteer || Boolean(ctx.stallReason));

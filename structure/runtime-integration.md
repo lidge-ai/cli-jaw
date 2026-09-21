@@ -59,10 +59,14 @@ a Jaw kill. When that print-compatible exit has no native outcome, lifecycle
 marks the terminal with legacy `executionInterrupted`; pipeline then carries the
 cause so the collector reaches `tg.stoppedUnattributed` instead of
 `tg.noResponse`. The collector must not invent a cause: a missing or unknown
-value keeps `tg.stopped`. `interrupt` is also used by explicit channel `/stop`,
-so a `steer_kill` with no matching `steer_started` replacement is displayed as
-`user_stop`; an observed replacement still blanks the old turn because the new
-turn owns the answer. Do not split `runtimeStatus`.
+value keeps `tg.stopped`. Cancellation provenance is captured with the physical
+or native cancellation itself and survives every runtime wrapper. Gateway
+replacement keeps `interrupt` and becomes `steer_kill`; explicit channel `/stop`
+uses `explicit-user-stop`, which keeps the same interrupt cleanup and
+exit-settlement behavior but becomes `user_stop`. The collector never infers the
+cause from `steer_started` ordering. If that event arrived first it still blanks
+the retired turn; if the terminal settles first, its captured `steer_kill`
+sentence is already truthful. Do not split `runtimeStatus`.
 
 A runtime that DOES know why it failed now says so. `ExitContext.runtimeDiagnostic`
 carries a sentence the runtime generated itself — never relayed child output — and

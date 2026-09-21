@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { ClaudeSessionOptions } from '../../src/agent/runtime/claude-sdk-session.js';
+import { EXPLICIT_USER_STOP_KILL_REASON } from '../../src/agent/spawn/kill-reason.ts';
 
 const root = fs.mkdtempSync(join(tmpdir(), 'native-claude-spawn-'));
 let detectedBinary = process.execPath;
@@ -293,9 +294,10 @@ runTest('pending main factory cancellation settles logically but retains scoped 
         await entered.promise;
         const creation = Promise.all(factoryDone).then(() => { factorySettled = true; });
         assert.equal(activeMainProcesses.has(opts.scopeKey), true); assert.equal(hasClaudeRuns(opts.scopeKey), true);
-        assert.equal(killActiveAgent(opts.scopeKey, 'user'), true);
+        assert.equal(killActiveAgent(opts.scopeKey, EXPLICIT_USER_STOP_KILL_REASON), true);
         const result = await run.promise;
         assert.equal(result.runtimeOutcome?.status, 'stopped'); assert.equal(result.runtimeOutcome?.finalText, null);
+        assert.equal(result.stopCause, 'user_stop');
         assert.equal(activeMainProcesses.has(opts.scopeKey), false);
         assert.equal(factorySettled, false); assert.equal(queries.length, 0);
         waits.push(waitForMainProcessEnd(opts.scopeKey, 2000).then(() => { mainDone = true; }));

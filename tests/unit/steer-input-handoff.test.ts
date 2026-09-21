@@ -9,12 +9,15 @@ import { settleOnce, settleAllPending } from '../../src/orchestrator/request-reg
 let mode: 'scoped-stop' | 'aggregate-stop' | 'natural' | 'dispatched' | 'new-run' | 'failure' = 'natural';
 const queued: unknown[][] = [];
 const steered: unknown[][] = [];
+const killed: unknown[][] = [];
+const purged: unknown[][] = [];
 test.mock.module('../../src/agent/spawn.js', { namedExports: {
-    isAgentBusy: () => true, messageQueue: [], purgeQueueOnStop: () => {},
+    isAgentBusy: () => true, messageQueue: [],
+    purgeQueueOnStop: (...args: unknown[]) => { purged.push(args); },
     getCurrentMainMeta: () => null,
     hasActiveMainReplacement: () => false,
     canSteerAgent: () => assert.fail('gateway must delegate capability choice, not pre-queue'),
-    killActiveAgent: () => assert.fail('gateway must delegate steer interruption to steerAgent'),
+    killActiveAgent: (...args: unknown[]) => { killed.push(args); return true; },
     enqueueMessage: (...args: unknown[]) => { queued.push(args); return 'fixture-queued'; },
     steerAgent: (scope: string, _text: string, _origin: string, meta: { requestId: string }) => {
         steered.push([scope, _text, _origin, meta]);
@@ -35,7 +38,8 @@ test.mock.module('../../src/orchestrator/pipeline.js', { namedExports: {
 } });
 const { submitMessage, __resetSubmitDedupForTest } = await import('../../src/orchestrator/gateway.ts');
 test.beforeEach(t => {
-    queued.length = 0; steered.length = 0; cancelAllSteerInputs(); __resetSubmitDedupForTest();
+    queued.length = 0; steered.length = 0; killed.length = 0; purged.length = 0;
+    cancelAllSteerInputs(); __resetSubmitDedupForTest();
     settings.multiSession = { enabled: true, maxConcurrent: 4, midRunPolicy: 'steer' };
     t.mock.method(globalThis, 'fetch', async () => assert.fail('unexpected network'));
     t.mock.method(console, 'error', () => {});
@@ -52,6 +56,7 @@ for (const scenario of ['scoped-stop', 'aggregate-stop', 'natural', 'dispatched'
             assert.equal(result.action, 'started'); assert.ok(result.requestId);
             await new Promise(resolve => setImmediate(resolve));
             assert.equal(steered.length, 1, 'every steer policy call delegates exactly once');
+            assert.equal(killed.length, 0, 'steer policy must not call the interrupt kill seam');
             assert.deepEqual(steered[0]!.slice(0, 3), ['handoff-scope', 'handoff-' + scenario, 'web']);
             const receipts = events.filter(event => event.event === 'request_settled' && event.data['requestId'] === result.requestId);
             if (scenario === 'natural') {
@@ -65,3 +70,20 @@ for (const scenario of ['scoped-stop', 'aggregate-stop', 'natural', 'dispatched'
         } finally { off(); }
     });
 }
+
+test('gateway interrupt captures interrupt provenance and emits no steer_started event', () => {
+    settings.multiSession = { enabled: true, maxConcurrent: 4, midRunPolicy: 'interrupt' };
+    const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+    const off = subscribe(event => events.push(event));
+    try {
+        const result = submitMessage('interrupt replacement', {
+            origin: 'web', scope: 'interrupt-scope', chatSessionId: 'interrupt-chat',
+        });
+        assert.equal(result.action, 'queued');
+        assert.deepEqual(killed, [['interrupt-scope', 'interrupt']]);
+        assert.deepEqual(purged, [['interrupt-scope', 'interrupt']]);
+        assert.equal(events.some(event => event.event === 'steer_started'), false);
+    } finally {
+        off();
+    }
+});
