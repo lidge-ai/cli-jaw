@@ -117,6 +117,9 @@ export class SlackSocketClient {
     /** Set when a reconnect is requested while a connect is already running. */
     private reconnectPending = false;
     private seenEnvelopes = new Map<string, number>();
+    private pendingEnvelopes = new Map<string, { token: number; socketEpoch: number }>();
+    private nextEnvelopeToken = 0;
+    private socketEpoch = 0;
     private stopped = false;
     private connecting = false;
     private readonly maxReconnectAttempts: number;
@@ -174,8 +177,10 @@ export class SlackSocketClient {
         this.clearHelloTimer();
         this.setState(terminalState);
         for (const waiter of [...this.readyWaiters]) waiter('stopped');
-        try { this.ws?.close(); } catch { /* already closing */ }
+        const socket = this.ws;
         this.ws = null;
+        this.invalidateSocketOwnership();
+        try { socket?.close(); } catch { /* already closing */ }
     }
 
     private clearReconnectTimer(): void {
@@ -232,6 +237,7 @@ export class SlackSocketClient {
         // otherwise schedule a second reconnect on top of this one.
         const superseded = this.ws;
         this.ws = null;
+        this.invalidateSocketOwnership();
         if (superseded) {
             try { superseded.close(); } catch { /* already closing */ }
         }
@@ -258,6 +264,7 @@ export class SlackSocketClient {
             return;
         }
         this.ws = ws;
+        const socketEpoch = this.socketEpoch;
 
         // Slack signals readiness with `hello`. If it never arrives the socket
         // is useless and inbound would stall forever, because frames are
@@ -269,6 +276,7 @@ export class SlackSocketClient {
             log.warn(`[slack:socket] no hello within ${HELLO_DEADLINE_MS}ms — recycling socket`);
             try { ws.close(); } catch { /* already closing */ }
             this.ws = null;
+            this.invalidateSocketOwnership();
             this.scheduleReconnect();
         }, HELLO_DEADLINE_MS);
 
@@ -287,7 +295,7 @@ export class SlackSocketClient {
         ws.addEventListener('message', (event: unknown) => {
             if (!isCurrent()) return;
             const data = (event as { data?: unknown })?.data;
-            void this.handleFrame(typeof data === 'string' ? data : String(data));
+            void this.handleFrame(typeof data === 'string' ? data : String(data), ws, socketEpoch);
         });
         ws.addEventListener('error', (event: unknown) => {
             if (!isCurrent()) return;
@@ -299,13 +307,15 @@ export class SlackSocketClient {
             // Detach so a repeated close from this same dead socket cannot
             // schedule a second reconnect.
             this.ws = null;
+            this.invalidateSocketOwnership();
             this.clearHelloTimer();
             log.info('[slack:socket] closed, scheduling reconnect');
             this.scheduleReconnect();
         });
     }
 
-    private async handleFrame(raw: string): Promise<void> {
+    private async handleFrame(raw: string, socket: SlackSocketLike, socketEpoch: number): Promise<void> {
+        if (!this.ownsSocket(socket, socketEpoch)) return;
         let envelope: SlackEnvelope;
         try {
             envelope = JSON.parse(raw) as SlackEnvelope;
@@ -342,68 +352,88 @@ export class SlackSocketClient {
             return;
         }
 
+        const envelopeId = envelope.envelope_id;
         // An envelope this connection already saw is acked and dropped: the work
         // was done, only our acknowledgement failed to land.
-        if (envelope.envelope_id && this.hasSeenEnvelope(envelope.envelope_id)) {
+        if (envelopeId && this.hasSeenEnvelope(envelopeId)) {
             log.info(`[slack:socket] duplicate envelope ignored (retry_attempt=${envelope.retry_attempt ?? 0})`);
-            this.ack(envelope.envelope_id);
+            this.ack(envelopeId, socket);
             return;
         }
 
-        // Types we never act on are acked immediately, as before, so Slack stops
-        // retrying payloads that have nowhere to go.
-        if (!HANDLED_ENVELOPE_TYPES.has(envelope.type)) {
-            if (envelope.envelope_id && this.ack(envelope.envelope_id)) {
-                this.rememberEnvelope(envelope.envelope_id);
-            }
-            return;
-        }
-
-        // Durable preflight BEFORE the ack. Acking first means an envelope whose
-        // record never reached disk is one Slack considers delivered: it will not be
-        // sent again, and a crash here loses the message with no trace. Withholding
-        // the ack turns that into a redelivery instead.
-        let preflight: SlackPreflightResult = 'committed';
-        if (this.options.preflightEnvelope) {
-            try {
-                preflight = await this.options.preflightEnvelope(envelope);
-            } catch (error) {
-                log.error(redactSlackTokens(
-                    '[slack:socket] durable preflight failed, withholding ack so Slack redelivers: '
-                    + (error as Error).message,
-                ));
-                this.recycleSocket();
+        let reservationToken: number | undefined;
+        if (envelopeId) {
+            if (this.pendingEnvelopes.has(envelopeId)) {
+                log.info(`[slack:socket] pending duplicate left un-acked (retry_attempt=${envelope.retry_attempt ?? 0})`);
                 return;
             }
+            reservationToken = ++this.nextEnvelopeToken;
+            this.pendingEnvelopes.set(envelopeId, { token: reservationToken, socketEpoch });
         }
-
-        if (envelope.envelope_id) {
-            if (!this.ack(envelope.envelope_id)) {
-                // The ack did not reach Slack, so this delivery WILL be retried. Running
-                // the agent now would duplicate that work. Do not remember the id until
-                // the ack succeeds, or the retry would be mistaken for completed work.
-                log.warn('[slack:socket] ack failed — skipping dispatch, awaiting Slack retry');
-                this.recycleSocket();
-                return;
-            }
-            this.rememberEnvelope(envelope.envelope_id);
-        }
-
-        // Acked, but already handled on an earlier run: the ack is what Slack was
-        // still waiting for, and re-dispatching would repeat the work.
-        if (preflight !== 'committed') return;
 
         try {
-            await this.options.onEnvelope(envelope);
-        } catch (error) {
-            log.error('[slack:socket] handler error', redactSlackTokens((error as Error).message));
+            // Types we never act on are acked immediately, as before, so Slack stops
+            // retrying payloads that have nowhere to go.
+            if (!HANDLED_ENVELOPE_TYPES.has(envelope.type)) {
+                if (envelopeId && this.ack(envelopeId, socket)) {
+                    this.rememberEnvelope(envelopeId);
+                }
+                return;
+            }
+
+            // Durable preflight BEFORE the ack. Acking first means an envelope whose
+            // record never reached disk is one Slack considers delivered: it will not be
+            // sent again, and a crash here loses the message with no trace. Withholding
+            // the ack turns that into a redelivery instead.
+            let preflight: SlackPreflightResult = 'committed';
+            if (this.options.preflightEnvelope) {
+                try {
+                    preflight = await this.options.preflightEnvelope(envelope);
+                } catch (error) {
+                    log.error(redactSlackTokens(
+                        '[slack:socket] durable preflight failed, withholding ack so Slack redelivers: '
+                        + (error as Error).message,
+                    ));
+                    if (this.ownsSocket(socket, socketEpoch)) this.recycleSocket();
+                    return;
+                }
+            }
+
+            if (!this.ownsSocket(socket, socketEpoch)
+                || (envelopeId && !this.ownsEnvelopeReservation(envelopeId, reservationToken, socketEpoch))) {
+                return;
+            }
+
+            if (envelopeId) {
+                if (!this.ack(envelopeId, socket)) {
+                    // The ack did not reach Slack, so this delivery WILL be retried. Running
+                    // the agent now would duplicate that work. Do not remember the id until
+                    // the ack succeeds, or the retry would be mistaken for completed work.
+                    log.warn('[slack:socket] ack failed — skipping dispatch, awaiting Slack retry');
+                    this.recycleSocket();
+                    return;
+                }
+                this.rememberEnvelope(envelopeId);
+            }
+
+            // Acked, but already handled on an earlier run: the ack is what Slack was
+            // still waiting for, and re-dispatching would repeat the work.
+            if (preflight !== 'committed') return;
+
+            try {
+                await this.options.onEnvelope(envelope);
+            } catch (error) {
+                log.error('[slack:socket] handler error', redactSlackTokens((error as Error).message));
+            }
+        } finally {
+            if (envelopeId && reservationToken !== undefined) {
+                this.releaseEnvelopeReservation(envelopeId, reservationToken);
+            }
         }
     }
 
     /** @returns true when the ack was handed to the socket successfully. */
-    private ack(envelopeId: string): boolean {
-        const socket = this.ws;
-        if (!socket) return false;
+    private ack(envelopeId: string, socket: SlackSocketLike): boolean {
         try {
             socket.send(JSON.stringify({ envelope_id: envelopeId }));
             return true;
@@ -418,9 +448,32 @@ export class SlackSocketClient {
         if (this.stopped || this.state === 'disabled') return;
         const socket = this.ws;
         this.ws = null;
+        this.invalidateSocketOwnership();
         this.clearHelloTimer();
         try { socket?.close(); } catch { /* already closing */ }
         this.scheduleReconnect();
+    }
+
+    private ownsSocket(socket: SlackSocketLike, socketEpoch: number): boolean {
+        return this.ws === socket && this.socketEpoch === socketEpoch;
+    }
+
+    private invalidateSocketOwnership(): void {
+        this.socketEpoch += 1;
+        this.pendingEnvelopes.clear();
+    }
+
+    private ownsEnvelopeReservation(envelopeId: string, token: number | undefined, socketEpoch: number): boolean {
+        const reservation = this.pendingEnvelopes.get(envelopeId);
+        return token !== undefined
+            && reservation?.token === token
+            && reservation.socketEpoch === socketEpoch;
+    }
+
+    private releaseEnvelopeReservation(envelopeId: string, token: number): void {
+        if (this.pendingEnvelopes.get(envelopeId)?.token === token) {
+            this.pendingEnvelopes.delete(envelopeId);
+        }
     }
 
     private hasSeenEnvelope(envelopeId: string): boolean {
@@ -461,6 +514,7 @@ export class SlackSocketClient {
             this.setState('disconnected');
             return;
         }
+        if (this.ws) this.invalidateSocketOwnership();
         this.clearReconnectTimer();
         const delay = Math.min(
             this.baseReconnectDelayMs * 2 ** Math.min(this.reconnectAttempts, RECONNECT_EXPONENT_CAP),

@@ -4,6 +4,13 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { settings } from '../../src/core/config.ts';
 import { SlackSocketClient, type SlackEnvelope, type SlackSocketLike } from '../../src/slack/socket.ts';
+import { slackTargetFromId } from '../../src/messaging/slack-target.ts';
+import { getSessionOwnershipGeneration } from '../../src/agent/session-persistence.ts';
+import {
+    claimThreadPrefetch,
+    releaseThreadPrefetch,
+    resetThreadPrefetchClaims,
+} from '../../src/slack/thread-tracker.ts';
 
 mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected live fetch'); });
 mock.module('../../src/orchestrator/gateway.ts', {
@@ -120,6 +127,7 @@ test.beforeEach(() => {
     };
     setSlackSelfUserIdForTest('UBOT');
     ingress.resetSlackEventDedup();
+    resetThreadPrefetchClaims();
     __resetIngressJournalForTests();
     initIngressJournal(new Database(':memory:') as never, { now: () => 1_700_000_000_000, bootId: 'settle' });
 });
@@ -232,27 +240,60 @@ test('ack failure retry dispatches once and completes the journal row', { timeou
     }
 });
 
-test('reset dead-letters an acked journal row dropped before its queue task starts', { timeout: 5000 }, async () => {
+test('reset immediately dead-letters and releases prefetch behind a noncooperative predecessor', { timeout: 5000 }, async t => {
     const firstStarted = Promise.withResolvers<void>();
-    assert.equal(ingress.enqueueSlackIngress('default', async signal => {
+    const releaseFirst = Promise.withResolvers<void>();
+    const realSetTimeout = globalThis.setTimeout;
+    let observedDrainTimeout = false;
+    t.mock.method(globalThis, 'setTimeout', (...args: Parameters<typeof setTimeout>) => {
+        const [callback, delay, ...rest] = args;
+        if (delay === 5_000) observedDrainTimeout = true;
+        return realSetTimeout(callback, delay === 5_000 ? 0 : delay, ...rest);
+    });
+    settings.multiSession = {
+        ...settings.multiSession,
+        enabled: true,
+        channels: { ...settings.multiSession.channels, slack: true },
+    };
+    const channel = 'C1705';
+    const threadTs = '1705.0';
+    const target = slackTargetFromId(channel, { threadTs, teamId: 'T1' });
+    const scope = ingress.resolveSlackScopeForTarget(target);
+    assert.ok(scope);
+    const owner = getSessionOwnershipGeneration(scope);
+    const lane = ingress.slackIngressLaneKey(target);
+    assert.equal(ingress.enqueueSlackIngress(lane, async () => {
         firstStarted.resolve();
-        await new Promise<void>(resolve => {
-            if (signal.aborted) resolve();
-            else signal.addEventListener('abort', () => resolve(), { once: true });
-        });
+        await releaseFirst.promise;
     }), true);
     await firstStarted.promise;
 
-    const envelope = messageEnvelope('1705.1');
+    const envelope: SlackEnvelope = {
+        envelope_id: 'E-1705.1',
+        type: 'events_api',
+        payload: { event: {
+            type: 'message', channel, channel_type: 'channel', thread_ts: threadTs,
+            ts: '1705.1', user: 'U1', text: 'hello',
+        } },
+    };
     assert.equal(await preflightSlackEnvelope(envelope), 'committed');
     await handleSlackEnvelope(envelope);
-    assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1705.1')?.state, 'processing');
+    assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1705:1705.1')?.state, 'processing');
+    assert.equal(claimThreadPrefetch(channel, threadTs, owner), 0, 'prefetch claim was not held while queued');
 
     await ingress.resetSlackIngress();
 
+    assert.equal(observedDrainTimeout, true, 'test did not exercise the bounded reset timeout');
     const journal = getIngressJournal()!;
-    const row = journal.find('slack', 'T1', 'T1:C1:1705.1');
+    const row = journal.find('slack', 'T1', 'T1:C1705:1705.1');
     assert.equal(row?.state, 'dead_letter');
     assert.equal(row?.lastError, 'ingress_cancelled');
     assert.equal(journal.oldestOpenReceivedAt(), null);
+    const reclaimed = claimThreadPrefetch(channel, threadTs, owner);
+    assert.ok(reclaimed > 0, 'prefetch remained claimed until predecessor settlement');
+
+    releaseFirst.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(claimThreadPrefetch(channel, threadTs, owner), 0, 'late dropped work released a replacement prefetch token');
+    releaseThreadPrefetch(channel, threadTs, owner, reclaimed);
 });
