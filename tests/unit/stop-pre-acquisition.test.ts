@@ -62,9 +62,11 @@ test.beforeEach(t => {
 });
 
 for (const route of ['pi', 'codex-legacy', 'codex-multiplex', 'codex-prepare'] as const) {
-    for (const completion of ['lease', 'rejection'] as const) {
+    for (const completion of ['lease', 'rejection', 'lease-without-map', 'rejection-without-map'] as const) {
         test(`actual remote /stop during ${route} acquisition survives late ${completion}`, { timeout: 5000 }, async () => {
             const cli = route === 'pi' ? 'pi' : 'codex-app';
+            const leaseReturned = completion.startsWith('lease');
+            const mapRemoved = completion.endsWith('without-map');
             stage = route === 'codex-prepare' ? 'prepare' : 'acquire';
             config.settings.runtime = { ...config.settings.runtime, codexApp: {
                 ...config.settings.runtime?.codexApp, multiplex: route !== 'codex-legacy',
@@ -94,7 +96,11 @@ for (const route of ['pi', 'codex-legacy', 'codex-multiplex', 'codex-prepare'] a
                     meta: { ...old.meta, requestId: 'replacement' } };
                 activeMainProcesses.set(scope, replacement);
                 live.beginLiveRun(scope, cli); live.setLiveRunTraceId(scope, 'replacement-trace');
-                if (completion === 'lease') acquisition.resolve(); else acquisition.reject(new Error('late acquisition rejection'));
+                live.appendLiveRunText(scope, 'replacement output');
+                const replacementLive = live.getLiveRun(scope);
+                if (mapRemoved) activeMainProcesses.delete(scope);
+                const afterReplacement = events.length;
+                if (leaseReturned) acquisition.resolve(); else acquisition.reject(new Error('late acquisition rejection'));
                 const collected = await pending;
                 assert.equal(collected.text, 'tg.stoppedUser');
                 assert.equal(collected.data.runtimeStatus, 'stopped');
@@ -102,9 +108,12 @@ for (const route of ['pi', 'codex-legacy', 'codex-multiplex', 'codex-prepare'] a
                 assert.equal(collected.data.executionFailed, undefined);
                 assert.equal(result?.code, 130);
                 assert.deepEqual(result?.runtimeOutcome, { status: 'stopped', finalText: null, partialText: '' });
-                assert.equal(releases, completion === 'lease' && stage === 'acquire' ? 1 : 0);
-                assert.equal(activeMainProcesses.get(scope), replacement);
-                assert.equal(live.getLiveRun(scope).traceRunId, 'replacement-trace');
+                assert.equal(releases, leaseReturned && stage === 'acquire' ? 1 : 0);
+                assert.equal(activeMainProcesses.get(scope), mapRemoved ? undefined : replacement);
+                assert.deepEqual(live.getLiveRun(scope), replacementLive);
+                assert.equal(events.slice(afterReplacement).filter(e =>
+                    e.type === 'agent_status' && e.data.running === false).length, 0,
+                'old acquisition must not announce a foreign live run as stopped');
                 assert.equal(old.starting, false);
                 assert.equal(old.cancelPending, undefined, 'captured acquire hook is retired');
                 assert.equal(events.filter(e => e.type === 'orchestrate_done' && e.data.requestId === scope).length, 1);

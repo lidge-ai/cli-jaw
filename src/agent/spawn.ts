@@ -3424,8 +3424,12 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
             finalizeTraceRun(traceRunId, 'interrupted');
             if (!activeMainProcesses.has(scopeKey) || activeMainProcesses.get(scopeKey) === mainRun) {
-                clearLiveRun(liveScope);
-                broadcast('agent_status', { running: false, agentId: agentLabel });
+                const currentLive = getLiveRun(liveScope);
+                const ownsLive = currentLive.traceRunId === traceRunId;
+                if (ownsLive) clearLiveRun(liveScope);
+                if (ownsLive || (!currentLive.running && currentLive.traceRunId === undefined)) {
+                    broadcast('agent_status', { running: false, agentId: agentLabel });
+                }
             }
             resolve!(stoppedBeforeStart(codexAcquireStopReason, traceRunId));
             if (activeMainProcesses.get(scopeKey) === mainRun) activeMainProcesses.delete(scopeKey);

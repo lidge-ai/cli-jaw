@@ -332,11 +332,14 @@ test.mock.module('../../src/agent/spawn/queue.js', {
     },
 });
 
+const realLiveRunState = await import('../../src/agent/live-run-state.ts');
 test.mock.module('../../src/agent/live-run-state.js', {
     namedExports: {
-        beginLiveRun() {}, appendLiveRunText() {}, setLiveRunTraceId() {}, replaceLiveRunTools() {}, appendLiveRunTool() {},
-        clearLiveRun: (scopeKey: string) => { harness.clearLiveRunCalls.push(scopeKey); },
-        getLiveRun: () => ({ text: '', toolLog: [], traceRunId: null, truncated: false }),
+        ...realLiveRunState,
+        clearLiveRun: (scopeKey: string) => {
+            harness.clearLiveRunCalls.push(scopeKey);
+            realLiveRunState.clearLiveRun(scopeKey);
+        },
     },
 });
 
@@ -674,7 +677,8 @@ test('cancelling a pending acquire releases its late lease and settles once with
         assert.equal(harness.releases, 1, 'the acquired lease must be released once');
         assert.equal(run.starting, false);
         assert.deepEqual(harness.finalized, [{ runId: 'tr_multiplexfixture0001', status: 'interrupted' }]);
-        assert.deepEqual(harness.clearLiveRunCalls, [scopeKey]);
+        assert.deepEqual(harness.clearLiveRunCalls, [], 'pending acquisition has no owned live entry to clear');
+        assert.equal(realLiveRunState.getLiveRun(scopeKey).running, false);
         assert.deepEqual(harness.processQueueCalls, [scopeKey]);
         assert.equal(events.filter((event) => event.type === 'agent_done').length, 0);
         assert.equal(events.filter((event) => event.type === 'agent_status' && event.data['running'] === false).length, 1);
