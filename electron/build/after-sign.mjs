@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import childProcess from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,7 +33,7 @@ export default async function afterSign(context) {
 
   console.log(`[after-sign] ${appName} is unsigned; applying an ad-hoc signature.`);
   const entitlementsPath = join(here, 'entitlements.mac.plist');
-  execFileSync('/usr/bin/codesign', [
+  childProcess.execFileSync('/usr/bin/codesign', [
     '--force',
     '--deep',
     '--sign',
@@ -48,20 +48,33 @@ export default async function afterSign(context) {
  * True when the bundle is signed by a certificate authority rather than ad-hoc.
  *
  * An ad-hoc signature reports `Signature=adhoc`; a real one reports an
- * `Authority=` chain. An unsigned bundle makes codesign exit non-zero and write
- * its report to stderr, so that case is handled in the catch rather than being
- * mistaken for a failure of the probe itself.
+ * `Authority=` chain. codesign writes this report to stderr even on success.
+ * A recognized unsigned result is the only non-zero outcome that enables the
+ * fallback; launch, permission and malformed-report failures stop the build.
  */
 function isRealSignature(appPath) {
   const looksReal = (text) => text.includes('Authority=') && !/Signature\s*=\s*adhoc/.test(text);
-  try {
-    return looksReal(
-      execFileSync('/usr/bin/codesign', ['-dv', '--verbose=2', appPath], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }) + '',
-    );
-  } catch (error) {
-    return looksReal(`${error.stdout ?? ''}${error.stderr ?? ''}`);
+  const result = childProcess.spawnSync('/usr/bin/codesign', ['-dv', '--verbose=2', appPath], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const text = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
+  if (result.error) {
+    throw new Error(`[after-sign] could not inspect existing signature: ${result.error.message}`);
   }
+  if (result.status === 0) {
+    if (looksReal(text)) return true;
+    if (/Signature\s*=\s*adhoc/.test(text)) return false;
+    throw new Error(`[after-sign] could not inspect existing signature: codesign returned an unrecognized successful report${detail(text)}`);
+  }
+  if (/code object is not signed at all/i.test(text)) return false;
+
+  const termination = result.signal ? `signal ${result.signal}` : `status ${result.status ?? 'unknown'}`;
+  throw new Error(`[after-sign] could not inspect existing signature: codesign exited with ${termination}${detail(text)}`);
+}
+
+function detail(text) {
+  const trimmed = text.trim();
+  return trimmed ? `: ${trimmed}` : '';
 }
