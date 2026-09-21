@@ -86,6 +86,8 @@ Activity persistence uses the existing SQLite trace tables: nullable `trace_runs
 | `gate:all` | `node scripts/release-gates.mjs` |
 | `prepublishOnly` | `npm run build && npm run build:frontend && npm run check:frontend-build-output` |
 | `electron:dev` | `concurrently -k -n jaw,electron "node scripts/electron-dev-manager.mjs" "npm --prefix electron run dev"` |
+| `electron:dist:mac:signed` | Opt-in Developer ID build with operator-provided electron-builder signing/notarization configuration. Requests notarization, then runs the existing artifact checks and `verify:mac-signature`. The default local command and desktop release workflow remain unsigned/ad-hoc. |
+| `verify:mac-signature` | Checks the built macOS app's Developer ID authority, hardened runtime, secure timestamp, nested signature, Gatekeeper assessment and stapled ticket. Source tests alone do not certify an artifact. |
 | `electron:build` | `npm --prefix electron run build` |
 | `sidecar:bundle` | `bash scripts/bundle-sidecar.sh darwin arm64` |
 | `electron:dist:mac` | `npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons` |
