@@ -24,46 +24,58 @@
  * Runs before electron-builder's own signing pass so the outer bundle seals a
  * tree whose contents are already signed.
  */
-import { execFileSync } from 'node:child_process';
-import { openSync, readSync, closeSync, statSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 /** Mach-O and universal-binary magic numbers, both endiannesses. */
 const MACHO_MAGIC = new Set([
   0xfeedface, 0xfeedfacf, // 32/64-bit, host order
   0xcefaedfe, 0xcffaedfe, // 32/64-bit, byte-swapped
   0xcafebabe, 0xbebafeca, // universal ("fat") binary
+  0xcafebabf, 0xbfbafeca, // universal FAT64, both byte orders
 ]);
 
 /** True when the first four bytes identify a Mach-O image. */
 function isMachO(path) {
   let fd;
+  let failure;
+  let result = false;
   try {
-    if (statSync(path).size < 4) return false;
-    fd = openSync(path, 'r');
+    if (fs.statSync(path).size < 4) return false;
+    fd = fs.openSync(path, 'r');
     const buf = Buffer.alloc(4);
-    if (readSync(fd, buf, 0, 4, 0) < 4) return false;
-    return MACHO_MAGIC.has(buf.readUInt32BE(0)) || MACHO_MAGIC.has(buf.readUInt32LE(0));
-  } catch {
-    return false;
+    const bytesRead = fs.readSync(fd, buf, 0, 4, 0);
+    if (bytesRead !== 4) throw new Error(`short read (${bytesRead}/4 bytes)`);
+    result = MACHO_MAGIC.has(buf.readUInt32BE(0)) || MACHO_MAGIC.has(buf.readUInt32LE(0));
+  } catch (error) {
+    failure = error;
   } finally {
     if (fd !== undefined) {
-      try { closeSync(fd); } catch { /* already gone */ }
+      try {
+        fs.closeSync(fd);
+      } catch (error) {
+        failure = failure ? new AggregateError([failure, error], 'read and close failed') : error;
+      }
     }
   }
+  if (failure) throw new Error(`[sign-extra] could not inspect ${path}: ${errorMessage(failure)}`);
+  return result;
 }
 
 /** Every regular file under `dir`, symlinks not followed. */
 async function collectFiles(dir, out = []) {
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return out;
+    entries = await fsPromises.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    throw new Error(`[sign-extra] could not traverse ${dir}: ${errorMessage(error)}`);
   }
   for (const entry of entries) {
     const full = join(dir, entry.name);
@@ -74,11 +86,11 @@ async function collectFiles(dir, out = []) {
   return out;
 }
 
-export default async function signExtraBinaries(context) {
+export default async function signExtraBinaries(context, dependencies = {}) {
   if (context.electronPlatformName !== 'darwin') return;
 
-  const identity = resolveIdentity();
-  if (!identity) {
+  const signing = await resolveIdentity(context, dependencies.findIdentity);
+  if (!signing) {
     console.log('[sign-extra] no Developer ID identity available; leaving sidecar binaries to the ad-hoc fallback.');
     return;
   }
@@ -103,14 +115,16 @@ export default async function signExtraBinaries(context) {
   const failures = [];
   for (const binary of binaries) {
     try {
-      execFileSync('/usr/bin/codesign', [
+      const args = [
         '--force',
         '--timestamp',
         '--options', 'runtime',
         '--entitlements', entitlements,
-        '--sign', identity,
-        binary,
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+        '--sign', signing.identity,
+      ];
+      if (signing.keychainFile) args.push('--keychain', signing.keychainFile);
+      args.push(binary);
+      childProcess.execFileSync('/usr/bin/codesign', args, { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (error) {
       failures.push(`${binary.replace(resources, 'Resources')}: ${(error.stderr ?? '').toString().trim()}`);
     }
@@ -130,17 +144,59 @@ export default async function signExtraBinaries(context) {
  * CSC_IDENTITY_AUTO_DISCOVERY=false is how the unsigned local build opts out,
  * so honour it rather than signing behind its back.
  */
-function resolveIdentity() {
-  if (process.env['CSC_IDENTITY_AUTO_DISCOVERY'] === 'false') return null;
-  if (process.env['CSC_NAME']) return process.env['CSC_NAME'];
+async function resolveIdentity(context, findIdentityOverride) {
+  const packager = context.packager;
+  const qualifier = packager.platformSpecificBuildOptions?.identity;
+  if (process.env['CSC_IDENTITY_AUTO_DISCOVERY'] === 'false' || qualifier === null) return null;
 
+  let signingInfo;
   try {
-    const out = execFileSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], {
-      encoding: 'utf8',
-    });
-    const match = out.match(/"(Developer ID Application: [^"]+)"/);
-    return match ? match[1] : null;
+    // app-builder-lib 25.1.8 source anchors:
+    // out/macPackager.js:25-50 owns CSC_LINK import and keychain cleanup;
+    // out/macPackager.js:190-197 awaits this owner before findIdentity.
+    signingInfo = await packager.codeSigningInfo.value;
   } catch {
+    throw new Error('[sign-extra] electron-builder could not prepare signing credentials');
+  }
+
+  const keychainFile = signingInfo?.keychainFile ?? null;
+  let identity;
+  try {
+    const findIdentity = findIdentityOverride ?? loadFindIdentity();
+    identity = await findIdentity('Developer ID Application', qualifier, keychainFile);
+  } catch {
+    throw new Error('[sign-extra] electron-builder could not resolve the Developer ID Application identity');
+  }
+
+  if (!identity) {
+    if (isSigningRequested(packager, qualifier)) {
+      throw new Error('[sign-extra] requested signing but no Developer ID Application identity was found');
+    }
     return null;
   }
+  return { identity: identity.hash || identity.name, keychainFile };
+}
+
+function loadFindIdentity() {
+  // This internal path is pinned by electron/package-lock.json to app-builder-lib 25.1.8.
+  return require('app-builder-lib/out/codeSign/macCodeSign.js').findIdentity;
+}
+
+function isSigningRequested(packager, qualifier) {
+  return packager.forceCodeSigning === true ||
+    nonEmpty(process.env['CSC_LINK']) ||
+    nonEmpty(process.env['CSC_NAME']) ||
+    nonEmpty(qualifier) ||
+    packager.platformSpecificBuildOptions?.sign != null ||
+    (packager.platformSpecificBuildOptions?.notarize != null &&
+      packager.platformSpecificBuildOptions.notarize !== false);
+}
+
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function errorMessage(error) {
+  if (error instanceof AggregateError) return error.errors.map(errorMessage).join('; ');
+  return error instanceof Error ? error.message : String(error);
 }
