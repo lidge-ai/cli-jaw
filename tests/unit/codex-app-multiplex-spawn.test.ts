@@ -667,7 +667,8 @@ test('cancelling a pending acquire releases its late lease and settles once with
         harness.acquireGate.resolve(createLaneLease(harness.laneAcquires[0]!));
         const result = await spawned.promise;
         await Promise.resolve();
-        assert.deepEqual(result, { text: '', code: -1 });
+        assert.deepEqual(result, { text: '', code: 130, traceRunId: 'tr_multiplexfixture0001',
+            runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' }, stopCause: 'user_stop' });
         assert.equal(resolutions, 1);
         assert.equal(harness.startPrompts.length, 0, 'cancelled acquire must not start a turn');
         assert.equal(harness.releases, 1, 'the acquired lease must be released once');
@@ -702,7 +703,8 @@ test('a cancelled acquire must not delete the replacement run that took its slot
     activeMainProcesses.set(scopeKey, replacement);
 
     harness.acquireGate.resolve(createLaneLease(harness.laneAcquires[0]!));
-    assert.deepEqual(await first.promise, { text: '', code: -1 });
+    assert.deepEqual(await first.promise, { text: '', code: 130, traceRunId: 'tr_multiplexfixture0001',
+        runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' }, stopCause: 'user_stop' });
     await Promise.resolve();
     assert.equal(activeMainProcesses.get(scopeKey), replacement,
         'the abandoned run must leave the replacement registered');

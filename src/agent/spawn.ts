@@ -314,6 +314,7 @@ type SpawnPromiseResult = {
     executionInterrupted?: boolean;
     executionFailed?: boolean;
     runtimeOutcome?: RuntimeTurnOutcome;
+    stopCause?: import('./spawn/stop-cause.js').StopCause;
     traceRunId?: string;
     agyCheckpointSeen?: boolean;
     agyPlannerOnly?: boolean;
@@ -338,6 +339,14 @@ import {
 import { releaseChildOutputAfterExit } from './spawn/exit-drain.js';
 import { clampPendingLine } from './spawn/line-buffer.js';
 import { appendBoundedFullText } from './events/fulltext-bound.js';
+
+/** No provider turn was dispatched; preserve the captured cancellation receipt. */
+function stoppedBeforeStart(reason: string | undefined, traceRunId: string): SpawnPromiseResult {
+    const stopCause = stopCauseFromKillReason(reason);
+    return { text: '', code: 130, traceRunId,
+        runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' },
+        ...(stopCause ? { stopCause } : {}) };
+}
 
 /** Single choke point for streamed assistant text: appends to the live-run
  *  accumulator and broadcasts agent_output tagged with the owning trace run
@@ -1289,16 +1298,15 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             try {
                 await waitForRuntimeSettingsIdle();
                 if (cancelled) {
-                    return { text: `⏹️ [${cancelReason}]`, code: -1 };
+                    const stopCause = stopCauseFromKillReason(cancelReason);
+                    return { text: '', code: 130, executionInterrupted: true,
+                        ...(stopCause ? { stopCause } : {}) };
                 }
                 const next: SpawnResult = spawnAgent(prompt, { ...opts, _settingsGateWaited: true });
                 return await next.promise;
             } finally {
-                const latest = activeMainProcesses.get(scopeKey);
-                if (latest === waitingRun) {
-                    if (latest.cancelPending === cancelThisSpawn) delete latest.cancelPending;
-                    latest.starting = false;
-                }
+                if (waitingRun.cancelPending === cancelThisSpawn) delete waitingRun.cancelPending;
+                waitingRun.starting = false;
                 void processQueue(scopeKey);
             }
         })();
@@ -2794,6 +2802,27 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             .digest('hex')
             .slice(0, 12);
         mainRun!.starting = true;
+        let piAcquireStopReason: string | undefined;
+        const cancelPiAcquire = (reason: string) => {
+            piAcquireStopReason ??= reason;
+            clearMainLiveRunOnStop(scopeKey, reason);
+        };
+        const finishPiAcquire = () => {
+            mainRun!.starting = false;
+            if (mainRun!.cancelPending === cancelPiAcquire) delete mainRun!.cancelPending;
+        };
+        const abandonPiAcquire = () => {
+            activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
+            try { finalizeTraceRun(traceRunId, 'interrupted'); }
+            catch { console.warn('[runtime] Pi cancelled acquisition trace finalization failed'); }
+            if (activeMainProcesses.get(scopeKey) === mainRun) {
+                if (getLiveRun(liveScope).traceRunId === traceRunId) clearLiveRun(liveScope);
+                releaseMainRun(scopeKey, null, ownerGeneration);
+            }
+            settlePiExit();
+            resolve!(stoppedBeforeStart(piAcquireStopReason, traceRunId));
+        };
+        mainRun!.cancelPending = cancelPiAcquire;
         void acquirePiRuntime({
             key: {
                 scopeKey,
@@ -2811,18 +2840,10 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             instructions: piSysPrompt,
             forceNew: forceNew || Boolean(slackToolGrant),
         }).then((lease) => {
-            mainRun!.starting = false;
-            if (activeMainProcesses.get(scopeKey) !== mainRun || !isCurrentSessionOwner(persistenceOwner, scopeKey)) {
+            finishPiAcquire();
+            if (piAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun || !isCurrentSessionOwner(persistenceOwner, scopeKey)) {
                 lease.release();
-                activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
-                try { finalizeTraceRun(traceRunId, 'interrupted'); }
-                catch { console.warn('[runtime] Pi cancelled acquisition trace finalization failed'); }
-                if (activeMainProcesses.get(scopeKey) === mainRun) {
-                    if (getLiveRun(liveScope).traceRunId === traceRunId) clearLiveRun(liveScope);
-                    releaseMainRun(scopeKey, null, ownerGeneration);
-                    settlePiExit();
-                }
-                resolve!({ text: '', code: 130, runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' } });
+                abandonPiAcquire();
                 return;
             }
             ctx.sessionId = lease.session.sessionId;
@@ -2834,7 +2855,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             } catch (error) { done = Promise.reject(error); }
             runPiTurn(lease.session.child, done, lease, null);
         }).catch((err: Error) => {
-            mainRun!.starting = false;
+            finishPiAcquire();
+            if (piAcquireStopReason !== undefined) { abandonPiAcquire(); return; }
             console.error(`[jaw:pi:pool] acquire failed: ${err.message}`);
             activity.close({ kind: 'turn-end', status: 'error', finalText: null, error: 'Pi acquisition failed' });
             try { finalizeTraceRun(traceRunId, 'error', 'Pi acquisition failed'); }
@@ -3278,17 +3300,17 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         type CodexAppAcquiredLease = CodexAppTurnLeaseView & { readonly client: CodexAppClient };
         type CodexAppAcquireOutcome =
             | { kind: 'lease'; lease: CodexAppAcquiredLease }
-            | { kind: 'cancelled'; reason: string };
+            | { kind: 'cancelled'; reason: string | undefined };
 
         mainRun!.starting = true;
+        let codexAcquireStopReason: string | undefined;
+        const cancelCodexAcquire = (reason: string) => { codexAcquireStopReason ??= reason; };
+        const releaseCodexAcquireHook = () => {
+            if (mainRun!.cancelPending === cancelCodexAcquire) delete mainRun!.cancelPending;
+        };
+        mainRun!.cancelPending = cancelCodexAcquire;
         const acquireCodexAppForTurn = async (): Promise<CodexAppAcquireOutcome> => {
-            let cancelled = false;
-            let cancelReason = 'user';
-            const cancelThisAcquire = (reason: string) => {
-                cancelled = true;
-                cancelReason = reason;
-            };
-            const acquireWasCancelled = () => cancelled || activeMainProcesses.get(scopeKey) !== mainRun;
+            const acquireWasCancelled = () => codexAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun;
 
             try {
                 if (!codexMultiplexMain) {
@@ -3306,7 +3328,6 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     return { kind: 'lease', lease };
                 }
 
-                mainRun!.cancelPending = cancelThisAcquire;
                 const waitMs = configuredPositiveMs(
                     process.env["CODEX_APP_ACQUIRE_WAIT_MS"],
                     DEFAULT_CODEX_APP_ACQUIRE_WAIT_MS,
@@ -3346,7 +3367,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 };
 
                 for (;;) {
-                    if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                    if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                     // Check the budget before spawning more work. awaitWithinDeadline()
                     // only measures what remains once the promise already exists, so a
                     // backoff that consumed the last of the budget would still get to
@@ -3357,7 +3378,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                             binary: detected.path || 'codex', cwd: spawnCwd,
                             fastMode: effectiveFastMode, env: spawnEnv, model, effort,
                         }));
-                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                         const lease = await awaitWithinDeadline('acquire', acquireCodexAppLane(prepared, {
                             scopeKey,
                             bucketKey: currentBucket!,
@@ -3368,13 +3389,13 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         }), (lateLease) => { lateLease.release(); });
                         if (acquireWasCancelled()) {
                             lease.release();
-                            return { kind: 'cancelled', reason: cancelReason };
+                            return { kind: 'cancelled', reason: codexAcquireStopReason };
                         }
                         return { kind: 'lease', lease };
                     } catch (err: unknown) {
                         if (!(err instanceof CodexHostGenerationStaleError)) throw err;
                         lastStaleError = err;
-                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                         const remainingMs = deadlineAt - Date.now();
                         if (remainingMs <= 0) throw lastStaleError;
                         staleAttempts += 1;
@@ -3387,33 +3408,38 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     }
                 }
             } finally {
-                const latest = activeMainProcesses.get(scopeKey);
-                if (latest?.cancelPending === cancelThisAcquire) delete latest.cancelPending;
+                // The next promise continuation still owns the acquired lease.
+                // Keep its cancellation hook until it hands off or abandons it.
                 mainRun!.starting = false;
             }
         };
 
-        void acquireCodexAppForTurn().then(async (outcome) => {
-            // A run that never started a turn owns nothing but its own map slot.
-            // releaseMainRun() matches on (process, ownerGeneration), and a pending
-            // run has process=null while sharing the global generation with whatever
-            // replaced it, so calling it here would delete the replacement's entry.
-            // Compare the captured object instead and only drop our own slot.
-            const abandonTurn = (lease: { release(): void } | null): void => {
-                lease?.release();
-                activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
-                finalizeTraceRun(traceRunId, 'interrupted');
+        // A run that never started a turn owns nothing but its own map slot.
+        // releaseMainRun() matches on (process, ownerGeneration), and a pending
+        // run has process=null while sharing the global generation with whatever
+        // replaced it, so calling it here would delete the replacement's entry.
+        // Compare the captured object instead and only drop our own slot.
+        const abandonTurn = (lease: { release(): void } | null): void => {
+            lease?.release();
+            activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
+            finalizeTraceRun(traceRunId, 'interrupted');
+            if (!activeMainProcesses.has(scopeKey) || activeMainProcesses.get(scopeKey) === mainRun) {
                 clearLiveRun(liveScope);
                 broadcast('agent_status', { running: false, agentId: agentLabel });
-                resolve!({ text: '', code: -1 });
-                if (activeMainProcesses.get(scopeKey) === mainRun) activeMainProcesses.delete(scopeKey);
-                void processQueue(scopeKey);
-            };
+            }
+            resolve!(stoppedBeforeStart(codexAcquireStopReason, traceRunId));
+            if (activeMainProcesses.get(scopeKey) === mainRun) activeMainProcesses.delete(scopeKey);
+            void processQueue(scopeKey);
+        };
+        void acquireCodexAppForTurn().then(async (outcome) => {
+            releaseCodexAcquireHook();
             if (outcome.kind === 'cancelled') { abandonTurn(null); return; }
             const lease = outcome.lease;
-            if (activeMainProcesses.get(scopeKey) !== mainRun) { abandonTurn(lease); return; }
+            if (codexAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun) { abandonTurn(lease); return; }
             await runCodexAppTurn(lease.client, lease, lease.laneScope);
         }).catch((err: Error) => {
+            releaseCodexAcquireHook();
+            if (codexAcquireStopReason !== undefined) { abandonTurn(null); return; }
             console.error(`[codex-app:pool] acquire failed: ${err.message}`);
             activity.close({ kind: 'turn-end', status: 'error', finalText: null, error: 'Codex acquisition failed' });
             try { finalizeTraceRun(traceRunId, 'error', 'Codex acquisition failed'); }
