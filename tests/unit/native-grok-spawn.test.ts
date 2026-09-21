@@ -8,6 +8,7 @@ import type { AcpSession } from '../../src/agent/runtime/acp/session.ts';
 import type { RemoteTarget } from '../../src/messaging/types.ts';
 import { buildRemoteBindingKey } from '../../src/messaging/session-key.ts';
 import { MainReplacementOwnerMismatchError } from '../../src/agent/runtime/replace-turn.ts';
+import { EXPLICIT_USER_STOP_KILL_REASON } from '../../src/agent/spawn/kill-reason.ts';
 
 const root = fs.mkdtempSync(join(tmpdir(), 'native-grok-spawn-'));
 const binary = join(root, 'grok.mjs'), wirePath = join(root, 'wire.jsonl');
@@ -475,9 +476,10 @@ test('optional journal failure preserves final and explicit stop uses native can
     assert.equal((await spawnAgent('fixture', opts).promise).text, 'GROK_MAIN_FINAL');
     failJournal = false;
     const stoppedOpts = options(), run = await held(stoppedOpts);
-    killActiveAgent(stoppedOpts.scopeKey, 'user');
+    killActiveAgent(stoppedOpts.scopeKey, EXPLICIT_USER_STOP_KILL_REASON);
     const result = await run.promise;
     assert.equal(result.runtimeOutcome?.status, 'stopped'); assert.equal(result.runtimeOutcome?.finalText, null);
+    assert.equal(result.stopCause, 'user_stop');
     assert.ok(wire().some(e => e['method'] === 'session/cancel'));
 });
 

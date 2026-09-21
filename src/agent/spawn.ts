@@ -314,6 +314,7 @@ type SpawnPromiseResult = {
     executionInterrupted?: boolean;
     executionFailed?: boolean;
     runtimeOutcome?: RuntimeTurnOutcome;
+    stopCause?: import('./spawn/stop-cause.js').StopCause;
     traceRunId?: string;
     agyCheckpointSeen?: boolean;
     agyPlannerOnly?: boolean;
@@ -324,7 +325,12 @@ interface CopilotSpawnContext extends SpawnContext {
 }
 
 import { hasChildExited, ownProcess } from './spawn/process-kill.js';
-import { DUP_REGISTRATION_KILL_REASON, isLifecycleSteerReason } from './spawn/kill-reason.js';
+import {
+    DUP_REGISTRATION_KILL_REASON,
+    isLifecycleExitSettleReason,
+    isLifecycleSteerReason,
+} from './spawn/kill-reason.js';
+import { stopCauseFromKillReason } from './spawn/stop-cause.js';
 import { buildSteerStartedEvent } from './spawn/steer-event.js';
 import {
     armExitSettle, captureExitSettler, settleCapturedExit, settleExit, waitForExitSettled,
@@ -333,6 +339,14 @@ import {
 import { releaseChildOutputAfterExit } from './spawn/exit-drain.js';
 import { clampPendingLine } from './spawn/line-buffer.js';
 import { appendBoundedFullText } from './events/fulltext-bound.js';
+
+/** No provider turn was dispatched; preserve the captured cancellation receipt. */
+function stoppedBeforeStart(reason: string | undefined, traceRunId: string): SpawnPromiseResult {
+    const stopCause = stopCauseFromKillReason(reason);
+    return { text: '', code: 130, traceRunId,
+        runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' },
+        ...(stopCause ? { stopCause } : {}) };
+}
 
 /** Single choke point for streamed assistant text: appends to the live-run
  *  accumulator and broadcasts agent_output tagged with the owning trace run
@@ -629,8 +643,12 @@ function clearWorkerSlotsOnStop(scopeKey: string, reason: string) {
 }
 
 function clearMainLiveRunOnStop(scopeKey: string, reason: string): void {
-    if (reason !== 'api' && reason !== 'user' && reason !== 'steer' && reason !== 'interrupt') return;
+    if (!isImmediateScopeReleaseReason(reason)) return;
     clearLiveRun(scopeKey);
+}
+
+function isImmediateScopeReleaseReason(reason: string): boolean {
+    return reason === 'api' || reason === 'user' || isLifecycleExitSettleReason(reason);
 }
 
 export function killActiveAgent(scopeKey: string, reason: string): boolean;
@@ -660,19 +678,19 @@ export function killActiveAgent(scopeKeyOrReason = 'user', scopedReason?: string
     if (run?.cancelTurn && ['codex-app', 'pi', 'cursor', 'grok', 'claude'].includes(getActiveMainCli(scopeKey) || '')) {
         if (run.process?.pid) killReasons.set(run.process.pid, reason);
         console.log(`[jaw:kill] reason=${reason} scope=${scopeKey} cli=${getActiveMainCli(scopeKey)} action=lease.cancel`);
-        if (reason === 'steer' || reason === 'interrupt') armExitSettle(scopeKey);
+        if (isLifecycleExitSettleReason(reason)) armExitSettle(scopeKey);
         run.cancelTurn(reason);
-        if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') activeMainProcesses.delete(scopeKey);
+        if (isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
         return true;
     }
     const activeProcess = run?.process ?? null;
     if (!activeProcess) {
-        if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') activeMainProcesses.delete(scopeKey);
+        if (isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
         return hadTimer || cancelledPendingMain || cancelledClaude;
     }
     console.log(`[jaw:kill] reason=${reason} scope=${scopeKey} cli=${getActiveMainCli(scopeKey) || 'unknown'} signal=SIGTERM escalationMs=${DEFAULT_KILL_ESCALATION_MS}`);
     if (activeProcess.pid) killReasons.set(activeProcess.pid, reason);
-    if (reason === 'steer' || reason === 'interrupt') armExitSettle(scopeKey);
+    if (isLifecycleExitSettleReason(reason)) armExitSettle(scopeKey);
     const proc = activeProcess;
     // One owner runs the whole termination: tree walk, then escalation after the
     // grace that re-checks the ORIGINAL child. The previous escalation guarded on
@@ -698,7 +716,7 @@ export function killActiveAgent(scopeKeyOrReason = 'user', scopedReason?: string
     // Fix C1: 사용자 stop/steer 시 해당 scope busy가 즉시 false가 되도록 참조를 동기 해제.
     // 실제 child 종료는 위 setTimeout SIGKILL이 백그라운드에서 마무리.
     // exit handler의 setActiveProcess(null) / activeProcesses.delete 는 idempotent.
-    if (reason === 'api' || reason === 'user' || reason === 'steer' || reason === 'interrupt') {
+    if (isImmediateScopeReleaseReason(reason)) {
         activeMainProcesses.delete(scopeKey);
     }
     return true;
@@ -1280,16 +1298,15 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             try {
                 await waitForRuntimeSettingsIdle();
                 if (cancelled) {
-                    return { text: `⏹️ [${cancelReason}]`, code: -1 };
+                    const stopCause = stopCauseFromKillReason(cancelReason);
+                    return { text: '', code: 130, executionInterrupted: true,
+                        ...(stopCause ? { stopCause } : {}) };
                 }
                 const next: SpawnResult = spawnAgent(prompt, { ...opts, _settingsGateWaited: true });
                 return await next.promise;
             } finally {
-                const latest = activeMainProcesses.get(scopeKey);
-                if (latest === waitingRun) {
-                    if (latest.cancelPending === cancelThisSpawn) delete latest.cancelPending;
-                    latest.starting = false;
-                }
+                if (waitingRun.cancelPending === cancelThisSpawn) delete waitingRun.cancelPending;
+                waitingRun.starting = false;
                 void processQueue(scopeKey);
             }
         })();
@@ -1806,7 +1823,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 activity: identity => opts.lifecycle?.onActivity?.('native-runtime', identity),
                 exited: code => opts.lifecycle?.onExit?.(code),
                 cancelling: reason => {
-                    if (reason === 'steer' || reason === 'interrupt') { armExitSettle(scopeKey); capturedExit ??= captureExitSettler(scopeKey); }
+                    if (isLifecycleExitSettleReason(reason)) { armExitSettle(scopeKey); capturedExit ??= captureExitSettler(scopeKey); }
                 },
                 exit: { cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin, resumeKey, prompt, opts,
                     cfg: { ...cfg, effort }, ownerGeneration, persistenceOwner, forceNew, empSid, isResume, effortDefault: effort,
@@ -1945,6 +1962,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 status: stopReason || ctx.stallReason ? 'stopped' as const : 'error' as const,
                 finalText: null, partialText: outcome.partialText,
             };
+            const stopCause = selected.status === 'stopped' ? stopCauseFromKillReason(stopReason) : undefined;
             handoffRuntimeOutcome(ctx, selected);
             try {
                 // Admit the captured run before compatibility consumers retire it.
@@ -1954,6 +1972,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     broadcast('agent_done', { ...runPin, traceRunId, cli,
                         text: selected.status === 'stopped' ? '' : `❌ ${diagnostic()}`, error: true,
                         runtimeStatus: selected.status, runtimeFinality: selected.finalText === null ? 'absent' : 'present',
+                        ...(stopCause ? { stopCause } : {}),
                     }, traceAudience);
                 }
             } finally {
@@ -1962,12 +1981,12 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         ...(selected.status === 'error' ? { error: diagnostic() } : {}) });
                 } finally { closeFailedTrace(selected); }
             }
-            return selectedResult ?? resultFor(selected);
+            return selectedResult ?? { ...resultFor(selected), ...(stopCause ? { stopCause } : {}) };
         };
         let nativeRun!: ReturnType<typeof runNativeRuntime<SpawnPromiseResult>>;
         const cancelHook = (reason: string) => {
             stopReason ??= reason;
-            if (reason === 'steer' || reason === 'interrupt') {
+            if (isLifecycleExitSettleReason(reason)) {
                 armExitSettle(scopeKey);
                 capturedExit ??= captureExitSettler(scopeKey);
             }
@@ -2075,6 +2094,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 try { opts.lifecycle?.onExit?.(code); } catch { console.warn(`[runtime:${cli}] exit observer failed`); }
                 await handleAgentExit({ onRuntimeEnd: endRuntime,
                     ctx, code, cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey, prompt, opts, cfg: { ...cfg, effort }, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume, wasKilled, wasSteer, smokeResult: detectSmokeResponse(outcome.finalText ?? '', ctx.toolLog, code, cli),
                     effortDefault: effort, costLine: '', resolve: value => { selectedResult ??= value; },
@@ -2447,7 +2467,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             //   - error: code !== 0 && !wasKilled → classifyExitError
             //   - trace: if (traceText) traceText = `⏹️ [interrupted]…`
             handleAgentExit({
-                ctx, code: acpCode, cli, model, agentLabel, mainManaged, origin,
+                ctx, code: acpCode, childExitCode: code, cli, model, agentLabel, mainManaged, origin,
+                killReason: acpKillReason,
                 onRuntimeEnd: end => ctx.printActivity?.finish(end),
                 resumeKey,
                 prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
@@ -2616,7 +2637,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             };
             const cancelHook = (reason: string) => {
                 if (cleanupDone) return;
-                if (reason === 'steer' || reason === 'interrupt') piExit = captureExitSettler(scopeKey);
+                if (isLifecycleExitSettleReason(reason)) piExit = captureExitSettler(scopeKey);
                 void requestCancel();
             };
             if (lease && mainRun) mainRun.cancelTurn = cancelHook;
@@ -2680,6 +2701,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 return handleAgentExit({
                     onRuntimeEnd: (end) => { activity.close(end); },
                     ctx, code: result.code, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume: false, wasKilled, wasSteer, smokeResult,
@@ -2711,6 +2733,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 return handleAgentExit({
                     onRuntimeEnd: (end) => { activity.close(end); },
                     ctx, code: 1, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
+                    killReason,
                     resumeKey,
                     prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                     isResume: false, wasKilled, wasSteer, smokeResult: detectSmokeResponse('', [], 1, cli),
@@ -2779,6 +2802,27 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             .digest('hex')
             .slice(0, 12);
         mainRun!.starting = true;
+        let piAcquireStopReason: string | undefined;
+        const cancelPiAcquire = (reason: string) => {
+            piAcquireStopReason ??= reason;
+            clearMainLiveRunOnStop(scopeKey, reason);
+        };
+        const finishPiAcquire = () => {
+            mainRun!.starting = false;
+            if (mainRun!.cancelPending === cancelPiAcquire) delete mainRun!.cancelPending;
+        };
+        const abandonPiAcquire = () => {
+            activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
+            try { finalizeTraceRun(traceRunId, 'interrupted'); }
+            catch { console.warn('[runtime] Pi cancelled acquisition trace finalization failed'); }
+            if (activeMainProcesses.get(scopeKey) === mainRun) {
+                if (getLiveRun(liveScope).traceRunId === traceRunId) clearLiveRun(liveScope);
+                releaseMainRun(scopeKey, null, ownerGeneration);
+            }
+            settlePiExit();
+            resolve!(stoppedBeforeStart(piAcquireStopReason, traceRunId));
+        };
+        mainRun!.cancelPending = cancelPiAcquire;
         void acquirePiRuntime({
             key: {
                 scopeKey,
@@ -2796,18 +2840,10 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             instructions: piSysPrompt,
             forceNew: forceNew || Boolean(slackToolGrant),
         }).then((lease) => {
-            mainRun!.starting = false;
-            if (activeMainProcesses.get(scopeKey) !== mainRun || !isCurrentSessionOwner(persistenceOwner, scopeKey)) {
+            finishPiAcquire();
+            if (piAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun || !isCurrentSessionOwner(persistenceOwner, scopeKey)) {
                 lease.release();
-                activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
-                try { finalizeTraceRun(traceRunId, 'interrupted'); }
-                catch { console.warn('[runtime] Pi cancelled acquisition trace finalization failed'); }
-                if (activeMainProcesses.get(scopeKey) === mainRun) {
-                    if (getLiveRun(liveScope).traceRunId === traceRunId) clearLiveRun(liveScope);
-                    releaseMainRun(scopeKey, null, ownerGeneration);
-                    settlePiExit();
-                }
-                resolve!({ text: '', code: 130, runtimeOutcome: { status: 'stopped', finalText: null, partialText: '' } });
+                abandonPiAcquire();
                 return;
             }
             ctx.sessionId = lease.session.sessionId;
@@ -2819,7 +2855,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             } catch (error) { done = Promise.reject(error); }
             runPiTurn(lease.session.child, done, lease, null);
         }).catch((err: Error) => {
-            mainRun!.starting = false;
+            finishPiAcquire();
+            if (piAcquireStopReason !== undefined) { abandonPiAcquire(); return; }
             console.error(`[jaw:pi:pool] acquire failed: ${err.message}`);
             activity.close({ kind: 'turn-end', status: 'error', finalText: null, error: 'Pi acquisition failed' });
             try { finalizeTraceRun(traceRunId, 'error', 'Pi acquisition failed'); }
@@ -3216,6 +3253,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             await handleAgentExit({
                 onRuntimeEnd: (end) => { activity.close(end); },
                 ctx, code: exitCode, cli, model, agentLabel, mainManaged, origin,
+                killReason,
                 resumeKey,
                 prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,
                 isResume, wasKilled, wasSteer, smokeResult,
@@ -3262,17 +3300,17 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         type CodexAppAcquiredLease = CodexAppTurnLeaseView & { readonly client: CodexAppClient };
         type CodexAppAcquireOutcome =
             | { kind: 'lease'; lease: CodexAppAcquiredLease }
-            | { kind: 'cancelled'; reason: string };
+            | { kind: 'cancelled'; reason: string | undefined };
 
         mainRun!.starting = true;
+        let codexAcquireStopReason: string | undefined;
+        const cancelCodexAcquire = (reason: string) => { codexAcquireStopReason ??= reason; };
+        const releaseCodexAcquireHook = () => {
+            if (mainRun!.cancelPending === cancelCodexAcquire) delete mainRun!.cancelPending;
+        };
+        mainRun!.cancelPending = cancelCodexAcquire;
         const acquireCodexAppForTurn = async (): Promise<CodexAppAcquireOutcome> => {
-            let cancelled = false;
-            let cancelReason = 'user';
-            const cancelThisAcquire = (reason: string) => {
-                cancelled = true;
-                cancelReason = reason;
-            };
-            const acquireWasCancelled = () => cancelled || activeMainProcesses.get(scopeKey) !== mainRun;
+            const acquireWasCancelled = () => codexAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun;
 
             try {
                 if (!codexMultiplexMain) {
@@ -3290,7 +3328,6 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     return { kind: 'lease', lease };
                 }
 
-                mainRun!.cancelPending = cancelThisAcquire;
                 const waitMs = configuredPositiveMs(
                     process.env["CODEX_APP_ACQUIRE_WAIT_MS"],
                     DEFAULT_CODEX_APP_ACQUIRE_WAIT_MS,
@@ -3330,7 +3367,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 };
 
                 for (;;) {
-                    if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                    if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                     // Check the budget before spawning more work. awaitWithinDeadline()
                     // only measures what remains once the promise already exists, so a
                     // backoff that consumed the last of the budget would still get to
@@ -3341,7 +3378,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                             binary: detected.path || 'codex', cwd: spawnCwd,
                             fastMode: effectiveFastMode, env: spawnEnv, model, effort,
                         }));
-                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                         const lease = await awaitWithinDeadline('acquire', acquireCodexAppLane(prepared, {
                             scopeKey,
                             bucketKey: currentBucket!,
@@ -3352,13 +3389,13 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         }), (lateLease) => { lateLease.release(); });
                         if (acquireWasCancelled()) {
                             lease.release();
-                            return { kind: 'cancelled', reason: cancelReason };
+                            return { kind: 'cancelled', reason: codexAcquireStopReason };
                         }
                         return { kind: 'lease', lease };
                     } catch (err: unknown) {
                         if (!(err instanceof CodexHostGenerationStaleError)) throw err;
                         lastStaleError = err;
-                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: cancelReason };
+                        if (acquireWasCancelled()) return { kind: 'cancelled', reason: codexAcquireStopReason };
                         const remainingMs = deadlineAt - Date.now();
                         if (remainingMs <= 0) throw lastStaleError;
                         staleAttempts += 1;
@@ -3371,33 +3408,42 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                     }
                 }
             } finally {
-                const latest = activeMainProcesses.get(scopeKey);
-                if (latest?.cancelPending === cancelThisAcquire) delete latest.cancelPending;
+                // The next promise continuation still owns the acquired lease.
+                // Keep its cancellation hook until it hands off or abandons it.
                 mainRun!.starting = false;
             }
         };
 
+        // A run that never started a turn owns nothing but its own map slot.
+        // releaseMainRun() matches on (process, ownerGeneration), and a pending
+        // run has process=null while sharing the global generation with whatever
+        // replaced it, so calling it here would delete the replacement's entry.
+        // Compare the captured object instead and only drop our own slot.
+        const abandonTurn = (lease: { release(): void } | null): void => {
+            lease?.release();
+            activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
+            finalizeTraceRun(traceRunId, 'interrupted');
+            if (!activeMainProcesses.has(scopeKey) || activeMainProcesses.get(scopeKey) === mainRun) {
+                const currentLive = getLiveRun(liveScope);
+                const ownsLive = currentLive.traceRunId === traceRunId;
+                if (ownsLive) clearLiveRun(liveScope);
+                if (ownsLive || (!currentLive.running && currentLive.traceRunId === undefined)) {
+                    broadcast('agent_status', { running: false, agentId: agentLabel });
+                }
+            }
+            resolve!(stoppedBeforeStart(codexAcquireStopReason, traceRunId));
+            if (activeMainProcesses.get(scopeKey) === mainRun) activeMainProcesses.delete(scopeKey);
+            void processQueue(scopeKey);
+        };
         void acquireCodexAppForTurn().then(async (outcome) => {
-            // A run that never started a turn owns nothing but its own map slot.
-            // releaseMainRun() matches on (process, ownerGeneration), and a pending
-            // run has process=null while sharing the global generation with whatever
-            // replaced it, so calling it here would delete the replacement's entry.
-            // Compare the captured object instead and only drop our own slot.
-            const abandonTurn = (lease: { release(): void } | null): void => {
-                lease?.release();
-                activity.close({ kind: 'turn-end', status: 'stopped', finalText: null });
-                finalizeTraceRun(traceRunId, 'interrupted');
-                clearLiveRun(liveScope);
-                broadcast('agent_status', { running: false, agentId: agentLabel });
-                resolve!({ text: '', code: -1 });
-                if (activeMainProcesses.get(scopeKey) === mainRun) activeMainProcesses.delete(scopeKey);
-                void processQueue(scopeKey);
-            };
+            releaseCodexAcquireHook();
             if (outcome.kind === 'cancelled') { abandonTurn(null); return; }
             const lease = outcome.lease;
-            if (activeMainProcesses.get(scopeKey) !== mainRun) { abandonTurn(lease); return; }
+            if (codexAcquireStopReason !== undefined || activeMainProcesses.get(scopeKey) !== mainRun) { abandonTurn(lease); return; }
             await runCodexAppTurn(lease.client, lease, lease.laneScope);
         }).catch((err: Error) => {
+            releaseCodexAcquireHook();
+            if (codexAcquireStopReason !== undefined) { abandonTurn(null); return; }
             console.error(`[codex-app:pool] acquire failed: ${err.message}`);
             activity.close({ kind: 'turn-end', status: 'error', finalText: null, error: 'Codex acquisition failed' });
             try { finalizeTraceRun(traceRunId, 'error', 'Codex acquisition failed'); }
@@ -4094,6 +4140,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         //   - trace: if (traceText) traceText = `⏹️ [interrupted]…`
         handleAgentExit({
             ctx, code: effectiveExitCode, cli, model: runtimeModel, effectiveProvider, agentLabel, mainManaged, origin,
+            killReason: stdKillReason,
             onRuntimeEnd: end => ctx.printActivity?.finish(end),
             resumeKey,
             prompt, opts, cfg, ownerGeneration, persistenceOwner, forceNew, empSid,

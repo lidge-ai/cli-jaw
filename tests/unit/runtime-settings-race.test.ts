@@ -80,7 +80,7 @@ test('RSR-005: stop cancels a pending gated main spawn', { timeout: 5000 }, asyn
         assert.equal(killActiveAgent(scopeKey, 'user'), true);
         assert.equal(activeMainProcesses.has(scopeKey), false);
         finishMutation();
-        assert.deepEqual(await run.promise, { text: '⏹️ [user]', code: -1 });
+        assert.deepEqual(await run.promise, { text: '', code: 130, executionInterrupted: true, stopCause: 'user_stop' });
         assert.equal(isRuntimeSettingsMutationInFlight(), false);
         assert.equal(isAgentBusy(scopeKey), false);
         assert.deepEqual(snapshot(), before, 'cancellation must not persist a resumed user turn');

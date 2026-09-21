@@ -19,6 +19,7 @@ import { currentSessionScope, withSessionScope } from '../core/session-context.j
 
 import { clearPromptCache } from '../prompt/builder.js';
 import { spawnAgent, killAgentById } from '../agent/spawn.js';
+import { readStopCause } from '../agent/spawn/stop-cause.js';
 import { stripStallTruncationNotice } from '../agent/error-classifier.js';
 import {
     createWorklog,
@@ -544,10 +545,16 @@ export async function orchestrate(
     const { promise } = withSessionScope({ scope, chatSessionId }, spawn);
     const result = await promise as Record<string, any>;
     const nativeOutcome: RuntimeTurnOutcome | undefined = result['runtimeOutcome'];
-    const nativeTags = nativeOutcome ? {
-        runtimeFinality: nativeOutcome.finalText === null ? 'absent' as const : 'present' as const,
-        runtimeStatus: nativeOutcome.status,
-    } : {};
+    const legacyInterrupted = nativeOutcome === undefined && result['executionInterrupted'] === true;
+    const stopped = nativeOutcome?.status === 'stopped' || legacyInterrupted;
+    const stopCause = stopped ? readStopCause(result['stopCause']) : undefined;
+    const nativeTags = {
+        ...(nativeOutcome ? {
+            runtimeFinality: nativeOutcome.finalText === null ? 'absent' as const : 'present' as const,
+            runtimeStatus: nativeOutcome.status,
+        } : {}),
+        ...(stopCause ? { stopCause } : {}),
+    };
     // Native absence/empty/whitespace is not a provisional-text fallback. Clear
     // compatibility text BEFORE any transform can decorate it into an answer;
     // the private outcome (and durable MESSAGE bytes) remain untouched.
@@ -749,7 +756,7 @@ export async function orchestrate(
         // After target/replyViaTarget on purpose: the source-level queue-correlation
         // pin reads the payload up to the first `{}),` terminator, and the ternary
         // below contains one. Target correlation must stay inside the window.
-        ...(!nativeOutcome && result['executionInterrupted'] === true
+        ...(legacyInterrupted
             ? { executionInterrupted: true }
             : !nativeOutcome && (result['executionFailed'] === true || result['error'] === true
                 || (Number.isFinite(result['code']) && Number.isInteger(result['code']) && result['code'] !== 0))

@@ -21,11 +21,12 @@ import { syncLiveTools } from './events/helpers.js';
 import { getWorkerSlot, updateWorkerTools } from '../orchestrator/worker-registry.js';
 import { attachWatchdog } from './watchdog.js';
 import { isLifecycleSteerReason } from './spawn/kill-reason.js';
+import { stopCauseFromKillReason } from './spawn/stop-cause.js';
 import { detectSmokeResponse } from './smoke-detector.js';
 import { clearNativeStartFailure, recordNativeStartFailure } from './runtime/start-failure.js';
 
 type Result = Parameters<ExitHandlerParams['resolve']>[0];
-export type ClaudeExitBase = Omit<ExitHandlerParams, 'ctx' | 'code' | 'wasKilled' | 'wasSteer' | 'smokeResult'
+export type ClaudeExitBase = Omit<ExitHandlerParams, 'ctx' | 'code' | 'killReason' | 'wasKilled' | 'wasSteer' | 'smokeResult'
     | 'costLine' | 'resolve' | 'childProcess' | 'onRuntimeEnd' | 'processQueue'>;
 export interface ClaudeNativeRunOptions {
     prepared: PreparedClaudeOptions;
@@ -115,6 +116,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         ctx.stallWatchdog?.stop();
         const final = selected?.runtimeOutcome ?? (ctx.runtimeTerminalAttempted && ctx.runtimeOutcome ? ctx.runtimeOutcome : {
             status: stopReason || ctx.stallReason ? 'stopped' as const : 'error' as const, finalText: null, partialText: outcome.partialText });
+        const stopCause = final.status === 'stopped' ? stopCauseFromKillReason(stopReason) : undefined;
         finishTools(final.status);
         handoffRuntimeOutcome(ctx, final);
         try {
@@ -126,7 +128,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                         remoteKey: base.opts.remoteKey, target: base.opts.target }),
                     traceRunId, cli: 'claude', ...(worker ? { isEmployee: true } : {}),
                     text: final.status === 'stopped' ? '' : `❌ ${diagnostic()}`, error: true,
-                    runtimeStatus: final.status, runtimeFinality: final.finalText === null ? 'absent' : 'present' }, input.audience);
+                    runtimeStatus: final.status, runtimeFinality: final.finalText === null ? 'absent' : 'present',
+                    ...(stopCause ? { stopCause } : {}) }, input.audience);
             }
         } finally {
             try { end({ kind: 'turn-end', status: final.status, finalText: final.finalText, error: diagnostic() }); }
@@ -138,7 +141,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                 catch { console.warn('[runtime:claude] failure trace finalization failed'); }
             }
         }
-        return selected ?? { ...resultFor(final), diagnostic: diagnostic() };
+        return selected ?? { ...resultFor(final), diagnostic: diagnostic(), ...(stopCause ? { stopCause } : {}) };
     };
     const tools = new Map<string, ToolEntry>();
     const syncOwnedTools = () => {
@@ -260,7 +263,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
             // Stop can settle without ever acquiring a SDK session. Its captured
             // fallback must be known before lifecycle publishes the compatibility end.
             ensureFallbackStarted();
-            await handleAgentExit({ ...base, ctx, code, onRuntimeEnd: end, wasKilled: !!reason,
+            await handleAgentExit({ ...base, ctx, code, killReason: reason, onRuntimeEnd: end, wasKilled: !!reason,
                 wasSteer: isLifecycleSteerReason(reason),
                 smokeResult: detectSmokeResponse(outcome.finalText ?? '', ctx.toolLog, code, 'claude'), costLine: '',
                 childProcess: lease?.child ?? null, resolve: value => { selected ??= value; },

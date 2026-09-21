@@ -5,6 +5,7 @@
 
 import { currentSessionScope } from '../../core/session-context.js';
 import { isAgentBusy, killActiveAgent, getQueuedMessageSnapshotForScope, removeQueuedMessage } from '../../agent/spawn.js';
+import { EXPLICIT_USER_STOP_KILL_REASON } from '../../agent/spawn/kill-reason.js';
 import { handleApprovalCommand } from '../../core/dispatch-approval-ingress.js';
 import { settings } from '../../core/config.js';
 import { evaluateMessagingAccess, type MessagingAccessPolicy } from '../../messaging/access-policy.js';
@@ -60,7 +61,7 @@ export async function remoteStopHandler(): Promise<SlashResult> {
     const scope = scopeKey();
     const busy = isAgentBusy(scope);
     if (!busy) return { ok: true, text: 'already_stopped' };
-    killActiveAgent(scope, 'interrupt');
+    killActiveAgent(scope, EXPLICIT_USER_STOP_KILL_REASON);
     return { ok: true, text: `⏹️ stopped ${scope}` };
 }
 

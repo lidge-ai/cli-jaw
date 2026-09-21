@@ -24,8 +24,18 @@ export const STEER_KILL_REASON = 'steer';
 /** The gateway's interrupt policy stopped the turn (`orchestrator/gateway.ts`). */
 export const INTERRUPT_KILL_REASON = 'interrupt';
 
+/** An explicit channel /stop uses interrupt lifecycle cleanup but user-stop copy. */
+export const EXPLICIT_USER_STOP_KILL_REASON = 'explicit-user-stop';
+
 /** Kill reason recorded when a duplicate registration reaps the previous child. */
 export const DUP_REGISTRATION_KILL_REASON = 'dup-registration';
+
+/** Reasons that arm the captured exit-settlement barrier and release the scope. */
+export function isLifecycleExitSettleReason(reason: string | null | undefined): boolean {
+    return reason === STEER_KILL_REASON
+        || reason === INTERRUPT_KILL_REASON
+        || reason === EXPLICIT_USER_STOP_KILL_REASON;
+}
 
 /**
  * Was this exit an intentional lifecycle stop rather than an agent failure?
@@ -35,7 +45,6 @@ export const DUP_REGISTRATION_KILL_REASON = 'dup-registration';
  * handler must not delete the new child's map entry or drain the queue underneath it.
  */
 export function isLifecycleSteerReason(reason: string | null | undefined): boolean {
-    return reason === STEER_KILL_REASON
-        || reason === INTERRUPT_KILL_REASON
+    return isLifecycleExitSettleReason(reason)
         || reason === DUP_REGISTRATION_KILL_REASON;
 }

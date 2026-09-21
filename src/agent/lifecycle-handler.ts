@@ -42,6 +42,7 @@ import { completeGoal, getActiveGoal, goalHasCompletionEvidence } from '../goal/
 import { recordTurn } from '../goal-run/controller.js';
 import { applyOutputPolicy } from '../core/policy-hooks.js';
 import { evaluateRecordPending } from '../core/policy-flags.js';
+import { classifyStopCause, type StopCause } from './spawn/stop-cause.js';
 
 const GOAL_CONT_MAX_ATTEMPTS = 20;
 let _goalContAttempts = 0;
@@ -186,6 +187,7 @@ type LifecycleResolveResult = {
     diagnostic?: string;
     agyCheckpointSeen?: boolean;
     agyPlannerOnly?: boolean;
+    stopCause?: StopCause;
 };
 
 type SpawnAgentRef = (
@@ -298,6 +300,9 @@ export interface ExitHandlerParams {
     onRuntimeEnd?: (end: Extract<RuntimeEventBody, { kind: 'turn-end' }>) => void;
     ctx: ExitContext;
     code: number | null;
+    childExitCode?: number | null;
+    /** Exact reason captured at cancellation admission; presentation provenance only. */
+    killReason?: string | null;
     cli: string;
     model: string;
     effectiveProvider?: string;
@@ -360,7 +365,16 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         retryState, fallbackState, fallbackMaxRetries, processQueue,
     } = params;
 
+    const candidateStopCause = classifyStopCause({
+        stallReason: ctx.stallReason,
+        wasSteer,
+        wasKilled,
+        killReason: params.killReason,
+        exitCode: params.childExitCode ?? params.code,
+    });
     const nativeOutcome = lifecycleRuntimeOutcome(ctx, wasKilled || wasSteer || Boolean(ctx.stallReason));
+    const nativeStopCause = nativeOutcome?.status === 'stopped' ? candidateStopCause : undefined;
+    const legacyUnattributedStop = nativeOutcome === undefined && candidateStopCause === 'unattributed';
     const code = runtimeOutcomeExitCode(nativeOutcome, processCode);
     const nativeRequestId = ctx.requestId ?? opts.requestId;
     if (mainManaged) revokeSlackToolGrant(nativeRequestId);
@@ -386,7 +400,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const ownsLiveRun = () => nativeOutcome === undefined
         || (typeof ctx.traceRunId === 'string' && getLiveRun(liveScope).traceRunId === ctx.traceRunId);
     const traceStatus = nativeOutcome === undefined
-        ? code === 0 ? 'done' : wasKilled ? 'interrupted' : 'error'
+        ? legacyUnattributedStop ? 'interrupted' : code === 0 ? 'done' : wasKilled ? 'interrupted' : 'error'
         : nativeOutcome.status === 'stopped' ? 'interrupted' : nativeOutcome.status;
     let runtimeFinalText: string | null = null;
     let runtimeEnded = false;
@@ -743,6 +757,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 ...(nativeRequestId !== undefined ? { requestId: nativeRequestId } : {}),
                 sessionId: chatSessionId, scope: scopeKey, toolLog: safeTools, origin, ...empTag,
                 ...(wasSteer ? { steered: true } : {}),
+                ...(nativeStopCause ? { stopCause: nativeStopCause } : {}),
                 ...(failed ? { error: true, errorKind, cli: runtimeCli } : {}),
             });
             if (finalContent !== null) {
@@ -1263,9 +1278,12 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const resolvedOutcome: RuntimeTurnOutcome | undefined = nativeOutcome === undefined
         ? undefined : { ...nativeOutcome, finalText: runtimeFinalText };
     const answerText = resolvedOutcome === undefined ? ctx.fullText : runtimeCompatibilityText(resolvedOutcome.finalText);
-    const executionInterrupted = resolvedOutcome === undefined && (wasKilled || wasSteer) && !ctx.stallReason;
+    const executionInterrupted = resolvedOutcome === undefined
+        && (legacyUnattributedStop || ((wasKilled || wasSteer) && !ctx.stallReason));
     const executionFailed = resolvedOutcome === undefined && !executionInterrupted
         && (traceStatus === 'error' || Boolean(ctx.stallReason));
+    const resolvedStopCause = resolvedOutcome?.status === 'stopped' || executionInterrupted
+        ? candidateStopCause : undefined;
     resolve({
         text: answerText, code: resolvedCode ?? 0,
         ...(executionInterrupted ? { executionInterrupted: true } : {}),
@@ -1280,6 +1298,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         ...(typeof ctx.metadata?.['agyPlannerOnly'] === 'boolean'
             ? { agyPlannerOnly: ctx.metadata['agyPlannerOnly'] } : {}),
         ...(params.outputLen ? { outputLen: params.outputLen } : {}),
+        ...(resolvedStopCause ? { stopCause: resolvedStopCause } : {}),
     });
 
     // ─── AI-initiated /goal done or /goal cancel ───
