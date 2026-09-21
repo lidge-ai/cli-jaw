@@ -93,6 +93,7 @@ function options(overrides: Record<string, unknown> = {}) {
         },
         ...(overrides['storedSessionId'] === undefined ? {} : { storedSessionId: overrides['storedSessionId'] }),
         ...(overrides['instructions'] === undefined ? {} : { instructions: String(overrides['instructions']) }),
+        ...(overrides['signal'] === undefined ? {} : { signal: overrides['signal'] as AbortSignal }),
     };
 }
 
@@ -231,4 +232,33 @@ test('Pi scope replacement observes rejected asynchronous close without claiming
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(warnings.filter(line => line.includes('fixture UNCERTIFIED close')).length, 1);
     assert.equal(second.runtime.alive, true); second.release(); old.die();
+});
+
+test('Pi lease retire marks dead, closes, and cannot be reused', async () => {
+    const scopeKey = `retire-${sequence++}`;
+    const first = await acquirePiRuntime(options({ scopeKey }));
+    const session = first.session as unknown as FakePiSession;
+    await first.retire(new Error('test retire'));
+    assert.equal(session.closeCount, 1);
+    assert.equal(session.alive, false);
+    const second = await acquirePiRuntime(options({ scopeKey }));
+    assert.equal(second.reused, false);
+    assert.notEqual(second.session.child, session.child);
+    second.release();
+    (second.session as unknown as FakePiSession).die();
+});
+
+test('Pi acquire signal aborts waitForEntry without cancelLease or retire', async () => {
+    const scopeKey = `signal-${sequence++}`;
+    const first = await acquirePiRuntime(options({ scopeKey }));
+    const session = first.session as unknown as FakePiSession;
+    const ac = new AbortController();
+    const pending = acquirePiRuntime(options({ scopeKey, signal: ac.signal }));
+    ac.abort();
+    await assert.rejects(pending, /runtime pool acquire aborted/);
+    assert.equal(session.abortCount, 0);
+    assert.equal(session.killCount, 0);
+    assert.equal(session.closeCount, 0);
+    first.release();
+    session.die();
 });

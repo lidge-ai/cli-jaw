@@ -297,12 +297,15 @@ test('Pi launch sites retain the shared Windows resolver, and RPC children have 
     // probe, which legitimately spawn, stay outside.
     const persistent = source.slice(
         source.indexOf('export function spawnPersistentPiRpc'),
-        source.indexOf('export function spawnPiRpc'),
+        source.indexOf('export function openPiRpc'),
     );
-    const oneShot = source.slice(source.indexOf('export function spawnPiRpc'));
+    const oneShot = source.slice(source.indexOf('export function openPiRpc'), source.indexOf('export function spawnPiRpc'));
     assert.ok(persistent.length > 0 && oneShot.length > 0, 'both Pi RPC entry points must exist');
-    for (const [name, body] of [['spawnPersistentPiRpc', persistent], ['spawnPiRpc', oneShot]] as const) {
+    for (const [name, body] of [['spawnPersistentPiRpc', persistent], ['openPiRpc', oneShot]] as const) {
         assert.doesNotMatch(body, /\bspawn\(/, name + ' must not launch a child of its own');
         assert.match(body, /launchPiRpcExecution\(/, name + ' must launch through the shared owner');
     }
+    const wrapper = source.slice(source.indexOf('export function spawnPiRpc'));
+    assert.match(wrapper, /openPiRpc\(/, 'spawnPiRpc remains the compatibility wrapper');
+    assert.doesNotMatch(wrapper, /launchPiRpcExecution\(/);
 });
