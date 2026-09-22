@@ -246,7 +246,8 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
     const btn = document.getElementById('btnSend');
     if (!input || !btn) return;
 
-    const text = input.value.trim();
+    const submittedRawText = input.value;
+    const text = submittedRawText.trim();
     // A stop-mode button click is not a message send, so it carries no command
     // text and the read-only guard must judge it on its own. Every other path —
     // including an ordinary button click on `/switch 1` — must pass the text,
@@ -285,6 +286,23 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
     if (!text && !state.attachedFiles.length) return;
     clearUnreadResponses();
 
+    // A settings write can keep this submission behind the save barrier while the
+    // user keeps composing. String equality alone is insufficient here: A -> B -> A
+    // is still a newer draft and must survive. Track real input events for this
+    // submission and retain the exact textarea identity in case the view replaces it.
+    let inputEditRevision = 0;
+    const submittedInputEditRevision = inputEditRevision;
+    const trackInputEdit = () => { inputEditRevision++; };
+    input.addEventListener('input', trackInputEdit);
+    const clearSubmittedInput = () => {
+        const currentInput = document.getElementById('chatInput');
+        if (currentInput !== input
+            || input.value !== submittedRawText
+            || inputEditRevision !== submittedInputEditRevision) return;
+        input.value = '';
+        resetInputHeight();
+    };
+
     // Mark in-flight AND disable send button for visual feedback.
     __chatSending = true;
     const sendBtn = btn as HTMLButtonElement;
@@ -300,8 +318,7 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
         const isSlashCommand = text.startsWith('/') && !isFilePath;
 
         if (isSlashCommand && !state.attachedFiles.length) {
-            input.value = '';
-            resetInputHeight();
+            clearSubmittedInput();
             slashCmd.close();
             if (tryCommandInfo(text)) return;
             try {
@@ -319,8 +336,7 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
             const displayMsg = `📎 [${names}] ${text}`;
             addMessage('user', displayMsg);
             upsertMessage({ role: 'user', content: displayMsg, timestamp: Date.now() });
-            input.value = '';
-            resetInputHeight();
+            clearSubmittedInput();
             try {
                 // Upload all files in parallel
                 const paths = await Promise.all(state.attachedFiles.map((f: File) => uploadFile(f)));
@@ -352,8 +368,7 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
             // chat bubble. Eliminates every duplicate-bubble class of bug
             // (WS-vs-HTTP race, VS stored-HTML capture, mounted reindex, etc.)
             // because we only addMessage when we know for sure what happened.
-            input.value = '';
-            resetInputHeight();
+            clearSubmittedInput();
             const result = await postChatMessage(text);
             const data = result.data;
             // Server-side 5s dedup returns 409 with reason='duplicate'.
@@ -396,6 +411,7 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
             }
         }
     } finally {
+        input.removeEventListener('input', trackInputEdit);
         __chatSending = false;
         sendBtn.disabled = prevDisabled;
     }

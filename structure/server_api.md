@@ -494,6 +494,8 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | POST `/sessions/:id/attach` | Explicit native resume; selecting or reading a session does not attach |
 | POST `/permissions/:id` | Captured session/turn/epoch and opaque optionId; stale or unknown decisions fail |
 
+Prompt retries with the same `clientTurnKey` and exact text recover the original receipt even after archive or a metadata revision change. They emit no new events and open no provider. A reused key with different text remains409; a new key on an archived session remains409. Archive, revision and busy checks gate new admission after duplicate receipt lookup.
+
 Snapshots contain complete items. Replay may contain `code_item_update` append
 suffixes and status/phase changes; apply only once in contiguous sequence to the
 existing item. Preserve `firstSequence` ordering. Worker and Manager use the same

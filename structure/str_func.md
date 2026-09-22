@@ -162,7 +162,7 @@ cli-jaw/
 │   │   │   ├── cursor.ts     ← Cursor event adapter + tool/message-boundary LAST-WINS (312L)
 │   │   │   ├── gemini.ts     ← Gemini event adapter (117L)
 │   │   │   ├── summary.ts    ← event summary formatters (118L)
-│   │   │   ├── tool-labels.ts ← tool name→label mapping (315L)
+│   │   │   ├── tool-labels.ts ← tool name→label mapping (320L)
 │   │   │   └── types.ts      ← event type definitions (23L)
 │   │   ├── spawn-env.ts      ← spawn용 child env 빌더 (AGY NO_COLOR, OpenCode/Gemini permissions config 주입 등, 148L)
 │   │   ├── args.ts           ← CLI별 인자 빌더 + AGY print-mode/`--log-file`/`--conversation` resume args + Pi session bucket 분리 (353L)
@@ -340,7 +340,7 @@ cli-jaw/
 │   │   ├── ipv4-fetch.ts    ← IPv4 fetch factory that honours init.signal (destroys on abort) (106L)
 │   │   ├── bot.ts            ← Telegram 봇 + forwarder lifecycle + origin 필터링 + channel-origin text/image reply + elicitation callback + voice 핸들러 등록 (1417L)
 │   │   ├── voice.ts          ← 음성 메시지 → guarded download → STT → tgOrchestrate 파이프라인 (43L)
-│   │   ├── forwarder.ts      ← text 전송 뒤 guarded local-image photo relay + escape/chunk/createForwarder (245L)
+│   │   ├── forwarder.ts      ← text 전송 뒤 guarded local-image photo relay + escape/chunk/createForwarder (244L)
 │   │   ├── rich-message.ts   ← Bot API 10.1 rich-first send (sendTelegramMarkdown, 32k chunk, HTML/plaintext fallback) (425L)
 │   │   ├── elicitation-buttons.ts ← single_select elicitation → inline keyboard + pending store + callback codec (110L)
 │   │   ├── hub-callback.ts   ← hub-member callback URL SSRF guard (19L)
@@ -593,7 +593,7 @@ cli-jaw/
 ├── electron/                 ← Electron tray background app (27 TS/TSX files, 3096L) ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
-│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1448L)
+│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1449L)
 │       ├── main/lib/qa-session.ts ← isolated QA profile paths before lock and sessions (12L)
 │       ├── main/lib/         ← 19 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 199L, qa-session, install-cli, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
 │       └── preload/          ← preload scripts (index 126L + metrics 68L)

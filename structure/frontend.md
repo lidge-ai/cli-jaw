@@ -579,6 +579,23 @@ React 컴포넌트에서는 `role="dialog"` + `aria-modal` 패턴.
 
 백엔드 API는 동일, 프론트엔드만 다름 (Vanilla JS vs React). 기능 추가 시 양쪽 모두 구현 필요.
 
+### Classic asynchronous intent ownership
+
+`features/chat.ts` and `features/settings-core.ts` share a settings-save barrier,
+but completion of that barrier is not ownership of the current editor value.
+A send owns its captured prompt; clearing the composer must not erase an edit
+made while that send was waiting. Likewise a settings read belongs to the CLI,
+provider and local model/effort selection that initiated it. A later selection
+or local edit invalidates that read's right to repaint the shared controls.
+Each send tracks input events for the lifetime of that submission and checks the
+original textarea plus raw value before clearing any ordinary, slash-command or
+attachment draft. Editing A to B and back to A still preserves the draft; the
+listener is removed when the send settles. CLI reads capture a generation, edit
+revision and control identities. Model/effort saves and custom-model typing
+invalidate pending reads; provider mismatches cannot restore a stale effort.
+Regressions delay the save/read, change local intent, and verify both the
+submitted value and preserved controls, including ABA and replaced DOM owners.
+
 ## Native Code workbench
 
 Manager Code uses `/api/code` with isolated Codex, Claude, Cursor and Grok

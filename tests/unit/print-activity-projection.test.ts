@@ -10,6 +10,7 @@ import { subscribe, type BusEvent } from '../../src/core/event-bus.js';
 import { settings } from '../../src/core/config.js';
 import { emitAgentTool } from '../../src/agent/events/helpers.js';
 import { addBroadcastListener, removeBroadcastListener } from '../../src/core/bus.js';
+import { extractFromEvent } from '../../src/agent/events.js';
 import type { RuntimeEventBody } from '../../src/shared/runtime-contract.js';
 import type { SpawnContext } from '../../src/types/agent.js';
 
@@ -130,6 +131,41 @@ test('print opt-in follows explicit terminal status updates without inferring re
     tools = readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })!.events.filter(e => e.kind === 'tool');
     assert.equal(tools.length, 2); assert.equal(tools[1]?.status, 'done'); assert.equal(tools[1]?.detail, '');
     assert.equal(tools[0]?.itemId, tools[1]?.itemId);
+});
+
+test('completed Codex web searches stay terminal through extractor, print projection, and close', () => {
+    const runId = startTraceRun({ cli: 'codex', sessionId: 'default', scopeKey: 'default' });
+    const observer = createPrintActivity({ runId, sessionId: 'default', scope: 'default', turnId: runId, audience: 'public' }, 'codex');
+    const ctx = { ...context(), traceRunId: runId, traceAudience: 'public' as const, printActivity: observer };
+    const events = [
+        { type: 'item.completed', item: { id: 'search-1', type: 'web_search', action: { type: 'search', query: 'fixture query' } } },
+        { type: 'item.completed', item: { id: 'page-1', type: 'web_search', action: { type: 'open_page', url: 'https://example.com/source' } } },
+        { type: 'item.completed', item: { id: 'invalid-page-1', type: 'web_search', action: { type: 'open_page', url: 'not a URL' } } },
+        { type: 'item.completed', item: { id: 'fallback-1', type: 'web_search', query: 'fallback query', action: { type: 'other' } } },
+        { type: 'item.completed', item: { type: 'web_search', action: { type: 'search', query: 'anonymous one' } } },
+        { type: 'item.completed', item: { type: 'web_search', action: { type: 'search', query: 'anonymous two' } } },
+    ];
+    for (const event of events) extractFromEvent('codex', event, ctx, 'fixture');
+    assert.deepEqual(ctx.toolLog.map(tool => tool.stepRef), [
+        'codex:item:search-1',
+        'codex:item:page-1',
+        'codex:item:invalid-page-1',
+        'codex:item:fallback-1',
+        undefined,
+        undefined,
+    ]);
+    observer.finish({ kind: 'turn-end', status: 'done', finalText: '' });
+
+    const eventsAfterClose = readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })!.events;
+    const tools = eventsAfterClose.filter(event => event.kind === 'tool');
+    const terminal = eventsAfterClose.filter(event => event.kind === 'turn-end');
+    assert.equal(tools.length, 6);
+    assert.deepEqual(tools.map(tool => tool.status), ['done', 'done', 'done', 'done', 'done', 'done']);
+    assert.equal(tools.some(tool => tool.detail === 'No native terminal tool result received'), false);
+    assert.equal(new Set(tools.map(tool => tool.itemId)).size, 6);
+    assert.notEqual(tools[4]?.itemId, tools[5]?.itemId, 'ID-less completed searches remain distinct');
+    assert.equal(terminal.length, 1);
+    assert.equal(terminal[0]?.status, 'done');
 });
 
 function context(): SpawnContext {

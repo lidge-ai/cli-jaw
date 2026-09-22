@@ -19,6 +19,8 @@ const activeSettingsSaves = new Set<Promise<void>>();
 let configuredPermission: unknown;
 let permissionSavePending = false;
 let permissionRevision = 0;
+let cliPickerReadGeneration = 0;
+let cliPickerEditRevision = 0;
 
 type MigrationResponse = SettingsData | { ok?: boolean; data?: SettingsData; settings?: SettingsData };
 
@@ -480,6 +482,7 @@ export async function setPerm(p: unknown, save = true): Promise<void> {
 export function onCliChange(save = true): void {
     const selCli = document.getElementById('selCli') as HTMLSelectElement | null;
     if (!selCli) return;
+    const readGeneration = ++cliPickerReadGeneration;
     if (selCli.value === '__show_more__') {
         const prev = selCli.dataset['prev'] || getCliKeys()[0] || 'claude';
         selCli.dataset['expanded'] = '1';
@@ -521,6 +524,7 @@ export function onCliChange(save = true): void {
     inp.className = 'custom-model-input';
     inp.placeholder = t('model.placeholder');
     inp.style.display = 'none';
+    inp.oninput = () => { cliPickerEditRevision++; };
     inp.onchange = function () {
         const val = (this as HTMLInputElement).value.trim();
         if (!val || !modelSel) return;
@@ -547,22 +551,29 @@ export function onCliChange(save = true): void {
         }
     };
 
+    const readEditRevision = cliPickerEditRevision;
+    const providerSel = document.getElementById('selCliProvider');
+    const effortSel = document.getElementById('selEffort');
     api<SettingsData>('/api/settings').then(s => {
-        if (!s) return;
+        if (!s
+            || readGeneration !== cliPickerReadGeneration
+            || readEditRevision !== cliPickerEditRevision
+            || document.getElementById('selCli') !== selCli
+            || selCli.value !== cli
+            || document.getElementById('selCliProvider') !== providerSel
+            || document.getElementById('selModel') !== modelSel
+            || document.getElementById('selModelCustom') !== inp
+            || document.getElementById('selEffort') !== effortSel
+            || ((meta?.providers?.length ?? 0) > 0 && getSelectedCliProvider(cli) !== cliProvider)) return;
         const ao = s.activeOverrides?.[cli] || {};
         const pc = s.perCli?.[cli] || {};
         const model = ao.model || pc.model;
         const effort = ao.effort ?? pc.effort ?? '';
+        if (cli !== 'pi' && meta?.providers?.length) {
+            const savedProvider = pc.provider || meta.defaultProvider || '';
+            if (savedProvider !== cliProvider) return;
+        }
         if (model && modelSel) {
-            const cliMetaCheck = getCliMeta(cli);
-            if (cli !== 'pi' && cliMetaCheck?.providers?.length) {
-                const savedProvider = s.perCli?.[cli]?.provider || cliMetaCheck.defaultProvider || '';
-                const currentProvider = getSelectedCliProvider(cli);
-                if (savedProvider !== currentProvider) {
-                    syncActiveEffortOptions(cli, effort);
-                    return;
-                }
-            }
             const displayModel = normalizeModelForDisplay(cli, model);
             appendCustomOption(modelSel, displayModel);
             modelSel.value = displayModel;
@@ -574,6 +585,7 @@ export function onCliChange(save = true): void {
 }
 
 export async function saveActiveCliSettings(): Promise<void> {
+    cliPickerEditRevision++;
     const cli = (document.getElementById('selCli') as HTMLSelectElement)?.value || 'claude';
     const modelSel = document.getElementById('selModel') as HTMLSelectElement | null;
     let model = modelSel?.value || 'default';

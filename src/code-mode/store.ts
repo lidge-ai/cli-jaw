@@ -574,16 +574,16 @@ export class CodeStore {
         return this.write(() => {
             if (!input.text.trim() || !input.clientTurnKey.trim()) throw new CodeStoreError('invalid_prompt', 'Text and client turn key are required', 400);
             const record = this.requireRecord(input.sessionId);
-            if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
-            if (input.expectedRevision !== undefined && input.expectedRevision !== record.revision) {
-                throw new CodeStoreError('revision_conflict', 'Code metadata changed', 409);
-            }
             const promptHash = createHash('sha256').update(input.text).digest('hex');
             const previous = this.database.prepare(`SELECT ${TURN_COLUMNS} FROM code_turns WHERE session_id = ? AND client_turn_key = ?`)
                 .get(input.sessionId, input.clientTurnKey) as TurnRow | undefined;
             if (previous) {
                 if (previous.prompt_hash !== promptHash) throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for different content', 409);
                 return { session: toCodeSessionInfo(record), events: [], receipt: receipt(previous), duplicate: true };
+            }
+            if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
+            if (input.expectedRevision !== undefined && input.expectedRevision !== record.revision) {
+                throw new CodeStoreError('revision_conflict', 'Code metadata changed', 409);
             }
             if (isBusy(record.status)) throw new CodeStoreError('session_busy', 'Code session already has an active turn', 409);
             if (record.nativeStarted && !record.nativeCursor) throw new CodeStoreError('resume_unavailable', 'Native history has no resumable identity', 409);
