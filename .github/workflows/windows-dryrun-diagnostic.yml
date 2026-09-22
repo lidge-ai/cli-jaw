@@ -1,0 +1,35 @@
+name: Windows dry-run diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/windows-dryrun-probe-*'
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: Observe nested PowerShell boundaries
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Run controlled module-path observations
+        shell: pwsh
+        run: |
+          Write-Host "Parent PowerShell: $($PSVersionTable.PSVersion)"
+          node scripts/ci/windows-dryrun-probe.mjs
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-dryrun-observations
+          path: ${{ runner.temp }}/jaw-wis-observations.json
+          if-no-files-found: error
