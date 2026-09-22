@@ -26,6 +26,8 @@ const MAX_CONSECUTIVE_LIVE_FAILURES = 3;
 // chat.appendStream is Tier 4 (100+/minute). Reserve at most 90/minute
 // across this process's streams sharing one credential, including tool updates.
 const APPEND_SPACING_MS = 667;
+// Share chat.update pacing per credential across live and terminal edits in this process.
+const UPDATE_SPACING_MS = 1100;
 const OPERATION_TIMEOUT_MS = 5000;
 const MAX_EMBARGO_KEYS = 128;
 const embargoes = new Map<string, number>();
@@ -206,6 +208,7 @@ export async function startSlackProgress(
             return { result: { ok: false, error: 'slack_send_aborted' }, attempted: false };
         }
         if (method === 'chat.appendStream') extendEmbargo(bucket(method), now() + APPEND_SPACING_MS, now());
+        if (method === 'chat.update') extendEmbargo(bucket(method), now() + UPDATE_SPACING_MS, now());
         const request = new AbortController();
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let cancel: () => void = () => {};
