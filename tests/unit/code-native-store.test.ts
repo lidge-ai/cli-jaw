@@ -456,6 +456,32 @@ test('matching key wins over busy; mismatching content and competing keys cannot
     assert.equal(store.snapshot('session-a').items.length, 2);
 });
 
+test('terminal duplicate receipts win over archive and stale revision while conflicts and new keys stay rejected', t => {
+    const { store } = fixture(t);
+    for (const [index, status] of (['completed', 'failed', 'cancelled'] as const).entries()) {
+        const sessionId = index === 0 ? 'session-a' : `session-${index}`;
+        if (index > 0) store.create({ ...creation, sessionId });
+        const text = `prompt-${status}`;
+        const key = `key-${status}`;
+        const admitted = admit(store, key, sessionId, text);
+        const settled = store.settleTurn(owner(admitted.session), {
+            status,
+            ...(status === 'failed' ? { error: { code: 'provider_failed', message: 'Provider failed', at: 1234, recoverable: true } } : {}),
+        });
+        const archived = store.patchSession(sessionId, { expectedRevision: 0, archived: true });
+
+        const duplicate = store.admitTurn({ sessionId, text, clientTurnKey: key,
+            expectedRevision: archived.session.revision + 100 });
+        assert.equal(duplicate.duplicate, true);
+        assert.deepEqual(duplicate.receipt, settled.receipt);
+        assert.deepEqual(duplicate.events, []);
+        expectError(() => store.admitTurn({ sessionId, text: `${text}-different`, clientTurnKey: key,
+            expectedRevision: archived.session.revision }), 'turn_key_conflict');
+        expectError(() => store.admitTurn({ sessionId, text, clientTurnKey: `${key}-new`,
+            expectedRevision: archived.session.revision }), 'session_archived');
+    }
+});
+
 test('a second store instance observes the durable admission before any native open', t => {
     const { store, db } = fixture(t);
     const accepted = admit(store);
