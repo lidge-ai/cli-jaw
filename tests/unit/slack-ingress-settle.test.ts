@@ -240,6 +240,36 @@ test('ack failure retry dispatches once and completes the journal row', { timeou
     }
 });
 
+test('reset during running ingress dead-letters the acknowledged event instead of completing it', { timeout: 5000 }, async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    collectImpl = async () => {
+        started.resolve();
+        await release.promise;
+        return { text: 'late cancelled result', data: {} };
+    };
+    const envelope = messageEnvelope('1705.1');
+    try {
+        assert.equal(await preflightSlackEnvelope(envelope), 'committed');
+        await handleSlackEnvelope(envelope);
+        await started.promise;
+        const resetting = ingress.resetSlackIngress();
+        release.resolve();
+        await resetting;
+        await drain();
+        const journal = getIngressJournal()!;
+        const row = journal.find('slack', 'T1', 'T1:C1:1705.1');
+        assert.equal(row?.state, 'dead_letter');
+        assert.equal(row?.lastError, 'ingress_cancelled');
+        assert.equal(row?.payloadJson, null, 'Slack keeps its existing digest-only retention policy');
+        assert.equal(journal.counts().completed, 0);
+        assert.equal(journal.counts().processing, 0);
+    } finally {
+        release.resolve();
+        await drain();
+    }
+});
+
 test('reset immediately dead-letters and releases prefetch behind a noncooperative predecessor', { timeout: 5000 }, async t => {
     const firstStarted = Promise.withResolvers<void>();
     const releaseFirst = Promise.withResolvers<void>();
