@@ -148,10 +148,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DEBUG: electron-builder
 
       - name: Package unsigned Windows or Linux app
         if: matrix.platform != 'macos'
-        run: npm --prefix electron run ${{ matrix.script }}
+        run: npm --prefix electron run ${{ matrix.script }} -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 

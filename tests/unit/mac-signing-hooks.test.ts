@@ -216,6 +216,17 @@ test('afterPack fails credential-owner errors without echoing credential diagnos
             return true;
         });
     });
+    await t.test('keychain preparation reports only a safe failure stage', async () => {
+        const { root } = appFixture();
+        const fixture = packContext(root, Promise.reject(
+            new Error('Command failed: /usr/bin/security import /tmp/certificate.p12 -P sensitive fixture payload'),
+        ));
+        await assert.rejects(signExtraBinaries(fixture.context, signingDependencies), error => {
+            assert.match((error as Error).message, /certificate import failed/);
+            assert.doesNotMatch((error as Error).message, /sensitive fixture payload|certificate\.p12/);
+            return true;
+        });
+    });
     await t.test('identity lookup', async () => {
         const { root } = appFixture();
         const fixture = packContext(root);

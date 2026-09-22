@@ -13,7 +13,12 @@ const childEntry=fileURLToPath(new URL('./sidecar-smoke-probe.mjs',import.meta.u
 const MAX_OUTPUT=4*1024*1024;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function inside(root,file){const rel=path.relative(root,file);return !rel||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}
-function safeDirectory(value){const root=fs.realpathSync(value);if(!fs.statSync(root).isDirectory())throw Error('Server root is not a directory');return root;}
+export function resolveCanonicalDirectory(value,fileSystem=fs){
+    const root=fileSystem.realpathSync.native(value);
+    if(!fileSystem.statSync(root).isDirectory())throw Error('Server root is not a directory');
+    return root;
+}
+function safeDirectory(value){return resolveCanonicalDirectory(value);}
 function redact(value){return value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/(\bAuth:\s*)\S+/g,'$1[REDACTED]')
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi,'$1[REDACTED]').replace(/\b(?:sk-|ghp_|gho_)[A-Za-z0-9_-]{8,}/g,'[REDACTED]');}
 
@@ -88,7 +93,7 @@ async function health(url){
 }
 
 async function probe(executionRoot,runRoot,item,timeoutMs,shutdownMs){
-    const root=fs.realpathSync(fs.mkdtempSync(path.join(runRoot,`${item.id}-`)));
+    const root=resolveCanonicalDirectory(fs.mkdtempSync(path.join(runRoot,`${item.id}-`)));
     const row={id:item.id,kind:item.kind,root,ok:false,closed:false,imported:false,listening:false,httpReady:false,stopAcknowledged:false,issues:[]};
     const slots=[];let child,retired=false,pid,code=null,signal=null,output='',outputBytes=0,messages=0,stopSent=false;
     const fail=reason=>{if(!row.issues.includes(reason)&&row.issues.length<32)row.issues.push(reason);};
@@ -191,16 +196,16 @@ export async function runSidecarSmoke(options){
     if(options.reportPath!==undefined){
         if(typeof options.reportPath!=='string'||!options.reportPath)throw Error('Invalid report path');
         const candidate=path.resolve(options.reportPath);
-        requestedReport=path.join(fs.realpathSync(path.dirname(candidate)),path.basename(candidate));
+        requestedReport=path.join(resolveCanonicalDirectory(path.dirname(candidate)),path.basename(candidate));
         if(inside(source,requestedReport))throw Error('Report destination must be outside the original artifact');
     }
-    const temporary=fs.realpathSync(os.tmpdir());
+    const temporary=resolveCanonicalDirectory(os.tmpdir());
     if(inside(source,temporary))throw Error('Smoke temp directory must be outside the original artifact');
     const node=path.join(source,process.platform==='win32'?'node.exe':'node');
     for(const file of [node,path.join(source,'dist/src/shared/isolated-qa.js'),...SMOKE_CASES.map(item=>path.join(source,item.relative))])
         if(!fs.statSync(file).isFile())throw Error('Required sidecar input is missing');
     fs.accessSync(node,fs.constants.X_OK);
-    const runRoot=fs.realpathSync(fs.mkdtempSync(path.join(temporary,'jaw-sidecar-smoke-')));
+    const runRoot=resolveCanonicalDirectory(fs.mkdtempSync(path.join(temporary,'jaw-sidecar-smoke-')));
     const reportPath=requestedReport??path.join(runRoot,'report.json');
     // Reserve before executing anything; never overwrite an existing result.
     let reportFd;try{reportFd=fs.openSync(reportPath,'wx',0o600);}catch(error){fs.rmSync(runRoot,{recursive:true});throw error;}

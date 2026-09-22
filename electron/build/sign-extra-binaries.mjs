@@ -155,8 +155,11 @@ async function resolveIdentity(context, findIdentityOverride) {
     // out/macPackager.js:25-50 owns CSC_LINK import and keychain cleanup;
     // out/macPackager.js:190-197 awaits this owner before findIdentity.
     signingInfo = await packager.codeSigningInfo.value;
-  } catch {
-    throw new Error('[sign-extra] electron-builder could not prepare signing credentials');
+  } catch (error) {
+    const stage = credentialPreparationStage(error);
+    throw new Error(
+      `[sign-extra] electron-builder could not prepare signing credentials${stage ? ` (${stage})` : ''}`,
+    );
   }
 
   const keychainFile = signingInfo?.keychainFile ?? null;
@@ -199,4 +202,15 @@ function nonEmpty(value) {
 function errorMessage(error) {
   if (error instanceof AggregateError) return error.errors.map(errorMessage).join('; ');
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Report only the failing operation, never certificate paths or passwords. */
+function credentialPreparationStage(error) {
+  const message = errorMessage(error);
+  if (/security[^\n]*\bimport\b/i.test(message)) return 'certificate import failed';
+  if (/set-key-partition-list/i.test(message)) return 'keychain access setup failed';
+  if (/create-keychain|unlock-keychain|set-keychain-settings/i.test(message)) return 'temporary keychain setup failed';
+  if (/list-keychains/i.test(message)) return 'keychain search-list setup failed';
+  if (/base64|certificate source|download/i.test(message)) return 'certificate source decode failed';
+  return null;
 }

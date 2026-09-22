@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import ts from 'typescript';
-import { runSidecarSmoke } from '../../scripts/check-sidecar-smoke.mjs';
+import { resolveCanonicalDirectory, runSidecarSmoke } from '../../scripts/check-sidecar-smoke.mjs';
 
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const cli=path.join(repo,'scripts/check-sidecar-smoke.mjs');
@@ -24,6 +24,21 @@ const server=http.createServer((req,res)=>{res.setHeader('content-type','applica
 server.listen(Number(process.env.DASHBOARD_PORT),'127.0.0.1');
 process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
 `;
+
+test('canonical directories use native realpath so Windows 8.3 aliases are not passed to child policy checks',()=>{
+    let ordinaryCalls=0,nativeCalls=0;
+    const realpathSync=Object.assign(
+        ()=>{ordinaryCalls++;return 'C:\\Users\\RUNNER~1\\Temp\\jaw';},
+        {native:()=>{nativeCalls++;return 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\jaw';}},
+    );
+    const fileSystem={realpathSync,statSync:()=>({isDirectory:()=>true})};
+    assert.equal(
+        resolveCanonicalDirectory('C:\\Users\\RUNNER~1\\Temp\\jaw',fileSystem),
+        'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\jaw',
+    );
+    assert.equal(nativeCalls,1);
+    assert.equal(ordinaryCalls,0);
+});
 
 function fixture(t:TestContext,underRepo=false){
     const parent=underRepo?path.join(repo,'.tmp'):fs.realpathSync(os.tmpdir());
@@ -273,7 +288,7 @@ test('preflight rejects missing binary/module, .env, escaping links and existing
     f.put('.env','PRIVATE_SENTINEL=never_loaded');await assert.rejects(f.run(),/\.env/);fs.rmSync(path.join(f.root,'.env'));
     const module=path.join(f.root,'dist/src/telegram/bot.js');fs.rmSync(module);await assert.rejects(f.run(),/ENOENT|missing/);f.put('dist/src/telegram/bot.js','');
     const link=path.join(f.root,'external-link');fs.symlinkSync(repo,link,process.platform==='win32'?'junction':'dir');
-    const escaped=await f.run();assert.equal(escaped.ok,false);assert.match(escaped.error,/symlink/);fs.rmSync(link);
+    const escaped=await f.run();assert.equal(escaped.ok,false);assert.match(escaped.error,/symlink/);fs.unlinkSync(link);
     fs.rmSync(f.node);await assert.rejects(f.run(),/ENOENT|missing/);
 });
 
