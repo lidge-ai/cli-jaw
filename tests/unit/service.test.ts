@@ -139,8 +139,8 @@ test('S-013b: instance binary lookup is Windows-aware', async () => {
         join(projectRoot, 'src', 'core', 'instance.ts'),
         'utf8'
     );
-    assert.ok(instanceCode.includes("process.platform === 'win32' ? 'where' : 'which'"),
-        'binary lookup should use where on Windows and which elsewhere');
+    assert.ok(instanceCode.includes("process.platform === 'win32' ? 'where.exe' : 'which'"),
+        'binary lookup should use the native where.exe executable on Windows and which elsewhere');
     assert.ok(instanceCode.includes('split(/\\r?\\n/)'),
         'Windows where may return multiple lines and should select the first result');
     assert.ok(instanceCode.includes('(?:^|[\\\\/])(?:cli-jaw|jaw)'),

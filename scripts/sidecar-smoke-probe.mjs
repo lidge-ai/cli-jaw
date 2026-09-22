@@ -13,6 +13,12 @@ export const SMOKE_CASES = Object.freeze([
     Object.freeze({ id:'manager', relative:'dist/src/manager/server.js', kind:'server', role:'manager', healthPath:'/api/dashboard/health' }),
 ]);
 
+/** Deliver the child's existing SIGTERM handler without asking Windows to emulate a POSIX self-signal. */
+export function requestGracefulStop(platform=process.platform,target=process) {
+    if(platform==='win32')target.emit('SIGTERM');
+    else target.kill(target.pid,'SIGTERM');
+}
+
 async function runChild() {
     const [root, id, nonce] = process.argv.slice(2);
     if (process.argv.length!==5 || !root || fs.realpathSync(root)!==root || !/^[a-f0-9]{48}$/.test(nonce??'')) throw Error('Invalid smoke child input');
@@ -149,7 +155,7 @@ async function runChild() {
         stopping=true;
         process.send({version:1,caseId:id,nonce,kind:'stopping',pid:process.pid},error=>{
             if(error||boundaryFailed)process.exit(1);
-            process.kill(process.pid,'SIGTERM'); // This executing process owns itself.
+            requestGracefulStop(); // This executing process owns itself.
         });
     });
     const fatal=error=>{
