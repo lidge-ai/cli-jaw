@@ -362,6 +362,10 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(workflow.includes('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}'), 'workflow must provide notarization credentials only at runtime');
     assert.ok(workflow.includes('EXPECTED_APPLE_TEAM_ID: U9ATA49N28'), 'credential preflight must pin the release signing team');
     assert.ok(workflow.includes('--config.mac.notarize=true --publish never'), 'macOS packaging must request notarization without publishing behind the release uploader');
+    assert.ok(
+        workflow.includes('npm --prefix electron run ${{ matrix.script }} -- --publish never'),
+        'Windows/Linux packaging must not let electron-builder auto-publish merely because CI is detected',
+    );
     assert.ok(workflow.includes('Verify Developer ID signature and notarization ticket'), 'signed macOS artifacts must be verified before upload');
     assert.ok(workflow.includes('Verify macOS update metadata and payload integrity'), 'update metadata and ZIP hash must be verified before upload');
     assert.ok(workflow.includes('VERIFY_EXPECTED_TEAM_ID: U9ATA49N28'), 'signature verification must enforce the expected Developer ID team');
