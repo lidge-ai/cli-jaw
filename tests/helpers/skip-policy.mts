@@ -85,6 +85,7 @@ export const SKIP_POLICY: SkipEntry[] = [
         why: 'Opt-in burst probe behind CLI_JAW_BURST_BROWSER / CLI_JAW_BURST_LABEL. smoke is not a runner scope and the file is .mts, so it is never collected.',
     },
     // ── unit: platform gates ─────────────────────────────────────────────────
+    { file: 'tests/unit/npm-registry-smoke.test.ts', policy: 'platform', why: 'Executes the Linux publish workflow Bash step with POSIX npm/sleep stubs on Linux and macOS; native win32 skips this shell-specific harness.' },
     { file: 'tests/unit/electron-jaw-spawn-orphan-kill.test.ts', policy: 'platform', why: 'POSIX process-group semantics; skipped on win32 and run on the Linux shards.' },
     { file: 'tests/unit/electron-dropped-paths.test.ts', policy: 'platform', why: 'Needs working symlinks; skips where symlink() throws.' },
     { file: 'tests/unit/file-open-route.test.ts', policy: 'platform', why: 'POSIX-only file-open behaviour; skipped on win32.' },
