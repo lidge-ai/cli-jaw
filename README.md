@@ -515,7 +515,7 @@ The Manager sidebar separates instance selection from session and process action
 
 For end users, download the desktop artifact from **GitHub Releases**:
 
-- **macOS**: download the DMG, drag CLI-JAW into Applications, then launch it. Releases produced by the current workflow are Developer ID signed, notarized and stapled.
+- **macOS**: download the DMG, drag CLI-JAW into Applications, then launch it. Releases produced by the current workflow are Developer ID signed, notarized and stapled, and so is the DMG itself.
 - **Windows**: download the NSIS installer. It includes the same sidecar server and adds the packaged `jaw` shim to PATH. Windows artifacts are currently unsigned and may show SmartScreen.
 - **Linux**: download the AppImage, make it executable, and run it.
 
@@ -533,7 +533,7 @@ npm run electron:dev          # develop with hot reload
 npm run electron:dist:mac     # build macOS arm64 .dmg + .zip with bundled sidecar
 ```
 
-For a local Developer ID build, configure your signing identity and notarization credentials for electron-builder, then run `npm run electron:dist:mac:signed`. This command requests notarization and verifies the Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment, stapled ticket and update ZIP metadata/hash. The ordinary `electron:dist:mac` command disables identity discovery and produces a plain ad-hoc local build, not a rehearsal of the signed path. The canonical GitHub Actions workflow fails closed unless its macOS build is signed by Team `U9ATA49N28`, notarized, stapled and update-metadata verified.
+For a local Developer ID build, configure your signing identity and the `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` notarization credentials, then run `npm run electron:dist:mac:signed`. This command notarizes and staples both the app and the DMG, and verifies the Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment, stapled tickets and update ZIP/DMG metadata and hashes. The ordinary `electron:dist:mac` command disables identity discovery and produces a plain ad-hoc local build, not a rehearsal of the signed path. The canonical GitHub Actions workflow fails closed unless its macOS app and DMG are signed by Team `U9ATA49N28`, notarized, stapled and update-metadata verified.
 
 The packaged app lands in `electron/dist/`. The GitHub Actions desktop release workflow builds macOS arm64 DMG/ZIP, Windows x64 NSIS/ZIP, and Linux AppImage artifacts on release publish or manual dispatch. Native modules such as `better-sqlite3` stay in the manager/sidecar server — the Electron main process never imports them.
 

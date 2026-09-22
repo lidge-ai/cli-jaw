@@ -366,7 +366,15 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(workflow.includes('node scripts/import-mac-signing-certificate.mjs cleanup "$MAC_SIGNING_KEYCHAIN"'), 'cleanup must use the same contained helper');
     assert.ok(workflow.includes('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}'), 'workflow must provide notarization credentials only at runtime');
     assert.ok(workflow.includes('EXPECTED_APPLE_TEAM_ID: U9ATA49N28'), 'credential preflight must pin the release signing team');
-    assert.ok(workflow.includes('--config.mac.notarize=true --publish never'), 'macOS packaging must request notarization without publishing behind the release uploader');
+    assert.ok(workflow.includes('--config.mac.notarize=true --config.dmg.sign=true --publish never'), 'macOS packaging must request notarization and a signed DMG without publishing behind the release uploader');
+    assert.ok(workflow.includes('- name: Notarize and staple macOS disk image'), 'the downloadable DMG must be notarized and stapled, not only the app inside it');
+    assert.ok(workflow.includes('run: node scripts/notarize-mac-dmg.mjs'), 'DMG notarization must use the audited helper that also repairs DMG metadata');
+    assert.ok(workflow.includes('npm run verify:mac-dmg'), 'the notarized DMG must be verified before upload');
+    assert.ok(
+        workflow.indexOf('Remove temporary macOS signing keychain') < workflow.indexOf('- name: Notarize and staple macOS disk image')
+            && workflow.indexOf('- name: Notarize and staple macOS disk image') < workflow.indexOf('Verify macOS update metadata and payload integrity'),
+        'DMG notarization runs after signing credentials are removed and before metadata verification',
+    );
     assert.ok(
         workflow.includes('npm --prefix electron run ${{ matrix.script }} -- --publish never'),
         'Windows/Linux packaging must not let electron-builder auto-publish merely because CI is detected',
