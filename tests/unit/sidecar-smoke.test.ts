@@ -115,9 +115,11 @@ if(fs.realpathSync(first)!==fs.realpathSync(process.execPath))throw Error('borro
 const sync=spawnSync(process.execPath,['--version'],{encoding:'utf8'});if(sync.status!==0||sync.stdout.trim()!==process.version)throw Error('metadata version');
 const a=await promisify(execFile)(query,args,{encoding:'utf8'});if(typeof a.stdout!=='string')throw Error('execFile promise shape');
 const b=await promisify(exec)('command -v node',{encoding:'utf8'});if(typeof b.stdout!=='string')throw Error('exec promise shape');
+try{execFileSync(process.platform==='win32'?'where.exe':'which',process.platform==='win32'?['pwsh.exe']:['-a','missing-probe.exe']);}catch{}
 `);
     const result=await f.run();assert.equal(result.ok,true,JSON.stringify(result.probes));
     const ledger=result.probes[0].boundary;assert.ok(ledger.some(row=>row.kind==='metadata'));
+    assert.equal(ledger.some(row=>row.kind==='forbidden-process'),false,'safe .exe path lookup names must remain metadata');
     const starts=ledger.filter(row=>row.phase==='start'),closes=ledger.filter(row=>row.phase==='closed');
     assert.equal(starts.length,closes.length);
 });
