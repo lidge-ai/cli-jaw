@@ -110,7 +110,9 @@ for (const error of ['unknown_method', 'method_not_supported_for_channel_type', 
         assert.equal((await p.ready()).mode, 'fallback');
         p.tool(tool('one'));
         await h.clock.advance(0);
-        await p.finish('error');
+        const finished = p.finish('error');
+        await h.clock.advance(5000);
+        await finished;
         assert.equal(h.calls.filter(c => c.method === 'chat.postMessage').length, 1);
         assert.ok(h.calls.filter(c => c.method === 'chat.update').every(c => c.body['ts'] === '111.222'));
         assert.ok(!h.calls.some(c => c.method === 'chat.delete'));
@@ -286,7 +288,9 @@ test('a stream closed after five minutes continues editing its own status throug
     assert.equal(h.calls.filter(c => c.method === 'chat.startStream').length, 1);
     assert.equal(h.calls.filter(c => c.method === 'chat.postMessage').length, 0);
     assert.equal(h.calls.filter(c => c.method === 'chat.stopStream').length, 0, 'live job was not finalized');
-    await p.finish('complete', { bodyDelivered: true });
+    const finished = p.finish('complete', { bodyDelivered: true });
+    await h.clock.advance(5000);
+    await finished;
     assert.equal(p.terminalConfirmed(), true);
     assert.match(String(h.calls.at(-1)!.body['text']), /Answer delivered/);
     assert.equal(h.clock.timers.size, 0);
@@ -565,5 +569,128 @@ test('fallback uses its slower edit budget while still ticking without tool even
     await p.ready(); await h.clock.advance(10000);
     const updates = h.calls.filter(call => call.method === 'chat.update');
     assert.deepEqual(updates.map(call => call.at - h.calls[0]!.at), [3200, 6400, 9600]);
-    await p.finish();
+    const finished = p.finish();
+    await h.clock.advance(5000);
+    await finished;
+});
+
+test('concurrent fallback cards share a live chat.update budget across one credential', async () => {
+    const h = harness(call => call.method === 'chat.startStream'
+        ? { payload: { ok: false, error: 'unknown_method' } }
+        : { payload: { ok: true, ts: `111.${h.calls.length}` } });
+    const a = await startSlackProgress(h.token, target, '', h.options);
+    const b = await startSlackProgress(h.token, { ...target, threadId: '100.2' }, '', h.options);
+    await Promise.all([a.ready(), b.ready()]);
+    await h.clock.advance(10000);
+    const updates = h.calls.filter(call => call.method === 'chat.update');
+    assert.ok(updates.length >= 4, 'both cards keep editing');
+    assert.ok(updates.slice(1).every((call, index) => call.at - updates[index]!.at >= 1100));
+    assert.equal(new Set(updates.map(call => call.body.ts)).size, 2);
+    const finished = Promise.all([a.finish(), b.finish()]);
+    await h.clock.advance(5000);
+    await finished;
+    assert.equal(h.clock.timers.size, 0);
+});
+
+test('simultaneous fallback finishes share the same chat.update budget', async () => {
+    const h = harness(call => call.method === 'chat.startStream'
+        ? { payload: { ok: false, error: 'unknown_method' } }
+        : { payload: { ok: true, ts: `111.${h.calls.length}` } });
+    const a = await startSlackProgress(h.token, target, '', h.options);
+    const b = await startSlackProgress(h.token, { ...target, threadId: '100.2' }, '', h.options);
+    await Promise.all([a.ready(), b.ready()]);
+    const finished = Promise.all([a.finish(), b.finish()]);
+    await settle();
+    assert.equal(h.calls.filter(call => call.method === 'chat.update').length, 1);
+    await h.clock.advance(1099);
+    assert.equal(h.calls.filter(call => call.method === 'chat.update').length, 1);
+    await h.clock.advance(1);
+    await finished;
+    const updates = h.calls.filter(call => call.method === 'chat.update');
+    assert.equal(updates.length, 2);
+    assert.equal(updates[1]!.at - updates[0]!.at, 1100);
+    assert.equal(a.terminalConfirmed(), true);
+    assert.equal(b.terminalConfirmed(), true);
+    assert.equal(h.clock.timers.size, 0);
+});
+
+test('a live chat.update Retry-After outlasting the finish deadline is shared without late IO', async () => {
+    let rejected = false;
+    const h = harness(call => {
+        if (call.method === 'chat.startStream') return { payload: { ok: false, error: 'unknown_method' } };
+        if (call.method === 'chat.update' && !rejected) {
+            rejected = true;
+            return { payload: { ok: false, error: 'ratelimited' }, status: 429, retryAfter: '20' };
+        }
+        return ok();
+    });
+    const a = await startSlackProgress(h.token, target, '', h.options);
+    const b = await startSlackProgress(h.token, { ...target, threadId: '100.2' }, '', h.options);
+    await Promise.all([a.ready(), b.ready()]);
+    a.tool(tool('rate-limited-live-edit'));
+    await h.clock.advance(0);
+    assert.equal(h.calls.filter(call => call.method === 'chat.update').length, 1);
+    const finished = Promise.all([a.finish(), b.finish()]);
+    await h.clock.advance(5000);
+    await finished;
+    assert.equal(h.calls.filter(call => call.method === 'chat.update').length, 1,
+        'terminal edits must not bypass the shared 20s embargo');
+    assert.equal(a.terminalConfirmed(), false);
+    assert.equal(b.terminalConfirmed(), false);
+    await h.clock.advance(20000);
+    assert.equal(h.calls.filter(call => call.method === 'chat.update').length, 1,
+        'expired embargo cannot resurrect a finished handle');
+    assert.equal(h.clock.timers.size, 0);
+});
+
+test('a chat.update embargo on one credential does not delay another credential', async () => {
+    const clock = new Clock();
+    let rejected = false;
+    const throttled = harness(call => {
+        if (call.method === 'chat.startStream') return { payload: { ok: false, error: 'unknown_method' } };
+        if (call.method === 'chat.update' && !rejected) {
+            rejected = true;
+            return { payload: { ok: false, error: 'ratelimited' }, status: 429, retryAfter: '20' };
+        }
+        return ok();
+    }, clock);
+    const independent = harness(call => call.method === 'chat.startStream'
+        ? { payload: { ok: false, error: 'unknown_method' } } : ok(), clock);
+    const a = await startSlackProgress(throttled.token, target, '', throttled.options);
+    const b = await startSlackProgress(independent.token, target, '', independent.options);
+    await Promise.all([a.ready(), b.ready()]);
+    a.tool(tool('rate-limited-live-edit'));
+    await clock.advance(0);
+    const finished = Promise.all([a.finish(), b.finish()]);
+    await clock.advance(5000);
+    await finished;
+    assert.equal(throttled.calls.filter(call => call.method === 'chat.update').length, 1);
+    assert.equal(a.terminalConfirmed(), false);
+    assert.equal(independent.calls.filter(call => call.method === 'chat.update').length, 1);
+    assert.equal(b.terminalConfirmed(), true);
+    await clock.advance(20000);
+    assert.equal(throttled.calls.filter(call => call.method === 'chat.update').length, 1);
+    assert.equal(clock.timers.size, 0);
+});
+
+test('ten simultaneous fallback finishes stay within the deadline and never resurrect excess edits', async () => {
+    const h = harness(call => call.method === 'chat.startStream'
+        ? { payload: { ok: false, error: 'unknown_method' } }
+        : { payload: { ok: true, ts: `111.${h.calls.length}` } });
+    const handles = await Promise.all(Array.from({ length: 10 }, (_, index) =>
+        startSlackProgress(h.token, { ...target, threadId: `100.${index + 1}` }, '', h.options)));
+    await Promise.all(handles.map(handle => handle.ready()));
+    const finished = Promise.all(handles.map(handle => handle.finish('complete', { bodyDelivered: true })));
+    await h.clock.advance(5000);
+    await finished;
+    const updates = h.calls.filter(call => call.method === 'chat.update');
+    assert.equal(updates.length, 5, 'only five 1100ms reservations fit in the 5s terminal budget');
+    assert.ok(updates.slice(1).every((call, index) => call.at - updates[index]!.at >= 1100));
+    assert.equal(handles.filter(handle => handle.terminalConfirmed()).length, 5);
+    const callsAtDeadline = h.calls.length;
+    await h.clock.advance(20000);
+    assert.equal(h.calls.length, callsAtDeadline, 'deadline-rejected edits must not run later');
+    assert.equal(handles.filter(handle => handle.terminalConfirmed()).length, 5,
+        'unsent terminal edits remain honestly unconfirmed');
+    assert.equal(h.clock.timers.size, 0);
 });

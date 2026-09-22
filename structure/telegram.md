@@ -158,7 +158,11 @@ fallback; ambiguous startup never causes a replacement post. Operations have
 bounded timeouts and shared credential/method Retry-After restrictions. Native
 heartbeat and per-stream refresh run every second, with a process-local shared
 667ms append spacing (at most 90/minute per credential). Concurrent streams or
-Slack/network backpressure may slow visual updates. Fallback edits remain 3.2s.
+Slack/network backpressure may slow visual updates. Each fallback card refreshes
+at most every 3.2s, while live and terminal `chat.update` calls share a process-local
+1100ms spacing per credential. This local pacing never overrides Slack Retry-After.
+Terminal edits keep the five-second finish deadline; if no permitted dispatch fits,
+the status edit remains unconfirmed without changing final answer delivery ownership.
 Snapshots are serialized at actual dispatch, unchanged cards are omitted, and
 finish cancels undispatched update waits while joining already-started HTTP.
 The plan title also contains elapsed time; clock ticks never count as work activity.
