@@ -45,7 +45,7 @@ function createBotSpy({ failHtmlOnce = false } = {}) {
                     events.push('photo');
                     photos.push({ chatId, file, opts });
                     resolvePhoto();
-                    return { ok: true };
+                    return { message_id: 1 };
                 },
             },
         },
@@ -125,6 +125,149 @@ test('forwarder falls back to plain text when HTML send fails', async () => {
     assert.equal(sent[1].opts, undefined);
     assert.equal(sent[1].text.includes('<b>'), false);
     assert.equal(sent[1].text.includes('bold'), true);
+});
+
+test('forwarder records an ambiguous text failure once without previewing or relaying images', async () => {
+    assert.ok(process.env["CLI_JAW_HOME"], 'tests/run.mts must provide isolated CLI_JAW_HOME');
+    const uploadDir = path.join(process.env["CLI_JAW_HOME"]!, 'uploads');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const imagePath = path.join(uploadDir, 'relay-ambiguous.png');
+    fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const photos = [];
+    const previews = [];
+    const error = Object.assign(new Error('socket reset before response'), { code: 'ECONNRESET' });
+    const bot = {
+        api: {
+            async sendMessage() { throw error; },
+            async sendPhoto(...args) { photos.push(args); return { ok: true }; },
+        },
+    };
+    const before = drainLogRing().length;
+    const forward = createTelegramForwarder({ bot, log: (entry) => previews.push(entry) });
+
+    try {
+        forward('agent_done', {
+            origin: 'web',
+            text: `answer\n![generated](${imagePath})`,
+            target: tgTarget(123),
+        });
+        await flush();
+
+        assert.deepEqual(previews, []);
+        assert.deepEqual(photos, []);
+        const warnings = drainLogRing().slice(before).filter((entry) =>
+            entry.level === 'warn' && entry.text.includes('[tg:forward] delivery failed'));
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0].text, /"outcome":"unknown"/);
+        assert.match(warnings[0].text, /"retryable":false/);
+    } finally {
+        fs.rmSync(imagePath, { force: true });
+    }
+});
+
+test('forwarder records a known long rate limit once without previewing or relaying images', async () => {
+    assert.ok(process.env["CLI_JAW_HOME"], 'tests/run.mts must provide isolated CLI_JAW_HOME');
+    const uploadDir = path.join(process.env["CLI_JAW_HOME"]!, 'uploads');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const imagePath = path.join(uploadDir, 'relay-rejected.png');
+    fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const photos = [];
+    const previews = [];
+    const rejection = Object.assign(new Error('Too Many Requests: retry later'), {
+        error_code: 429,
+        parameters: { retry_after: 30 },
+    });
+    const bot = {
+        api: {
+            async sendMessage() { throw rejection; },
+            async sendPhoto(...args) { photos.push(args); return { ok: true }; },
+        },
+    };
+    const before = drainLogRing().length;
+    const forward = createTelegramForwarder({ bot, log: (entry) => previews.push(entry) });
+
+    try {
+        forward('agent_done', {
+            origin: 'web',
+            text: `answer\n![generated](${imagePath})`,
+            target: tgTarget(123),
+        });
+        await flush();
+
+        assert.deepEqual(previews, []);
+        assert.deepEqual(photos, []);
+        const warnings = drainLogRing().slice(before).filter((entry) =>
+            entry.level === 'warn' && entry.text.includes('[tg:forward] delivery failed'));
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0].text, /"outcome":"failed"/);
+        assert.match(warnings[0].text, /"retryable":false/);
+    } finally {
+        fs.rmSync(imagePath, { force: true });
+    }
+});
+
+test('forwarder requires body delivery when every format leg is rejected', async () => {
+    assert.ok(process.env["CLI_JAW_HOME"], 'tests/run.mts must provide isolated CLI_JAW_HOME');
+    const uploadDir = path.join(process.env["CLI_JAW_HOME"]!, 'uploads');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const imagePath = path.join(uploadDir, 'relay-format-rejected.png');
+    fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const photos = [];
+    const previews = [];
+    const rejection = Object.assign(new Error('Bad Request: unsupported start tag'), { error_code: 400 });
+    const bot = {
+        api: {
+            async sendMessage() { throw rejection; },
+            async sendPhoto(...args) { photos.push(args); return { message_id: 1 }; },
+        },
+    };
+    const before = drainLogRing().length;
+    const forward = createTelegramForwarder({ bot, log: (entry) => previews.push(entry) });
+
+    try {
+        forward('agent_done', {
+            origin: 'web',
+            text: `answer\n![generated](${imagePath})`,
+            target: tgTarget(123),
+        });
+        await flush();
+
+        assert.deepEqual(previews, []);
+        assert.deepEqual(photos, []);
+        const warnings = drainLogRing().slice(before).filter((entry) =>
+            entry.level === 'warn' && entry.text.includes('[tg:forward] delivery failed'));
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0].text, /"outcome":"failed"/);
+        assert.match(warnings[0].text, /"retryable":false/);
+    } finally {
+        fs.rmSync(imagePath, { force: true });
+    }
+});
+
+test('forwarder logs success after format fallback and before image relay', { timeout: 2000 }, async () => {
+    assert.ok(process.env["CLI_JAW_HOME"], 'tests/run.mts must provide isolated CLI_JAW_HOME');
+    const uploadDir = path.join(process.env["CLI_JAW_HOME"]!, 'uploads');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const imagePath = path.join(uploadDir, 'relay-success-order.png');
+    fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const { bot, events, photoSent } = createBotSpy({ failHtmlOnce: true });
+    const forward = createTelegramForwarder({
+        bot,
+        log: () => events.push('preview'),
+    });
+
+    try {
+        forward('agent_done', {
+            origin: 'web',
+            text: `**answer**\n![generated](${imagePath})`,
+            target: tgTarget(123),
+        });
+        await photoSent;
+
+        assert.deepEqual(events, ['text', 'text', 'preview', 'photo']);
+    } finally {
+        fs.rmSync(imagePath, { force: true });
+    }
 });
 
 test('forwarder handles mixed origin/error events deterministically', async () => {

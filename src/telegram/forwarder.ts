@@ -110,6 +110,7 @@ import { extractLocalImagePaths } from '../messaging/extract-images.js';
 import { threadIdNumber } from '../messaging/thread-target.js';
 import type { RemoteTarget } from '../messaging/types.js';
 import { resolveForwarderTarget } from '../messaging/forwarder-origin.js';
+import { classifySendFailure } from '../messaging/retry.js';
 import { assertSendFilePath } from '../security/path-guards.js';
 import { sendTelegramMarkdown } from './rich-message.js';
 import { sendTelegramFile, validateFileSize } from './telegram-file.js';
@@ -207,38 +208,36 @@ export function createTelegramForwarder({
 }: TelegramForwarderOptions) {
     return (type: string, data: Record<string, unknown>) => {
         void (async () => {
-            try {
-                if (type !== 'agent_done' || !data?.["text"]) return;
-                if (data["error"] && !isUserSafeWatchdogDiagnostic(String(data["text"]))) return;
-                if (shouldSkip(data)) return;
+            if (type !== 'agent_done' || !data?.["text"]) return;
+            if (data["error"] && !isUserSafeWatchdogDiagnostic(String(data["text"]))) return;
+            if (shouldSkip(data)) return;
 
-                // The run's own destination only. `getLastTarget`/`getLastChatId`
-                // answer "who spoke here most recently", which a concurrent
-                // conversation moves out from under a running turn (#742).
-                const target = resolveForwarderTarget(data, 'telegram');
-                const chatId = target?.targetId ?? null;
-                if (!chatId) return;
+            // The run's own destination only. `getLastTarget`/`getLastChatId`
+            // answer "who spoke here most recently", which a concurrent
+            // conversation moves out from under a running turn (#742).
+            const target = resolveForwarderTarget(data, 'telegram');
+            const chatId = target?.targetId ?? null;
+            if (!chatId) return;
 
-                const text = String(data["text"]);
-                // Redact BEFORE slicing: the preview goes to a log file, and
-                // a token in the first 200 characters would be stored raw.
-                const preview = redactOutboundText(text).slice(0, 200).replace(/\n/g, ' ');
-                log({ chatId, preview });
+            const text = String(data["text"]);
+            // Rich-first default; helper owns format fallback and bounded 429 retry.
+            await sendTelegramMarkdown(bot.api, chatId, text, stripUndefined({
+                prefix,
+                message_thread_id: threadIdNumber(target ?? undefined),
+                requireBodyDelivery: true,
+            }));
 
-                // Rich-first default; helper falls back to HTML then plaintext per chunk.
-                await sendTelegramMarkdown(bot.api, chatId, text, stripUndefined({
-                    prefix,
-                    message_thread_id: threadIdNumber(target ?? undefined),
-                })).catch(() => { });
-                await relayTelegramImages(bot, chatId, text, target);
-            } catch (error: unknown) {
-                appLog.warn('[tg:forward] delivery failed', {
-                    error: logErrorText(error),
-                });
-            }
+            // Redact BEFORE slicing: the preview goes to a log file, and
+            // a token in the first 200 characters would be stored raw.
+            const preview = redactOutboundText(text).slice(0, 200).replace(/\n/g, ' ');
+            log({ chatId, preview });
+            await relayTelegramImages(bot, chatId, text, target);
         })().catch((error: unknown) => {
+            const failureKind = classifySendFailure(error);
             appLog.warn('[tg:forward] delivery failed', {
                 error: logErrorText(error),
+                outcome: failureKind === 'ambiguous' ? 'unknown' : 'failed',
+                retryable: false,
             });
         });
     };

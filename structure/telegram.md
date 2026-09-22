@@ -377,7 +377,7 @@ initTelegram():
 - `shouldSkip(data)`로 Telegram-origin 결과를 제외한다
 - `broadcast` listener는 named handler 기준으로 제거된다
 - `forwardAll`이 꺼져 있으면 bot 메시지는 받고, agent_done forward는 하지 않는다
-- outbound 텍스트는 Telegram HTML로 변환한 뒤 4096자 청크로 보내고, 전송 시도 뒤 추출된 이미지를 순서대로 photo relay한다
+- Passive forwarding requires successful body delivery from the rich sender before logging the sent preview or relaying images. The sender owns format fallback and bounded 429 retries. Rejected delivery logs `failed`; ambiguous transport failure logs `unknown`. Both stop dependent image relay and are marked `retryable: false` without replaying the body.
 - Telegram `agent_done` forwarder reads the run pin's `target` (or sends nothing). It does not call `getLastTarget()` / `getLastChatId()`.
 
 ---
