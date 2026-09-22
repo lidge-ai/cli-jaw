@@ -103,7 +103,9 @@ test('bounded projection plus an expired five-minute stream retains live status 
     notifyRuntimeLiveness({ ...f.identity, requestId: 'foreign-request' });
     assert.equal(f.activity(), activities);
     projection.close({ kind: 'turn-end', status: 'done', finalText: 'Final answer remains separate.' });
-    await f.life.finish('complete', { bodyDelivered: true });
+    const finished = f.life.finish('complete', { bodyDelivered: true });
+    await f.tick(1100);
+    await finished;
     assert.equal(f.closed(), 1);
     assert.match(String(f.calls.at(-1)!.body['text']), /Answer delivered/);
     const finalCount = f.calls.length;
