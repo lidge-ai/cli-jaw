@@ -24,6 +24,7 @@ export function classifyStopCause(input: {
     if (input.stallReason) return 'watchdog';
     const captured = stopCauseFromKillReason(input.killReason);
     if (captured) return captured;
+    if (input.killReason != null) return undefined;
     if (input.wasSteer) return 'steer_kill';
     if (input.wasKilled) return 'user_stop';
     if (input.exitCode === 130) return 'unattributed';

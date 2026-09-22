@@ -68,6 +68,10 @@ cause from `steer_started` ordering. If that event arrived first it still blanks
 the retired turn; if the terminal settles first, its captured `steer_kill`
 sentence is already truthful. Do not split `runtimeStatus`.
 
+Captured internal reasons such as `planned-restart` and `shutdown` keep generic
+stopped wording. Legacy `wasKilled`/`wasSteer` flags supply a display cause only
+when no reason was captured; they must not relabel an internal restart as user Stop.
+
 A runtime that DOES know why it failed now says so. `ExitContext.runtimeDiagnostic`
 carries a sentence the runtime generated itself — never relayed child output — and
 `lifecycle-handler.ts` prefers it over the stderr classification for the trace error
@@ -448,6 +452,13 @@ cancel/watchdog first, then `start()`; every user prompt goes through
 stale path stays `lease.release()`. Do not put pooled Pi through
 `runNativeRuntime` — that runner cancels through `session.cancel()` rather than
 `lease.cancel()`. `interrupt` vs `clearWorkerSlotsOnStop` stays open (D7).
+
+Pi diagnostics use captured-turn private observers. Resolved prompt stderr stays
+bounded in the private classifier buffer, including resolved error outcomes.
+Caught failures supply a redacted, bounded `runtimeDiagnostic` only for error
+outcomes; stopped turns do not acquire an error sentence. Observer failure or stale
+ownership cannot change the immutable outcome, and raw stderr is never added to
+the public outcome or Activity event shape.
 
 ## Native Code sessions
 

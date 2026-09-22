@@ -355,13 +355,13 @@ jobs:
         if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 90); do
             if version="$(npm view "cli-jaw@${{ steps.release.outputs.version }}" version 2>/dev/null)"; then
               test "$version" = "${{ steps.release.outputs.version }}"
               npm dist-tag ls cli-jaw
               exit 0
             fi
-            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} not visible yet (${attempt}/30)"
+            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} not visible yet (${attempt}/90)"
             sleep 10
           done
           echo "::error::registry smoke failed"

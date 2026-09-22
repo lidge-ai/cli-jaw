@@ -32,6 +32,7 @@ if(process.env.PI_SPAWN_IGNORE_RPC_TERM==='1') {
  setInterval(()=>{},1000); // Also survive EOF: Stop must reach the paired owner's escalation.
  setTimeout(()=>{note('rpc-expired');process.exit(97);},8000);
 }
+if(process.env.PI_SPAWN_RESOLVED_ERROR) process.stderr.write(process.env.PI_SPAWN_RESOLVED_ERROR+'\\n');
 note('rpc-ready');
 const send = row => console.log(JSON.stringify(row));
 for await(const line of readline.createInterface({input:process.stdin})) {
@@ -44,6 +45,11 @@ for await(const line of readline.createInterface({input:process.stdin})) {
    continue;
   }
   send({type:'agent_start'});
+  if(process.env.PI_SPAWN_RESOLVED_ERROR) {
+   send({type:'agent_end',willRetry:false,messages:[{role:'assistant',stopReason:'error',content:[]}]});
+   send({type:'agent_settled'});
+   continue;
+  }
   send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'PROVISIONAL /goal done'}});
   if(process.env.PI_SPAWN_HOLD==='1') continue;
   send({type:'agent_end',willRetry:false,messages:[{role:'assistant',stopReason:'toolUse',content:[{type:'text',text:'PROVISIONAL /goal done'}]},
@@ -126,6 +132,7 @@ test.beforeEach(context => {
     failRawTrace=false;failActivityJournal=false;rawFailures=0;journalFailures=0;directDirectories.length=0;onText=undefined;delete process.env.PI_SPAWN_HOLD;
     delete process.env.PI_SPAWN_HOLD_VERSION;delete process.env.PI_SPAWN_VERSION_LEDGER;delete process.env.PI_SPAWN_VERSION_RELEASE;
     delete process.env.PI_SPAWN_IGNORE_RPC_TERM;delete process.env.PI_SPAWN_REJECT;
+    delete process.env.PI_SPAWN_RESOLVED_ERROR;
     config.settings.workingDir = root;mkdirSync(join(root,'prompts'),{recursive:true});
     mkdirSync(join(config.JAW_HOME,'prompts'),{recursive:true});
     config.settings.fallbackOrder=[];config.settings.activeOverrides={};
@@ -153,6 +160,7 @@ test.after(() => {
     delete process.env.PI_SPAWN_HOLD;delete process.env.PI_SPAWN_HOLD_VERSION;
     delete process.env.PI_SPAWN_VERSION_LEDGER;delete process.env.PI_SPAWN_VERSION_RELEASE;
     delete process.env.PI_SPAWN_IGNORE_RPC_TERM;delete process.env.PI_SPAWN_REJECT;
+    delete process.env.PI_SPAWN_RESOLVED_ERROR;
     if(cleanupSafe)rmSync(root,{recursive:true,force:true});
 });
 function options() {
@@ -180,7 +188,7 @@ test('actual pooled Pi-to-lifecycle final uses only typed final and canonical ja
         assert.ok(journal.readActivityPage({runId:traceId,sessionId:opts.chatSessionId,after:0,limit:40})?.events.length);
     } finally {unsub();}
 });
-test('pooled Pi prompt rejection reaches the existing lifecycle rate-limit classifier',async () => {
+test('pooled Pi prompt rejection keeps rate-limit classification with its owned diagnostic',async () => {
     process.env.PI_SPAWN_REJECT='429 retry after 2 seconds';
     const opts=options();
     let terminal:Record<string,unknown>|undefined;
@@ -190,6 +198,33 @@ test('pooled Pi prompt rejection reaches the existing lifecycle rate-limit class
         const result=await spawnAgent('fixture',{...opts,_retryAttempt:3}).promise;
         assert.equal(result.code,1);
         assert.deepEqual(result.runtimeOutcome,{status:'error',finalText:null,partialText:''});
+        assert.equal(result.diagnostic,'429 retry after 2 seconds');
+        assert.equal(terminal?.errorKind,'rate_limit');
+    } finally {removeBroadcastListener(listener);}
+});
+test('pooled Pi rejection publishes a meaningful redacted owned diagnostic',async () => {
+    const secret='xoxb-native-diagnostic-secret';
+    process.env.PI_SPAWN_REJECT=`provider rejected Bearer ${secret}`;
+    const opts=options();
+    let terminal:Record<string,unknown>|undefined;
+    const listener=(type:string,data:Record<string,unknown>)=>{if(type==='agent_done'&&data.requestId===opts.requestId)terminal=data;};
+    addBroadcastListener(listener);
+    try {
+        const result=await spawnAgent('fixture',{...opts,_retryAttempt:3}).promise;
+        assert.equal(result.runtimeOutcome?.status,'error');
+        assert.match(String(terminal?.text),/provider rejected Bearer \.\.\.redacted/);
+        assert.doesNotMatch(String(terminal?.text),new RegExp(secret));
+    } finally {removeBroadcastListener(listener);}
+});
+test('resolved Pi error stderr reaches the lifecycle rate-limit classifier',async () => {
+    process.env.PI_SPAWN_RESOLVED_ERROR='429 retry after 2 seconds';
+    const opts=options();
+    let terminal:Record<string,unknown>|undefined;
+    const listener=(type:string,data:Record<string,unknown>)=>{if(type==='agent_done'&&data.requestId===opts.requestId)terminal=data;};
+    addBroadcastListener(listener);
+    try {
+        const result=await spawnAgent('fixture',{...opts,_retryAttempt:3}).promise;
+        assert.equal(result.runtimeOutcome?.status,'error');
         assert.equal(result.diagnostic,'⚡ API 용량 초과 (429)');
         assert.equal(terminal?.errorKind,'rate_limit');
     } finally {removeBroadcastListener(listener);}
@@ -225,11 +260,18 @@ test('user stop preserves partial outcome without inventing a final response',as
     process.env.PI_SPAWN_HOLD='1';
     const opts=options();
     onText=() => {onText=undefined;assert.equal(killActiveAgent(opts.scopeKey,'user'),true);};
-    const result=await spawnAgent('hold',opts).promise;
-    assert.deepEqual(result.runtimeOutcome,{status:'stopped',finalText:null,partialText:'PROVISIONAL /goal done'});
-    assert.equal(result.text,'');assert.notEqual(result.code,0);
-    assert.equal(activeMainProcesses.has(opts.scopeKey),false);
-    assert.deepEqual(db.prepare('SELECT content FROM messages WHERE session_id=? AND role=?').all(opts.chatSessionId,'assistant'),[]);
+    let terminal:Record<string,unknown>|undefined;
+    const listener=(type:string,data:Record<string,unknown>)=>{if(type==='agent_done'&&data.requestId===opts.requestId)terminal=data;};
+    addBroadcastListener(listener);
+    try {
+        const result=await spawnAgent('hold',opts).promise;
+        assert.deepEqual(result.runtimeOutcome,{status:'stopped',finalText:null,partialText:'PROVISIONAL /goal done'});
+        assert.equal(result.text,'');assert.notEqual(result.code,0);
+        assert.equal(terminal?.text,'');
+        assert.equal(terminal?.runtimeStatus,'stopped');
+        assert.equal(activeMainProcesses.has(opts.scopeKey),false);
+        assert.deepEqual(db.prepare('SELECT content FROM messages WHERE session_id=? AND role=?').all(opts.chatSessionId,'assistant'),[]);
+    } finally {removeBroadcastListener(listener);}
 });
 
 for (const stop of [false, true]) test(`activity journal append failure cannot replace ${stop ? 'steer salvage' : 'the final MESSAGE'} or strand settlement`, {timeout:10_000}, async () => {

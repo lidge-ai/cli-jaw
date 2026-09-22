@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Ad-hoc re-sign, but only when nobody signed the bundle for real.
+ * Preserve a real signature, or ad-hoc sign an unsigned bundle when this
+ * function is invoked directly.
+ *
+ * electron-builder is configured to use this hook, but it invokes afterSign
+ * only when its mac signing pass runs. The default no-identity packaging path
+ * skips both that pass and this hook, then applies its final plain ad-hoc
+ * signature through the separate electron:resign:mac command. Unit tests call
+ * this function directly; they do not prove that electron-builder invoked it.
  *
  * This hook used to run `codesign --sign -` unconditionally. That was correct
  * while the build was always unsigned, and actively destructive once a

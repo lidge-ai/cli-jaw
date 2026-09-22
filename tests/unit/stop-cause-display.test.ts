@@ -48,6 +48,26 @@ test('classifier: captured explicit Stop provenance wins over lifecycle steer se
     }), 'steer_kill');
 });
 
+test('classifier: captured unmapped reasons suppress broad legacy stop flags', () => {
+    for (const killReason of ['planned-restart', 'shutdown', 'unknown']) {
+        assert.equal(classifyStopCause({
+            killReason,
+            wasSteer: true,
+            wasKilled: true,
+            exitCode: 130,
+        }), undefined, killReason);
+    }
+});
+
+test('classifier: watchdog and captured API/user Stop keep precedence', () => {
+    assert.equal(classifyStopCause({
+        stallReason: 'watchdog', killReason: 'shutdown', wasSteer: true, wasKilled: true, exitCode: 130,
+    }), 'watchdog');
+    for (const killReason of ['api', 'user']) {
+        assert.equal(classifyStopCause({ killReason, wasSteer: true, wasKilled: true, exitCode: 130 }), 'user_stop');
+    }
+});
+
 test('classifier: none is undefined', () => {
     assert.equal(classifyStopCause({ wasSteer: false, wasKilled: false }), undefined);
 });

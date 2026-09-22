@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { join } from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { createTextStreamReader, sliceWithoutSplittingSurrogate } from './stream-text.js';
+import { userErrorText } from '../messaging/redact.js';
 import { resolveWindowsLaunchSpec, launchArgv } from '../core/windows-launch-spec.js';
 import { decideShellFallback } from '../core/windows-shell-fallback.js';
 
@@ -2611,21 +2612,32 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             }
             if (event.kind === 'session') ctx.sessionId = event.sessionId;
         };
-        type PiTurnResult = { text: string; stderr: string; code: number; sessionId?: string | null; runtimeOutcome?: RuntimeTurnOutcome };
+        type PiTurnResult = { text: string; code: number; sessionId?: string | null; runtimeOutcome?: RuntimeTurnOutcome };
         let piFacade: PiRuntimeSession | null = null;
+        let piTurnChild: ChildProcess | null = null;
         let piSendStarted = false;
         const piTurnContext = () => ({
             runId: traceRunId, sessionId: chatSessionId, scope: scopeKey,
-            turnId: traceRunId, audience: traceAudience, isCurrent: () => true,
+            turnId: traceRunId, audience: traceAudience,
+            isCurrent: () => isCurrentSessionOwner(persistenceOwner, scopeKey)
+                && (mainManaged
+                    ? activeMainProcesses.get(scopeKey) === mainRun
+                    : piTurnChild !== null && activeProcesses.get(agentLabel) === piTurnChild),
         });
-        const onPiFailure = (error: Error): void => {
-            const remaining = 4000 - ctx.stderrBuf.length;
-            if (remaining > 0) ctx.stderrBuf += error.message.slice(0, remaining);
+        const appendPiStderr = (stderr: string): void => {
+            if (!stderr || ctx.stderrBuf.length >= STDERR_BUF_CAP) return;
+            ctx.stderrBuf = sliceWithoutSplittingSurrogate(ctx.stderrBuf + stderr, STDERR_BUF_CAP);
         };
+        const onPiFailure = (error: Error, outcome: RuntimeTurnOutcome): void => {
+            appendPiStderr(error.message);
+            if (outcome.status !== 'error') return;
+            const diagnostic = sliceWithoutSplittingSurrogate(userErrorText(error), STDERR_BUF_CAP);
+            if (diagnostic.trim() && !ctx.runtimeDiagnostic?.trim()) ctx.runtimeDiagnostic = diagnostic;
+        };
+        const onPiStderr = (stderr: string): void => appendPiStderr(stderr);
         const mapPiSend = (child: ChildProcess, send: Promise<RuntimeTurnOutcome>): Promise<PiTurnResult> =>
             send.then((outcome): PiTurnResult => ({
                 text: outcome.finalText ?? outcome.partialText ?? '',
-                stderr: '',
                 code: typeof child.exitCode === 'number' ? child.exitCode
                     : outcome.status === 'error' ? 1 : 0,
                 sessionId: ctx.sessionId ?? piFacade?.nativeSessionId ?? null,
@@ -2723,7 +2735,6 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 const killReason = consumeKillReason(child.pid);
                 stopWatchdog();
                 flushPiThinking();
-                if (ctx.stderrBuf.length < 4000) ctx.stderrBuf += result.stderr || '';
                 if (result.sessionId) ctx.sessionId = result.sessionId;
                 if (!ctx.fullText && result.text) ctx.fullText = result.text;
                 try { opts.lifecycle?.onExit?.(result.code); }
@@ -2761,8 +2772,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 const wasKilled = !!killReason;
                 const wasSteer = isLifecycleSteerReason(killReason);
                 stopWatchdog();
-                if (ctx.stderrBuf.length < 4000) ctx.stderrBuf += err.message;
-                console.error('[jaw:pi] runtime failed:', err.message);
+                appendPiStderr(err.message);
+                console.error('[jaw:pi] runtime failed:', userErrorText(err));
                 return handleAgentExit({
                     onRuntimeEnd: endPiRuntime,
                     ctx, code: 1, cli, model: runtimeModel, effectiveProvider: profile.id, agentLabel, mainManaged, origin,
@@ -2825,6 +2836,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 cleanupPiEmployee();
                 throw error;
             }
+            piTurnChild = opened.child;
             piFacade = new PiRuntimeSession(opened, {
                 lifetime: 'oneshot',
                 provider: 'pi',
@@ -2835,6 +2847,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 onPiEvent,
                 onRawRecord: onPiRawRecord,
                 onFailure: onPiFailure,
+                onStderr: onPiStderr,
             });
             bindPiExecutionCancel(opened.child, () => { void piFacade!.cancel(); });
             runPiTurn(opened.child, null, opened.cleanup, () => {
@@ -2895,6 +2908,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             }
             ctx.sessionId = lease.session.sessionId;
             console.log(`[jaw:pi:pool] reused=${lease.reused} sessionId=${lease.session.sessionId || 'new'}`);
+            piTurnChild = lease.session.child;
             piFacade = new PiRuntimeSession(lease.session, {
                 lifetime: 'pooled',
                 provider: 'pi',
@@ -2905,6 +2919,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                 onPiEvent,
                 onRawRecord: onPiRawRecord,
                 onFailure: onPiFailure,
+                onStderr: onPiStderr,
             });
             runPiTurn(lease.session.child, lease, null, () => {
                 piSendStarted = true;

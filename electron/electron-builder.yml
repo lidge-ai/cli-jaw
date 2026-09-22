@@ -46,16 +46,17 @@ mac:
         - arm64
   # Signing is decided by the environment, not hard-coded here.
   #
-  # With CSC_LINK / CSC_IDENTITY_AUTO_DISCOVERY present, electron-builder finds
-  # the Developer ID Application identity and signs for real; `notarize` is then
-  # switched on from the command line (see electron:dist:mac:signed). Without
-  # those, `electron:dist:mac` exports CSC_IDENTITY_AUTO_DISCOVERY=false and the
-  # after-sign hook falls back to an ad-hoc signature, which is what local dev
-  # builds have always produced.
+  # With a Developer ID Application identity, electron-builder signs with the
+  # configured entitlements and hardened runtime; `notarize` is enabled by the signed
+  # command (see electron:dist:mac:signed). Without an identity,
+  # `electron:dist:mac` disables discovery, electron-builder skips mac signing
+  # and therefore skips afterSign, and the later electron:resign:mac command
+  # applies the final plain ad-hoc signature.
   #
-  # hardenedRuntime must stay on in both paths: notarization rejects a bundle
-  # without it, and leaving it off only for unsigned builds would mean the
-  # entitlements above go untested until release day.
+  # That plain ad-hoc result has no Developer ID authority, secure timestamp or
+  # hardened-runtime signing option. It is a local launch artifact, not a
+  # rehearsal of the signed/notarized path; only the Developer ID path exercises
+  # hardenedRuntime and these entitlements through electron-builder.
   gatekeeperAssess: false
   notarize: false
   hardenedRuntime: true

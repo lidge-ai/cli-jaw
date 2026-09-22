@@ -133,20 +133,20 @@ test('Electron shell stamps manager requests with a desktop user-agent token', (
     assert.ok(main.includes('app.getVersion()'), 'desktop user-agent token should include the packaged app version');
 });
 
-test('Electron app primes macOS Automation permission for Computer Use', () => {
+test('Electron app configures macOS Automation metadata and startup priming', () => {
     const main = read('electron/src/main/index.ts');
     const helper = read('electron/src/main/lib/mac-automation-permission.ts');
     const builder = read('electron/electron-builder.yml');
     const entitlements = read('electron/build/entitlements.mac.plist');
 
     assert.ok(builder.includes('NSAppleEventsUsageDescription'), 'Electron Info.plist must explain AppleEvents usage so macOS can show the Automation prompt');
-    assert.ok(builder.includes('afterSign: build/after-sign.mjs'), 'mac packaging must run the ad-hoc signing hook so TCC sees the cli-jaw bundle identity');
+    assert.ok(builder.includes('afterSign: build/after-sign.mjs'), 'mac packaging must configure the afterSign hook for electron-builder signing runs');
     assert.ok(builder.includes('entitlements: build/entitlements.mac.plist'), 'mac packaging must include AppleEvents entitlements when signing is enabled');
     assert.ok(entitlements.includes('com.apple.security.automation.apple-events'), 'mac entitlements must allow prompting for AppleEvents Automation');
     const afterSign = read('electron/build/after-sign.mjs');
-    assert.ok(afterSign.includes("execFileSync('/usr/bin/codesign'"), 'afterSign hook must invoke codesign directly');
-    assert.ok(afterSign.includes("'--sign',\n    '-'"), 'afterSign hook must use an ad-hoc signature');
-    assert.ok(afterSign.includes('entitlements.mac.plist'), 'afterSign hook must sign with AppleEvents entitlements');
+    assert.ok(afterSign.includes("execFileSync('/usr/bin/codesign'"), 'direct afterSign fallback must invoke codesign directly');
+    assert.ok(afterSign.includes("'--sign',\n    '-'"), 'direct afterSign fallback must use an ad-hoc signature');
+    assert.ok(afterSign.includes('entitlements.mac.plist'), 'direct afterSign fallback must pass the AppleEvents entitlements file');
     assert.ok(main.includes("import { primeMacAutomationPermission } from './lib/mac-automation-permission.js'"), 'Electron main must import the Automation priming helper');
     assert.ok(main.includes('primeMacAutomationPermission({'), 'Electron startup must trigger an AppleEvent so cli-jaw appears in Privacy > Automation');
     assert.ok(main.includes('onBlocked: showAutomationPermissionDialog'), 'Electron startup must show a user-visible dialog when Automation priming cannot complete');

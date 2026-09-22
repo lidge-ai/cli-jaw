@@ -248,7 +248,10 @@ test('Pi model discovery prefers a verified opencodex endpoint', async () => {
     }
 });
 
-test('Pi model discovery falls back to the offline Pi inventory', async () => {
+test('Pi model discovery falls back to the offline Pi inventory', { timeout: 5000 }, async context => {
+    // This verifies offline inventory selection, not subprocess startup latency.
+    // Keep its watchdog clock deterministic while the real fixture process closes.
+    context.mock.timers.enable({ apis: ['setTimeout'] });
     const root = await mkdtemp(join(tmpdir(), 'jaw-pi-discovery-'));
     const executable = join(root, 'pi-stub');
     await writeFile(executable, '#!/bin/sh\nprintf "fallback fallback-model 100000\\n"\n', { mode: 0o755 });
