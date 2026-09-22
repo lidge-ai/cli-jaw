@@ -219,7 +219,7 @@ test('resolveOpenCodexCodexModelsDetailed carries per-model efforts from a live 
     }
 });
 
-test('applyCodexModelsToChoices keeps inactive ocx Codex defaults at seven models', () => {
+test('applyCodexModelsToChoices keeps inactive ocx Codex static models', () => {
     const choices = applyCodexModelsToChoices(buildModelChoicesByCli(), CODEX_MODEL_CHOICES);
     assert.deepEqual(choices.codex, CODEX_MODEL_CHOICES);
     assert.deepEqual(choices['codex-app'], CODEX_MODEL_CHOICES);

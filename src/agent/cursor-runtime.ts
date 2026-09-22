@@ -108,6 +108,17 @@ export const CURSOR_MODEL_IDS = [
     'claude-opus-5-xhigh-fast',
     'claude-opus-5-max',
     'claude-opus-5-max-fast',
+    // Cursor account inventory: Opus 5.5 has low..max, each with a fast ID.
+    'claude-opus-5-5-low',
+    'claude-opus-5-5-low-fast',
+    'claude-opus-5-5-medium',
+    'claude-opus-5-5-medium-fast',
+    'claude-opus-5-5-high',
+    'claude-opus-5-5-high-fast',
+    'claude-opus-5-5-xhigh',
+    'claude-opus-5-5-xhigh-fast',
+    'claude-opus-5-5-max',
+    'claude-opus-5-5-max-fast',
     'grok-4.5',
     'grok-4.5-fast',
     'gpt-5.4-low',
@@ -210,6 +221,15 @@ export const CURSOR_MODEL_IDS = [
     'cursor-grok-4.6-medium-fast',
     'cursor-grok-4.6-xhigh',
     'cursor-grok-4.6-xhigh-fast',
+    // Grok 4.7 uses unprefixed wire IDs and has no max rung.
+    'grok-4.7-low',
+    'grok-4.7-low-fast',
+    'grok-4.7-medium',
+    'grok-4.7-medium-fast',
+    'grok-4.7-high',
+    'grok-4.7-high-fast',
+    'grok-4.7-xhigh',
+    'grok-4.7-xhigh-fast',
     'gemini-3.6-flash-high',
     'gemini-3.6-flash-low',
     'gemini-3.6-flash-medium',
@@ -283,6 +303,7 @@ export const CURSOR_REGISTRY_MODELS = [
     'claude-fable-5',
     'claude-fable-5-thinking',
     'claude-opus-5',
+    'claude-opus-5-5',
     'claude-opus-4-8',
     'claude-opus-4-8-thinking',
     'claude-opus-4-7',
@@ -304,6 +325,7 @@ export const CURSOR_REGISTRY_MODELS = [
     // sends `cursor-grok-4.6-high` (#394).
     'grok-4.5',
     'grok-4.6',
+    'grok-4.7',
     'gpt-5-mini',
     'glm-5.2',
     'glm-5.3',
@@ -389,7 +411,38 @@ export function resolveCursorModelVariant(model: string, effort: string): string
     ));
     const resolved = withPrefix.find((candidate) => CURSOR_MODEL_ID_SET.has(candidate));
     if (resolved) return resolved;
-    return base.startsWith('grok-') && CURSOR_MODEL_ID_SET.has(`cursor-${base}`)
-        ? `cursor-${base}`
-        : base;
+    if (base.startsWith('grok-') && CURSOR_MODEL_ID_SET.has(`cursor-${base}`)) return `cursor-${base}`;
+    // Some families expose no bare id at all (grok-4.7 has only -low..-xhigh and
+    // their -fast twins). Falling back to the bare base there sends an id the
+    // account does not have, so step down to the nearest rung it does expose.
+    if (!CURSOR_MODEL_ID_SET.has(base)) {
+        const clamped = nearestAvailableRung(base, selectedEffort);
+        if (clamped) return clamped;
+    }
+    return base;
+}
+
+const CURSOR_EFFORT_LADDER = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+function nearestAvailableRung(base: string, selectedEffort: string): string | undefined {
+    const fast = selectedEffort.endsWith('-fast');
+    const rung = fast ? selectedEffort.replace(/-fast$/, '') : selectedEffort;
+    const start = (CURSOR_EFFORT_LADDER as readonly string[]).indexOf(rung);
+    if (start < 0) return undefined;
+    // Prefer the nearest lower rung; a request below the lowest exposed rung
+    // (e.g. `none`) takes the lowest one above it instead.
+    const order: number[] = [];
+    for (let i = start; i >= 0; i -= 1) order.push(i);
+    for (let i = start + 1; i < CURSOR_EFFORT_LADDER.length; i += 1) order.push(i);
+    for (const i of order) {
+        const suffix = cursorEffortSuffix(base, CURSOR_EFFORT_LADDER[i]!);
+        if (!suffix) continue;
+        const ids = fast ? [`${base}-${suffix}-fast`, `${base}-${suffix}`] : [`${base}-${suffix}`];
+        for (const id of ids) {
+            for (const candidate of id.startsWith('grok-') ? [`cursor-${id}`, id] : [id]) {
+                if (CURSOR_MODEL_ID_SET.has(candidate)) return candidate;
+            }
+        }
+    }
+    return undefined;
 }

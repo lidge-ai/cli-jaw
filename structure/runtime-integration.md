@@ -355,7 +355,7 @@ Print and ACP spell Cursor models differently, so `config.ts` accepts an opaque 
 
 - codex/codex-app 모델 목록은 기존 라이브 배선(runtime-port.json → healthz → /v1/models)이 소유. `resolveOpenCodexCodexModelsDetailed()`가 `{models, entries, source:'opencodex'|'static'}`를 주고 registry가 `modelSource`를 노출.
 - **모델별 reasoning effort도 같은 배선으로 동기화된다.** ocx는 모델마다 다른 effort 집합을 광고한다
-  (`gpt-5.6-sol`은 `ultra`까지, `gpt-5.6-luna`는 `max`까지, `anthropic/*` 같은 routed 모델은 없음).
+  (`gpt-5.6-sol`·`gpt-6-sol`은 `ultra`까지, `gpt-5.6-luna`·`gpt-6-luna`는 `max`까지; 2026-09-23 기준 `anthropic/*` routed 모델은 `low..max`).
   `parseModelEntries()`가 `reasoning_efforts[].value` / `supports_reasoning_effort` / `reasoning_effort`를
   `{id, efforts, defaultEffort}`로 파싱하고, `registry-live.ts`가 codex/codex-app에
   `effortsByModel`·`defaultEffortByModel`을 싣는다. `efforts`는 legacy 소비자용 합집합이다.

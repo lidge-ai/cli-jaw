@@ -150,7 +150,7 @@ jobs:
 
       - name: Package signed and notarized macOS app
         if: matrix.platform == 'macos'
-        run: npm --prefix electron run dist:mac -- --config.mac.notarize=true --publish never
+        run: npm --prefix electron run dist:mac -- --config.mac.notarize=true --config.dmg.sign=true --publish never
         env:
           CSC_KEYCHAIN: ${{ steps.mac-keychain.outputs.keychain }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -163,6 +163,18 @@ jobs:
           MAC_SIGNING_KEYCHAIN: ${{ steps.mac-keychain.outputs.keychain }}
         run: node scripts/import-mac-signing-certificate.mjs cleanup "$MAC_SIGNING_KEYCHAIN"
 
+      # electron-builder notarizes the app but not the DMG around it. Notarize
+      # and staple the signed DMG here, then rebuild the DMG blockmap and its
+      # latest-mac.yml entry from the stapled bytes (stapling changes the file).
+      - name: Notarize and staple macOS disk image
+        if: matrix.platform == 'macos'
+        run: node scripts/notarize-mac-dmg.mjs
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPECTED_APPLE_TEAM_ID: U9ATA49N28
+
       - name: Package unsigned Windows or Linux app
         if: matrix.platform != 'macos'
         run: npm --prefix electron run ${{ matrix.script }} -- --publish never
@@ -171,7 +183,9 @@ jobs:
 
       - name: Verify Developer ID signature and notarization ticket
         if: matrix.platform == 'macos'
-        run: npm run verify:mac-signature
+        run: |
+          npm run verify:mac-signature
+          npm run verify:mac-dmg
         env:
           VERIFY_EXPECTED_TEAM_ID: U9ATA49N28
 

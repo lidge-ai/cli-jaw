@@ -6,7 +6,7 @@ import type { CliEngine } from '../types/cli-engine.js';
 import type { RuntimeTransport } from '../shared/runtime-contract.js';
 import { isSwitchableNativeCli } from '../agent/runtime/selection.js';
 
-export const CODEX_MODEL_CHOICES = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
+export const CODEX_MODEL_CHOICES = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna'];
 /**
  * Static effort fallback for Codex when opencodex is not running. When ocx IS
  * running, registry-live.ts replaces this with the live per-model sets, which

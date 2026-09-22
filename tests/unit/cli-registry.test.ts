@@ -189,7 +189,7 @@ test('Cursor registry exposes Cursor as a top-level runtime, not an ai-e provide
     assert.equal(Object.hasOwn(CLI_REGISTRY, 'ai-e'), false);
 });
 test('Codex registry defaults expose only the curated inactive ocx model set', () => {
-    assert.deepEqual(CODEX_MODEL_CHOICES, ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    assert.deepEqual(CODEX_MODEL_CHOICES, ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna']);
     assert.deepEqual(CLI_REGISTRY.codex.models, CODEX_MODEL_CHOICES);
     assert.deepEqual(CLI_REGISTRY['codex-app'].models, CODEX_MODEL_CHOICES);
     assert.equal(CLI_REGISTRY.codex.models.includes('gpt-5.3-codex'), false);

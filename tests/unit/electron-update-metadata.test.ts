@@ -22,11 +22,15 @@ function fixture(t: test.TestContext, version = '2.17.55') {
   writeFileSync(`${zipPath}.blockmap`, '{}');
   const digest = createHash('sha512').update(bytes).digest('base64');
   const dmgName = `cli-jaw-${version}-arm64.dmg`;
+  const dmgPath = join(dist, dmgName);
+  const dmgBytes = Buffer.from('stapled-dmg-fixture');
+  writeFileSync(dmgPath, dmgBytes);
+  const dmgDigest = createHash('sha512').update(dmgBytes).digest('base64');
   const metadataPath = join(dist, 'latest-mac.yml');
   writeFileSync(metadataPath, stringify({
     version,
     files: [
-      { url: dmgName, sha512: 'unused-by-updater-verifier', size: 123 },
+      { url: dmgName, sha512: dmgDigest, size: dmgBytes.length },
       { url: zipName, sha512: digest, size: bytes.length },
     ],
     path: zipName,
@@ -34,7 +38,7 @@ function fixture(t: test.TestContext, version = '2.17.55') {
   }));
   const appUpdatePath = join(appResources, 'app-update.yml');
   writeFileSync(appUpdatePath, stringify({ provider: 'github', owner: 'lidge-jun', repo: 'cli-jaw' }));
-  return { root, dist, packagePath, metadataPath, appUpdatePath, zipPath };
+  return { root, dist, packagePath, metadataPath, appUpdatePath, zipPath, dmgPath };
 }
 
 test('accepts stable and preview update metadata with matching provider and payload', (t) => {
@@ -50,6 +54,21 @@ test('rejects a payload whose bytes no longer match the published hash', (t) => 
   const f = fixture(t);
   writeFileSync(f.zipPath, 'tampered');
   assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /size mismatch|SHA-512/);
+});
+
+test('rejects a DMG entry that still describes the bytes from before stapling', (t) => {
+  const f = fixture(t);
+  // Same length, different bytes: only the hash can catch it.
+  writeFileSync(f.dmgPath, 'stapled-dmg-FIXTURE');
+  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /arm64\.dmg SHA-512 does not match/);
+  writeFileSync(f.dmgPath, 'stapled-dmg-fixture plus an appended ticket');
+  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /arm64\.dmg size mismatch/);
+});
+
+test('rejects metadata that lists a DMG the build did not leave behind', (t) => {
+  const f = fixture(t);
+  rmSync(f.dmgPath);
+  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /Missing listed update artifact/);
 });
 
 test('rejects a provider that points updates at another repository', (t) => {

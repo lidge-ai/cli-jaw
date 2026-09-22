@@ -108,7 +108,8 @@ Current `electron-builder.yml` targets:
 
 The ordinary local `electron:dist:mac` command is ad-hoc signed. The canonical
 GitHub release workflow requires a Team `U9ATA49N28` Developer ID signature,
-Apple notarization and a stapled ticket. Windows artifacts remain unsigned.
+Apple notarization and a stapled ticket on both the app and the DMG that
+carries it. Windows artifacts remain unsigned.
 
 ## Release Workflow
 
@@ -123,11 +124,19 @@ For each platform matrix entry it:
 4. bundles the platform sidecar,
 5. installs Electron dependencies,
 6. typechecks and builds Electron,
-7. signs, notarizes and staples the macOS app (Windows/Linux remain unsigned),
+7. signs, notarizes and staples the macOS app and signs the DMG, then
+   notarizes and staples the DMG with `scripts/notarize-mac-dmg.mjs`
+   (Windows/Linux remain unsigned). Stapling changes the DMG bytes
+   electron-builder already hashed, so the script rebuilds the DMG blockmap
+   and the DMG entry of `latest-mac.yml` from the stapled file and leaves the
+   ZIP entry the updater downloads as built,
 8. verifies the macOS identity, team, hardened runtime, timestamp, nested
-   signature, Gatekeeper verdict and stapled ticket,
+   signature, Gatekeeper verdict and stapled ticket of the app, and the
+   Developer ID signature, team, `open` Gatekeeper verdict (must report
+   `Notarized Developer ID`) and stapled ticket of the DMG,
 9. verifies the selected release's `latest-mac.yml`, ZIP size/SHA-512,
-   blockmap and packaged GitHub provider,
+   blockmap, the size/SHA-512 of every other listed artifact (the DMG) and
+   the packaged GitHub provider,
 10. verifies the final sidecar and packaged app icon inputs,
 11. uploads artifacts to the release or 7-day manual-run artifact storage.
 

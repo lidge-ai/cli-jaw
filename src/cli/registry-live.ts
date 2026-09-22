@@ -43,7 +43,8 @@ export async function buildLiveCliRegistry() {
     if (codexModels.length > 0) {
         // Per-model effort metadata. opencodex advertises a DIFFERENT effort set
         // per model (gpt-5.6-sol reaches `ultra`, gpt-5.6-luna stops at `max`,
-        // routed models like anthropic/* take none), and the chosen value is
+        // routed anthropic/* advertised low..max on 2026-09-23 and may advertise
+        // none), and the chosen value is
         // forwarded to the wire, so consumers must narrow by model rather than
         // offer the union. `efforts` stays as the union for legacy consumers.
         const effortsByModel: Record<string, string[]> = {};

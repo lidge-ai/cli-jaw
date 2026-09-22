@@ -15,8 +15,8 @@
  * code of the step that produced it.
  */
 import childProcess from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Capture stdout and stderr because macOS security tools report on stderr. */
@@ -112,7 +112,90 @@ function normalizeExpectedTeam(value) {
   return normalized || null;
 }
 
+/**
+ * The disk image users download is a separate trust decision from the app
+ * inside it. Gatekeeper assesses a quarantined DMG with the `open` operation
+ * and the primary-signature context; an unsigned image reports "no usable
+ * signature" and a signed but unnotarized one reports "Unnotarized Developer
+ * ID". Only a notarized, stapled Developer ID image passes offline.
+ */
+export function verifyMacDiskImage(options = {}) {
+  const dmgPath = resolve(options.dmgPath ?? findDiskImage(options.distDir ?? 'electron/dist'));
+  const expectedTeamId = normalizeExpectedTeam(options.expectedTeamId ?? process.env['VERIFY_EXPECTED_TEAM_ID']);
+
+  if (!existsSync(dmgPath)) {
+    throw new Error(`No disk image at ${dmgPath}. Did the build step run?`);
+  }
+
+  const problems = [];
+  const info = probe('/usr/bin/codesign', ['-dv', '--verbose=4', dmgPath]);
+  if (!info.ok) {
+    problems.push(`codesign -dv failed:\n${info.text.trim()}`);
+  } else {
+    if (!/Authority=Developer ID Application:/.test(info.text)) {
+      problems.push('disk image is not signed with a Developer ID Application certificate');
+    }
+    if (!/^Timestamp=/m.test(info.text)) {
+      problems.push('disk image signature has no secure timestamp');
+    }
+  }
+
+  const teamId = (info.text.match(/TeamIdentifier=(\S+)/) ?? [, '(unknown)'])[1];
+  if (expectedTeamId && teamId !== expectedTeamId) {
+    problems.push(`disk image team "${teamId}" does not match expected team "${expectedTeamId}"`);
+  }
+
+  const strict = probe('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', dmgPath]);
+  if (!strict.ok) {
+    problems.push(`codesign --verify failed:\n${strict.text.trim()}`);
+  }
+
+  const assess = probe('/usr/sbin/spctl', [
+    '--assess', '--type', 'open', '--context', 'context:primary-signature', '--verbose=4', dmgPath,
+  ]);
+  if (!assess.ok || !/source=Notarized Developer ID/.test(assess.text)) {
+    problems.push(`spctl did not accept the disk image as notarized:\n${assess.text.trim()}`);
+  }
+
+  const staple = probe('/usr/bin/xcrun', ['stapler', 'validate', dmgPath]);
+  if (!staple.ok) {
+    problems.push(`disk image has no stapled notarization ticket:\n${staple.text.trim()}`);
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`${dmgPath}\n\n  - ${problems.join('\n  - ')}`);
+  }
+
+  const authority = (info.text.match(/Authority=(.+)/) ?? [, '(unknown)'])[1].trim();
+  return { dmgPath, authority, teamId };
+}
+
+function findDiskImage(distDir) {
+  const dir = resolve(distDir);
+  if (!existsSync(dir)) throw new Error(`No build output directory at ${dir}`);
+  const images = readdirSync(dir).filter(name => name.endsWith('.dmg'));
+  if (images.length !== 1) {
+    throw new Error(`Expected exactly one .dmg in ${dir}, found ${images.length}`);
+  }
+  return join(dir, images[0]);
+}
+
 function main() {
+  if (process.argv[2] === '--dmg') {
+    try {
+      const report = verifyMacDiskImage({ dmgPath: process.argv[3] });
+      console.log('[verify-mac-signature] disk image OK');
+      console.log(`  dmg       ${report.dmgPath}`);
+      console.log(`  authority ${report.authority}`);
+      console.log(`  team      ${report.teamId}`);
+      console.log('  notarized yes');
+      console.log('  stapled   yes');
+    } catch (error) {
+      console.error(`\n[verify-mac-signature] FAIL: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
+    return;
+  }
   try {
     const report = verifyMacSignature({ appPath: process.argv[2] });
     console.log('[verify-mac-signature] OK');

@@ -49,7 +49,7 @@ mock.method(fsPromises, 'readdir', (async (path: fs.PathLike, options: unknown) 
 
 const { default: afterSign } = await import('../../electron/build/after-sign.mjs');
 const { default: signExtraBinaries } = await import('../../electron/build/sign-extra-binaries.mjs');
-const { verifyMacSignature } = await import('../../scripts/verify-mac-signature.mjs');
+const { verifyMacSignature, verifyMacDiskImage } = await import('../../scripts/verify-mac-signature.mjs');
 
 const signingDependencies = {
     // Pinned source anchors: app-builder-lib 25.1.8
@@ -380,4 +380,59 @@ test('signature verifier fails closed when the metadata probe cannot execute cle
 
     assert.throws(() => verifyMacSignature({ appPath: join(root, 'cli-jaw.app'), requireStapled: false }),
         /codesign -dv failed:\noperation not permitted/);
+});
+
+function dmgFixture(): string {
+    const { root } = appFixture();
+    const dmgPath = join(root, 'cli-jaw-9.9.9-arm64.dmg');
+    writeFileSync(dmgPath, 'dmg');
+    return dmgPath;
+}
+
+function validDiskImageProbes(teamId = 'TEAMFIX001'): SpawnResult[] {
+    return [
+        { status: 0, stdout: '', stderr: 'Authority=Developer ID Application: Fixture (' + teamId + ')\nTeamIdentifier=' + teamId + '\nTimestamp=Sep 23, 2026 at 01:15:10\n' },
+        { status: 0, stdout: '', stderr: 'valid on disk\nsatisfies its Designated Requirement\n' },
+        { status: 0, stdout: '', stderr: 'accepted\nsource=Notarized Developer ID\n' },
+        { status: 0, stdout: 'The validate action worked!\n', stderr: '' },
+    ];
+}
+
+test('disk image verifier accepts a notarized, stapled Developer ID DMG from the expected team', () => {
+    const dmgPath = dmgFixture();
+    spawnResults = validDiskImageProbes('TEAMFIX001');
+    const report = verifyMacDiskImage({ dmgPath, expectedTeamId: 'TEAMFIX001' });
+    assert.equal(report.teamId, 'TEAMFIX001');
+    assert.equal(spawnResults.length, 0);
+});
+
+test('disk image verifier rejects the unsigned DMG shape shipped before disk image notarization', () => {
+    const dmgPath = dmgFixture();
+    spawnResults = [
+        { status: 1, stdout: '', stderr: dmgPath + ': code object is not signed at all\n' },
+        { status: 1, stdout: '', stderr: dmgPath + ': code object is not signed at all\n' },
+        { status: 3, stdout: '', stderr: dmgPath + ': rejected\nsource=no usable signature\n' },
+        { status: 65, stdout: '', stderr: 'does not have a ticket stapled to it.\n' },
+    ];
+    assert.throws(() => verifyMacDiskImage({ dmgPath, expectedTeamId: 'U9ATA49N28' }), error => {
+        const message = (error as Error).message;
+        assert.match(message, /codesign -dv failed/);
+        assert.match(message, /spctl did not accept the disk image as notarized/);
+        assert.match(message, /no stapled notarization ticket/);
+        return true;
+    });
+});
+
+test('disk image verifier treats an accepted but unnotarized signature as a failure', () => {
+    const dmgPath = dmgFixture();
+    spawnResults = validDiskImageProbes('TEAMFIX001');
+    spawnResults[2] = { status: 0, stdout: '', stderr: 'accepted\nsource=Unnotarized Developer ID\n' };
+    assert.throws(() => verifyMacDiskImage({ dmgPath }), /spctl did not accept the disk image as notarized/);
+});
+
+test('disk image verifier enforces the expected team', () => {
+    const dmgPath = dmgFixture();
+    spawnResults = validDiskImageProbes('OTHERTEAM1');
+    assert.throws(() => verifyMacDiskImage({ dmgPath, expectedTeamId: 'EXPECTED01' }),
+        /disk image team "OTHERTEAM1" does not match expected team "EXPECTED01"/);
 });

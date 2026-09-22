@@ -73,6 +73,25 @@ export function verifyElectronUpdateMetadata(options = {}) {
     throw new Error('Legacy macOS update metadata fields do not match files[0]');
   }
 
+  // The other entries (the DMG) are not the updater payload, but they are
+  // published next to it and describe bytes users download. The DMG is
+  // stapled after electron-builder hashed it, so a stale description here
+  // means the post-staple metadata repair did not run or did not stick.
+  const otherArtifacts = [];
+  for (const file of metadata.files) {
+    if (file === entry) continue;
+    const artifactPath = join(distDir, file.url);
+    if (!existsSync(artifactPath)) throw new Error(`Missing listed update artifact: ${artifactPath}`);
+    const size = statSync(artifactPath).size;
+    if (file.size !== size) {
+      throw new Error(`${file.url} size mismatch: metadata=${String(file.size)} actual=${size}`);
+    }
+    if (file.sha512 !== sha512(artifactPath)) {
+      throw new Error(`${file.url} SHA-512 does not match update metadata`);
+    }
+    otherArtifacts.push(artifactPath);
+  }
+
   const provider = readYaml(appUpdatePath);
   for (const [key, expected] of Object.entries(EXPECTED_PROVIDER)) {
     if (provider?.[key] !== expected) {
@@ -80,7 +99,7 @@ export function verifyElectronUpdateMetadata(options = {}) {
     }
   }
 
-  return { metadataPath, zipPath, blockmapPath, version, sha512: actualHash };
+  return { metadataPath, zipPath, blockmapPath, version, sha512: actualHash, otherArtifacts };
 }
 
 function main() {
@@ -95,6 +114,7 @@ function main() {
     console.log(`  zip       ${report.zipPath}`);
     console.log(`  blockmap  ${report.blockmapPath}`);
     console.log(`  sha512    ${report.sha512}`);
+    for (const artifact of report.otherArtifacts) console.log(`  listed    ${artifact} (hash matches)`);
   } catch (error) {
     console.error(`\n[verify-electron-update-metadata] FAIL: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
