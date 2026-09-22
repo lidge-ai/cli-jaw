@@ -63,8 +63,17 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'manifest invalid' }
           $tsx = (& node -p "require.resolve('tsx/cli')").Trim()
           if ($LASTEXITCODE -ne 0 -or -not $tsx) { throw 'tsx unavailable' }
-          $nodeArgs = @($tsx, '--import', './tests/setup/test-home.ts', '--experimental-test-module-mocks', '--test')
-          if ($env:PROBE_MODE -eq 'serial') { $nodeArgs += '--test-concurrency=1' }
-          $nodeArgs += $files
-          & node @nodeArgs
-          exit $LASTEXITCODE
+          $modes = if ($env:PROBE_MODE -eq 'default') { @('default', 'serial') } else { @('serial', 'default') }
+          $results = @()
+          foreach ($mode in $modes) {
+            $nodeArgs = @($tsx, '--import', './tests/setup/test-home.ts', '--experimental-test-module-mocks', '--test')
+            if ($mode -eq 'serial') { $nodeArgs += '--test-concurrency=1' }
+            $nodeArgs += $files
+            Write-Host "PROBE_MODE_BEGIN:$mode"
+            & node @nodeArgs
+            $code = $LASTEXITCODE
+            $results += $code
+            Write-Host "PROBE_MODE_END:$mode exit=$code"
+          }
+          if (@($results | Where-Object { $_ -ne 0 }).Count -gt 0) { exit 1 }
+          exit 0
