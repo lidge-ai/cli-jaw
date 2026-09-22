@@ -411,7 +411,38 @@ export function resolveCursorModelVariant(model: string, effort: string): string
     ));
     const resolved = withPrefix.find((candidate) => CURSOR_MODEL_ID_SET.has(candidate));
     if (resolved) return resolved;
-    return base.startsWith('grok-') && CURSOR_MODEL_ID_SET.has(`cursor-${base}`)
-        ? `cursor-${base}`
-        : base;
+    if (base.startsWith('grok-') && CURSOR_MODEL_ID_SET.has(`cursor-${base}`)) return `cursor-${base}`;
+    // Some families expose no bare id at all (grok-4.7 has only -low..-xhigh and
+    // their -fast twins). Falling back to the bare base there sends an id the
+    // account does not have, so step down to the nearest rung it does expose.
+    if (!CURSOR_MODEL_ID_SET.has(base)) {
+        const clamped = nearestAvailableRung(base, selectedEffort);
+        if (clamped) return clamped;
+    }
+    return base;
+}
+
+const CURSOR_EFFORT_LADDER = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+function nearestAvailableRung(base: string, selectedEffort: string): string | undefined {
+    const fast = selectedEffort.endsWith('-fast');
+    const rung = fast ? selectedEffort.replace(/-fast$/, '') : selectedEffort;
+    const start = (CURSOR_EFFORT_LADDER as readonly string[]).indexOf(rung);
+    if (start < 0) return undefined;
+    // Prefer the nearest lower rung; a request below the lowest exposed rung
+    // (e.g. `none`) takes the lowest one above it instead.
+    const order: number[] = [];
+    for (let i = start; i >= 0; i -= 1) order.push(i);
+    for (let i = start + 1; i < CURSOR_EFFORT_LADDER.length; i += 1) order.push(i);
+    for (const i of order) {
+        const suffix = cursorEffortSuffix(base, CURSOR_EFFORT_LADDER[i]!);
+        if (!suffix) continue;
+        const ids = fast ? [`${base}-${suffix}-fast`, `${base}-${suffix}`] : [`${base}-${suffix}`];
+        for (const id of ids) {
+            for (const candidate of id.startsWith('grok-') ? [`cursor-${id}`, id] : [id]) {
+                if (CURSOR_MODEL_ID_SET.has(candidate)) return candidate;
+            }
+        }
+    }
+    return undefined;
 }

@@ -38,6 +38,22 @@ test('Cursor effort resolves to model IDs instead of CLI flags', () => {
     assert.equal(resolveCursorModelVariant('claude-opus-5-5', 'max-fast'), 'claude-opus-5-5-max-fast');
 });
 
+test('Cursor families without a bare id step to the nearest exposed rung instead of sending the bare base', () => {
+    // grok-4.7 exposes only -low..-xhigh (and -fast twins); a saved max effort
+    // used to fall back to bare `grok-4.7`, which the account does not have.
+    assert.equal(resolveCursorModelVariant('grok-4.7', 'high'), 'grok-4.7-high');
+    assert.equal(resolveCursorModelVariant('grok-4.7', 'max'), 'grok-4.7-xhigh');
+    assert.equal(resolveCursorModelVariant('grok-4.7', 'max-fast'), 'grok-4.7-xhigh-fast');
+    assert.equal(resolveCursorModelVariant('grok-4.7', 'none'), 'grok-4.7-low');
+    assert.equal(resolveCursorModelVariant('grok-4.7', 'none-fast'), 'grok-4.7-low-fast');
+    // A family whose bare id exists keeps the established fallback to it.
+    assert.equal(resolveCursorModelVariant('grok-4.5', 'max'), 'grok-4.5');
+    // grok-4.6 had the same gap (no bare id, no max rung): it now keeps the
+    // #394 prefix and steps down instead of sending bare `grok-4.6`.
+    assert.equal(resolveCursorModelVariant('grok-4.6', 'max'), 'cursor-grok-4.6-xhigh');
+    assert.equal(resolveCursorModelVariant('grok-4.6', 'high'), 'cursor-grok-4.6-high');
+});
+
 test('Cursor full model IDs stay unchanged', () => {
     assert.equal(isCursorFullModelId('gpt-5.5-medium'), true);
     assert.equal(resolveCursorModelVariant('gpt-5.5-medium', 'high-fast'), 'gpt-5.5-medium');
