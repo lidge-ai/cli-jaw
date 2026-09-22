@@ -146,7 +146,11 @@ for(const [name,source] of [
 ] as const)test(`caught forbidden ${name} cannot disappear from the smoke verdict`,async t=>{
     const f=fixture(t);f.put('dist/src/telegram/bot.js',source);
     const result=await f.run();assert.equal(result.ok,false);assert.ok(result.probes[0].issues.includes('forbidden-process'));
-    assert.ok(result.probes[0].boundary.some(row=>row.kind==='forbidden-process'));
+    const forbidden=result.probes[0].boundary.find(row=>row.kind==='forbidden-process'&&row.phase==='start');
+    assert.ok(forbidden);
+    assert.equal(typeof forbidden.executable,'string','forbidden process evidence should name only the executable basename');
+    assert.equal(typeof forbidden.argumentCount,'number');
+    assert.equal('args' in forbidden,false,'forbidden process evidence must not persist argument values');
 });
 
 test('owned bootstrap Git metadata stays unavailable without delegating Git',async t=>{

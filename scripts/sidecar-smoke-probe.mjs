@@ -77,7 +77,10 @@ async function runChild() {
     function launch(method,command,args=[],opts={},callback,forcedKind) {
         const choice=forcedKind?{kind:forcedKind}:classify(command,args,opts);
         const ticket=++sequence;
-        record({kind:choice.kind,method,ticket,phase:'start'});
+        const diagnostic=choice.kind==='forbidden-process'&&typeof command==='string'
+            ?{executable:path.basename(command).toLowerCase(),argumentCount:args.length}
+            :{};
+        record({kind:choice.kind,method,ticket,phase:'start',...diagnostic});
         if(fs.existsSync(absent))throw Error('Unavailable executable path unexpectedly exists');
         const selected=choice.command??absent;
         const selectedArgs=choice.args??[];
