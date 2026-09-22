@@ -178,11 +178,13 @@ CLI-JAW는 여러분이 이미 사용하는 AI 코딩 CLI — Pi, Antigravity, C
 
 최종 사용자는 **GitHub Releases**에서 데스크톱 아티팩트를 받으면 됩니다:
 
-- **macOS**: DMG를 다운로드하고 CLI-JAW를 Applications에 드래그한 뒤 실행합니다. 현재 빌드는 unsigned / un-notarized 상태라 첫 실행 시 Finder에서 우클릭 → **Open**이 필요할 수 있습니다.
-- **Windows**: NSIS installer를 다운로드합니다. 같은 sidecar 서버가 포함되어 있고, 패키징된 `jaw` shim을 PATH에 추가합니다.
+- **macOS**: DMG를 다운로드하고 CLI-JAW를 Applications에 드래그한 뒤 실행합니다. 현재 워크플로가 만드는 릴리스는 Developer ID로 서명되고, Apple 공증과 ticket stapling까지 검증됩니다.
+- **Windows**: NSIS installer를 다운로드합니다. 같은 sidecar 서버가 포함되어 있고, 패키징된 `jaw` shim을 PATH에 추가합니다. Windows 아티팩트는 아직 미서명이라 SmartScreen 경고가 나타날 수 있습니다.
 - **Linux**: AppImage를 다운로드하고 실행 권한을 준 뒤 실행합니다.
 
 첫 실행 후 **Install CLI command** 프롬프트를 승인하면 번들 sidecar 기반 터미널 `jaw` 명령이 생성됩니다. 건너뛰었다면 나중에 tray menu의 **Install CLI to Terminal** 항목을 사용하세요. 이 경로는 패키징된 앱과 터미널 shim에 전역 npm 설치를 요구하지 않습니다.
+
+설치된 macOS 앱은 같은 GitHub Release 채널을 백그라운드에서 확인하며 **CLI-JAW → Check for Updates…** 메뉴도 제공합니다. preview 빌드는 preview 릴리스만, stable 빌드는 stable 릴리스만 따릅니다. 다운로드와 재시작/설치는 각각 사용자 확인이 필요합니다. 기존 미서명 앱은 이 신뢰 체계로 안전하게 자동 전환할 수 없으므로 첫 서명 버전의 DMG는 한 번 수동 설치해야 하며, 그 다음 서명 버전부터 앱 내 업데이트를 사용할 수 있습니다.
 
 개발자 빌드:
 
@@ -195,6 +197,8 @@ npm run electron:dist:mac     # bundled sidecar 포함 macOS arm64 .dmg + .zip �
 ```
 
 패키징 산출물은 `electron/dist/`에 생성됩니다. GitHub Actions desktop release workflow는 release publish 또는 manual dispatch에서 macOS arm64 DMG/ZIP, Windows x64 NSIS/ZIP, Linux AppImage 아티팩트를 빌드합니다. `better-sqlite3` 같은 네이티브 모듈은 manager/sidecar 서버 안에 머물고 Electron main process는 직접 import하지 않습니다.
+
+로컬 Developer ID 빌드는 서명/공증 자격 증명을 설정한 뒤 `npm run electron:dist:mac:signed`로 만듭니다. 일반 `electron:dist:mac`은 계속 ad-hoc 로컬 빌드입니다. 정식 GitHub Actions 경로는 Team `U9ATA49N28`의 Developer ID 서명, Apple 공증·stapling, 업데이트 ZIP 메타데이터와 SHA-512 검증 중 하나라도 실패하면 배포하지 않습니다.
 
 ---
 

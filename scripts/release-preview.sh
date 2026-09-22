@@ -65,19 +65,15 @@ ELECTRON_RELEASE_NOTES_BASE="### Desktop / Electron
 - Desktop app distribution remains separate from \`npm install -g cli-jaw\`.
 - macOS, Windows, and Linux desktop assets are built by GitHub Actions after this prerelease is published, then attached to this GitHub Release."
 
-ELECTRON_RELEASE_NOTES_UNSIGNED="
-#### ⚠️ Desktop app downloads are unsigned
-The desktop assets attached by GitHub Actions are **unsigned** (no Apple Developer ID / Windows code-signing cert configured).
-
-- macOS: Gatekeeper will block first launch. Either right-click → Open → Open, or remove the quarantine attribute:
-  \`\`\`sh
-  xattr -d com.apple.quarantine /Applications/cli-jaw.app
-  \`\`\`
-- Windows: SmartScreen will warn on first run. Click \"More info\" → \"Run anyway\".
+ELECTRON_RELEASE_NOTES_PLATFORM_TRUST="
+#### Desktop signing and updates
+- macOS: Developer ID signed, Apple-notarized and stapled. The workflow verifies Team \`U9ATA49N28\`, Gatekeeper acceptance, update metadata and the ZIP SHA-512 before upload.
+- Updates: preview builds follow preview releases and stable builds follow stable releases. Download and restart/install require explicit confirmation. Existing unsigned installs must install this first signed DMG manually once.
+- Windows: artifacts remain unsigned. SmartScreen may warn on first run; click \"More info\" → \"Run anyway\".
 - Linux: AppImage downloads may need execute permission before launch.
-- For trusted distribution, install via \`npm install -g cli-jaw\` instead."
+- CLI-only users can continue to install via \`npm install -g cli-jaw\`."
 
-ELECTRON_RELEASE_NOTES="$ELECTRON_RELEASE_NOTES_BASE$ELECTRON_RELEASE_NOTES_UNSIGNED"
+ELECTRON_RELEASE_NOTES="$ELECTRON_RELEASE_NOTES_BASE$ELECTRON_RELEASE_NOTES_PLATFORM_TRUST"
 
 # ─── Version detection ─────────────────────────────────
 NPM_LATEST=$(npm view cli-jaw dist-tags.latest 2>/dev/null || echo "")

@@ -31,13 +31,14 @@ jobs:
         include:
           - platform: macos
             os: macos-latest
-            script: dist:mac
             sidecar_platform: darwin
             sidecar_arch: arm64
             sidecar_check_script: check:electron-dist-mac-no-jwc
             artifact_globs: |
               electron/dist/*.dmg
               electron/dist/*.zip
+              electron/dist/*-mac.yml
+              electron/dist/*.blockmap
           - platform: windows
             os: windows-2022
             script: dist:win
@@ -115,10 +116,54 @@ jobs:
       - name: Build Electron shell
         run: npm --prefix electron run build
 
-      - name: Package desktop app
+      - name: Require macOS signing and notarization credentials
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPECTED_APPLE_TEAM_ID: U9ATA49N28
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required macOS release credential is not configured: $name"
+              exit 1
+            fi
+          done
+          if [ "$APPLE_TEAM_ID" != "$EXPECTED_APPLE_TEAM_ID" ]; then
+            echo "::error::APPLE_TEAM_ID does not match the release signing team"
+            exit 1
+          fi
+
+      - name: Package signed and notarized macOS app
+        if: matrix.platform == 'macos'
+        run: npm --prefix electron run dist:mac -- --config.mac.notarize=true --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Package unsigned Windows or Linux app
+        if: matrix.platform != 'macos'
         run: npm --prefix electron run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify Developer ID signature and notarization ticket
+        if: matrix.platform == 'macos'
+        run: npm run verify:mac-signature
+        env:
+          VERIFY_EXPECTED_TEAM_ID: U9ATA49N28
+
+      - name: Verify macOS update metadata and payload integrity
+        if: matrix.platform == 'macos'
+        run: npm run verify:electron-update-metadata
 
       # This is the only workflow that ends up with a built node-pty, so it is
       # the only place the probe can run for real: node-tests and publish
@@ -162,6 +207,8 @@ jobs:
             electron/dist/*.deb
             electron/dist/*.rpm
             electron/dist/*.zip
+            electron/dist/*-mac.yml
+            electron/dist/*.blockmap
           if-no-files-found: error
           retention-days: 7
 

@@ -131,6 +131,12 @@ CLI-JAW は、すでに使っている AI コーディング CLI — Pi、Antigr
 
 </div>
 
+### デスクトップアプリ
+
+GitHub Releases の macOS DMG は、現在のリリースワークフローでは Developer ID 署名、Apple 公証、ticket stapling を必須とします。インストール済みアプリは同じ release channel をバックグラウンドで確認し、**CLI-JAW → Check for Updates…** から手動確認もできます。preview は preview、stable は stable のみを追跡し、ダウンロードと再起動インストールにはそれぞれ明示的な確認が必要です。
+
+既存の未署名アプリから最初の署名版へは安全に自動移行できないため、その DMG だけは一度手動でインストールしてください。以後の署名版はアプリ内更新を利用できます。Windows artifact は現在未署名のため SmartScreen が表示される場合があります。
+
 ---
 
 ## 認証

@@ -106,8 +106,9 @@ Current `electron-builder.yml` targets:
 | Windows | x64 | NSIS installer, ZIP |
 | Linux | x64 | AppImage |
 
-Builds are currently unsigned and unnotarized. On macOS, first launch may
-require right-click then Open.
+The ordinary local `electron:dist:mac` command is ad-hoc signed. The canonical
+GitHub release workflow requires a Team `U9ATA49N28` Developer ID signature,
+Apple notarization and a stapled ticket. Windows artifacts remain unsigned.
 
 ## Release Workflow
 
@@ -122,9 +123,22 @@ For each platform matrix entry it:
 4. bundles the platform sidecar,
 5. installs Electron dependencies,
 6. typechecks and builds Electron,
-7. packages the app with signing disabled,
-8. verifies the final macOS `.app` sidecar and packaged app icon inputs,
-9. uploads artifacts to the release or 7-day manual-run artifact storage.
+7. signs, notarizes and staples the macOS app (Windows/Linux remain unsigned),
+8. verifies the macOS identity, team, hardened runtime, timestamp, nested
+   signature, Gatekeeper verdict and stapled ticket,
+9. verifies the selected release's `latest-mac.yml`, ZIP size/SHA-512,
+   blockmap and packaged GitHub provider,
+10. verifies the final sidecar and packaged app icon inputs,
+11. uploads artifacts to the release or 7-day manual-run artifact storage.
+
+The updater runs only in an installed, packaged macOS app. It performs one
+delayed silent check on startup and exposes **CLI-JAW → Check for Updates…**.
+It never auto-downloads or auto-installs: both actions require native-dialog
+consent, and coordinated manager cleanup completes before restart/install.
+Stable builds use GitHub's latest stable release. Preview builds select a
+matching preview tag from the GitHub release feed and use that release's own
+`latest-mac.yml` (electron-updater's documented GitHub fallback). The first
+signed release is a manual-DMG bootstrap for users of older unsigned builds.
 
 ## Desktop Behavior
 

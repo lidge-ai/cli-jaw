@@ -178,11 +178,13 @@ CLI-JAW 是一个开源平台，将你已经在用的 AI 编码 CLI — Pi、Ant
 
 最终用户可以直接从 **GitHub Releases** 下载桌面 artifact：
 
-- **macOS**：下载 DMG，把 CLI-JAW 拖到 Applications 后启动。当前构建仍是 unsigned / un-notarized，首次启动可能需要在 Finder 中右键 → **Open**。
-- **Windows**：下载 NSIS installer。它包含同一个 sidecar server，并把打包的 `jaw` shim 加入 PATH。
+- **macOS**：下载 DMG，把 CLI-JAW 拖到 Applications 后启动。当前工作流生成的版本使用 Developer ID 签名，并经过 Apple 公证与 ticket stapling 验证。
+- **Windows**：下载 NSIS installer。它包含同一个 sidecar server，并把打包的 `jaw` shim 加入 PATH。Windows artifact 目前仍未签名，可能触发 SmartScreen。
 - **Linux**：下载 AppImage，赋予执行权限后运行。
 
 首次启动后，接受 **Install CLI command** 提示即可从 bundled sidecar 创建终端 `jaw` 命令。如果跳过了提示，之后可在 tray menu 使用 **Install CLI to Terminal**。这个路径不要求为打包应用或终端 shim 进行全局 npm 安装。
+
+已安装的 macOS 应用会在后台检查对应的 GitHub Release channel，也可使用 **CLI-JAW → Check for Updates…**。preview 版本只跟随 preview release，stable 版本只跟随 stable release；下载和重启安装都需要用户明确确认。旧的未签名应用无法安全地自动迁移到新的信任链，因此首个签名版 DMG 需要手动安装一次，之后的签名版本可在应用内更新。
 
 开发者构建：
 
@@ -195,6 +197,8 @@ npm run electron:dist:mac     # 构建包含 bundled sidecar 的 macOS arm64 .dm
 ```
 
 打包产物位于 `electron/dist/`。GitHub Actions desktop release workflow 会在 release publish 或 manual dispatch 时构建 macOS arm64 DMG/ZIP、Windows x64 NSIS/ZIP 和 Linux AppImage artifacts。`better-sqlite3` 等原生模块保留在 manager/sidecar server 中；Electron main process 不直接 import 它们。
+
+本地 Developer ID 构建需配置签名与公证凭据后运行 `npm run electron:dist:mac:signed`；普通 `electron:dist:mac` 仍是 ad-hoc 本地构建。正式 GitHub Actions 路径会验证 Team `U9ATA49N28` 的 Developer ID 签名、Apple 公证与 stapling，以及更新 ZIP metadata/SHA-512，任一失败都会阻止发布。
 
 ---
 

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, screen, session, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
+import electronUpdater from 'electron-updater';
 import { fileURLToPath, URL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
@@ -53,6 +54,11 @@ import { resolveWindowChromeOptions } from './lib/window/chrome-options.js';
 import { isAllowedSender, setAllowedOrigin } from './lib/ipc-origin-guard.js';
 import { primeMacAutomationPermission } from './lib/mac-automation-permission.js';
 import { showQuitProgress } from './lib/quit-progress.js';
+import {
+  createAppUpdaterController,
+  shouldEnableAppUpdater,
+  type AppUpdaterController,
+} from './lib/app-updater.js';
 import {
   recordElectronPermissionDenial,
   resolveElectronPermissionDecision,
@@ -239,6 +245,7 @@ let forceQuitRequested = false;
 let managerRestarting = false;
 let windowCreating = false;
 let bootstrapPromise: Promise<void> | null = null;
+let shutdownPreparationPromise: Promise<boolean> | null = null;
 let managerReadyPromise: Promise<void> | null = null;
 let metricsCollector: MetricsCollectorHandle | null = null;
 let webContentsHardeningRegistered = false;
@@ -246,6 +253,7 @@ let reminderPopover: ReminderPopover | null = null;
 let reminderBadgePoller: ReminderBadgePoller | null = null;
 let trayPopupMenuIpcRegistered = false;
 let trayRemindersShortcutRegistered = false;
+let appUpdaterController: AppUpdaterController | null = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -319,7 +327,9 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     configureEmbeddedBrowserSession();
+    initializeAppUpdater();
     await bootstrapOnce();
+    appUpdaterController?.start();
     if (!QA_POLICY) promptInstallCli().catch(() => {});
     if (!metricsCollector) {
       try {
@@ -381,55 +391,93 @@ async function requestApplicationQuit(reason: string): Promise<void> {
     app.exit(0);
     return;
   }
-  if (shuttingDown) return;
+  const prepared = await prepareApplicationShutdown(reason);
+  if (prepared) app.exit(0);
+}
+
+async function prepareApplicationShutdown(reason: string): Promise<boolean> {
+  if (shutdownComplete) return true;
+  if (shutdownPreparationPromise) return shutdownPreparationPromise;
   shuttingDown = true;
-  destroyTrayReminders();
-  destroyTray();
-  ringBuffer.append(`[quit] requested by ${reason}\n`);
-  showQuitProgress(mainWindow, ringBuffer);
-  setTimeout(() => {
-    if (!mainWindow || mainWindow.isDestroyed() || shutdownComplete) return;
-    mainWindow.hide();
-  }, QUIT_WINDOW_HIDE_DELAY_MS);
-  if (metricsCollector) {
+  shutdownPreparationPromise = (async () => {
+    appUpdaterController?.dispose();
+    appUpdaterController = null;
+    destroyTrayReminders();
+    destroyTray();
+    ringBuffer.append(`[quit] requested by ${reason}\n`);
+    showQuitProgress(mainWindow, ringBuffer);
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || shutdownComplete) return;
+      mainWindow.hide();
+    }, QUIT_WINDOW_HIDE_DELAY_MS);
+    if (metricsCollector) {
+      try {
+        metricsCollector.stop();
+      } catch {
+        // ignore
+      }
+      metricsCollector = null;
+    }
+    cleanupTerminals();
+    cleanupFolderWatchers();
     try {
-      metricsCollector.stop();
+      // #229: cookies persist via the partition, but an explicit flush protects
+      // fresh logins from being lost when quit follows shortly after sign-in.
+      // Raced against a short timeout so a pathological cookie-store hang can
+      // never delay application quit.
+      await Promise.race([
+        session.fromPartition(EMBEDDED_BROWSER_PARTITION).cookies.flushStore(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1_500)),
+      ]);
     } catch {
-      // ignore
+      // best-effort — quit must not block on cookie flush
     }
-    metricsCollector = null;
-  }
-  cleanupTerminals();
-  cleanupFolderWatchers();
-  try {
-    // #229: cookies persist via the partition, but an explicit flush protects
-    // fresh logins from being lost when quit follows shortly after sign-in.
-    // Raced against a short timeout so a pathological cookie-store hang can
-    // never delay application quit.
-    await Promise.race([
-      session.fromPartition(EMBEDDED_BROWSER_PARTITION).cookies.flushStore(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1_500)),
-    ]);
-  } catch {
-    // best-effort — quit must not block on cookie flush
-  }
-  const child = managerProcess;
-  if (!QA_POLICY) managerProcess = null;
-  try {
-    if (child) await gracefulShutdown(child, 5000, QA_POLICY);
-    if (QA_POLICY && qaCleanupUncertain) throw new Error('[isolated-qa] prior cleanup remains uncertain');
-    managerProcess = null;
-    shutdownComplete = true;
-    app.exit(0);
-  } catch (err) {
-    if (!QA_POLICY) {
+    const child = managerProcess;
+    if (!QA_POLICY) managerProcess = null;
+    try {
+      if (child) await gracefulShutdown(child, 5000, QA_POLICY);
+      if (QA_POLICY && qaCleanupUncertain) throw new Error('[isolated-qa] prior cleanup remains uncertain');
+      managerProcess = null;
       shutdownComplete = true;
-      app.exit(0);
-      throw err;
+      return true;
+    } catch (err) {
+      if (!QA_POLICY) {
+        shutdownComplete = true;
+        ringBuffer.append(`[quit cleanup error] ${(err as Error)?.message ?? err}\n`);
+        return true;
+      }
+      reportQaCleanupUncertain(err);
+      shuttingDown = false;
+      return false;
     }
-    reportQaCleanupUncertain(err);
-    shuttingDown = false;
-  }
+  })().finally(() => {
+    if (!shutdownComplete) shutdownPreparationPromise = null;
+  });
+  return shutdownPreparationPromise;
+}
+
+async function prepareForUpdateInstall(): Promise<void> {
+  forceQuitRequested = true;
+  const prepared = await prepareApplicationShutdown('update-install');
+  if (!prepared) throw new Error('cli-jaw could not safely stop its bundled server');
+}
+
+function initializeAppUpdater(): void {
+  if (appUpdaterController) return;
+  const { autoUpdater } = electronUpdater;
+  appUpdaterController = createAppUpdaterController({
+    updater: autoUpdater,
+    enabled: shouldEnableAppUpdater({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      isolatedQa: QA_POLICY !== null,
+      disabledByEnvironment: process.env.JAW_DISABLE_AUTO_UPDATE === '1',
+    }),
+    currentVersion: app.getVersion(),
+    showMessageBox: options => dialog.showMessageBox(options),
+    prepareForUpdateInstall,
+    log: message => ringBuffer.append(`${message}\n`),
+  });
 }
 
 function reportQaCleanupUncertain(error: unknown): void {
@@ -926,7 +974,26 @@ function applyMainWindowZoom(direction: 'in' | 'out' | 'reset'): void {
 
 function installManagerApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as MenuItemConstructorOptions] : []),
+    ...(process.platform === 'darwin' ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        {
+          label: 'Check for Updates…',
+          enabled: appUpdaterController?.enabled ?? false,
+          click: () => { void appUpdaterController?.checkManually(); },
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    } as MenuItemConstructorOptions] : []),
     {
       label: 'File',
       submenu: [

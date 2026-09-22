@@ -515,11 +515,13 @@ The Manager sidebar separates instance selection from session and process action
 
 For end users, download the desktop artifact from **GitHub Releases**:
 
-- **macOS**: download the DMG, drag CLI-JAW into Applications, then launch it. Current builds carry only a plain ad-hoc signature and are not notarized, so first launch may require right-click → **Open** in Finder.
-- **Windows**: download the NSIS installer. It includes the same sidecar server and adds the packaged `jaw` shim to PATH.
+- **macOS**: download the DMG, drag CLI-JAW into Applications, then launch it. Releases produced by the current workflow are Developer ID signed, notarized and stapled.
+- **Windows**: download the NSIS installer. It includes the same sidecar server and adds the packaged `jaw` shim to PATH. Windows artifacts are currently unsigned and may show SmartScreen.
 - **Linux**: download the AppImage, make it executable, and run it.
 
 After first launch, accept the **Install CLI command** prompt to create the terminal `jaw` command from the bundled sidecar. If you skip the prompt, use the tray menu item **Install CLI to Terminal** later. This path does not require a global npm install for the packaged app or terminal shim.
+
+The installed macOS app checks its matching GitHub Release channel in the background and also exposes **CLI-JAW → Check for Updates…**. Preview builds select matching preview tags from the GitHub release feed; stable builds use GitHub's latest stable release. Each selected release carries its own `latest-mac.yml`. Download and restart/install both require explicit confirmation. An existing unsigned install cannot safely bootstrap into this trust chain, so install the first signed DMG manually once; subsequent signed releases can update in-app.
 
 Developer build:
 
@@ -531,7 +533,7 @@ npm run electron:dev          # develop with hot reload
 npm run electron:dist:mac     # build macOS arm64 .dmg + .zip with bundled sidecar
 ```
 
-For an opt-in Developer ID build, configure your signing identity and notarization credentials for electron-builder, then run `npm run electron:dist:mac:signed`. This command requests notarization and checks the resulting app with `npm run verify:mac-signature`, including Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment and a stapled ticket. The ordinary `electron:dist:mac` command disables identity discovery. With no signing identity configured, electron-builder skips signing and its configured `afterSign` hook; the later `electron:resign:mac` step produces the final plain ad-hoc bundle without Developer ID authority, hardened-runtime signing or a secure timestamp. That artifact is for local launch, not a rehearsal of the signed path. The GitHub Actions desktop release workflow still selects this ad-hoc build; these opt-in commands do not certify existing release downloads.
+For a local Developer ID build, configure your signing identity and notarization credentials for electron-builder, then run `npm run electron:dist:mac:signed`. This command requests notarization and verifies the Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment, stapled ticket and update ZIP metadata/hash. The ordinary `electron:dist:mac` command disables identity discovery and produces a plain ad-hoc local build, not a rehearsal of the signed path. The canonical GitHub Actions workflow fails closed unless its macOS build is signed by Team `U9ATA49N28`, notarized, stapled and update-metadata verified.
 
 The packaged app lands in `electron/dist/`. The GitHub Actions desktop release workflow builds macOS arm64 DMG/ZIP, Windows x64 NSIS/ZIP, and Linux AppImage artifacts on release publish or manual dispatch. Native modules such as `better-sqlite3` stay in the manager/sidecar server — the Electron main process never imports them.
 

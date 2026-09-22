@@ -63,11 +63,19 @@ for (const scriptPath of ['scripts/release-preview.sh']) {
         );
         assert.ok(
             script.includes('unsigned'),
-            'release notes must contain the literal "unsigned" warning for desktop artifacts',
+            'release notes must disclose that Windows desktop artifacts remain unsigned',
         );
         assert.ok(
-            script.includes('xattr -d com.apple.quarantine'),
-            'release notes must instruct macOS users on the xattr -d com.apple.quarantine workaround',
+            script.includes('Developer ID signed, Apple-notarized and stapled'),
+            'release notes must describe the macOS trust state',
+        );
+        assert.ok(
+            !script.includes('xattr -d com.apple.quarantine'),
+            'signed and notarized macOS releases must not instruct users to bypass Gatekeeper',
+        );
+        assert.ok(
+            script.includes('Existing unsigned installs must install this first signed DMG manually once'),
+            'release notes must explain the one-time trust-chain bootstrap',
         );
         assert.ok(
             !script.includes('npm --prefix electron run dist:mac'),
@@ -347,7 +355,28 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(workflow.includes('Verify macOS app icons'), 'desktop workflow must validate macOS app icons separately');
     assert.ok(workflow.includes("if: matrix.platform == 'macos'"), 'macOS icon verification must not run on Windows/Linux matrix legs');
     assert.ok(workflow.includes('npm run check:app-icons'), 'desktop workflow must validate app icon assets before uploading macOS artifacts');
-    assert.ok(workflow.includes('CSC_IDENTITY_AUTO_DISCOVERY: false'), 'desktop workflow must keep unsigned mac builds explicit');
+    assert.ok(workflow.includes('Package signed and notarized macOS app'), 'desktop workflow must use a dedicated signed macOS packaging step');
+    assert.ok(workflow.includes("if: matrix.platform == 'macos'"), 'Apple credentials must be scoped to macOS-only steps');
+    assert.ok(workflow.includes('CSC_LINK: ${{ secrets.MAC_CSC_LINK }}'), 'workflow must map the certificate secret to electron-builder CSC_LINK');
+    assert.ok(workflow.includes('CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}'), 'workflow must map the p12 password to electron-builder CSC_KEY_PASSWORD');
+    assert.ok(workflow.includes('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}'), 'workflow must provide notarization credentials only at runtime');
+    assert.ok(workflow.includes('EXPECTED_APPLE_TEAM_ID: U9ATA49N28'), 'credential preflight must pin the release signing team');
+    assert.ok(workflow.includes('--config.mac.notarize=true --publish never'), 'macOS packaging must request notarization without publishing behind the release uploader');
+    assert.ok(workflow.includes('Verify Developer ID signature and notarization ticket'), 'signed macOS artifacts must be verified before upload');
+    assert.ok(workflow.includes('Verify macOS update metadata and payload integrity'), 'update metadata and ZIP hash must be verified before upload');
+    assert.ok(workflow.includes('VERIFY_EXPECTED_TEAM_ID: U9ATA49N28'), 'signature verification must enforce the expected Developer ID team');
+    assert.ok(workflow.includes("if: matrix.platform != 'macos'"), 'unsigned packaging must be limited to Windows and Linux');
+    assert.ok(workflow.includes('CSC_IDENTITY_AUTO_DISCOVERY: false'), 'Windows/Linux packaging must keep identity discovery disabled');
+    assert.ok(workflow.includes('electron/dist/*-mac.yml'), 'desktop release must upload macOS updater channel metadata');
+    assert.ok(workflow.includes('electron/dist/*.blockmap'), 'desktop release must upload differential update metadata when generated');
+    assert.ok(
+        workflow.indexOf('Verify Developer ID signature and notarization ticket') < workflow.indexOf('Upload build artifacts (manual run)'),
+        'signature/notarization verification must run before any artifact upload',
+    );
+    assert.ok(
+        workflow.indexOf('Verify macOS update metadata and payload integrity') < workflow.indexOf('Upload build artifacts (manual run)'),
+        'update metadata verification must run before any artifact upload',
+    );
     assert.ok(workflow.includes('gh release upload'), 'desktop workflow must upload artifacts to the existing release');
     assert.ok(
         workflow.includes('ref: ${{ inputs.release-tag || github.event.release.tag_name || github.ref }}'),
