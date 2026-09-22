@@ -33,3 +33,38 @@ jobs:
           name: windows-dryrun-observations
           path: ${{ runner.temp }}/jaw-wis-observations.json
           if-no-files-found: error
+
+  compare-suite:
+    name: Observe Windows suite (${{ matrix.mode }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default, serial]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 0a17b121c63cab0813d6d888965c30550e296301
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/ensure-native-modules.cjs
+      - name: Observe frozen original Windows suite
+        shell: pwsh
+        env:
+          PROBE_MODE: ${{ matrix.mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(& node scripts/ci/windows-unit-manifest.mjs --print)
+          if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'manifest invalid' }
+          $tsx = (& node -p "require.resolve('tsx/cli')").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $tsx) { throw 'tsx unavailable' }
+          $nodeArgs = @($tsx, '--import', './tests/setup/test-home.ts', '--experimental-test-module-mocks', '--test')
+          if ($env:PROBE_MODE -eq 'serial') { $nodeArgs += '--test-concurrency=1' }
+          $nodeArgs += $files
+          & node @nodeArgs
+          exit $LASTEXITCODE
