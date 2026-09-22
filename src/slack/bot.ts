@@ -1661,6 +1661,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                         ...(reservedEventKey ? { eventKey: reservedEventKey } : {}),
                         ...(reservationGeneration !== undefined ? { reservationGeneration } : {}),
                     });
+                    if (signal.aborted) throw new Error('ingress_cancelled');
                     settleOk();
                 } catch (error) {
                     settleErr(error);
