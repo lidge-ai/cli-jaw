@@ -21,10 +21,14 @@ function fixture(t: test.TestContext, version = '2.17.55') {
   writeFileSync(zipPath, bytes);
   writeFileSync(`${zipPath}.blockmap`, '{}');
   const digest = createHash('sha512').update(bytes).digest('base64');
+  const dmgName = `cli-jaw-${version}-arm64.dmg`;
   const metadataPath = join(dist, 'latest-mac.yml');
   writeFileSync(metadataPath, stringify({
     version,
-    files: [{ url: zipName, sha512: digest, size: bytes.length }],
+    files: [
+      { url: dmgName, sha512: 'unused-by-updater-verifier', size: 123 },
+      { url: zipName, sha512: digest, size: bytes.length },
+    ],
     path: zipName,
     sha512: digest,
   }));
@@ -59,7 +63,15 @@ test('rejects a provider that points updates at another repository', (t) => {
 test('rejects path traversal in the update ZIP entry', (t) => {
   const f = fixture(t);
   const metadata = parse(readFileSync(f.metadataPath, 'utf8'));
-  metadata.files[0].url = `../${metadata.files[0].url}`;
+  metadata.files[1].url = `../${metadata.files[1].url}`;
   writeFileSync(f.metadataPath, stringify(metadata));
-  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /Unsafe or unexpected/);
+  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /Unsafe update artifact/);
+});
+
+test('rejects ambiguous metadata with more than one update ZIP', (t) => {
+  const f = fixture(t);
+  const metadata = parse(readFileSync(f.metadataPath, 'utf8'));
+  metadata.files.push({ ...metadata.files[1], url: `duplicate-${metadata.files[1].url}` });
+  writeFileSync(f.metadataPath, stringify(metadata));
+  assert.throws(() => verifyElectronUpdateMetadata({ projectRoot: f.root }), /exactly one ZIP/);
 });

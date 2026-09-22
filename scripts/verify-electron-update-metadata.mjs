@@ -44,14 +44,20 @@ export function verifyElectronUpdateMetadata(options = {}) {
   if (metadata?.version !== version) {
     throw new Error(`Update metadata version ${String(metadata?.version)} does not match package version ${version}`);
   }
-  if (!Array.isArray(metadata?.files) || metadata.files.length !== 1) {
+  if (!Array.isArray(metadata?.files) || metadata.files.length === 0) {
+    throw new Error('macOS update metadata must contain artifact entries');
+  }
+  for (const file of metadata.files) {
+    if (typeof file?.url !== 'string' || basename(file.url) !== file.url) {
+      throw new Error(`Unsafe update artifact path: ${String(file?.url)}`);
+    }
+  }
+  const zipEntries = metadata.files.filter(file => file.url.endsWith('-mac.zip'));
+  if (zipEntries.length !== 1) {
     throw new Error('macOS update metadata must contain exactly one ZIP entry');
   }
 
-  const entry = metadata.files[0];
-  if (typeof entry?.url !== 'string' || basename(entry.url) !== entry.url || !entry.url.endsWith('-mac.zip')) {
-    throw new Error(`Unsafe or unexpected update ZIP path: ${String(entry?.url)}`);
-  }
+  const entry = zipEntries[0];
   const zipPath = join(distDir, entry.url);
   const blockmapPath = `${zipPath}.blockmap`;
   if (!existsSync(zipPath)) throw new Error(`Missing update ZIP: ${zipPath}`);
