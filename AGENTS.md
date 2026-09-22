@@ -257,6 +257,11 @@ and acquire `AbortSignal` are test-only this slice. Do not route pooled Pi
 through `runNativeRuntime`. Sync runtime-integration and root notes; do not add
 numeric tree signals or a registry.
 
+Pi resolved stderr stays in a bounded private classifier buffer; caught error
+diagnostics are redacted before bounding and never annotate stopped outcomes.
+Captured-turn observers cannot alter immutable finals. Captured internal kill
+reasons keep generic stopped wording instead of falling through to user Stop.
+
 Interactive TUI Activity is implemented in `src/cli/tui/activity*.ts` and
 `bin/commands/tui/activity*.ts`. Default Activity/explicit Legacy is independent of
 transport. Snapshot owns live admission; F6 is read-only history, never a message/

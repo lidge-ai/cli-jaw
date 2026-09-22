@@ -180,6 +180,26 @@ test('captured explicit Stop provenance reaches the terminal as user_stop', asyn
     }
 });
 
+test('captured unmapped kill reasons reach the collector as generic stopped terminals', async () => {
+    resetRequestRegistryForTest();
+    try {
+        for (const killReason of ['planned-restart', 'shutdown', 'unknown']) {
+            const collected = await collectLifecycleResult(`captured-${killReason}`, () => lifecycleResult({
+                code: 130,
+                killReason,
+                outcome: { status: 'stopped', finalText: null, partialText: '' },
+                wasKilled: true,
+                wasSteer: true,
+            }));
+            assert.equal(collected.text, 'tg.stopped', killReason);
+            assert.equal(collected.data['runtimeStatus'], 'stopped', killReason);
+            assert.equal(collected.data['stopCause'], undefined, killReason);
+        }
+    } finally {
+        resetRequestRegistryForTest();
+    }
+});
+
 test('gateway interrupt terminal settles before a later steer event with steer provenance', async () => {
     resetRequestRegistryForTest();
     try {
