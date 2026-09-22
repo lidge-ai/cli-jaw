@@ -117,7 +117,7 @@ function writeMagic(path: string, magic: number): void {
     writeFileSync(path, bytes);
 }
 
-test('afterSign preserves a valid Developer ID signature reported on stderr', async () => {
+test('direct afterSign invocation preserves a valid Developer ID signature reported on stderr', async () => {
     spawnResult = {
         status: 0,
         stdout: '',
@@ -130,7 +130,7 @@ test('afterSign preserves a valid Developer ID signature reported on stderr', as
     assert.equal(execCalls.length, 0, 'a real signature must never be replaced by the ad-hoc fallback');
 });
 
-test('afterSign applies the fallback only for a recognized unsigned result', async () => {
+test('direct afterSign invocation applies a plain ad-hoc fallback only for a recognized unsigned result', async () => {
     spawnResult = { status: 1, stdout: '', stderr: 'cli-jaw.app: code object is not signed at all\n' };
     const { root } = appFixture();
 
@@ -138,9 +138,12 @@ test('afterSign applies the fallback only for a recognized unsigned result', asy
 
     assert.equal(execCalls.length, 1);
     assert.deepEqual(execCalls[0]!.args.slice(0, 4), ['--force', '--deep', '--sign', '-']);
+    assert.ok(!execCalls[0]!.args.includes('--options'), 'plain ad-hoc fallback must not claim hardened-runtime signing');
+    assert.ok(!execCalls[0]!.args.includes('runtime'), 'plain ad-hoc fallback must not pass the runtime option');
+    assert.ok(!execCalls[0]!.args.includes('--timestamp'), 'plain ad-hoc fallback must not request a secure timestamp');
 });
 
-test('afterSign fails closed when the signature probe fails unexpectedly', async () => {
+test('direct afterSign invocation fails closed when the signature probe fails unexpectedly', async () => {
     spawnResult = { status: 2, stdout: '', stderr: 'cli-jaw.app: operation not permitted\n' };
     const { root } = appFixture();
 
@@ -325,6 +328,35 @@ test('signature verifier enforces VERIFY_EXPECTED_TEAM_ID only when explicitly p
     spawnResults = validVerificationProbes('OTHERTEAM1');
     assert.throws(() => verifyMacSignature({ appPath, requireStapled: true }),
         /signature team "OTHERTEAM1" does not match expected team "EXPECTED01"/);
+});
+
+test('signature verifier rejects an ad-hoc report without authority, hardened runtime, or timestamp', () => {
+    const { root } = appFixture();
+    spawnResults = [
+        {
+            status: 0,
+            stdout: '',
+            stderr: [
+                'Signature=adhoc',
+                'TeamIdentifier=not set',
+                'CodeDirectory v=20400 size=123 flags=0x2(adhoc) hashes=1+7 location=embedded',
+            ].join('\n'),
+        },
+        { status: 0, stdout: '', stderr: 'valid on disk\nsatisfies its Designated Requirement\n' },
+        { status: 0, stdout: '', stderr: 'accepted\nsource=Unnotarized Developer ID\n' },
+    ];
+
+    assert.throws(
+        () => verifyMacSignature({ appPath: join(root, 'cli-jaw.app'), requireStapled: false }),
+        error => {
+            const message = (error as Error).message;
+            assert.match(message, /bundle carries no certificate authority/);
+            assert.match(message, /bundle is ad-hoc signed/);
+            assert.match(message, /hardened runtime is not enabled/);
+            assert.match(message, /signature has no secure timestamp/);
+            return true;
+        },
+    );
 });
 
 test('signature verifier fails closed when the metadata probe cannot execute cleanly', () => {

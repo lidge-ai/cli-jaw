@@ -86,12 +86,12 @@ Activity persistence uses the existing SQLite trace tables: nullable `trace_runs
 | `gate:all` | `node scripts/release-gates.mjs` |
 | `prepublishOnly` | `npm run build && npm run build:frontend && npm run check:frontend-build-output` |
 | `electron:dev` | `concurrently -k -n jaw,electron "node scripts/electron-dev-manager.mjs" "npm --prefix electron run dev"` |
-| `electron:dist:mac:signed` | Opt-in Developer ID build with operator-provided electron-builder signing/notarization configuration. Requests notarization, then runs the existing artifact checks and `verify:mac-signature`. The default local command and desktop release workflow remain unsigned/ad-hoc. |
+| `electron:dist:mac:signed` | Opt-in Developer ID build with operator-provided electron-builder signing/notarization configuration. This is the path that applies the configured entitlements and hardened runtime, requests notarization, then runs the existing artifact checks and `verify:mac-signature`. |
 | `verify:mac-signature` | Checks the built macOS app's Developer ID authority, hardened runtime, secure timestamp, nested signature, Gatekeeper assessment and stapled ticket. Source tests alone do not certify an artifact. |
 | `electron:build` | `npm --prefix electron run build` |
 | `sidecar:bundle` | `bash scripts/bundle-sidecar.sh darwin arm64` |
-| `electron:dist:mac` | `npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons` |
-| `electron:resign:mac` | `codesign --force --deep --sign - electron/dist/mac-arm64/cli-jaw.app` |
+| `electron:dist:mac` | `npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons`. With no signing identity configured, electron-builder skips mac signing and `afterSign`; the following re-sign step creates the final plain ad-hoc local artifact. |
+| `electron:resign:mac` | `codesign --force --deep --sign - electron/dist/mac-arm64/cli-jaw.app` — plain ad-hoc only: no Developer ID authority, hardened-runtime option or secure timestamp. It is not a signed-release rehearsal. |
 | `electron:start` | `npm --prefix electron run start` |
 | `check:electron-sidecar-no-jwc` | `node scripts/check-electron-sidecar-no-jwc.cjs` |
 | `check:electron-dist-mac-no-jwc` | `node scripts/check-electron-sidecar-no-jwc.cjs --server-root electron/dist/mac-arm64/cli-jaw.app/Contents/Resources/server` |
