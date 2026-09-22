@@ -86,8 +86,9 @@ Activity persistence uses the existing SQLite trace tables: nullable `trace_runs
 | `gate:all` | `node scripts/release-gates.mjs` |
 | `prepublishOnly` | `npm run build && npm run build:frontend && npm run check:frontend-build-output` |
 | `electron:dev` | `concurrently -k -n jaw,electron "node scripts/electron-dev-manager.mjs" "npm --prefix electron run dev"` |
-| `electron:dist:mac:signed` | Opt-in Developer ID build with operator-provided electron-builder signing/notarization configuration. This is the path that applies the configured entitlements and hardened runtime, requests notarization, then runs the existing artifact checks and `verify:mac-signature`. |
+| `electron:dist:mac:signed` | Opt-in local Developer ID build with operator-provided signing/notarization configuration. Requests notarization, then runs artifact, update-metadata and signature verification. The default local command remains ad-hoc; the canonical desktop release workflow requires Team `U9ATA49N28` signing/notarization and fails closed. |
 | `verify:mac-signature` | Checks the built macOS app's Developer ID authority, hardened runtime, secure timestamp, nested signature, Gatekeeper assessment and stapled ticket. Source tests alone do not certify an artifact. |
+| `verify:electron-update-metadata` | Verifies the GitHub provider's per-release `latest-mac.yml`: version, safe ZIP name, size, SHA-512, blockmap and packaged provider before any macOS artifact upload. Preview clients select a matching prerelease tag from GitHub's feed, then use that release's `latest-mac.yml` fallback. |
 | `electron:build` | `npm --prefix electron run build` |
 | `sidecar:bundle` | `bash scripts/bundle-sidecar.sh darwin arm64` |
 | `electron:dist:mac` | `npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons`. With no signing identity configured, electron-builder skips mac signing and `afterSign`; the following re-sign step creates the final plain ad-hoc local artifact. |

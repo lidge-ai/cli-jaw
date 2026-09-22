@@ -198,6 +198,23 @@ test('Electron quit path shows progress and exits after manager cleanup', () => 
     assert.ok(quitProgress.includes('animation: cliJawQuitSpin'), 'quit overlay must include a visible spinner');
 });
 
+test('Electron updater stays in the trusted main process and preserves coordinated shutdown', () => {
+    const main = read('electron/src/main/index.ts');
+    const preload = read('electron/src/preload/index.ts');
+    const builder = read('electron/electron-builder.yml');
+    const vite = read('electron/electron.vite.config.ts');
+
+    assert.ok(main.includes("from './lib/app-updater.js'"), 'Electron main must own updater lifecycle');
+    assert.ok(main.includes('initializeAppUpdater();'), 'updater must initialize before the native menu is built');
+    assert.ok(main.includes("label: 'Check for Updates…'"), 'macOS native app menu must expose a manual update check');
+    assert.ok(main.includes("await prepareApplicationShutdown('update-install')"), 'update install must await sidecar cleanup');
+    assert.ok(main.includes('appUpdaterController?.dispose()'), 'shutdown must dispose updater timers and listeners');
+    assert.equal(preload.includes('updater'), false, 'renderer preload must not expose update-source or install control');
+    assert.ok(builder.includes('provider: github'), 'packaged update config must use the public GitHub provider');
+    assert.ok(builder.includes('owner: lidge-jun') && builder.includes('repo: cli-jaw'), 'update provider must pin repository ownership');
+    assert.ok(vite.includes("'electron-updater'"), 'electron-updater must remain an external packaged runtime dependency');
+});
+
 test('Electron default launch owns its manager server instead of attaching to web UI', () => {
     const main = read('electron/src/main/index.ts');
 

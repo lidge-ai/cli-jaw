@@ -1,6 +1,6 @@
 # CLI-JAW Claude Guide
 
-- macOS signing is opt-in via `electron:dist:mac:signed`; `verify:mac-signature` checks the built app. Preserve the ordinary ad-hoc build and distinguish these commands from the currently unsigned desktop release workflow. Keep README and `structure/infra.md` aligned; fixture tests do not prove a signed or notarized artifact.
+- The canonical desktop release workflow must Developer ID-sign macOS with Team `U9ATA49N28`, notarize, staple, verify the final app, and verify channel metadata plus the update ZIP SHA-512 before upload. `electron:dist:mac:signed` is the equivalent opt-in local path; ordinary `electron:dist:mac` remains ad-hoc. Windows remains unsigned. Keep README and `structure/infra.md` aligned; fixture tests do not prove a signed/notarized artifact, and the first signed release is a manual-DMG bootstrap before in-app updates can be trusted.
 
 This repository is a Node.js ESM orchestration runtime for boss/employee dispatch, Web UI, browser/CDP automation, Telegram/Discord/Slack channels, memory, heartbeat, and PABCD orchestration.
 

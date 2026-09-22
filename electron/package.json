@@ -26,7 +26,11 @@
     "vite": "^7.3.2"
   },
   "dependencies": {
+    "electron-updater": "6.8.9",
     "fix-path": "^4.0.0",
     "node-pty": "^1.1.0"
+  },
+  "overrides": {
+    "js-yaml": "5.4.2"
   }
 }

@@ -6,7 +6,7 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: resolve(__dirname, 'src/main/index.ts') },
-      rollupOptions: { external: ['electron', 'fix-path', 'node-pty'] },
+      rollupOptions: { external: ['electron', 'electron-updater', 'fix-path', 'node-pty'] },
     },
   },
   preload: {

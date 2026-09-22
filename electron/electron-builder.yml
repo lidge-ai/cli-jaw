@@ -79,4 +79,7 @@ linux:
   target:
     - AppImage
   category: Development
-publish: null
+publish:
+  provider: github
+  owner: lidge-jun
+  repo: cli-jaw
