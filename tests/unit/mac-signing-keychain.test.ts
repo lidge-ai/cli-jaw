@@ -35,6 +35,7 @@ test('certificate import uses the owned keychain password, verifies the team, an
             randomBytesFn:size=>Buffer.alloc(size,0xab),
             runSecurity:args=>{
                 calls.push([...args]);
+                if(args[0]==='list-keychains'&&args.length===3)return '    "/Users/runner/Library/Keychains/login.keychain-db"\n';
                 return args[0]==='find-identity'
                     ? '1) ABCDEF "Developer ID Application: Maintainer (U9ATA49N28)"\n     1 valid identities found'
                     : '';
@@ -45,6 +46,8 @@ test('certificate import uses the owned keychain password, verifies the team, an
         assert.ok(calls.some(args=>args[0]==='import'&&args.includes(certificatePassword)));
         assert.ok(calls.some(args=>args[0]==='set-key-partition-list'&&args.includes(keychainPassword)));
         assert.ok(!calls.find(args=>args[0]==='set-key-partition-list')!.includes(certificatePassword));
+        assert.ok(calls.some(args=>args[0]==='list-keychains'&&args[3]==='-s'
+            &&args.includes(keychain)&&args.includes('/Users/runner/Library/Keychains/login.keychain-db')));
         assert.equal(fs.readFileSync(output,'utf8'),`keychain=${keychain}\n`);
         assert.equal(fs.readdirSync(root).some(name=>name.endsWith('.p12')),false);
     }finally{fs.rmSync(root,{recursive:true,force:true});}
@@ -101,8 +104,17 @@ test('cleanup accepts only helper-owned keychains directly inside RUNNER_TEMP',(
     fs.writeFileSync(owned,'fixture');
     try{
         assert.throws(()=>cleanupSigningKeychain('/tmp/foreign.keychain-db',{env:{RUNNER_TEMP:root},runSecurity:()=>''}),/refusing/);
-        cleanupSigningKeychain(owned,{env:{RUNNER_TEMP:root},runSecurity:args=>{calls.push([...args]);fs.rmSync(owned,{force:true});return '';}});
-        assert.deepEqual(calls,[['delete-keychain',owned]]);
+        cleanupSigningKeychain(owned,{env:{RUNNER_TEMP:root},runSecurity:args=>{
+            calls.push([...args]);
+            if(args[0]==='list-keychains')return `    "${owned}"\n    "/Users/runner/Library/Keychains/login.keychain-db"\n`;
+            if(args[0]==='delete-keychain')fs.rmSync(owned,{force:true});
+            return '';
+        }});
+        assert.deepEqual(calls,[
+            ['list-keychains','-d','user'],
+            ['list-keychains','-d','user','-s','/Users/runner/Library/Keychains/login.keychain-db'],
+            ['delete-keychain',owned],
+        ]);
         assert.equal(fs.existsSync(owned),false);
     }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

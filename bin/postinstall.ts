@@ -107,7 +107,7 @@ const JAW_HOME = (() => {
 
 const home = os.homedir();
 const jawHome = JAW_HOME;
-const PATH_LOOKUP_CMD = process.platform === 'win32' ? 'where' : 'which';
+const PATH_LOOKUP_CMD = process.platform === 'win32' ? 'where.exe' : 'which';
 const MCP_SERVERS_SKIP = process.env["CLI_JAW_SKIP_MCP_SERVERS"] === '1'
     || process.env["CLI_JAW_SKIP_MCP_SERVERS"] === 'true';
 const SKILL_DEPS_SKIP = process.env["CLI_JAW_SKIP_SKILL_DEPS"] === '1'
