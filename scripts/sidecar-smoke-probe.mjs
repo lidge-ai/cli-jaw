@@ -52,10 +52,16 @@ async function runChild() {
     function classify(command,args,opts) {
         if(typeof command!=='string'||!args.every(value=>typeof value==='string')||opts.shell||opts.detached) return {kind:'forbidden-process'};
         const base=path.basename(command).toLowerCase();
-        const name=/^[a-z0-9_-]+$/i;
+        const name=/^[a-z0-9_-]+(?:\.exe)?$/i;
         if((command==='which'||command==='where.exe'||command===which)
             && ((args.length===1&&name.test(args[0]))||(args.length===2&&args[0]==='-a'&&name.test(args[1]))))
             return {kind:'metadata',command:which,args:process.platform==='win32'?[args.at(-1)]:['-a',args.at(-1)]};
+        // scanSystemProfile resolves the known npm.cmd shim through this exact,
+        // argv-separated wrapper on Windows. Keep the host probe unavailable;
+        // accepting only the fixed shape does not open a general cmd.exe path.
+        if(process.platform==='win32'&&base==='cmd.exe'
+            && JSON.stringify(args)===JSON.stringify(['/d','/s','/c','npm.cmd','--version']))
+            return {kind:'unavailable-discovery'};
         if((command==='ps'||command===ps)&&JSON.stringify(args)===JSON.stringify(['-o','lstart=','-p',String(process.pid)]))
             return {kind:'metadata',command:ps,args};
         if((command==='powershell.exe'||command===powershell)&&JSON.stringify(args)===JSON.stringify([
