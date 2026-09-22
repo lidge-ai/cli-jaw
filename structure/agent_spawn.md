@@ -19,6 +19,8 @@ aliases: [CLI-JAW Agent Spawn, agent runtime, ACP orchestration]
 
 `runtime/print-projection.ts` owns only counters/accepted-content mapping; `print-activity.ts` composes canonical bounds and bypass close. Generic print and legacy Copilot ACP branches capture `activityIdentity` and create one observer; native branches keep their existing projection. Accepted Kiro/AGY/Copilot output and provider parser boundaries feed the observer, never raw stderr. Existing lifecycle supplies the application-final. `merge-tool-log.ts` reconciles exact run/ref or run/seq tools, with primary-first order and terminal precedence. Best-effort trace finalization/linkage cannot discard a correct inserted answer or add delivery attempts. Failed linkage remains explicitly incomplete, not atomic.
 
+Completed Codex `web_search` items (search, page open, and fallback) emit `done`. A provider item ID supplies `codex:item:<id>` as the stable step reference; absent IDs remain anonymous rather than sharing a query-derived identity. The print observer therefore closes successful searches without a missing-terminal diagnostic.
+
 ### Native Claude ownership
 
 `claude-runtime-run.ts` adapts the optional SDK to the shared native host and

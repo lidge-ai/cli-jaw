@@ -54,19 +54,24 @@ export function extractToolLabels(cli: string, event: CliEventRecord, ctx: Spawn
     if (cli === 'codex' && (event.type === 'item.started' || event.type === 'item.completed') && item) {
         if (event.type === 'item.completed' && item.type === 'web_search') {
             const action = item.action?.type || '';
+            const stepRef = item.id ? `codex:item:${item.id}` : undefined;
             if (action === 'search') {
                 const query = item.query || item.action?.query || 'search';
-                labels.push({ icon: '🔍', label: buildPreview(query, 60), toolType: 'search', detail: query });
+                labels.push({ icon: '🔍', label: buildPreview(query, 60), toolType: 'search', detail: query,
+                    ...(stepRef ? { stepRef } : {}), status: 'done' });
             } else if (action === 'open_page') {
                 const url = item.action?.url || '';
                 try {
-                    labels.push({ icon: '🌐', label: new URL(url).hostname, toolType: 'search', detail: url });
+                    labels.push({ icon: '🌐', label: new URL(url).hostname, toolType: 'search', detail: url,
+                        ...(stepRef ? { stepRef } : {}), status: 'done' });
                 } catch {
-                    labels.push({ icon: '🌐', label: 'page', toolType: 'search', detail: url });
+                    labels.push({ icon: '🌐', label: 'page', toolType: 'search', detail: url,
+                        ...(stepRef ? { stepRef } : {}), status: 'done' });
                 }
             } else {
                 const query = item.query || 'web';
-                labels.push({ icon: '🔍', label: buildPreview(query, 60), toolType: 'search', detail: query });
+                labels.push({ icon: '🔍', label: buildPreview(query, 60), toolType: 'search', detail: query,
+                    ...(stepRef ? { stepRef } : {}), status: 'done' });
             }
         }
         if (event.type === 'item.completed' && item.type === 'reasoning') {
