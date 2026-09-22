@@ -437,6 +437,9 @@ fs.writeFileSync(path.join(root, ".jaw-install-state.json"), JSON.stringify({
 }, null, 2), { flag: "wx" });
 ' "$SIDECAR_DIR"
 
+# Windows refuses to rename a directory while the parent Git Bash process has
+# that directory as its cwd. Leave staging before the atomic promotion.
+cd "$PROJECT_ROOT"
 transaction complete "$PROJECT_ROOT" "$PLATFORM" "$ARCH" "$NODE_VERSION" "$BUILD_ROOT" "$EXTRACT_ROOT"
 transaction promote "$PROJECT_ROOT" "$PLATFORM" "$ARCH" "$NODE_VERSION" "$BUILD_ROOT" "$EXTRACT_ROOT"
 transaction cleanup "$PROJECT_ROOT" "$PLATFORM" "$ARCH" "$NODE_VERSION" "$BUILD_ROOT" "$EXTRACT_ROOT"
