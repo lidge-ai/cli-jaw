@@ -35,7 +35,8 @@ export interface PiRuntimeSessionOptions {
     effort?: string;
     onPiEvent?: (event: PiRuntimeEvent) => void;
     onRawRecord?: (record: unknown) => void;
-    onFailure?: (error: Error) => void;
+    onFailure?: (error: Error, outcome: RuntimeTurnOutcome) => void;
+    onStderr?: (stderr: string) => void;
 }
 
 type Pending = { turnId: string; outcome: RuntimeTurnOutcome; claimed?: RuntimeTurnOutcome };
@@ -88,9 +89,16 @@ export class PiRuntimeSession implements NativeRuntimeSession {
         if (typeof prompt.text !== 'string' || prompt.text.length > FULLTEXT_MAX_CHARS || prompt.images?.length) {
             throw new Error('pi_runtime_prompt_unsupported');
         }
-        const turnId = this.options.getTurnContext().turnId;
+        const turn = this.options.getTurnContext();
+        const turnId = turn.turnId;
         if (typeof turnId !== 'string' || !turnId) throw new Error('pi_runtime_missing_turn');
         this.capturedTurnId = turnId;
+        const current = () => {
+            if (this.capturedTurnId !== turnId) return false;
+            if (!turn.isCurrent) return true;
+            try { return turn.isCurrent() === true; }
+            catch { return false; }
+        };
         this.sending = true;
         this.cancelled = false;
         let outcome: RuntimeTurnOutcome;
@@ -101,10 +109,12 @@ export class PiRuntimeSession implements NativeRuntimeSession {
                 ...(this.options.onRawRecord ? { onRawRecord: this.options.onRawRecord } : {}),
             });
             outcome = outcomeFromResult(result, this.cancelled);
+            if (result.stderr && current()) {
+                try { this.options.onStderr?.(result.stderr); }
+                catch { console.warn('[jaw:pi] stderr observer failed'); }
+            }
         } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
-            try { this.options.onFailure?.(failure); }
-            catch { console.warn('[jaw:pi] failure observer failed'); }
             if (failure instanceof PiRuntimeError) {
                 outcome = snapshot(this.cancelled ? { status: 'stopped', finalText: null, partialText: failure.runtimeOutcome.partialText } : failure.runtimeOutcome);
             } else {
@@ -113,6 +123,10 @@ export class PiRuntimeSession implements NativeRuntimeSession {
                     finalText: null,
                     partialText: '',
                 });
+            }
+            if (current()) {
+                try { this.options.onFailure?.(failure, outcome); }
+                catch { console.warn('[jaw:pi] failure observer failed'); }
             }
         } finally {
             this.sending = false;
