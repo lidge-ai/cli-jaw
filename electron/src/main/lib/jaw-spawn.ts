@@ -76,7 +76,7 @@ function shellScriptInvocation(binary: string, args: string[]): { command: strin
 
 function whichJawCandidates(): string[] {
   try {
-    const command = process.platform === 'win32' ? 'where' : 'which';
+    const command = process.platform === 'win32' ? 'where.exe' : 'which';
     const args = process.platform === 'win32' ? ['jaw'] : ['-a', 'jaw'];
     const out = execFileSync(command, args, {
       encoding: 'utf8',

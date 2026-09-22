@@ -37,7 +37,26 @@ function ownedKeychainPath(value,env) {
     return candidate;
 }
 
+function parseKeychainList(output) {
+    return String(output).split(/\r?\n/).map(value=>value.trim())
+        .filter(Boolean).map(value=>value.replace(/^"|"$/g,'').replace(/\\"/g,'"'));
+}
+
+function addKeychainToSearchList(keychain,runSecurity) {
+    const current=parseKeychainList(runSecurity(['list-keychains','-d','user']));
+    if(!current.includes(keychain))runSecurity(['list-keychains','-d','user','-s',keychain,...current]);
+}
+
+function removeKeychainFromSearchList(keychain,runSecurity) {
+    try {
+        const current=parseKeychainList(runSecurity(['list-keychains','-d','user']));
+        const remaining=current.filter(value=>value!==keychain);
+        if(remaining.length!==current.length)runSecurity(['list-keychains','-d','user','-s',...remaining]);
+    } catch { /* Deletion below is still mandatory if search-list inspection fails. */ }
+}
+
 function removeKeychain(keychain,runSecurity,removeFile) {
+    removeKeychainFromSearchList(keychain,runSecurity);
     try { runSecurity(['delete-keychain',keychain]); }
     catch { /* The contained filesystem fallback still removes a partially created keychain. */ }
     removeFile(keychain,{force:true,recursive:true});
@@ -72,6 +91,8 @@ export function importSigningCertificate(options={}) {
         runSecurity(['create-keychain','-p',keychainPassword,keychain]);
         runSecurity(['set-keychain-settings','-lut','21600',keychain]);
         runSecurity(['unlock-keychain','-p',keychainPassword,keychain]);
+        stage='keychain search-list configuration';
+        addKeychainToSearchList(keychain,runSecurity);
         stage='certificate import';
         runSecurity(['import',certificate,'-k',keychain,'-P',certificatePassword,
             '-T','/usr/bin/codesign','-T','/usr/bin/productbuild']);

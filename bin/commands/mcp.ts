@@ -27,7 +27,7 @@ import {
     initMcpConfig,
 } from '../../lib/mcp-sync.js';
 
-const PATH_LOOKUP_CMD = process.platform === 'win32' ? 'where' : 'which';
+const PATH_LOOKUP_CMD = process.platform === 'win32' ? 'where.exe' : 'which';
 
 // ─── ANSI ────────────────────────────────────
 const c = {

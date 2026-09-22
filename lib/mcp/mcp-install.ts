@@ -39,7 +39,7 @@ function resolveNpxPackage(args: readonly string[] | undefined) {
 export async function installMcpServers(config: McpInstallConfig) {
     const { execSync, execFileSync } = await import('child_process');
     const results: Record<string, McpInstallResult> = {};
-    const pathLookupCmd = process.platform === 'win32' ? 'where' : 'which';
+    const pathLookupCmd = process.platform === 'win32' ? 'where.exe' : 'which';
     const findBinary = (name: string) => {
         try {
             const raw = execFileSync(pathLookupCmd, [name], { encoding: 'utf8', stdio: 'pipe', timeout: 5000 }).trim();
