@@ -1338,6 +1338,7 @@ async function createWindow(): Promise<void> {
       devTools: DEV_TOOLS_ENABLED,
     },
   });
+  const owningWindow = mainWindow;
   const userAgent = mainWindow.webContents.getUserAgent();
   if (!userAgent.includes(DESKTOP_USER_AGENT_TOKEN)) {
     mainWindow.webContents.setUserAgent(`${userAgent} ${DESKTOP_USER_AGENT_TOKEN}/${app.getVersion()}`);
@@ -1386,10 +1387,9 @@ async function createWindow(): Promise<void> {
   mainWindow.on('leave-full-screen', emitFullscreen);
 
   const applyOverlay = () => {
-    const win = mainWindow;
-    if (!win || win.isDestroyed()) return;
+    if (owningWindow.isDestroyed()) return;
     const next = resolveWindowChromeOptions(process.platform, nativeTheme.shouldUseDarkColors);
-    if (next.titleBarOverlay) win.setTitleBarOverlay(next.titleBarOverlay);
+    if (next.titleBarOverlay) owningWindow.setTitleBarOverlay(next.titleBarOverlay);
   };
   nativeTheme.on('updated', applyOverlay);
 
@@ -1422,7 +1422,8 @@ async function createWindow(): Promise<void> {
   });
 
   mainWindow.on('closed', () => {
-    mainWindow = null;
+    nativeTheme.off('updated', applyOverlay);
+    if (mainWindow === owningWindow) mainWindow = null;
   });
   mainWindow.on('close', (event) => {
     if (shutdownComplete || shuttingDown) return;
