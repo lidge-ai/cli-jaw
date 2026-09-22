@@ -48,6 +48,10 @@ wire id 전체와 picker가 보여주는 base 모델. **두 목록의 일치가 
 어휘는 접두사가 없어서, `grok-4.6` + `high`가 계정에 없는 id를 만들고 resolver가
 조용히 base로 물러났다.
 
+2026-09-23 관측한 `grok-4.7` wire id는 반대로 `cursor-` 접두사가 없다.
+`low/medium/high/xhigh`와 각 fast 변형만 있으며 `max`는 없다. `claude-opus-5-5`는
+같은 Cursor 목록에서 `low`부터 `max`까지와 각 fast 변형이 확인되었다.
+
 `--list-models`가 출력하는 것이 정확히 첫 번째 목록이다. 그래서 그것을 관측으로
 받고 base와 effort 사다리는 거기서 역산한다. 접미사 어휘는
 `CURSOR_EFFORT_SUFFIX`의 역이며, 항등이 아닌 항목은 Cursor가 xhigh를
@@ -61,8 +65,8 @@ wire id 전체와 picker가 보여주는 base 모델. **두 목록의 일치가 
 ## effort는 모델별로 좁힌다
 
 opencodex는 모델마다 **다른** effort 집합을 광고한다. `gpt-5.6-sol`은 `ultra`까지
-가고 `gpt-5.6-luna`는 `max`에서 멈추며, 라우팅된 `anthropic/*`는 effort를 아예
-받지 않는다. 선택된 값은 그대로 wire에 실리므로
+가고 `gpt-5.6-luna`는 `max`에서 멈춘다. 2026-09-23에는 `gpt-6-sol`이
+`low..ultra`, `gpt-6-luna`가 `low..max`를 광고했다. 선택된 값은 그대로 wire에 실리므로
 (`-c model_reasoning_effort=`, `src/agent/args.ts`), 소비자는 union이 아니라
 모델별 집합으로 좁혀야 한다.
 

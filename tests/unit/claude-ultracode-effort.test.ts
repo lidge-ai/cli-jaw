@@ -89,6 +89,7 @@ for (const [label, args] of ULTRACODE_PATHS) {
 
 test('UC-010: ultracode is offered only where xhigh is supported', () => {
     assert.ok(claudeModelSupportsXhigh('claude-opus-5'));
+    assert.ok(claudeModelSupportsXhigh('claude-opus-5-5'));
     assert.ok(claudeModelSupportsXhigh('claude-fable-5-1'));
     assert.ok(claudeModelSupportsXhigh('opus'));
     assert.equal(claudeModelSupportsXhigh('claude-haiku-4-5'), false);
@@ -97,8 +98,9 @@ test('UC-010: ultracode is offered only where xhigh is supported', () => {
 });
 
 test('UC-011: per-model efforts drop ultracode for models that cannot run it', () => {
-    const byModel = buildClaudeEffortsByModel(['claude-opus-5', 'claude-haiku-4-5']);
+    const byModel = buildClaudeEffortsByModel(['claude-opus-5', 'claude-opus-5-5', 'claude-haiku-4-5']);
     assert.deepEqual(byModel['claude-opus-5'], [...CLAUDE_EFFORT_CHOICES]);
+    assert.deepEqual(byModel['claude-opus-5-5'], [...CLAUDE_EFFORT_CHOICES]);
     assert.deepEqual(byModel['claude-haiku-4-5'], [...CLAUDE_WIRE_EFFORTS]);
     assert.equal(byModel['claude-haiku-4-5']!.includes('ultracode'), false);
 });

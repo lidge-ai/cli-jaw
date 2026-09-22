@@ -120,7 +120,7 @@ test('Model defaults imports canonical CLI metadata from agent-meta', () => {
     const source = readFileSync('public/manager/src/settings/pages/ModelProvider.tsx', 'utf8');
     assert.ok(source.includes("from './components/agent/agent-meta'"));
     assert.ok(source.includes('Model defaults'));
-    assert.deepEqual(metaFor('codex').models, ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    assert.deepEqual(metaFor('codex').models, ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna']);
     assert.equal(metaFor('agy').label, 'Antigravity');
     // Label form only: AGY rejects a tier-less slug when no --effort is sent,
     // and cli-jaw never sends one for AGY.
@@ -132,6 +132,8 @@ test('Model defaults imports canonical CLI metadata from agent-meta', () => {
     assert.equal(metaFor('cursor').models.includes('gpt-5.5'), true);
     assert.equal(metaFor('cursor').models.includes('gpt-5.1-codex-mini'), true);
     assert.equal(metaFor('cursor').models.includes('claude-opus-5'), true);
+    assert.equal(metaFor('cursor').models.includes('claude-opus-5-5'), true);
+    assert.equal(metaFor('cursor').models.includes('grok-4.7'), true);
     assert.equal(metaFor('cursor').efforts.includes('medium-fast'), true);
     assert.equal(PRIMARY_CLIS.includes('agy'), true);
     assert.equal(PRIMARY_CLIS.includes('cursor'), true);

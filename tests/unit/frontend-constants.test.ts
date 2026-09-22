@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { getCliMeta } from '../../public/js/constants.js';
 import { CLI_REGISTRY } from '../../src/cli/registry.ts';
 
-const DEFAULT_CODEX_MODELS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
+const DEFAULT_CODEX_MODELS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna'];
 
 test('frontend copilot meta exposes selectable efforts', () => {
     const meta = getCliMeta('copilot');
@@ -22,6 +22,8 @@ test('frontend cursor meta exposes model-ID effort choices', () => {
     assert.ok(meta.models.includes('gpt-5.5'));
     assert.ok(meta.models.includes('gpt-5.1-codex-mini'));
     assert.ok(meta.models.includes('claude-opus-5'), 'web cursor fallback is missing claude-opus-5');
+    assert.ok(meta.models.includes('claude-opus-5-5'));
+    assert.ok(meta.models.includes('grok-4.7'));
     assert.ok(meta.efforts.includes('medium-fast'));
     assert.match(meta.effortNote || '', /model IDs/);
     assert.equal(meta.modelNote, undefined);

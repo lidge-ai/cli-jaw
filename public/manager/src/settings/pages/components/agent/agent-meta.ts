@@ -47,7 +47,7 @@ export type ActiveOverride = {
     effort?: string;
 };
 
-const CODEX_MODELS: ReadonlyArray<string> = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
+const CODEX_MODELS: ReadonlyArray<string> = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna'];
 
 export const PRIMARY_CLIS: ReadonlyArray<string> = ['pi', 'claude', 'agy', 'codex', 'cursor', 'kiro-code', 'gemini'];
 
@@ -95,6 +95,8 @@ export const CLI_META: Record<string, CliMeta> = {
             'claude-fable-5[1m]',
             'claude-sonnet-5',
             'claude-sonnet-5[1m]',
+            'claude-opus-5-5',
+            'claude-opus-5-5[1m]',
             'claude-opus-5',
             'claude-opus-5[1m]',
             'claude-opus-4-8',
@@ -127,13 +129,14 @@ export const CLI_META: Record<string, CliMeta> = {
             'gpt-5.3-codex', 'gpt-5.2', 'gpt-5.2-codex',
             'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.1',
             'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-thinking',
+            'claude-opus-5-5',
             'claude-opus-5',
             'claude-opus-4-8', 'claude-opus-4-8-thinking',
             'claude-opus-4-7', 'claude-opus-4-7-thinking',
             'claude-4.6-opus', 'claude-4.6-sonnet',
             'claude-4.5-opus-high', 'claude-4.5-sonnet', 'claude-4-sonnet',
             'gemini-3.1-pro', 'gemini-3-flash', 'gemini-3-pro', 'gemini-3.5-flash',
-            'grok-4.6', 'grok-4.5', 'gpt-5-mini', 'glm-5.2', 'glm-5.3', 'gpt-5.5-extra', 'kimi-k2.7-code', 'kimi-k3',
+            'grok-4.6', 'grok-4.7', 'grok-4.5', 'gpt-5-mini', 'glm-5.2', 'glm-5.3', 'gpt-5.5-extra', 'kimi-k2.7-code', 'kimi-k3',
             'gemini-3.6-flash', 'gemini-3.7-flash',
         ],
         efforts: ['none', 'none-fast', 'low', 'low-fast', 'medium', 'medium-fast', 'high', 'high-fast', 'xhigh', 'xhigh-fast', 'max', 'max-fast'],

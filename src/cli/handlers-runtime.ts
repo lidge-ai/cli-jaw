@@ -442,6 +442,8 @@ export async function flushHandler(args: string[], ctx: CliCommandContext): Prom
             'claude-fable-5[1m]': 'claude',
             'claude-sonnet-4-6': 'claude',
             'claude-opus-5': 'claude',
+            'claude-opus-5-5': 'claude',
+            'claude-opus-5-5[1m]': 'claude',
             'claude-opus-5[1m]': 'claude',
             'claude-opus-4-8': 'claude',
             'claude-opus-4-8[1m]': 'claude',
