@@ -8,6 +8,7 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import ts from 'typescript';
 import { resolveCanonicalDirectory, runSidecarSmoke } from '../../scripts/check-sidecar-smoke.mjs';
+import { requestGracefulStop } from '../../scripts/sidecar-smoke-probe.mjs';
 
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const cli=path.join(repo,'scripts/check-sidecar-smoke.mjs');
@@ -24,6 +25,24 @@ const server=http.createServer((req,res)=>{res.setHeader('content-type','applica
 server.listen(Number(process.env.DASHBOARD_PORT),'127.0.0.1');
 process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
 `;
+
+test('sidecar graceful stop emits SIGTERM on Windows and self-signals on POSIX',()=>{
+    const windowsCalls:Array<[string,...unknown[]]>=[];
+    requestGracefulStop('win32',{
+        pid:41001,
+        emit:(...args:unknown[])=>{windowsCalls.push(['emit',...args]);return true;},
+        kill:(...args:unknown[])=>{windowsCalls.push(['kill',...args]);return true;},
+    });
+    assert.deepEqual(windowsCalls,[['emit','SIGTERM']]);
+
+    const posixCalls:Array<[string,...unknown[]]>=[];
+    requestGracefulStop('darwin',{
+        pid:41002,
+        emit:(...args:unknown[])=>{posixCalls.push(['emit',...args]);return true;},
+        kill:(...args:unknown[])=>{posixCalls.push(['kill',...args]);return true;},
+    });
+    assert.deepEqual(posixCalls,[['kill',41002,'SIGTERM']]);
+});
 
 test('canonical directories use native realpath so Windows 8.3 aliases are not passed to child policy checks',()=>{
     let ordinaryCalls=0,nativeCalls=0;

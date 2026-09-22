@@ -120,15 +120,15 @@ jobs:
         if: matrix.platform == 'macos'
         shell: bash
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           EXPECTED_APPLE_TEAM_ID: U9ATA49N28
         run: |
           set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in MAC_CSC_LINK MAC_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Required macOS release credential is not configured: $name"
               exit 1
@@ -139,16 +139,29 @@ jobs:
             exit 1
           fi
 
+      - name: Import Developer ID certificate into temporary keychain
+        if: matrix.platform == 'macos'
+        id: mac-keychain
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          EXPECTED_APPLE_TEAM_ID: U9ATA49N28
+        run: node scripts/import-mac-signing-certificate.mjs import
+
       - name: Package signed and notarized macOS app
         if: matrix.platform == 'macos'
         run: npm --prefix electron run dist:mac -- --config.mac.notarize=true --publish never
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_KEYCHAIN: ${{ steps.mac-keychain.outputs.keychain }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          DEBUG: electron-builder
+
+      - name: Remove temporary macOS signing keychain
+        if: always() && matrix.platform == 'macos' && steps.mac-keychain.outputs.keychain != ''
+        env:
+          MAC_SIGNING_KEYCHAIN: ${{ steps.mac-keychain.outputs.keychain }}
+        run: node scripts/import-mac-signing-certificate.mjs cleanup "$MAC_SIGNING_KEYCHAIN"
 
       - name: Package unsigned Windows or Linux app
         if: matrix.platform != 'macos'

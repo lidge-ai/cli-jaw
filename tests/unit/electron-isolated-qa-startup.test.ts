@@ -31,6 +31,11 @@ const compiled = await build({ stdin: { contents: `export { gracefulShutdown } f
   plugins: [{ name: 'external-boundaries', setup(builder) {
     builder.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'fake-electron' }));
     builder.onLoad({ filter: /.*/, namespace: 'fake-electron' }, () => ({ contents: 'module.exports = globalThis.electronBoundary;' }));
+    builder.onResolve({ filter: /^electron-updater$/ }, () => ({ path: 'electron-updater', namespace: 'fake-electron-updater' }));
+    builder.onLoad({ filter: /.*/, namespace: 'fake-electron-updater' }, () => ({ contents: `module.exports = { autoUpdater: {
+      on() { return this; }, off() { return this; }, checkForUpdates() { return Promise.resolve(); },
+      downloadUpdate() { return Promise.resolve(); }, quitAndInstall() {},
+    } };` }));
     builder.onResolve({ filter: /^fix-path$/ }, () => ({ path: 'fix-path', namespace: 'fake-fix-path' }));
     builder.onLoad({ filter: /.*/, namespace: 'fake-fix-path' }, () => ({ contents: 'module.exports = () => globalThis.record("fixPath");' }));
     builder.onResolve({ filter: /\.js$/ }, args => {

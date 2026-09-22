@@ -357,8 +357,13 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(workflow.includes('npm run check:app-icons'), 'desktop workflow must validate app icon assets before uploading macOS artifacts');
     assert.ok(workflow.includes('Package signed and notarized macOS app'), 'desktop workflow must use a dedicated signed macOS packaging step');
     assert.ok(workflow.includes("if: matrix.platform == 'macos'"), 'Apple credentials must be scoped to macOS-only steps');
-    assert.ok(workflow.includes('CSC_LINK: ${{ secrets.MAC_CSC_LINK }}'), 'workflow must map the certificate secret to electron-builder CSC_LINK');
-    assert.ok(workflow.includes('CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}'), 'workflow must map the p12 password to electron-builder CSC_KEY_PASSWORD');
+    assert.ok(workflow.includes('Import Developer ID certificate into temporary keychain'), 'workflow must own certificate import instead of delegating keychain creation to electron-builder');
+    assert.ok(workflow.includes('id: mac-keychain'), 'certificate import must expose the owned keychain path to the packaging step');
+    assert.ok(workflow.includes('node scripts/import-mac-signing-certificate.mjs import'), 'workflow must use the audited certificate import helper');
+    assert.ok(workflow.includes('CSC_KEYCHAIN: ${{ steps.mac-keychain.outputs.keychain }}'), 'electron-builder must use the already-unlocked owned keychain');
+    assert.ok(workflow.includes('Remove temporary macOS signing keychain'), 'workflow must remove the signing keychain immediately after packaging');
+    assert.ok(workflow.includes("if: always() && matrix.platform == 'macos' && steps.mac-keychain.outputs.keychain != ''"), 'keychain cleanup must also run after a packaging failure');
+    assert.ok(workflow.includes('node scripts/import-mac-signing-certificate.mjs cleanup "$MAC_SIGNING_KEYCHAIN"'), 'cleanup must use the same contained helper');
     assert.ok(workflow.includes('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}'), 'workflow must provide notarization credentials only at runtime');
     assert.ok(workflow.includes('EXPECTED_APPLE_TEAM_ID: U9ATA49N28'), 'credential preflight must pin the release signing team');
     assert.ok(workflow.includes('--config.mac.notarize=true --publish never'), 'macOS packaging must request notarization without publishing behind the release uploader');
@@ -380,6 +385,28 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(
         workflow.indexOf('Verify macOS update metadata and payload integrity') < workflow.indexOf('Upload build artifacts (manual run)'),
         'update metadata verification must run before any artifact upload',
+    );
+    const packageBlock = workflow.slice(
+        workflow.indexOf('- name: Package signed and notarized macOS app'),
+        workflow.indexOf('- name: Package unsigned Windows or Linux app'),
+    );
+    assert.ok(!packageBlock.includes('CSC_LINK:'), 'raw certificate material must not remain in the packaging environment');
+    assert.ok(!packageBlock.includes('CSC_KEY_PASSWORD:'), 'the p12 password must not be reused as electron-builder keychain password');
+    assert.ok(!packageBlock.includes('DEBUG:'), 'release packaging must not enable verbose electron-builder logging around credentials');
+    assert.ok(
+        workflow.indexOf('Import Developer ID certificate into temporary keychain')
+            < workflow.indexOf('Package signed and notarized macOS app'),
+        'certificate import must precede packaging',
+    );
+    assert.ok(
+        workflow.indexOf('Package signed and notarized macOS app')
+            < workflow.indexOf('Remove temporary macOS signing keychain'),
+        'keychain cleanup must follow packaging',
+    );
+    assert.ok(
+        workflow.indexOf('Remove temporary macOS signing keychain')
+            < workflow.indexOf('Upload build artifacts (manual run)'),
+        'signing credentials must be removed before any artifact upload',
     );
     assert.ok(workflow.includes('gh release upload'), 'desktop workflow must upload artifacts to the existing release');
     assert.ok(

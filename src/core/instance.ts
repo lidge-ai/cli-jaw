@@ -23,7 +23,7 @@ export function instanceId(): string {
 export { buildServicePath } from './runtime-path.js';
 
 function whichWithServicePath(binary: string): string {
-    const lookup = process.platform === 'win32' ? 'where' : 'which';
+    const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     return execFileSync(lookup, [binary], {
         encoding: 'utf8',
         env: {
