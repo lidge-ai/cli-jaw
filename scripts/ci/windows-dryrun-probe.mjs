@@ -44,12 +44,16 @@ const report = {
     observations: [],
 };
 const output = join(process.env.RUNNER_TEMP || tmpdir(), 'jaw-wis-observations.json');
-for (const mode of ['clean-before', 'inherited', 'clean-after']) {
+for (const mode of ['original-cold', 'clean-before', 'inherited', 'clean-after']) {
     const env = { ...process.env };
-    if (mode !== 'inherited') {
+    if (mode !== 'inherited' && mode !== 'original-cold') {
         for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
     }
-    const command = `[Console]::Error.WriteLine('WIS_PS:' + $PSVersionTable.PSVersion); $env:Path = 'C:\\\\WINDOWS\\\\system32'; & '${script.replaceAll("'", "''")}' -DryRun; [Console]::Error.WriteLine('WIS_PHASE:script.return:' + $?); exit 0`;
+    const tracedCommand = `[Console]::Error.WriteLine('WIS_PS:' + $PSVersionTable.PSVersion); $env:Path = 'C:\\WINDOWS\\system32'; & '${script.replaceAll("'", "''")}' -DryRun; [Console]::Error.WriteLine('WIS_PHASE:script.return:' + $?); exit 0`;
+    const originalScript = join(root, 'scripts/install.ps1');
+    const command = mode === 'original-cold'
+        ? `$env:Path = 'C:\\WINDOWS\\system32'; & '${originalScript.replaceAll("'", "''")}' -DryRun; exit 0`
+        : tracedCommand;
     const start = Date.now();
     const result = spawnSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], {
         env, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024,
@@ -69,7 +73,7 @@ for (const mode of ['clean-before', 'inherited', 'clean-after']) {
     writeFileSync(output, JSON.stringify(report, null, 2));
     console.log(JSON.stringify(observation));
 }
-const [before, inherited, after] = report.observations;
+const [, before, inherited, after] = report.observations;
 const passes = row => !row.error && row.status === 0 && row.actualPlan;
 report.cleanInheritedCleanPattern = passes(before) && !passes(inherited) && passes(after);
 report.allArmsPassed = report.observations.every(passes);
