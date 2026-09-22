@@ -115,13 +115,17 @@ function launch(env: NodeJS.ProcessEnv, root: string, args = ['--spawn'], option
     setPermissionRequestHandler: (...args: unknown[]) => record('permissionRequest', ...args),
     setPermissionCheckHandler: (...args: unknown[]) => record('permissionCheck', ...args),
   };
+  const windows: Window[] = [];
   class Window extends EventEmitter {
+    destroyed = false;
     webContents = Object.assign(new EventEmitter(), { getUserAgent: () => 'fixture', setUserAgent: () => {},
       setWindowOpenHandler: () => {}, send: () => {}, getURL: () => env.JAW_MANAGER_URL,
       openDevTools: () => {}, getZoomFactor: () => 1, setZoomFactor: () => {} });
-    constructor(opts: unknown) { super(); record('window', opts); }
-    isDestroyed() { return false; }
+    constructor(opts: unknown) { super(); windows.push(this); record('window', opts); }
+    isDestroyed() { return this.destroyed; }
     isMinimized() { return false; }
+    isFullScreen() { return false; }
+    setTitleBarOverlay(value: unknown) { record('overlay', this, value); }
     show() {} focus() {} restore() {} hide() {}
     async loadURL(url: string) { record('loadURL', url); }
   }
@@ -142,10 +146,11 @@ function launch(env: NodeJS.ProcessEnv, root: string, args = ['--spawn'], option
     if (name === 'createReminderBadgePoller') return { stop() {}, start() {}, refreshNow() {} };
     if (name === 'startAppMetricsCollector') return { stop() {} };
   };
+  const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });
   const electronBoundary = { app, BrowserWindow: Window, Tray: FakeTray,
     Menu: { buildFromTemplate: (items: Array<Record<string, unknown>>) => { menus.push(items); return items; }, setApplicationMenu: () => {} },
     nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
-    nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false }),
+    nativeTheme,
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1600, height: 1000 } }) },
     session: { get defaultSession() { record('session'); return sessionObject; }, fromPartition: () => { record('session'); return sessionObject; } },
     globalShortcut: { register: () => { record('shortcut'); return true; }, unregister: () => record('unregister') },
@@ -192,7 +197,7 @@ function launch(env: NodeJS.ProcessEnv, root: string, args = ['--spawn'], option
     }, { filename: entry });
   } catch (caught) { error = caught; }
   resolveReady();
-  return { calls, app, menus, error, env: fakeProcess.env, children, api: module.exports,
+  return { calls, app, menus, error, env: fakeProcess.env, children, windows, nativeTheme, api: module.exports,
     deadline: (delay: number) => {
       for (const [handle, timer] of [...timers]) if (timer.delay === delay) { timers.delete(handle); timer.fn(); }
     },
@@ -200,6 +205,49 @@ function launch(env: NodeJS.ProcessEnv, root: string, args = ['--spawn'], option
 }
 const named = (run: ReturnType<typeof launch>, name: string) => run.calls.filter(call => call.name === name);
 const forbidden = ['protocol', 'login', 'shortcut', 'unregister', 'primeMacAutomationPermission', 'promptInstallCli', 'isCliInstalled', 'installCli', 'fixPath', 'picker', 'showJawNotFoundDialog', 'external'];
+
+test('theme listener follows one live window and stale callbacks cannot affect its replacement', async () => {
+  const f = fixture();
+  try {
+    const run = launch(f.env, f.root, ['--spawn'], { platform: 'linux' });
+    assert.equal(run.error, undefined); await run.settle();
+    assert.equal(run.windows.length, 1);
+    assert.equal(run.nativeTheme.listenerCount('updated'), 1);
+
+    const first = run.windows[0]!;
+    const firstThemeCallback = run.nativeTheme.listeners('updated')[0] as () => void;
+    const staleClosedCallback = first.listeners('closed')[0] as () => void;
+    first.destroyed = true;
+    first.emit('closed');
+    assert.equal(run.nativeTheme.listenerCount('updated'), 0);
+
+    run.app.emit('activate'); await run.settle();
+    assert.equal(run.windows.length, 2);
+    assert.equal(run.nativeTheme.listenerCount('updated'), 1);
+    const second = run.windows[1]!;
+    const secondThemeCallback = run.nativeTheme.listeners('updated')[0] as () => void;
+    assert.notEqual(secondThemeCallback, firstThemeCallback);
+
+    firstThemeCallback();
+    staleClosedCallback();
+    run.app.emit('activate'); await run.settle();
+    assert.equal(run.windows.length, 2, 'stale callbacks must not clear or update the replacement window');
+    assert.equal(named(run, 'overlay').length, 0);
+
+    run.nativeTheme.shouldUseDarkColors = true;
+    run.nativeTheme.emit('updated');
+    assert.equal(named(run, 'overlay').length, 1);
+    assert.equal(named(run, 'overlay')[0]!.args[0], second);
+
+    second.destroyed = true;
+    second.emit('closed');
+    assert.equal(run.nativeTheme.listenerCount('updated'), 0);
+    run.app.emit('activate'); await run.settle();
+    assert.equal(run.windows.length, 3);
+    assert.equal(run.nativeTheme.listenerCount('updated'), 1);
+    assert.notEqual(run.nativeTheme.listeners('updated')[0], secondThemeCallback);
+  } finally { f.dispose(); }
+});
 
 test('actual main/tray/spawn preserves isolated startup order, argv/environment, IPC and repeat bootstrap', async () => {
   const f = fixture();
