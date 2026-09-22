@@ -72,6 +72,10 @@ test('Electron sidecar bundle excludes JWC payload and verifies the absence cont
     assert.equal(script.includes('npm install --omit=dev --ignore-scripts --install-links'), false, 'sidecar bundle must not rely on linked local file dependencies');
     assert.equal(script.includes('"$SIDECAR_DIR/node_modules/jawcode/"'), false, 'sidecar bundle must not rsync jawcode directly into runtime node_modules');
     assert.ok(script.includes('scripts/check-electron-sidecar-no-jwc.cjs'), 'sidecar bundle must run the no-JWC validator after creating shims');
+    const leaveStagingAt = script.lastIndexOf('cd "$PROJECT_ROOT"');
+    const promoteAt = script.indexOf('transaction promote');
+    assert.ok(leaveStagingAt > 0 && leaveStagingAt < promoteAt,
+        'sidecar promotion must leave the staging cwd before Windows renames it');
     // Actual payload rejection is covered by retired-runtime-package.test.ts.
 });
 
