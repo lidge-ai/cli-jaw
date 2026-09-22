@@ -392,7 +392,7 @@ cli-jaw/
 │   │   ├── scope-status.ts   ← OAuth grant drift 단일 소유자 (auth.test의 x-oauth-scopes를 manifest 요구 집합과 대조, 미관측을 '이상 없음'과 구분, doctor·health·identity 경고가 공유) (191L) ✨
 │   │   ├── allowlist-audit.ts ← channelIds 변경 방향 분류 + 축소 감사 기록 (게이트 리더 기준 정규화, route·settings watcher 양쪽이 공유) (125L) ✨
 │   │   ├── hot-notify.ts     ← CLI 설정 변경 후 실행 중 서버 hot-reload 통지 (loopback PUT /api/settings → transport 재시작, version skew 감지) (41L)
-│   │   ├── progress.ts       ← native plan stream + explicit unsupported fallback, bounded IO/Retry-After and terminal receipt (399L)
+│   │   ├── progress.ts       ← native plan stream + explicit unsupported fallback, bounded IO/Retry-After and terminal receipt (402L)
 │   │   ├── progress-activity.ts ← safe fixed-category activity projection, bounded recent observations and delivery receipt (244L)
 │   │   ├── progress-files.ts ← shared bounded file target projection under captured working directory (61L)
 │   │   ├── progress-detail.ts ← explicit purposes and finite safe command action summaries (319L)
