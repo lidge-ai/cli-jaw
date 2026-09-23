@@ -25,7 +25,10 @@ export type SlackWorkflowRoute =
     | { kind: 'none' }
     | { kind: 'blocked'; code: 'ambiguous_workflow' | 'source_unavailable' | 'skill_unavailable' | 'workflow_changed' }
     | { kind: 'ready'; metadata: SlackWorkflowMetadata; skill: string };
-const MAX_SKILL_BYTES = 64 * 1024;
+// Workflow skills are operator-owned documents; the old 64 KiB cap refused a
+// grown production skill outright and killed every ticket. Keep only a sanity
+// bound for the fixed read buffer.
+const MAX_SKILL_BYTES = 8 * 1024 * 1024;
 export type SlackWorkflowSelection =
     | { kind: 'none' }
     | { kind: 'blocked'; code: 'ambiguous_workflow' }
