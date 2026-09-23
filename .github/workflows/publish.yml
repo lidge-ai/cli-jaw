@@ -33,6 +33,10 @@ on:
 permissions:
   contents: write
   id-token: write
+  # `gh workflow run` posts to .../actions/workflows/{id}/dispatches, which needs
+  # `actions: write`. Declaring any permissions block sets every unlisted scope to
+  # none, so the desktop dispatch below would fail with 403 without this line.
+  actions: write
 
 concurrency:
   group: npm-publish-${{ github.ref }}-${{ inputs.tag }}-${{ inputs.version }}
@@ -351,22 +355,6 @@ jobs:
             npm publish --tag "${{ steps.release.outputs.tag }}" --access public --provenance
           fi
 
-      - name: Registry smoke
-        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' }}
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 90); do
-            if version="$(npm view "cli-jaw@${{ steps.release.outputs.version }}" version 2>/dev/null)"; then
-              test "$version" = "${{ steps.release.outputs.version }}"
-              npm dist-tag ls cli-jaw
-              exit 0
-            fi
-            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} not visible yet (${attempt}/90)"
-            sleep 10
-          done
-          echo "::error::registry smoke failed"
-          exit 1
-
       - name: Create GitHub release
         if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' }}
         env:
@@ -408,7 +396,7 @@ jobs:
             echo "### Verification"
             echo "- Published from \`${{ github.ref_name }}\` with npm dist-tag \`${{ steps.release.outputs.tag }}\`."
             echo "- npm package gates passed in this workflow."
-            echo "- npm registry smoke confirmed \`cli-jaw@${{ steps.release.outputs.version }}\`."
+            echo "- npm registry visibility is verified later in this workflow run."
             echo "- npm provenance was requested through GitHub OIDC Trusted Publishing."
           } > "$notes_file"
 
@@ -428,3 +416,48 @@ jobs:
           else
             gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file "$notes_file" "${create_args[@]}"
           fi
+
+      # A release created with the default GITHUB_TOKEN does not emit a
+      # `release: published` event -- GitHub suppresses it so a workflow cannot
+      # trigger itself. desktop-release.yml therefore never starts on its own for
+      # a stable release, and v2.17.57 and v2.17.58 both shipped with an empty
+      # release until someone dispatched it by hand. workflow_dispatch is one of
+      # the documented exceptions to that suppression, so the same token can
+      # start it explicitly here.
+      #
+      # Preview is deliberately not dispatched: release-preview.sh creates the
+      # prerelease with the operator's own credentials, so the event fires and
+      # the build already runs. Dispatching here as well would build every
+      # preview twice and burn a second macOS notarization round trip.
+      - name: Dispatch Desktop Release
+        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' && steps.release.outputs.tag == 'latest' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run desktop-release.yml \
+            --ref "${{ github.ref_name }}" \
+            -f release-tag="v${{ steps.release.outputs.version }}" \
+            -f upload-release-assets=true
+
+      # Runs last on purpose. npm publish above is irreversible and registry
+      # visibility lags it by an unpredictable amount -- 100s, 9min and >15min
+      # across three consecutive releases. While this step sat before the release
+      # steps, a slow registry skipped GitHub release creation entirely and left
+      # a published npm version with nowhere to download from. Verification must
+      # fail the run loudly without taking the release down with it.
+      - name: Registry smoke
+        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if version="$(npm view "cli-jaw@${{ steps.release.outputs.version }}" version 2>/dev/null)"; then
+              test "$version" = "${{ steps.release.outputs.version }}"
+              npm dist-tag ls cli-jaw
+              exit 0
+            fi
+            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} not visible yet (${attempt}/90)"
+            sleep 10
+          done
+          echo "::error::registry smoke failed"
+          exit 1

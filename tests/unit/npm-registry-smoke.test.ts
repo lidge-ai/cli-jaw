@@ -8,7 +8,11 @@ import { spawnSync } from 'node:child_process';
 
 const version = '9.9.9-registry-fixture';
 const workflow = readFileSync(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const match = /      - name: Registry smoke\n[\s\S]*?        run: \|\n([\s\S]*?)(?=\n      - name: )/.exec(workflow);
+// Registry smoke is deliberately the LAST step in the job: it verifies an
+// already-irreversible publish and must not gate GitHub release creation or the
+// desktop dispatch. So the extractor accepts end-of-file as a terminator in
+// addition to the next step header, or it would silently stop matching.
+const match = /      - name: Registry smoke\n[\s\S]*?        run: \|\n([\s\S]*?)(?=\n      - name: |\s*$)/.exec(workflow);
 assert.ok(match, 'the real workflow must contain a Registry smoke shell step');
 const script = match[1]!.split('\n').map(line => line.replace(/^ {10}/, '')).join('\n')
     .replaceAll('${{ steps.release.outputs.version }}', version);

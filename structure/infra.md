@@ -524,6 +524,23 @@ gh workflow run publish.yml \
 
 (`scripts/promote-to-main.sh:175-181`.)
 
+Because `create-github-release=true`, the stable GitHub release is created by the
+workflow rather than by an operator. That difference decides how desktop builds
+start, and the two channels are NOT symmetric:
+
+| 채널 | 릴리스를 만드는 주체 | `desktop-release.yml` 시작 방법 |
+| --- | --- | --- |
+| preview | `release-preview.sh` (운영자 토큰) | `release: published` 이벤트로 자동 |
+| stable | `publish.yml` (기본 `GITHUB_TOKEN`) | `publish.yml`이 `gh workflow run`으로 명시 dispatch |
+
+A release created with the default `GITHUB_TOKEN` emits no `release: published`
+event — GitHub suppresses it so a workflow cannot trigger itself. `workflow_dispatch`
+is a documented exception, so `publish.yml` starts the desktop build explicitly
+with `actions: write` and `-f release-tag=vX.Y.Z`. Before that step existed,
+`v2.17.57` and `v2.17.58` both published to npm with an **empty** GitHub release
+and needed a manual dispatch. The dispatch is limited to `tag == 'latest'`; adding
+it to preview as well would build every preview twice.
+
 #### 승격된 SHA는 인증된 SHA와 문자 그대로 같다
 
 The commit published to npm is the SAME commit CI certified — not a copy of its
@@ -599,12 +616,22 @@ and skips the publish rather than failing (`publish.yml:307-332`).
 
 ### 복구 2 — npm은 게시됨, GitHub 릴리스가 없거나 잘못됨
 
-**Re-dispatching `publish.yml` will not fix this.** The `Create GitHub release`
-step is gated on `steps.registry.outputs.exists != 'true'`
-(`publish.yml:350-351`), and `registry.exists` becomes `true` the moment the
-version is visible on npm (`publish.yml:307-319`). Once the package is
-published, that step can never run again for that version. Backfill by hand,
-mirroring `publish.yml:395-410`:
+**Re-dispatch `publish.yml` — that is the supported repair.** `Create GitHub
+release` is gated only on `skip-publish`, `dry-run` and `create-github-release`;
+the `registry.exists` gate that once blocked backfill was removed in
+`20fa16232`. The step is create-or-edit (`gh release view` then `edit`/`create`),
+so a re-dispatch fixes a missing or wrong release for a version that is already
+on npm. The publish itself is skipped because `registry.exists` is `true`.
+
+`Registry smoke` runs AFTER release creation and the desktop dispatch, so a slow
+registry can no longer skip them. It used to run before both, and a publish whose
+version stayed invisible past the 15-minute window failed the job there — leaving
+a published npm version with no GitHub release at all.
+
+A stable re-dispatch also re-dispatches `desktop-release.yml`; asset upload uses
+`gh release upload --clobber`, so repeating it is safe.
+
+Backfill by hand only if the workflow itself cannot run:
 
 ```bash
 # stable (latest)

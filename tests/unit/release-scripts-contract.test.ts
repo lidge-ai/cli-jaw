@@ -466,6 +466,25 @@ test('npm publish workflow uses dev/preview/main branch policy without release r
     assert.ok(workflow.includes('### Changes'), 'GitHub release notes must include a Changes section');
     assert.ok(workflow.includes('--target "$GITHUB_SHA"'), 'release edits must retarget the release to the current publish commit');
     assert.ok(workflow.includes('notes-file'), 'GitHub releases should be created from a structured notes file');
+
+    // A release created with the default GITHUB_TOKEN emits no `release: published`
+    // event, so desktop-release.yml has to be dispatched explicitly or a stable
+    // release ships with no installers at all -- v2.17.57 and v2.17.58 both did,
+    // and both needed a manual dispatch to recover.
+    assert.ok(workflow.includes('actions: write'),
+        'publish workflow needs actions: write to dispatch the desktop release');
+    assert.ok(workflow.includes('gh workflow run desktop-release.yml'),
+        'a stable publish must dispatch desktop-release.yml itself');
+    assert.ok(/Dispatch Desktop Release[\s\S]*?steps\.release\.outputs\.tag == 'latest'/.test(workflow),
+        'the desktop dispatch must be limited to stable, or every preview builds twice');
+
+    // npm publish is irreversible and registry visibility lags it unpredictably.
+    // Verification must run AFTER the release exists, or a slow registry skips
+    // release creation and strands a published version with nothing to download.
+    assert.ok(workflow.indexOf('- name: Create GitHub release') < workflow.indexOf('- name: Registry smoke'),
+        'GitHub release creation must not be gated on the registry smoke step');
+    assert.ok(workflow.indexOf('- name: Dispatch Desktop Release') < workflow.indexOf('- name: Registry smoke'),
+        'the desktop dispatch must not be gated on the registry smoke step');
 });
 
 test('release branch policy is reflected in CI workflows, release script, installers, and public docs', () => {
