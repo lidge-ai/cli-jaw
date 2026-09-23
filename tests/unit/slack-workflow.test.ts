@@ -47,7 +47,9 @@ test('legacy, human, wrong sender and spoofed marker do not load a workflow', as
 test('missing, oversized, escaped or ambiguous skills block without a reference fallback', async t => {
     const f = await fixture(t);
     assert.equal((await prepareSlackWorkflow(event, config, f.skills)).kind, 'blocked');
-    await writeFile(f.file, 'x'.repeat(65537));
+    await writeFile(f.file, '# Grown skill\n' + 'x'.repeat(65537));
+    assert.equal((await prepareSlackWorkflow(event, config, f.skills)).kind, 'ready');
+    await writeFile(f.file, 'x'.repeat(8 * 1024 * 1024 + 1));
     assert.equal((await prepareSlackWorkflow(event, config, f.skills)).kind, 'blocked');
     await rm(f.file);
     const outside = join(f.root, 'not-enabled.md'); await writeFile(outside, '# Disabled skill');
