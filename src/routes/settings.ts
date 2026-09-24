@@ -12,8 +12,10 @@ import {
     configuredSlackEnvironmentVariables,
     slackEnvironmentManagedPatchPaths,
     configuredTelegramEnvironmentVariables,
+    telegramEnvironmentManagedSettingKeys,
     telegramEnvironmentManagedPatchPaths,
     configuredDiscordEnvironmentVariables,
+    discordEnvironmentManagedSettingKeys,
     discordEnvironmentManagedPatchPaths,
     wikiRouteManagedPatchPaths,
 } from '../core/config.js';
@@ -130,31 +132,36 @@ function redactMcpSecrets(config: unknown): unknown {
     return out;
 }
 
+const ENVIRONMENT_BLANK_VALUES: Record<string, unknown> = {
+    token: '', allowedChatIds: [], guildId: '', channelIds: [],
+};
+
+/** Blank only the fields a configured variable owns; a file-held value the
+ *  environment does not own stays visible (tokens are masked afterwards). */
+function blankOwnedFields(
+    channel: Record<string, unknown> | undefined,
+    ownedKeys: readonly string[],
+): Record<string, unknown> | undefined {
+    if (!channel) return channel;
+    const blanked = { ...channel };
+    for (const key of ownedKeys) {
+        if (key in ENVIRONMENT_BLANK_VALUES) blanked[key] = ENVIRONMENT_BLANK_VALUES[key];
+    }
+    return blanked;
+}
+
 function blankEnvironmentOwnedMessagingFields(safe: {
     telegram?: Record<string, unknown>;
     telegramEnvironmentVariables?: string[];
     discord?: Record<string, unknown>;
     discordEnvironmentVariables?: string[];
 }): void {
-    const telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
-    safe.telegramEnvironmentVariables = telegramEnvironmentVariables;
-    if (telegramEnvironmentVariables.length > 0 && safe.telegram) {
-        safe.telegram = {
-            ...safe.telegram,
-            token: '',
-            allowedChatIds: [],
-        };
-    }
-    const discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
-    safe.discordEnvironmentVariables = discordEnvironmentVariables;
-    if (discordEnvironmentVariables.length > 0 && safe.discord) {
-        safe.discord = {
-            ...safe.discord,
-            token: '',
-            guildId: '',
-            channelIds: [],
-        };
-    }
+    safe.telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
+    const telegram = blankOwnedFields(safe.telegram, telegramEnvironmentManagedSettingKeys());
+    if (telegram) safe.telegram = telegram;
+    safe.discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
+    const discord = blankOwnedFields(safe.discord, discordEnvironmentManagedSettingKeys());
+    if (discord) safe.discord = discord;
 }
 
 function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {

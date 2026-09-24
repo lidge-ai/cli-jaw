@@ -272,3 +272,32 @@ test('environment-owned Telegram/Discord values are identical before save, after
     assert.equal(persisted.telegram.forwardAll, true);
     assert.equal(persisted.discord.mentionOnly, false);
 });
+
+test('GET /api/settings blanks only the fields a configured variable owns', async () => {
+    config.saveSettings({
+        ...config.settings,
+        telegram: { ...(config.settings['telegram'] || {}), token: 'file-tg-token', allowedChatIds: [7] },
+        discord: {
+            ...(config.settings['discord'] || {}),
+            token: 'file-dc-token', guildId: 'file-guild', channelIds: ['file-ch'],
+        },
+    });
+    process.env['TELEGRAM_ALLOWED_CHAT_IDS'] = '7777777';
+    process.env['DISCORD_TOKEN'] = 'env-dc-token';
+    config.loadSettings();
+
+    const get = registerRouteApp(allowAuth, async (patch) => patch, 'GET');
+    const { json } = await routeRequest(get);
+    const body = (json['data'] ?? json) as Record<string, any>;
+
+    assert.deepEqual(body.telegramEnvironmentVariables, ['TELEGRAM_ALLOWED_CHAT_IDS']);
+    assert.deepEqual(body.telegram.allowedChatIds, []);
+    assert.notEqual(body.telegram.token, '', 'file-held token is masked, not blanked');
+    assert.notEqual(body.telegram.token, 'file-tg-token');
+
+    assert.deepEqual(body.discordEnvironmentVariables, ['DISCORD_TOKEN']);
+    assert.equal(body.discord.token, '');
+    assert.equal(body.discord.guildId, 'file-guild');
+    assert.deepEqual(body.discord.channelIds, ['file-ch']);
+    assert.equal(JSON.stringify(json).includes('env-dc-token'), false);
+});
