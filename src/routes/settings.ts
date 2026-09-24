@@ -130,6 +130,33 @@ function redactMcpSecrets(config: unknown): unknown {
     return out;
 }
 
+function blankEnvironmentOwnedMessagingFields(safe: {
+    telegram?: Record<string, unknown>;
+    telegramEnvironmentVariables?: string[];
+    discord?: Record<string, unknown>;
+    discordEnvironmentVariables?: string[];
+}): void {
+    const telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
+    safe.telegramEnvironmentVariables = telegramEnvironmentVariables;
+    if (telegramEnvironmentVariables.length > 0 && safe.telegram) {
+        safe.telegram = {
+            ...safe.telegram,
+            token: '',
+            allowedChatIds: [],
+        };
+    }
+    const discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
+    safe.discordEnvironmentVariables = discordEnvironmentVariables;
+    if (discordEnvironmentVariables.length > 0 && safe.discord) {
+        safe.discord = {
+            ...safe.discord,
+            token: '',
+            guildId: '',
+            channelIds: [],
+        };
+    }
+}
+
 function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
     const safe = { ...input } as T & {
         stt?: Record<string, unknown>;
@@ -163,25 +190,7 @@ function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
             attachPort: '',
         };
     }
-    const telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
-    safe.telegramEnvironmentVariables = telegramEnvironmentVariables;
-    if (telegramEnvironmentVariables.length > 0 && safe.telegram) {
-        safe.telegram = {
-            ...safe.telegram,
-            token: '',
-            allowedChatIds: [],
-        };
-    }
-    const discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
-    safe.discordEnvironmentVariables = discordEnvironmentVariables;
-    if (discordEnvironmentVariables.length > 0 && safe.discord) {
-        safe.discord = {
-            ...safe.discord,
-            token: '',
-            guildId: '',
-            channelIds: [],
-        };
-    }
+    blankEnvironmentOwnedMessagingFields(safe);
     // Channel bot tokens are full account credentials, and only the Slack
     // env-managed case was being masked — a file-configured Telegram or Discord
     // token came back verbatim (#449). The UI needs to know whether a token is
