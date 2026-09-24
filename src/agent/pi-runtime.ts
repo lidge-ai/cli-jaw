@@ -6,7 +6,7 @@ import { decideShellFallback } from '../core/windows-shell-fallback.js';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { JAW_HOME } from '../core/config.js';
-import { clampPendingLine } from './spawn/line-buffer.js';
+import { createNdjsonFramer, MAX_PENDING_LINE_CHARS } from './spawn/line-buffer.js';
 import { probeOpenCodexEndpointModels } from '../cli/opencodex-models.js';
 import { launchSpec } from '../core/exec-name.js';
 import { mergeEnvWindowsSafe } from './spawn-env.js';
@@ -757,23 +757,25 @@ function launchPiRpcExecution(profile: PiProfile, pi: PiSettings, options: {
  */
 function readPiRpcLines(child: ChildProcess, dispatch: (line: string) => void): { flush: () => void } {
     const decoder = new StringDecoder('utf8');
-    let buffer = '';
-    child.stdout?.on('data', (chunk) => {
-        buffer += decoder.write(chunk);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        const clamped = clampPendingLine(buffer);
-        if (clamped.overflowed) {
-            console.warn('[jaw:pi] stdout line exceeded the pending-line cap without a newline — truncating');
-            buffer = clamped.buffer;
+    const framer = createNdjsonFramer();
+    const reportDrops = (drops: readonly { frameChars: number }[]): void => {
+        for (const drop of drops) {
+            console.warn(`[jaw:pi] stdout frame exceeded the ${MAX_PENDING_LINE_CHARS}-char limit — dropped ${drop.frameChars} chars`);
         }
-        for (const line of lines) if (line.trim()) dispatch(line.trim());
+    };
+    child.stdout?.on('data', (chunk) => {
+        const framed = framer.push(decoder.write(chunk));
+        reportDrops(framed.drops);
+        for (const line of framed.lines) if (line.trim()) dispatch(line.trim());
     });
     return {
         flush: () => {
-            buffer += decoder.end();
-            if (buffer.trim()) dispatch(buffer.trim());
-            buffer = '';
+            const framed = framer.push(decoder.end());
+            reportDrops(framed.drops);
+            for (const line of framed.lines) if (line.trim()) dispatch(line.trim());
+            const tail = framer.end();
+            if (tail.drop) reportDrops([tail.drop]);
+            if (tail.tail.trim()) dispatch(tail.tail.trim());
         },
     };
 }
