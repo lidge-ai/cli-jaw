@@ -915,7 +915,9 @@ test('cleanup timeout retains capacity and prevents overlapping reopen until phy
     await handle.closedEvent.promise;
     assert.equal(handle.closes, 1);
     // The first read to observe physical close clears the readout and frees the held capacity.
-    assert.equal(f.manager.snapshot(row.sessionId).session.cleanupPending, false);
+    const released = f.manager.snapshot(row.sessionId).session;
+    assert.equal(released.cleanupPending, false);
+    assert.equal(released.contextUsage, undefined, 'the clearing snapshot carries no usage from the closed runtime');
     assert.equal(f.manager.list().find(entry => entry.sessionId === row.sessionId)?.cleanupPending, false);
     const admitted = f.manager.prompt(other.sessionId, prompt);
     const options = await f.providers.claude.opened();

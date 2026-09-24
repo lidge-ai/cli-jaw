@@ -130,7 +130,7 @@ export class CodeSessionManager {
         this.ready();
         return this.storage(() => this.options.store.list(options)).map(row => {
             const service = this.sessions.get(row.sessionId);
-            const cleanupPending = service?.cleanupPending ?? false;
+            const cleanupPending = this.cleanupReadout(row.sessionId, service);
             try {
                 const usage = service?.contextUsage() ?? null;
                 return { ...row, cleanupPending, pendingPermissionCount: service?.pendingPermissions().length ?? 0,
@@ -149,8 +149,10 @@ export class CodeSessionManager {
         const snapshot = this.storage(() => this.options.store.snapshot(id));
         const current = pendingPermissions.filter(permission =>
             permission.turnId === snapshot.session.turnId && permission.epoch === snapshot.session.epoch);
+        // Reading the residue can release a closed runtime and its usage; do it first.
+        const cleanupPending = this.cleanupReadout(id, session);
         const usage = session?.contextUsage() ?? null;
-        return { ...snapshot, session: { ...snapshot.session, cleanupPending: session?.cleanupPending ?? false,
+        return { ...snapshot, session: { ...snapshot.session, cleanupPending,
             pendingPermissionCount: current.length,
             ...(usage ? { contextUsage: usage } : {}) }, pendingPermissions: current };
     }
@@ -180,6 +182,14 @@ export class CodeSessionManager {
             this.clearIdle(id);
             this.sessions.delete(id);
         }
+    }
+
+    /** Residue readout; a session left non-resident by the read is released from the map. */
+    private cleanupReadout(id: string, session: CodeSession | undefined): boolean {
+        if (!session) return false;
+        const pending = session.cleanupPending;
+        if (!session.resident && this.sessions.get(id) === session) this.changed(id, session);
+        return pending;
     }
 
     private changed(id: string, session: CodeSession): void {
@@ -261,7 +271,7 @@ export class CodeSessionManager {
         // The turn view may already read `idle` while a retired runtime is
         // still draining; the residency readout is what separates the two.
         return { ...this.storage(() => this.options.store.snapshot(id)).session,
-            cleanupPending: session?.cleanupPending ?? false };
+            cleanupPending: this.cleanupReadout(id, session) };
     }
 
     async attach(id: string): Promise<CodeSessionInfo> {
@@ -277,7 +287,7 @@ export class CodeSessionManager {
         } catch (error) { this.changed(id, session); throw error; }
         await session.wait();
         return { ...this.storage(() => this.options.store.snapshot(id)).session,
-            cleanupPending: session.cleanupPending };
+            cleanupPending: this.cleanupReadout(id, session) };
     }
 
     async patch(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo> {
@@ -300,7 +310,7 @@ export class CodeSessionManager {
         const closing = session && (policyChanged || input.archived === true) ? session.dispose() : null;
         this.publish(result.events);
         if (closing) await closing;
-        return { ...result.session, cleanupPending: session?.cleanupPending ?? false };
+        return { ...result.session, cleanupPending: this.cleanupReadout(id, session) };
     }
 
     answerPermission(permissionId: string, input: CodePermissionAnswer): void {

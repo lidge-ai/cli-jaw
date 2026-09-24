@@ -72,7 +72,7 @@ cli-jaw/
 │   │   └── skill-cache.ts    ← 활성 스킬 슬래시 커맨드 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache) (44L)
 │   ├── code-mode/            ← native Code sessions, independent of Jaw orchestration
 │   │   ├── host.ts ← per-backend lazy composition and storage (70L)
-│   │   ├── manager.ts ← session index, admission and resource capacity (335L)
+│   │   ├── manager.ts ← session index, admission and resource capacity (345L)
 │   │   ├── session.ts ← captured turn ownership, cancellation and accepted-buffer drain (656L)
 │   │   ├── normalize.ts ← redacted materialized transcript and coalescing (534L)
 │   │   ├── store.ts ← SQLite ownership, replay, snapshots and byte budgets (824L)
