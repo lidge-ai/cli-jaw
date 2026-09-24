@@ -556,7 +556,7 @@ cli-jaw/
 │       ├── checkpoint/       ← checkpoint store + types (2 files, 59L) ✨
 │       ├── permissions/      ← permission policy + types (2 files, 80L) ✨
 │       └── context-map/      ← context map builder (1 file, 71L) ✨
-├── public/                   ← Web UI (Vite 8 + ES Modules, 607 files source/assets, ~103293L; generated `public/dist` and `public/public/dist` excluded)
+├── public/                   ← Web UI (Vite 8 + ES Modules, 607 files source/assets, ~103841L; generated `public/dist` and `public/public/dist` excluded)
 │   ├── settings/ ← standalone instance settings entry
 │   │   └── index.html ← Classic settings iframe HTML (13L)
 │   ├── index.html            ← 뼈대 + header project/git status anchor (693L)
@@ -572,7 +572,7 @@ cli-jaw/
 │   │   ├── settings-icons.ts ← category glyph mapping (17L)
 │   │   ├── settings-registry.ts ← scope-filtered page registry (35L)
 │   │   ├── pages/components/SlackSetup.tsx ← native Slack setup dialog (126L)
-│   │   ├── pages/manager/shared.tsx ← Manager locale copy and row controls (517L)
+│   │   ├── pages/manager/shared.tsx ← Manager locale copy and row controls (949L)
 │   │   ├── pages/manager/Display.tsx ← Manager display registry UI settings (92L)
 │   │   ├── pages/manager/Activity.tsx ← read-only title support (8L)
 │   │   ├── pages/manager/Developer.tsx ← Manager diff defaults (7L)
@@ -597,7 +597,7 @@ cli-jaw/
 ├── electron/                 ← Electron tray background app (27 TS/TSX files, 3096L) ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
-│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1516L)
+│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1511L)
 │       ├── main/lib/qa-session.ts ← isolated QA profile paths before lock and sessions (12L)
 │       ├── main/lib/         ← 19 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 199L, qa-session, install-cli, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
 │       └── preload/          ← preload scripts (index 126L + metrics 68L)
