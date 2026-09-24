@@ -29,7 +29,7 @@ export interface CodeGitInfo {
 }
 
 export interface CodeListOptions {
-    scope?: 'all' | 'cwd'; cwd?: string; archived?: boolean; offset?: number; limit?: number;
+    scope?: 'all' | 'cwd'; cwd?: string; archived?: boolean; cursor?: string; limit?: number;
 }
 export interface CodeSessionClient {
     listSessions(options?: CodeListOptions, signal?: AbortSignal): Promise<CodeSessionPage>;
