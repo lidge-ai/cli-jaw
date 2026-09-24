@@ -980,7 +980,9 @@ export async function discordSendHandler(req: ChannelSendRequest): Promise<Trans
                 try {
                     restResult = await sendDiscordTextRest(restToken, String(channelId), text, { signal: outbound.signal,
                         ...(nativeBodyRequests.has(req) ? { requireBodyDelivery: true } : {}) });
-                    if (!restResult.ok) return { ok: false, error: restResult.error || 'send failed' };
+                    // Failure keeps the transport's receipt — a partial send's
+                    // posted prefix must survive to the caller (#785).
+                    if (!restResult.ok) return restResult;
                 } finally {
                     outbound.done();
                 }
