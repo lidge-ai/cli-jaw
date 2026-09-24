@@ -129,13 +129,14 @@ export class CodeSessionManager {
     list(options?: CodeSessionListOptions): CodeSessionInfo[] {
         this.ready();
         return this.storage(() => this.options.store.list(options)).map(row => {
+            const service = this.sessions.get(row.sessionId);
+            const cleanupPending = service?.cleanupPending ?? false;
             try {
-                const service = this.sessions.get(row.sessionId);
                 const usage = service?.contextUsage() ?? null;
-                return { ...row, pendingPermissionCount: service?.pendingPermissions().length ?? 0,
+                return { ...row, cleanupPending, pendingPermissionCount: service?.pendingPermissions().length ?? 0,
                     ...(usage ? { contextUsage: usage } : {}) };
             }
-            catch { return row; } // An unavailable attention read stays unknown, never inferred zero.
+            catch { return { ...row, cleanupPending }; } // An unavailable attention read stays unknown, never inferred zero.
         });
     }
 
@@ -149,7 +150,8 @@ export class CodeSessionManager {
         const current = pendingPermissions.filter(permission =>
             permission.turnId === snapshot.session.turnId && permission.epoch === snapshot.session.epoch);
         const usage = session?.contextUsage() ?? null;
-        return { ...snapshot, session: { ...snapshot.session, pendingPermissionCount: current.length,
+        return { ...snapshot, session: { ...snapshot.session, cleanupPending: session?.cleanupPending ?? false,
+            pendingPermissionCount: current.length,
             ...(usage ? { contextUsage: usage } : {}) }, pendingPermissions: current };
     }
 
@@ -256,7 +258,10 @@ export class CodeSessionManager {
             if (!session) throw new CodeServiceError('orphaned_turn', 'Code turn has no live owner; recovery is required');
             await session.cancel(input);
         }
-        return this.storage(() => this.options.store.snapshot(id)).session;
+        // The turn view may already read `idle` while a retired runtime is
+        // still draining; the residency readout is what separates the two.
+        return { ...this.storage(() => this.options.store.snapshot(id)).session,
+            cleanupPending: session?.cleanupPending ?? false };
     }
 
     async attach(id: string): Promise<CodeSessionInfo> {
@@ -271,7 +276,8 @@ export class CodeSessionManager {
             this.publish(result.events);
         } catch (error) { this.changed(id, session); throw error; }
         await session.wait();
-        return this.storage(() => this.options.store.snapshot(id)).session;
+        return { ...this.storage(() => this.options.store.snapshot(id)).session,
+            cleanupPending: session.cleanupPending };
     }
 
     async patch(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo> {
@@ -294,7 +300,7 @@ export class CodeSessionManager {
         const closing = session && (policyChanged || input.archived === true) ? session.dispose() : null;
         this.publish(result.events);
         if (closing) await closing;
-        return result.session;
+        return { ...result.session, cleanupPending: session?.cleanupPending ?? false };
     }
 
     answerPermission(permissionId: string, input: CodePermissionAnswer): void {

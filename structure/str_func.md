@@ -72,13 +72,13 @@ cli-jaw/
 │   │   └── skill-cache.ts    ← 활성 스킬 슬래시 커맨드 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache) (44L)
 │   ├── code-mode/            ← native Code sessions, independent of Jaw orchestration
 │   │   ├── host.ts ← per-backend lazy composition and storage (70L)
-│   │   ├── manager.ts ← session index, admission and resource capacity (329L)
+│   │   ├── manager.ts ← session index, admission and resource capacity (335L)
 │   │   ├── session.ts ← captured turn ownership, cancellation and accepted-buffer drain (656L)
 │   │   ├── normalize.ts ← redacted materialized transcript and coalescing (534L)
 │   │   ├── store.ts ← SQLite ownership, replay, snapshots and byte budgets (794L)
 │   │   ├── provider.ts ← native handle and turn-context contracts (59L)
 │   │   ├── types.ts ← internal session and store contracts (12L)
-│   │   ├── wire.ts ← public request/event DTOs (213L)
+│   │   ├── wire.ts ← public request/event DTOs (223L)
 │   │   └── providers/        ← direct native adapters and capabilities
 │   │       ├── catalog.ts ← model/capability descriptions (129L)
 │   │       ├── live-models.ts ← last-known opencodex catalog, refreshed in background (93L)
