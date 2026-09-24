@@ -11,6 +11,7 @@ import { VecStore, createProvider, syncAllInstances, VALID_PROVIDERS } from '../
 import type { EmbeddingConfig } from '../memory/embedding/index.js';
 import { hybridMerge } from '../memory/embedding/hybrid-search.js';
 import { getEmbeddingState } from '../memory/embedding/state-machine.js';
+import { trackSseConnection } from '../../routes/sse-connections.js';
 import Database from 'better-sqlite3';
 
 const MAX_QUERY_LEN = 256;
@@ -419,7 +420,14 @@ export function createDashboardMemoryRouter(opts: DashboardMemoryRouterOptions):
         res.flushHeaders();
 
         let aborted = false;
-        req.on('close', () => { aborted = true; });
+        // Tracked so shutdown can abort an in-flight reindex before the HTTP
+        // server closes — the open stream would hold close() open (#790).
+        const untrack = trackSseConnection(() => {
+            aborted = true;
+            if (!res.writableEnded) res.end();
+        });
+        req.on('close', () => { aborted = true; untrack(); });
+        res.on('close', untrack);
 
         try {
             const scan = await opts.scanSupplier();

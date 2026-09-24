@@ -8,6 +8,7 @@ import {
     MAX_SSE_LISTENERS, isPublicSseTopic, setDeliveryKeyResolver, type BusEvent,
 } from '../core/event-bus.js';
 import { deliveryKeyForEntry, shouldDeliverToScope } from '../core/event-scope.js';
+import { trackSseConnection } from './sse-connections.js';
 
 const HEARTBEAT_MS = 15_000;
 let activeConnections = 0;
@@ -103,11 +104,14 @@ export function registerEventsRoutes(app: Router, requireAuth: RequestHandler): 
         const cleanup = () => {
             if (closed) return;
             closed = true;
+            untrack();
             unsub?.();
             if (hb) clearInterval(hb);
             activeConnections--;
             if (!res.writableEnded) res.end();
         };
+        // Tracked so shutdown can end the stream before server.close() (#790).
+        const untrack = trackSseConnection(cleanup);
 
         // Live delivery — enforce the public-topic allowlist so internal topics
         // (e.g. `trace`) never serialize out, and apply bounded backpressure so a
