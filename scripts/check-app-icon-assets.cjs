@@ -62,6 +62,25 @@ for (const [file, label] of pngs) {
 }
 checkIcns(join(root, 'electron/build/icon.icns'), 'macOS app ICNS icon');
 
+// Assets with a fixed geometry or an alpha requirement. The tray pair is a macOS
+// template image (black + alpha), and the favicon/mascot marks sit on arbitrary
+// backgrounds, so all of them must carry an alpha channel (PNG color type 6).
+const sizedAlphaPngs = [
+  ['electron/build/trayTemplate.png', 'macOS menu bar template icon', 18],
+  ['electron/build/trayTemplate@2x.png', 'macOS menu bar template icon @2x', 36],
+  ['public/icons/favicon-32.png', 'Web favicon', 32],
+  ['public/icons/mascot.png', 'Web mascot mark', 256],
+];
+for (const [file, label, size] of sizedAlphaPngs) {
+  const { width, height, colorType } = checkPng(join(root, file), label);
+  if (width !== size || height !== size) {
+    fail(`${label} must be ${size}x${size}, got ${width}x${height}: ${file}`);
+  }
+  if (colorType !== 6) {
+    fail(`${label} must be RGBA (PNG color type 6), got ${colorType}: ${file}`);
+  }
+}
+
 const builder = readFileSync(join(root, 'electron/electron-builder.yml'), 'utf8');
 if (/\bwin:\s*(?:\n\s+[^\n]*)*\n\s+icon:\s*build\/icon\.ico\b/m.test(builder)) {
   checkExists(join(root, 'electron/build/icon.ico'), 'Windows app ICO icon');
