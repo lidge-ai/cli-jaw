@@ -1611,6 +1611,8 @@ export function loadSettings() {
         // previous schema meant (110 §4c). The ENOENT branch above is genuinely new and
         // keeps the new defaults.
         next.multiSession = { ...next.multiSession, ...LEGACY_MULTI_SESSION_BASELINE };
+        // A file whose permissions we refused must not come back as Auto (YOLO).
+        if (err?.message === 'invalid_settings_permissions') next.permissions = 'safe';
         applyEnvOverrides(next);
         commitCandidate({ value: next, shape: 'absent' });
 

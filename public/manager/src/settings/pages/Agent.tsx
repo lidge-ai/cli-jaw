@@ -10,7 +10,7 @@ import {
     PageOffline,
     usePageSnapshot,
 } from './page-shell';
-import { parsePermissionsValue } from './Permissions';
+import { parsePermissionsValue, permissionsEditMode } from './Permissions';
 import { RuntimeHeader } from './components/agent/RuntimeHeader';
 import { PermissionQuickSection } from './components/agent/PermissionQuickSection';
 import { FlushAgentSection } from './components/agent/FlushAgentSection';
@@ -280,6 +280,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
         const cliKeys = Object.keys(state.data.perCli || {});
         const cli = state.data.cli || cliKeys[0] || '';
         const permissions = parsePermissionsValue(state.data.permissions);
+        const permissionsMode = permissionsEditMode(state.data.permissions);
         const meta = metaFor(cli, cliMeta);
         setDraft({
             cli,
@@ -291,9 +292,9 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             // become Auto (YOLO) as a side effect of saving something unrelated on this page.
             // An unrecognized stored value stays in the draft as-is so the editor can show
             // a recoverable invalid state instead of silently selecting Auto (#788).
-            permissions: permissions.mode === 'custom' ? permissions.tokens
+            permissions: permissionsMode === 'invalid' ? state.data.permissions
+                : permissions.mode === 'custom' ? permissions.tokens
                 : permissions.mode === 'safe' ? 'safe'
-                : permissions.mode === 'unknown' ? state.data.permissions
                 : 'auto',
         });
     }, [cliMeta, state]);

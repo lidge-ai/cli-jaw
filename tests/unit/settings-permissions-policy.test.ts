@@ -195,7 +195,7 @@ test('a current-schema file with malformed permissions is corrupt: latched, back
         assert.equal(disk(), original, `${name}: the original file is not overwritten`);
         // In-memory we are on the failsafe defaults — a loud failure state, not a
         // quiet continuation of the stored bytes.
-        assert.equal(config.settings['permissions'], 'auto', `${name}: failsafe defaults in memory`);
+        assert.equal(config.settings['permissions'], 'safe', `${name}: refused permissions fall back to safe, not auto`);
         fs.unlinkSync(config.SETTINGS_PATH);
         for (const backup of corruptBackups()) fs.unlinkSync(`${home}/${backup}`);
         writeSettings(validV4Document());
