@@ -100,8 +100,8 @@ public/
 ├── theme-test.html       ← 테마 점검 페이지
 ├── assets/
 │   ├── fonts/            ← 2 fonts (GeistVF, JetBrainsMono variable)
-│   └── providers/        ← 18 SVG provider assets
-├── css/                  ← 12 CSS files
+│   └── providers/        ← 19 SVG provider assets
+├── css/                  ← 15 CSS files
 ├── icons/                ← 5 PWA icons (favicon-32, mascot, 192/512/maskable)
 ├── img/                  ← mascot runner sprite (scripts/brand/generate-brand-assets.py)
 ├── js/                   ← 90 TypeScript modules
@@ -127,7 +127,7 @@ public/
 | `public/manager/src/` | 304 | React 19 manager dashboard |
 | `public/css/` | 12 | theme/layout/chat/markdown/tool UI/diagram/trace drawer/workflow cockpit/chat-search |
 | `public/locales/` | 4 | `ko.json`, `en.json`, `ja.json`, `zh.json` |
-| `public/assets/providers/` | 18 | provider SVG 세트 |
+| `public/assets/providers/` | 19 | provider SVG 세트 |
 | `public/assets/fonts/` | 2 | 로컬 폰트 자산 |
 | `public/icons/` | 5 | PWA icons (`favicon-32.png`, `mascot.png` 포함) |
 

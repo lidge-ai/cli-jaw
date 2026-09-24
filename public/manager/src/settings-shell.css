@@ -278,6 +278,12 @@
     object-fit: cover;
 }
 
+.settings-avatar-preview img.settings-avatar-mascot {
+    width: 80%;
+    height: 80%;
+    object-fit: contain;
+}
+
 .settings-avatar-placeholder {
     font-size: 28px;
 }

@@ -2,8 +2,9 @@
 """Regenerate every cli-jaw brand asset from the mascot master.
 
 Maintainer tool, not part of the build. Requires Pillow; icon.icns also needs macOS iconutil.
-Usage: python3 scripts/brand/generate-brand-assets.py [--skip-icns] [--og-card]
---og-card recomposes docs/assets/og-card.jpg in place, so run it only against the original card.
+Usage: python3 scripts/brand/generate-brand-assets.py [--skip-icns] [--og-card-from <plain-card.jpg>]
+--og-card-from composites the mascot onto a card without it and writes docs/assets/og-card.jpg.
+Pass the pre-mascot card (for example from git history); the shipped card already carries the mascot.
 """
 import math
 import os
@@ -175,8 +176,8 @@ def runner_sprite(mascot, frames=10, fw=47, fh=32):
     return strip
 
 
-def og_card(mascot):
-    card = Image.open(path('docs', 'assets', 'og-card.jpg')).convert('RGBA')
+def og_card(mascot, source):
+    card = Image.open(source).convert('RGBA')
     center = (930, 300)
     card.alpha_composite(glow(card.size, center, 220))
     place_mascot(card, mascot, 330, center)
@@ -185,8 +186,7 @@ def og_card(mascot):
 
 def write_icns(icon1024, out_path):
     if shutil.which('iconutil') is None:
-        print('skip icon.icns: iconutil not found (macOS only)')
-        return
+        sys.exit('iconutil not found (macOS only): rerun on macOS or pass --skip-icns to leave icon.icns unchanged')
     with tempfile.TemporaryDirectory() as tmp:
         iconset = os.path.join(tmp, 'icon.iconset')
         os.mkdir(iconset)
@@ -216,8 +216,9 @@ def main():
 
     icon.resize((512, 512), Image.LANCZOS).save(path('docs', 'assets', 'app-icon.png'), optimize=True)
     transparent_mark(mascot, 256).save(path('docs', 'assets', 'mascot.png'), optimize=True)
-    if '--og-card' in sys.argv:
-        og_card(mascot).save(path('docs', 'assets', 'og-card.jpg'), quality=90, optimize=True)
+    if '--og-card-from' in sys.argv:
+        source = sys.argv[sys.argv.index('--og-card-from') + 1]
+        og_card(mascot, source).save(path('docs', 'assets', 'og-card.jpg'), quality=90, optimize=True)
     print('brand assets regenerated')
 
 

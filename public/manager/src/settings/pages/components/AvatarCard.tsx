@@ -120,9 +120,11 @@ export function AvatarCard({ kind, port }: Props) {
             <div className="settings-avatar-preview" aria-label={`${label} preview`}>
                 {imageUrl ? (
                     <img src={imageUrl} alt={`${label} current`} />
+                ) : kind === 'agent' ? (
+                    <img className="settings-avatar-mascot" src="/icons/mascot.png" alt="" aria-hidden="true" />
                 ) : (
                     <span className="settings-avatar-placeholder" aria-hidden="true">
-                        {kind === 'agent' ? '🦈' : '👤'}
+                        👤
                     </span>
                 )}
             </div>
