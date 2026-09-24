@@ -435,6 +435,13 @@
     border-radius: inherit;
 }
 
+.avatar-mascot {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
 .agent-body {
     flex: 1;
     min-width: 0;
@@ -1420,10 +1427,17 @@ div.math-placeholder {
 }
 
 .empty-icon {
-    font-size: 48px;
-    font-family: var(--font-display);
-    color: var(--accent);
-    text-shadow: 0 0 20px color-mix(in oklch, var(--accent) 30%, transparent);
+    display: grid;
+    place-items: center;
+    width: 96px;
+    height: 96px;
+}
+
+.empty-icon img {
+    display: block;
+    width: 96px;
+    height: 96px;
+    object-fit: contain;
 }
 
 .empty-title {
