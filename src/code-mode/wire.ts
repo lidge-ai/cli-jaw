@@ -47,6 +47,16 @@ export interface CodeSessionInfo {
      * exited is not a fact about the session now.
      */
     contextUsage?: CodeContextUsage;
+    /**
+     * True while a retired native runtime still holds resources without
+     * physical close proof. Attached at read time like the attention fields
+     * above and never persisted: `idle` means the turn is over, not that the
+     * session can take new work — while this reads true the same session
+     * refuses with `cleanup_pending` and the residue still counts toward
+     * `session_capacity`. It clears on the first read or admission that
+     * observes every resource closed.
+     */
+    cleanupPending?: boolean;
 }
 
 /**
