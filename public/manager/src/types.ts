@@ -30,7 +30,6 @@ export type DashboardShortcutAction =
     | 'switchTab1'
     | 'switchTab2'
     | 'switchTab3'
-    | 'switchTab4'
     | 'previousTab'
     | 'nextTab'
     | 'browserReload'

@@ -206,7 +206,6 @@ type ManagerShortcutAction =
   | 'switchTab1'
   | 'switchTab2'
   | 'switchTab3'
-  | 'switchTab4'
   | 'previousTab'
   | 'nextTab'
   | 'browserReload'
@@ -1026,23 +1025,23 @@ function installManagerApplicationMenu(): void {
         ...(DEV_TOOLS_ENABLED ? [{ role: 'toggleDevTools' } as MenuItemConstructorOptions] : []),
         { type: 'separator' },
         {
-          label: 'Toggle Left Sidebar',
-          accelerator: 'CommandOrControl+Shift+B',
-          click: () => sendManagerShortcut('toggleLeftSidebar'),
-        },
-        {
           label: 'Toggle Right Sidebar',
           accelerator: 'CommandOrControl+B',
           click: () => sendManagerShortcut('toggleRightPanel'),
         },
         {
-          label: 'Toggle Bottom Panel',
-          accelerator: 'CommandOrControl+J',
-          click: () => sendManagerShortcut('toggleBottomPanel'),
+          label: 'Toggle Left Sidebar',
+          accelerator: 'CommandOrControl+Shift+B',
+          click: () => sendManagerShortcut('toggleLeftSidebar'),
         },
         {
           label: 'Reset Sidebar Width',
           click: () => sendManagerShortcut('resetSidebarWidth'),
+        },
+        {
+          label: 'Toggle Bottom Panel',
+          accelerator: 'CommandOrControl+J',
+          click: () => sendManagerShortcut('toggleBottomPanel'),
         },
         { type: 'separator' },
         {
@@ -1070,11 +1069,6 @@ function installManagerApplicationMenu(): void {
           label: 'Logs',
           accelerator: 'CommandOrControl+3',
           click: () => sendManagerShortcut('switchTab3'),
-        },
-        {
-          label: 'Settings',
-          accelerator: 'CommandOrControl+4',
-          click: () => sendManagerShortcut('switchTab4'),
         },
         {
           label: 'Previous Tab',

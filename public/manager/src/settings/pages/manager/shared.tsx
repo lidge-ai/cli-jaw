@@ -160,11 +160,6 @@ const COPY = {
                 scope: '단축키',
                 description: '인스턴스 Logs 탭으로 전환합니다.',
             },
-            shortcutSwitchTab4: {
-                label: 'Settings 탭',
-                scope: '단축키',
-                description: 'Settings 레일 워크스페이스를 엽니다.',
-            },
             shortcutPreviousTab: {
                 label: '이전 탭',
                 scope: '단축키',
@@ -355,11 +350,6 @@ const COPY = {
                 label: 'Logs tab',
                 scope: 'Shortcut',
                 description: 'Switch to the instance Logs tab.',
-            },
-            shortcutSwitchTab4: {
-                label: 'Settings tab',
-                scope: 'Shortcut',
-                description: 'Open the Settings rail workspace.',
             },
             shortcutPreviousTab: {
                 label: 'Previous tab',
@@ -552,11 +542,6 @@ const COPY = {
                 scope: '快捷键',
                 description: '切换到实例 Logs 标签。',
             },
-            shortcutSwitchTab4: {
-                label: 'Settings 标签',
-                scope: '快捷键',
-                description: '打开 Settings 侧边工作区。',
-            },
             shortcutPreviousTab: {
                 label: '上一个标签',
                 scope: '快捷键',
@@ -748,11 +733,6 @@ const COPY = {
                 scope: 'ショートカット',
                 description: 'インスタンスの Logs タブに切り替えます。',
             },
-            shortcutSwitchTab4: {
-                label: 'Settings タブ',
-                scope: 'ショートカット',
-                description: 'Settings レールワークスペースを開きます。',
-            },
             shortcutPreviousTab: {
                 label: '前のタブ',
                 scope: 'ショートカット',
@@ -920,7 +900,6 @@ const SHORTCUT_COPY_KEYS: Record<DashboardShortcutAction, keyof typeof COPY.ko.f
     switchTab1: 'shortcutSwitchTab1',
     switchTab2: 'shortcutSwitchTab2',
     switchTab3: 'shortcutSwitchTab3',
-    switchTab4: 'shortcutSwitchTab4',
     previousTab: 'shortcutPreviousTab',
     nextTab: 'shortcutNextTab',
     browserReload: 'shortcutBrowserReload',

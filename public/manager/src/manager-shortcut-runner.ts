@@ -76,7 +76,6 @@ export function runManagerShortcut(action: DashboardShortcutAction, deps: Manage
     if (action === 'switchTab1') { deps.handleTabChange('overview'); return; }
     if (action === 'switchTab2') { deps.handleTabChange('preview'); return; }
     if (action === 'switchTab3') { deps.handleTabChange('logs'); return; }
-    if (action === 'switchTab4') { deps.handleTabChange('settings'); return; }
     if (action === 'previousTab' || action === 'nextTab') {
         const tabs: DashboardDetailTab[] = ['overview', 'preview', 'logs'];
         const idx = tabs.indexOf(deps.activeDetailTab);
