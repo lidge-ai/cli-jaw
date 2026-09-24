@@ -873,6 +873,8 @@
   "settings.slack.resetFailed": "Slack 앱 연결을 초기화하지 못했습니다. 다시 시도해주세요.",
   "settings.slack.resetManagedByEnvironment": "이 Slack 연결은 환경변수({variables})로 관리되고 있습니다. 해당 환경변수를 제거하고 cli-jaw를 재시작한 후 연결을 초기화하세요.",
   "settings.slack.managedByEnvironment": "연결 설정은 환경변수({variables})로 관리되어 읽기 전용입니다. 여기서 수정하려면 환경변수를 제거하고 cli-jaw를 재시작하세요.",
+  "settings.telegram.managedByEnvironment": "연결 설정은 환경변수({variables})로 관리되어 읽기 전용입니다. 여기서 수정하려면 환경변수를 제거하고 cli-jaw를 재시작하세요.",
+  "settings.discord.managedByEnvironment": "연결 설정은 환경변수({variables})로 관리되어 읽기 전용입니다. 여기서 수정하려면 환경변수를 제거하고 cli-jaw를 재시작하세요.",
   "settings.slack.attachPort": "연결 인스턴스 포트",
   "settings.channel.notAttachInstanceHint": "다른 인스턴스가 이 Slack 연결을 소유하고 있습니다 (연결 인스턴스 포트 확인)",
   "settings.slack.guide.step2Desc": "앱 설정 → OAuth & Permissions → files:read 확인 → Reinstall to Workspace → Bot User OAuth Token 복사",

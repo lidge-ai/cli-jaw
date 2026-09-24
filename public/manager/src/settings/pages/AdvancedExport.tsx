@@ -45,6 +45,8 @@ export function stripServerOwnedSettingsFields(settings: Record<string, unknown>
         nativeTransportMigration: _nativeTransportMigration,
         maxConcurrentDefaultMigration: _maxConcurrentDefaultMigration,
         slackEnvironmentVariables: _slackEnvironmentVariables,
+        telegramEnvironmentVariables: _telegramEnvironmentVariables,
+        discordEnvironmentVariables: _discordEnvironmentVariables,
         ...userOwned
     } = settings;
     return userOwned;
