@@ -422,9 +422,12 @@ jobs:
 
   # macOS unit lane, push/dispatch only — the macOS twin of windows-unit.
   # Several suites can only prove anything on a real darwin host: launchd-plist
-  # needs plutil, tcc.test.ts skips everywhere else, service-artifact's zsh
-  # repin cases are darwin-gated, and platform-kind-runtime can only assert
-  # `darwin` classification where the resolver genuinely runs on darwin. The
+  # needs plutil, service-artifact's zsh repin cases are darwin-gated, and
+  # platform-kind-runtime can only assert `darwin` classification where the
+  # resolver genuinely runs on darwin. tcc.test.ts is weaker: it skips
+  # everywhere else, and on a runner without a readable TCC.db it only proves
+  # the empty-array fallback — coverage of the darwin code path, not proof of
+  # a real grant read. The
   # file list lives in scripts/ci/macos-unit-manifest.txt and is validated by
   # scripts/ci/macos-unit-manifest.mjs on Linux (gates job +
   # tests/unit/macos-unit-manifest.test.ts) and here, the same contract the
