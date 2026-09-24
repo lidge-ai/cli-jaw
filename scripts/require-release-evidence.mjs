@@ -148,12 +148,11 @@ function deriveInstallerSensitivePaths() {
     throw new Error(`cannot read ${PLATFORM_WORKFLOW_PATH}: ${error.message}`);
   }
   // `push` is what actually determines whether platform evidence can exist:
-  // publish.yml looks for a successful `--event push` run of this workflow. The
-  // union of both trigger lists is used so a divergence errs toward requiring
-  // evidence rather than skipping it; a unit test asserts they stay identical.
+  // publish.yml looks for a successful `--event push` run of this workflow.
+  // The pull_request trigger was removed when cross-platform evidence moved
+  // to the dev push after merge, so on.push.paths is the whole contract now.
   const pushPaths = parseWorkflowTriggerPaths(source, 'push');
-  const pullRequestPaths = parseWorkflowTriggerPaths(source, 'pull_request');
-  return [...new Set([...pushPaths, ...pullRequestPaths, ...EXTRA_SENSITIVE_PATHS])];
+  return [...new Set([...pushPaths, ...EXTRA_SENSITIVE_PATHS])];
 }
 
 let installerSensitivePaths;

@@ -511,7 +511,11 @@ test('release branch policy is reflected in CI workflows, release script, instal
     // comment mentioning a branch nor a path entry that happens to look like
     // one can satisfy it.
     const pushBranches = (workflow: string): Set<string> => {
-        const on = workflow.slice(workflow.indexOf('on:'), workflow.indexOf('pull_request:'));
+        const pushStart = workflow.indexOf('push:', workflow.indexOf('on:'));
+        const end = Math.min(...['pull_request:', 'workflow_dispatch:', 'jobs:']
+            .map(marker => workflow.indexOf(marker, pushStart))
+            .filter(index => index > 0));
+        const on = workflow.slice(pushStart, end);
         const fromBranches = on.slice(on.indexOf('branches:'));
         const pathsAt = fromBranches.indexOf('paths:');
         const list = pathsAt >= 0 ? fromBranches.slice(0, pathsAt) : fromBranches;
@@ -530,12 +534,16 @@ test('release branch policy is reflected in CI workflows, release script, instal
     // release branch. It still is not — publish.yml accepts a certifying run only
     // from preview/main, and promote-to-main.sh pins --branch preview. What M0
     // also cost was any CI at all for dev HEAD, which is how a241c6222 came to
-    // carry live product code with zero check-runs (#521). So test.yml — and only
-    // test.yml — now runs on dev.
+    // carry live product code with zero check-runs (#521). test.yml answered
+    // that first; postinstall-platform.yml joined the dev push when the
+    // cross-platform contract moved off pull_request.
     assert.ok(testBranches.has('dev'),
         'test.yml must run on dev so dev HEAD is never unverified (#521)');
-    assert.ok(!platformBranches.has('dev'),
-        'installer-surface certification never runs on dev');
+    // dev now also carries the platform matrix: pull_request stopped running
+    // the cross-platform lanes, so the installer-surface evidence lands on the
+    // dev push after merge. preview remains the only release-certifying run.
+    assert.ok(platformBranches.has('dev'),
+        'postinstall-platform.yml must run on dev so installer-surface evidence exists post-merge');
 
     // test.yml keeps its main run: branch protection on main requires the
     // ci-aggregate check, and that is the workflow which produces it.

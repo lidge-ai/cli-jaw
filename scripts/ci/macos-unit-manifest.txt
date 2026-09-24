@@ -1,0 +1,29 @@
+# Unit test files the macos-unit job runs on macos-latest (.github/workflows/test.yml).
+# One repo-relative path per line, tests/unit/<name>.test.ts only; no globs.
+# Validated by scripts/ci/macos-unit-manifest.mjs and tests/unit/macos-unit-manifest.test.ts.
+#
+# Picked for what only a real darwin host can prove: darwin-gated suites that
+# skip everywhere else, real-runtime classification, and suites where the
+# darwin-arm64 native build (better-sqlite3) or filesystem semantics differ.
+tests/unit/tcc.test.ts
+tests/unit/launchd-plist.test.ts
+tests/unit/launchd-multi.test.ts
+tests/unit/launchd-cleanup.test.ts
+tests/unit/service.test.ts
+tests/unit/service-artifact.test.ts
+tests/unit/service-lifecycle-cli.test.ts
+tests/unit/platform-kind-runtime.test.ts
+tests/unit/sidecar-bundle-ownership.test.ts
+tests/unit/install-sh-exec.test.ts
+tests/unit/jaw-reminders-bridge.test.ts
+tests/unit/manager-git-status-service.test.ts
+tests/unit/manager-git-worktree-service.test.ts
+tests/unit/electron-jaw-spawn.test.ts
+tests/unit/electron-jaw-spawn-orphan-kill.test.ts
+
+# Same reason the Windows lane carries them: schema migration needs a home that
+# already exists, so every fresh-CLI_JAW_HOME CI run skips it elsewhere, and
+# these two build an old home and walk the source tree by path — the place the
+# darwin-arm64 better-sqlite3 prebuild actually differs (#691).
+tests/unit/db-schema-migration.test.ts
+tests/unit/db-legacy-mention-watch-surface.test.ts

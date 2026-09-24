@@ -3,7 +3,12 @@ name: Postinstall Platform Checks
 on:
   push:
     branches:
-      # preview only. Promotion fast-forwards main onto the exact commit
+      # preview + dev. preview stays the release-certifying run (see below);
+      # dev carries the post-merge cross-platform evidence since pull_request
+      # no longer triggers this workflow — PRs keep the minimal test.yml
+      # contract and installer-surface proof lands on the dev push after merge.
+      #
+      # Promotion fast-forwards main onto the exact commit
       # preview already certified (#480), so a main push re-ran this workflow
       # against a byte-identical tree: no new information about the code, and a
       # second exposure to runner-side failure. Both post-promotion reds on main
@@ -17,6 +22,7 @@ on:
       # run before it fast-forwards main. Branch protection on main requires
       # only ci-aggregate, which test.yml supplies.
       - preview
+      - dev
     paths:
       - '.gitattributes'
       - '.github/workflows/postinstall-platform.yml'
@@ -80,84 +86,6 @@ on:
       - 'src/core/windows-shell.ts'
       - 'src/core/instance-identity.ts'
       - 'src/manager/windows-service.ts'
-      - 'scripts/windows-bootstrap-manifest.json'
-      - 'scripts/windows-support-contract.json'
-      - 'scripts/render-windows-support.mts'
-      - 'tests/unit/spawn-env.test.ts'
-      - 'tests/unit/stream-decode-boundary.test.ts'
-      - 'tests/unit/windows-launch-spec.test.ts'
-      - 'tests/unit/windows-shell-fallback.test.ts'
-      - 'tests/unit/windows-bootstrap.test.ts'
-      - 'tests/unit/instance-identity.test.ts'
-      - 'tests/unit/install-ps1-hardening.test.ts'
-      - 'tests/unit/readme-windows-parity.test.ts'
-      - 'package.json'
-      - 'package-lock.json'
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.gitattributes'
-      - '.github/workflows/postinstall-platform.yml'
-      - 'bin/postinstall.ts'
-      - 'src/core/claude-install.ts'
-      - 'src/core/cli-detect.ts'
-      - 'src/core/platform-kind.ts'
-      - 'src/core/runtime-path.ts'
-      - 'scripts/install-risk-gate.mjs'
-      - 'scripts/retired-runtime-package-smoke.mjs'
-      - 'scripts/check-electron-sidecar-no-jwc.cjs'
-      - 'tests/unit/retired-runtime-package.test.ts'
-      - 'tests/unit/retired-runtime-command-contract.test.ts'
-      - 'scripts/install.sh'
-      - 'scripts/install-wsl.sh'
-      - 'scripts/install-officecli.ps1'
-      - 'scripts/fresh-install-smoke.ts'
-      - 'scripts/verify-fresh-install.sh'
-      - 'scripts/collect-fresh-install-evidence.sh'
-      - 'scripts/audit-fresh-install-evidence.mjs'
-      - 'scripts/verify-release-evidence.mjs'
-      - 'scripts/require-release-evidence.mjs'
-      - 'tests/unit/cli-detect.test.ts'
-      - 'tests/unit/platform-kind.test.ts'
-      - 'tests/unit/platform-kind-runtime.test.ts'
-      - 'tests/unit/platform-kind-delegation.test.ts'
-      - 'tests/unit/windows-native-cli-detect.test.ts'
-      - 'tests/unit/doctor-platform-lanes.test.ts'
-      - 'tests/unit/install-sh-exec.test.ts'
-      - 'tests/unit/fresh-evidence-audit.test.ts'
-      - 'tests/unit/safe-install.test.ts'
-      - 'tests/unit/service.test.ts'
-      - 'tests/unit/postinstall-strict-tools.test.ts'
-      - 'tests/unit/wsl-installer-doctor.test.ts'
-      - 'tests/unit/wsl-installer-exec.test.ts'
-      - 'src/core/install-integrity.ts'
-      - 'scripts/install.ps1'
-      - 'tests/windows/install-ps1-contract.ps1'
-      - 'scripts/postinstall-guard.cjs'
-      - 'scripts/ensure-native-modules.cjs'
-      - 'scripts/bundle-sidecar.sh'
-      - 'bin/cli-jaw.ts'
-      - 'bin/commands/init.ts'
-      - 'bin/commands/doctor.ts'
-      - 'Dockerfile'
-      - 'Dockerfile.dev'
-      - 'structure/infra.md'
-      - 'tests/unit/install-integrity.test.ts'
-      - 'tests/unit/scriptless-install-contract.test.ts'
-      - 'tests/unit/installer-sensitive-path-parity.test.ts'
-      # Windows-critical surfaces (#371). Without these, editing the shim resolver,
-      # the stream decoder, or the bootstrap manifest would NOT run the only job that
-      # executes them on a real Windows runner.
-      - 'src/agent/spawn.ts'
-      - 'src/agent/spawn-env.ts'
-      - 'src/agent/stream-text.ts'
-      - 'src/agent/args.ts'
-      - 'src/core/windows-launch-spec.ts'
-      - 'src/core/windows-shell-fallback.ts'
-      - 'src/core/windows-bootstrap.ts'
-      - 'src/core/windows-shell.ts'
-      - 'src/manager/windows-service.ts'
-      - 'src/core/instance-identity.ts'
       - 'scripts/windows-bootstrap-manifest.json'
       - 'scripts/windows-support-contract.json'
       - 'scripts/render-windows-support.mts'

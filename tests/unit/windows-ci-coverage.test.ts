@@ -20,10 +20,10 @@ const nativeJob = workflow.jobs['windows-native'];
  * schedules is not coverage.
  */
 
-/** Every path list across push and pull_request triggers. */
+/** The path list on the push trigger (pull_request no longer runs this workflow). */
 function triggerPaths(): string[] {
     const on = workflow.on ?? workflow[true];   // yaml parses bare `on:` as boolean true
-    return [...(on.push?.paths ?? []), ...(on.pull_request?.paths ?? [])];
+    return [...(on.push?.paths ?? [])];
 }
 
 const WINDOWS_CRITICAL_SOURCES = [
@@ -116,13 +116,13 @@ test('WCI-002: every Windows-critical suite is actually INVOKED, not merely name
 
 test('WCI-003: every Windows-critical file triggers the job, with no later exclusion', () => {
     // A trailing `!path` entry silently removes coverage GitHub-side while a
-    // membership check still sees the positive entry.
+    // membership check still sees the positive entry. push is the only
+    // remaining trigger list: pull_request stopped scheduling this workflow
+    // when the cross-platform contract moved to the dev push after merge.
     const on = workflow.on ?? workflow[true];
-    for (const [event, list] of [['push', on.push?.paths], ['pull_request', on.pull_request?.paths]] as const) {
-        const included = positivePaths(list as string[]);
-        for (const file of [...WINDOWS_CRITICAL_SOURCES, ...WINDOWS_CRITICAL_SUITES]) {
-            assert.ok(included.has(file), `${file} is not effectively included in ${event} triggers`);
-        }
+    const included = positivePaths(on.push?.paths as string[]);
+    for (const file of [...WINDOWS_CRITICAL_SOURCES, ...WINDOWS_CRITICAL_SUITES]) {
+        assert.ok(included.has(file), `${file} is not effectively included in push triggers`);
     }
 });
 
@@ -142,16 +142,19 @@ test('WCI-004: both PowerShell lanes run the installer contract as live gates', 
     }
 });
 
-test('WCI-005: push and pull_request cover the SAME Windows-critical set', () => {
-    // A file covered only on push gets feedback after merge, which is when it is
-    // least useful. Compare the effective sets, including the suites.
+test('WCI-005: the push trigger carries the Windows-critical set on dev and preview', () => {
+    // Cross-platform evidence moved off pull_request: PRs keep the minimal
+    // test.yml contract and this workflow produces its matrix on push to dev
+    // (post-merge) and preview (release certification). Pin both ends of that
+    // policy: the push list covers the set, pull_request is gone entirely.
     const on = workflow.on ?? workflow[true];
     const push = positivePaths(on.push?.paths as string[]);
-    const pr = positivePaths(on.pull_request?.paths as string[]);
     for (const file of [...WINDOWS_CRITICAL_SOURCES, ...WINDOWS_CRITICAL_SUITES]) {
         assert.ok(push.has(file), `${file} missing from push triggers`);
-        assert.ok(pr.has(file), `${file} missing from pull_request triggers`);
     }
+    assert.ok(on.push?.branches?.includes('dev'), 'the dev push must carry the post-merge platform evidence');
+    assert.ok(on.push?.branches?.includes('preview'), 'preview stays the release-certifying run');
+    assert.equal(on.pull_request, undefined, 'pull_request must not trigger the cross-platform matrix');
     // Manual dispatch is the escape hatch when a release needs the lane on demand.
     assert.ok(on.workflow_dispatch !== undefined, 'workflow_dispatch must remain available');
 });
