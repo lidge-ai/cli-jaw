@@ -35,9 +35,15 @@ aliases: [model registry, 모델 레지스트리, live model discovery]
 | `claude` | 설치된 Claude Code 번들 | `src/cli/claude-model-discovery.ts` |
 | `cursor` | `cursor-agent --list-models` | `src/agent/cursor-model-inventory.ts` |
 | `grok` | `grok models` | `src/agent/grok-models.ts` |
-| `agy` / `pi` / `opencode` | 정적 | — |
+| `agy` | `agy models` (두 번째 열, 티어가 붙은 라벨) | `src/agent/agy-models.ts` |
+| `pi` / `opencode` | 정적 | — |
 
-정적으로 남은 것은 AGY, Pi, OpenCode 세 런타임이다.
+정적으로 남은 것은 Pi, OpenCode 두 런타임이다.
+
+AGY는 `agy models`의 두 번째 열만 선택지로 쓴다. 첫 열의 슬러그는 `--effort`를
+요구하는데 cli-jaw는 AGY에 effort를 보내지 않는다. Google은 다음 Flash 세대가
+나오면 이전 세대를 곧 내리므로, 정적 기본 모델이 라이브 목록에 없으면 첫 라이브
+모델로 바꿔 picker가 고를 수 없는 기본값을 들고 있지 않게 한다.
 
 ## Cursor: 하나의 관측에서 두 목록을 파생한다
 
