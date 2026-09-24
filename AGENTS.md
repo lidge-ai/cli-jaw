@@ -203,7 +203,7 @@ The same boundary check also rejects a `pr-assets` directory at any depth: PR sc
 
 ### Pull request screenshots
 
-A PR that changes rendered UI — `public/` (the manager dashboard / web frontend the Electron shell loads) or the Electron rendered surface (`electron/src/preload/`, markup/style/component files under `electron/`; pure test files excluded — exact rules in `.github/scripts/pr-screenshot.cjs`) — must embed a screenshot in its description. `pull_request_target` workflow `pr-screenshot-gate.yml` runs check `screenshot-gate` and fails otherwise; it reads the body for a rendered image (`![alt](url)`, `<img src>`, or a defined reference image — comments and code fences do not count) and never checks out PR head code.
+A PR that changes rendered UI — `public/` (the manager dashboard / web frontend the Electron shell loads) or the Electron rendered surface (`electron/src/preload/`, markup/style/component files under `electron/`; pure test files excluded — exact rules in `.github/scripts/pr-screenshot.cjs`) — must embed a screenshot in its description. `pull_request_target` workflow `pr-screenshot-gate.yml` runs check `screenshot-gate` and fails otherwise — the workflow file executes from the repository's default branch, so the check activates once it reaches `main`. It reads the body for a rendered image (`![alt](url)`, `<img src>`, or a defined reference image — comments and code spans/fences do not count) and never checks out PR head code.
 
 **Never commit screenshot evidence to the PR branch.** Agents and CLI uploads with push access push images to the orphan `pr-assets` branch and link by commit SHA:
 
@@ -211,7 +211,7 @@ A PR that changes rendered UI — `public/` (the manager dashboard / web fronten
 https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
 ```
 
-Waivers: the `ui-screenshot-waived` label counts only when the label actor has write/maintain/admin access (checked via the issue event timeline), or a maintainer comment negates UI impact ("no UI changes").
+Waivers: the `ui-screenshot-waived` label counts only when the label actor has write/maintain/admin access (checked via the issue event timeline), or a comment asserting no UI change ("no UI changes", "UI 변경 없음") posted after the latest push by someone with write/maintain/admin access (verified via `repos.getCollaboratorPermissionLevel`).
 
 ### Kanban
 
