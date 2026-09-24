@@ -7,8 +7,11 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function isPrivatePath(file) {
+    // `pr-assets` is not a private name but shares this guard: PR screenshot
+    // evidence lives only on the orphan `pr-assets` branch, so a same-named
+    // directory (e.g. `docs/pr-assets/`) must never land on a code branch.
     return file.replaceAll('\\', '/').split('/').some(segment =>
-        /^(?:devlog(?:[._-].*)?|cli-jaw-internal|_plan|_fin|\.jwc)$/i.test(segment));
+        /^(?:devlog(?:[._-].*)?|cli-jaw-internal|_plan|_fin|\.jwc|pr-assets)$/i.test(segment));
 }
 
 function git(cwd, args) {
