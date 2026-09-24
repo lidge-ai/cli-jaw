@@ -93,7 +93,7 @@ const COPY = {
             shortcutJumpInstance: {
                 label: '인스턴스 점프',
                 scope: '단축키',
-                description: '렌더된 사이드바 행 1–9로 이동합니다. Meta+1–4는 탭 전환에 남아 있어 Alt를 씁니다.',
+                description: '렌더된 사이드바 행 1–9로 이동합니다. Meta+1–3는 탭 전환에 남아 있어 Alt를 씁니다.',
             },
             shortcutToggleBottomPanel: {
                 label: '하단 패널',
@@ -284,7 +284,7 @@ const COPY = {
             shortcutJumpInstance: {
                 label: 'Jump to instance',
                 scope: 'Shortcut',
-                description: 'Jump to rendered sidebar rows 1–9. Meta+1–4 stay on tab switching, so these use Alt.',
+                description: 'Jump to rendered sidebar rows 1–9. Meta+1–3 stay on tab switching, so these use Alt.',
             },
             shortcutToggleBottomPanel: {
                 label: 'Bottom panel',
@@ -475,7 +475,7 @@ const COPY = {
             shortcutJumpInstance: {
                 label: '跳转到实例',
                 scope: '快捷键',
-                description: '跳转到已渲染的侧边栏第 1–9 行。Meta+1–4 仍用于切换标签，因此这里使用 Alt。',
+                description: '跳转到已渲染的侧边栏第 1–9 行。Meta+1–3 仍用于切换标签，因此这里使用 Alt。',
             },
             shortcutToggleBottomPanel: {
                 label: '底部面板',
@@ -666,7 +666,7 @@ const COPY = {
             shortcutJumpInstance: {
                 label: 'インスタンスへジャンプ',
                 scope: 'ショートカット',
-                description: '描画済みサイドバー行 1–9 へ移動します。Meta+1–4 はタブ切替のままなので Alt を使います。',
+                description: '描画済みサイドバー行 1–9 へ移動します。Meta+1–3 はタブ切替のままなので Alt を使います。',
             },
             shortcutToggleBottomPanel: {
                 label: 'ボトムパネル',

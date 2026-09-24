@@ -594,8 +594,20 @@ test('Electron terminal uses xterm plus a PTY backend and representative shortcu
     assert.ok(desktopBridge.includes('shortcuts?: ShortcutBridgeApi'), 'frontend desktop bridge type must include shortcut events');
     assert.ok(app.includes("getDesktop()?.shortcuts?.onAction"), 'manager app must subscribe to Electron desktop shortcut events');
     assert.ok(
-        app.includes("document.activeElement?.tagName === 'IFRAME' && action !== 'browserReload' && action !== 'browserHardReload'"),
-        'iframe focus must keep blocking manager chrome shortcuts while allowing Cmd+R/Cmd+Shift+R to refresh the preview',
+        !app.includes("document.activeElement?.tagName === 'IFRAME'"),
+        'menu dispatch must stay live while the preview iframe holds focus — clicks and accelerators still run',
+    );
+    assert.ok(
+        app.includes('menuOwned: getDesktop() != null'),
+        'renderer keydown matching must skip menu-owned chords on desktop so one press does not fire twice',
+    );
+    assert.ok(
+        previewMessages.includes('menuOwned: args.menuOwned'),
+        'preview iframe bridge must skip menu-owned chords on desktop — the menu accelerator already dispatched them',
+    );
+    assert.ok(
+        shortcuts.includes('MENU_ACCELERATOR_SHORTCUT_CHORDS'),
+        'manager-shortcuts must export the menu-owned chord list used for desktop dedup',
     );
     assert.ok(previewBridge.includes('e.ctrlKey && !e.metaKey && !e.altKey'), 'classic preview iframe bridge must forward Ctrl+Backquote and Ctrl+Shift+Backquote');
     assert.ok(previewMessages.includes('ctrlKey: !!data.ctrlKey'), 'manager preview shortcut bridge must preserve Ctrl modifier');

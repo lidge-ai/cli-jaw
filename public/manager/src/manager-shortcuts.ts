@@ -172,10 +172,42 @@ export const RENDERER_DISABLED_SHORTCUT_ACTIONS = new Set<DashboardShortcutActio
     'browserHardReload',
 ]);
 
+/**
+ * Chords owned by the Electron application menu accelerators. On desktop the
+ * menu dispatches these keys through `manager:shortcut`, so renderer-side
+ * matchers (document keydown and the preview-iframe shortcut bridge) must not
+ * also resolve them — one press would fire the action twice. The check is on
+ * the chord, not the action, so a user keymap rebinding an action to a key the
+ * menu does not own keeps working. On web there is no menu, so callers leave
+ * `menuOwned` unset and these chords stay renderer-handled.
+ */
+export const MENU_ACCELERATOR_SHORTCUT_CHORDS: string[] = [
+    'Meta+W',
+    'Meta+R',
+    'Meta+Shift+R',
+    'Meta+B',
+    'Meta+Shift+B',
+    'Meta+J',
+    'Meta+Shift+E',
+    'Meta+Shift+D',
+    'Meta+1',
+    'Meta+2',
+    'Meta+3',
+    'Meta+Shift+[',
+    'Meta+Shift+]',
+    'Meta+T',
+    'Ctrl+`',
+    'Ctrl+Shift+`',
+];
+
 export function actionForShortcutEvent(
     event: KeyboardEvent,
     keymap: unknown,
+    options?: { menuOwned?: boolean },
 ): DashboardShortcutAction | null {
+    if (options?.menuOwned && MENU_ACCELERATOR_SHORTCUT_CHORDS.some(chord => shortcutMatches(event, chord))) {
+        return null;
+    }
     const shortcuts = normalizeManagerShortcutKeymap(keymap);
     for (const action of MANAGER_SHORTCUT_ACTIONS) {
         if (RENDERER_DISABLED_SHORTCUT_ACTIONS.has(action)) continue;

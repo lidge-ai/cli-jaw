@@ -101,6 +101,42 @@ test('reload shortcuts are owned by the Electron menu and ignored by the rendere
     assert.ok(RENDERER_DISABLED_SHORTCUT_ACTIONS.has('browserHardReload'));
 });
 
+test('menu-owned chords resolve on web but not on the Electron desktop', () => {
+    const menuOwned = { menuOwned: true };
+    // Menu accelerator chords: the renderer matcher (document keydown and the
+    // preview iframe bridge) must ignore them on desktop — the menu already
+    // dispatched them via manager:shortcut, so resolving again double-fires.
+    for (const event of [
+        keyEvent('`', { ctrlKey: true, code: 'Backquote' }),           // Reveal Terminal
+        keyEvent('~', { ctrlKey: true, shiftKey: true, code: 'Backquote' }), // New Terminal
+        keyEvent('t', { metaKey: true, code: 'KeyT' }),                // New Terminal Tab
+        keyEvent('b', { metaKey: true, code: 'KeyB' }),                // Right sidebar
+        keyEvent('b', { metaKey: true, shiftKey: true, code: 'KeyB' }),// Left sidebar
+        keyEvent('j', { metaKey: true, code: 'KeyJ' }),                // Bottom panel
+        keyEvent('w', { metaKey: true, code: 'KeyW' }),                // Close Tab
+        keyEvent('1', { metaKey: true, code: 'Digit1' }),              // Overview tab
+        keyEvent('e', { metaKey: true, shiftKey: true, code: 'KeyE' }),// Folder panel
+        keyEvent('d', { metaKey: true, shiftKey: true, code: 'KeyD' }),// Diff panel
+    ]) {
+        assert.equal(actionForShortcutEvent(event, DEFAULT_MANAGER_SHORTCUT_KEYMAP, menuOwned), null,
+            `desktop matcher must skip menu-owned chord ${JSON.stringify(event)}`);
+        assert.notEqual(actionForShortcutEvent(event, DEFAULT_MANAGER_SHORTCUT_KEYMAP), null,
+            `web matcher must keep resolving ${JSON.stringify(event)}`);
+    }
+    // Chords the menu does not own still resolve on desktop.
+    assert.equal(
+        actionForShortcutEvent(keyEvent('j', { altKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, menuOwned),
+        'nextInstance',
+    );
+    assert.equal(
+        actionForShortcutEvent(keyEvent('k', { metaKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, menuOwned),
+        'terminalClear',
+    );
+    // A user rebound onto a non-menu chord keeps working on desktop.
+    const rebound = { ...DEFAULT_MANAGER_SHORTCUT_KEYMAP, toggleRightPanel: 'Alt+R' };
+    assert.equal(actionForShortcutEvent(keyEvent('r', { altKey: true }), rebound, menuOwned), 'toggleRightPanel');
+});
+
 test('Alt+Digit recovers jumpInstance even when macOS rewrites the key character', () => {
     assert.equal(
         actionForShortcutEvent(keyEvent('1', { altKey: true, code: 'Digit1' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),

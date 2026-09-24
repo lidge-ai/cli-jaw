@@ -104,11 +104,18 @@ export function runManagerShortcut(action: DashboardShortcutAction, deps: Manage
         // browserFocusUrl / Back / Forward are browser-only → no-op outside the panel.
         return;
     }
-    if (action === 'terminalClear' || action === 'terminalNewTab') {
+    if (action === 'terminalClear') {
+        // Clears the active terminal tab regardless of current focus — the panel
+        // resolves the last-used session, so menu dispatch still works when the
+        // pointer has left the terminal.
+        document.dispatchEvent(new CustomEvent('jaw:shortcut-action', { detail: action }));
+        return;
+    }
+    if (action === 'terminalNewTab') {
         const el = document.activeElement;
         if (el?.closest('.terminal-panel, .xterm')) {
             document.dispatchEvent(new CustomEvent('jaw:shortcut-action', { detail: action }));
-        } else if (action === 'terminalNewTab') {
+        } else {
             panelShortcutBus.dispatch('newTerminalSession');
         }
         return;
