@@ -37,7 +37,7 @@ import { requiresNativeBodyDelivery } from '../messaging/native-body.js';
 import { createQueueNoticeRecorder } from '../messaging/queue-notice-record.js';
 import { admitTargetReply } from '../messaging/target-reply-guard.js';
 import { sendDiscordFile } from './discord-file.js';
-import { getDiscordSendClient, sendDiscordFileRest, sendDiscordTextRest } from './send-only-client.js';
+import { describeDiscordSendFailure, getDiscordSendClient, sendDiscordFileRest, sendDiscordTextRest } from './send-only-client.js';
 import { invalidateDiscordSendClient } from './send-only-client.js';
 import { deliverySent, type TransportSendResult } from '../messaging/delivery-outcome.js';
 import { OutboundSendRegistry } from '../messaging/outbound-lifecycle.js';
@@ -480,7 +480,7 @@ async function dcOrchestrate(msg: Message, prompt: string, displayMsg: string) {
                                 ...(requireBodyDelivery ? { requireBodyDelivery: true } : {}) });
                         if (!sendResult.ok) {
                             delivered = false;
-                            log.error('[discord:queue-send]', logErrorText(sendResult.error || 'send failed'));
+                            log.error('[discord:queue-send]', logErrorText(describeDiscordSendFailure(sendResult)));
                         }
                     } catch (e) {
                         delivered = false;
@@ -600,7 +600,7 @@ async function dcOrchestrate(msg: Message, prompt: string, displayMsg: string) {
                 if (!selfDelivered) {
                     const sendResult = await sendDiscordTextRest(restToken, msg.channelId, text, { signal: outbound.signal,
                         ...(requiresNativeBodyDelivery(collected.data) ? { requireBodyDelivery: true } : {}) });
-                    if (!sendResult.ok) throw new Error(sendResult.error || 'discord send failed');
+                    if (!sendResult.ok) throw new Error(describeDiscordSendFailure(sendResult));
                 }
             } finally {
                 outbound.done();

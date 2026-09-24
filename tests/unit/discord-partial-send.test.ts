@@ -14,7 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sendDiscordTextRest } from '../../src/discord/send-only-client.ts';
+import { describeDiscordSendFailure, sendDiscordDm, sendDiscordTextRest } from '../../src/discord/send-only-client.ts';
 
 type Scheduled = { path: string; body: string; signal?: AbortSignal };
 type Reply =
@@ -114,4 +114,37 @@ test('a first-chunk failure keeps the plain failure shape', async () => {
     assert.equal('retryable' in result, false);
     assert.equal('platformMessageId' in result, false);
     assert.equal(jobs.length, 1);
+});
+
+test('a DM whose follow-up chunk is rejected keeps the posted prefix receipt', async () => {
+    let posts = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/users/@me/channels')) {
+            return new Response(JSON.stringify({ id: 'DM1' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        posts += 1;
+        if (posts === 1) {
+            return new Response(JSON.stringify({ id: 'M1' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ message: 'Missing Permissions', code: 50013 }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const result = await sendDiscordDm('token', 'USER9', LONG, fetchImpl);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.sent, true);
+    assert.equal(result.partial, true);
+    assert.equal(result.retryable, false);
+    assert.equal(result.postedChunks, 1);
+    assert.equal(result.totalChunks, 2);
+    assert.deepEqual(result.messageIds, ['M1']);
+    assert.equal(posts, 2, 'the failed chunk is not replayed');
+});
+
+test('a failure description names the posted prefix so logs and thrown errors keep it', () => {
+    assert.equal(describeDiscordSendFailure({ error: 'boom' }), 'boom');
+    assert.equal(
+        describeDiscordSendFailure({ error: 'boom', sent: true, partial: true, retryable: false, postedChunks: 1, totalChunks: 2, messageIds: ['M1'] }),
+        'boom (partial: posted 1/2 chunks messageIds=M1)',
+    );
 });

@@ -100,6 +100,15 @@ function sendResult<T>(result: DiscordRestResult<T>): DiscordRestSendResult {
     };
 }
 
+/** Log/error text for a failed send that names any posted prefix, so a
+ *  thrown or logged failure does not lose the partial receipt (#785). */
+export function describeDiscordSendFailure(result: { error?: string } & Partial<DiscordPartialDelivery>): string {
+    const base = result.error || 'discord send failed';
+    if (result.partial !== true || typeof result.postedChunks !== 'number') return base;
+    const ids = result.messageIds?.length ? ` messageIds=${result.messageIds.join(',')}` : '';
+    return `${base} (partial: posted ${result.postedChunks}/${result.totalChunks ?? '?'} chunks${ids})`;
+}
+
 /** Receipt for the prefix that already posted when a later chunk fails.
  *  Nothing posted means nothing to preserve, so the failure keeps the plain
  *  shape it always had. Posted chunks keep their ids via `deliveryFailed` —
