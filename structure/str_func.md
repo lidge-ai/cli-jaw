@@ -75,10 +75,10 @@ cli-jaw/
 │   │   ├── manager.ts ← session index, admission and resource capacity (329L)
 │   │   ├── session.ts ← captured turn ownership, cancellation and accepted-buffer drain (656L)
 │   │   ├── normalize.ts ← redacted materialized transcript and coalescing (534L)
-│   │   ├── store.ts ← SQLite ownership, replay, snapshots and byte budgets (794L)
+│   │   ├── store.ts ← SQLite ownership, replay, snapshots and byte budgets (812L)
 │   │   ├── provider.ts ← native handle and turn-context contracts (59L)
 │   │   ├── types.ts ← internal session and store contracts (12L)
-│   │   ├── wire.ts ← public request/event DTOs (213L)
+│   │   ├── wire.ts ← public request/event DTOs (226L)
 │   │   └── providers/        ← direct native adapters and capabilities
 │   │       ├── catalog.ts ← model/capability descriptions (129L)
 │   │       ├── live-models.ts ← last-known opencodex catalog, refreshed in background (93L)
@@ -427,7 +427,7 @@ cli-jaw/
 │   ├── project-git-summary.ts ← Web UI header용 read-only primary project git summary helper (`projectDirs[0]`, branch/hash, modified/untracked counts, home path guard, 115L) ✨
 │   ├── routes/               ← Express 라우트 추출 (36 TS files: registrar + helper modules + extracted base-route modules, 199 direct app route registrations incl. `/`)
 │   │   ├── code-body-parser.ts ← shared worker/Manager Code envelope policy (29L)
-│   │   ├── code-native.ts ← native session API and retired-route responses (208L)
+│   │   ├── code-native.ts ← native session API and retired-route responses (222L)
 │   │   ├── code.ts ← workspace picker and Git summary helpers (79L)
 │   │   ├── _http-error.ts    ← route-level HTTP error helper (status/code/detail 추출) (35L)
 │   │   ├── types.ts          ← `AuthMiddleware` shared type (3L)

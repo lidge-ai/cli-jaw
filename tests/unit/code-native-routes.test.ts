@@ -134,9 +134,14 @@ test('index, snapshot and replay reads preserve filters, caps and exact returned
         assert.equal((await request(`${url}/sessions?scope=cwd`)).status, 400);
         assert.equal((await request(`${url}/sessions?archived=perhaps`)).status, 400);
         assert.equal((await request(`${url}/sessions?limit=0`)).status, 400);
-        const listing = await request(`${url}/sessions?cwd=${encodeURIComponent(tmpdir())}&archived=false&limit=25&offset=5`);
+        assert.equal((await request(`${url}/sessions?cursor=not-json`)).status, 400);
+        assert.equal((await request(`${url}/sessions?cursor=${encodeURIComponent('{"createdAt":-1,"sessionId":"s3"}')}`)).status, 400);
+        const cursor = encodeURIComponent(JSON.stringify({ createdAt: 3, sessionId: 's3' }));
+        const listing = await request(`${url}/sessions?cwd=${encodeURIComponent(tmpdir())}&archived=false&limit=25&cursor=${cursor}`);
         assert.equal(listing.status, 200);
-        assert.deepEqual(f.calls.at(-1), { method: 'list', args: [{ cwd: realpathSync(tmpdir()), archived: false, limit: 25, offset: 5 }] });
+        assert.deepEqual(f.calls.at(-1), { method: 'list', args: [{ cwd: realpathSync(tmpdir()), archived: false, limit: 25,
+            cursor: { createdAt: 3, sessionId: 's3' } }] });
+        assert.deepEqual(await listing.json(), { ok: true, sessions: [f.session], limit: 25, hasMore: false, nextCursor: null });
         assert.equal((await request(`${url}/sessions/session-one`)).status, 200);
         assert.equal(f.calls.at(-1)?.method, 'snapshot');
         const events = await request(`${url}/sessions/session-one/events?afterSequence=7&limit=9000`);

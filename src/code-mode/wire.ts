@@ -154,10 +154,23 @@ export interface CodeHistoryPage {
     sequence: number;
 }
 
+/**
+ * Position inside the session index's stable creation order (created_at DESC,
+ * session_id ASC). Pages are keyset slices: pass the cursor back to read the
+ * strictly-lower rows. The order key never moves, so a stream covers every
+ * session matching the filter when it started, once each; sessions created or
+ * newly matching ahead of the cursor belong to a later from-scratch read.
+ */
+export interface CodeSessionCursor {
+    createdAt: number;
+    sessionId: string;
+}
+
 export interface CodeSessionPage {
     sessions: CodeSessionInfo[];
     limit: number;
-    offset: number;
+    /** Opaque cursor for the next page; null when the stream is exhausted. */
+    nextCursor: string | null;
     hasMore: boolean;
 }
 

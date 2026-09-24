@@ -99,7 +99,8 @@ export class CodeController {
     private historyLoading = new Set<string>();
     private indexLoading = false;
     private moreSessions = false;
-    private offset = 0;
+    private cursor: string | null = null;
+    private fetched = 0;
     private indexError: string | null = null;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private listeners = new Set<() => void>();
@@ -153,6 +154,8 @@ export class CodeController {
             this.summaries.clear();
             this.attention.clear();
             this.rows = [];
+            this.cursor = null;
+            this.fetched = 0;
             this.gitGeneration++;
             this.pickerGeneration++;
         };
@@ -338,12 +341,15 @@ export class CodeController {
     private async readIndex(more = false): Promise<void> {
         const generation = ++this.indexGeneration;
         const life = this.lifetime;
-        const offset = more ? this.offset : 0;
-        const limit = more ? INDEX_PAGE_SIZE : Math.min(MAX_INDEX, Math.max(INDEX_PAGE_SIZE, this.offset));
+        // Pages are keyset slices of the stable creation order; a refresh
+        // re-reads a grown prefix instead of resuming the stream.
+        const cursor = more ? this.cursor : null;
+        const limit = more ? INDEX_PAGE_SIZE : Math.min(MAX_INDEX, Math.max(INDEX_PAGE_SIZE, this.fetched));
         this.indexLoading = true;
         this.notify();
         try {
-            const page = await this.client.listSessions({ ...this.filter, limit, offset,
+            const page = await this.client.listSessions({ ...this.filter, limit,
+                ...(cursor === null ? {} : { cursor }),
                 ...(this.filter.scope === 'cwd' ? { cwd: this.workingDir } : {}) }, this.abort.signal);
             if (!this.active || life !== this.lifetime || generation !== this.indexGeneration) return;
             for (const session of page.sessions) {
@@ -357,7 +363,8 @@ export class CodeController {
                 }
             }
             this.rows = [...new Set([...(more ? this.rows : []), ...page.sessions.map(row => row.sessionId)])].slice(0, MAX_INDEX);
-            this.offset = page.offset + page.sessions.length;
+            this.cursor = page.nextCursor;
+            this.fetched = (more ? this.fetched : 0) + page.sessions.length;
             this.moreSessions = page.hasMore && this.rows.length < MAX_INDEX;
             this.indexError = null;
             const retained = new Set([...this.rows, ...this.details.keys(), ...(this.book.selectedId ? [this.book.selectedId] : [])]);
@@ -463,7 +470,7 @@ export class CodeController {
         await Promise.all([this.readCatalog(), this.readIndex(), id ? this.sync(id, true) : Promise.resolve(), this.readGit()]);
     };
     loadMoreSessions = async (): Promise<void> => { if (this.moreSessions && !this.indexLoading) await this.readIndex(true); };
-    setFilter = (filter: CodeSessionFilter): void => { this.filter = { ...filter }; this.offset = 0; this.rows = []; this.moreSessions = false; this.notify(); void this.readIndex(); };
+    setFilter = (filter: CodeSessionFilter): void => { this.filter = { ...filter }; this.cursor = null; this.fetched = 0; this.rows = []; this.moreSessions = false; this.notify(); void this.readIndex(); };
     // Explicitly abandon only the local uncertain attempt. The server session may exist.
     startAnotherSession = (): void => {
         const previous = this.book.fresh;

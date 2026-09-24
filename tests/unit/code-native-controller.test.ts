@@ -40,7 +40,7 @@ function fixture(t: TestContext) {
         if (result) return result;
         if (path === '/models') return response({ ok: true, ...catalog });
         if (path === '/git-info') return response({ ok: true, isRepo: true, branch: url.searchParams.get('cwd'), worktrees: [] });
-        if (path === '/sessions' && call.method === 'GET') return response({ ok: true, sessions: [...snapshots.values()].map(s => s.session), limit: 100, offset: 0, hasMore: false });
+        if (path === '/sessions' && call.method === 'GET') return response({ ok: true, sessions: [...snapshots.values()].map(s => s.session), limit: 100, nextCursor: null, hasMore: false });
         const id = path.split('/')[2] ?? '';
         const snapshot = snapshots.get(id);
         if (snapshot && path.endsWith('/events')) return response({ ok: true, events: [], nextSequence: snapshot.sequence, throughSequence: snapshot.sequence, hasMore: false });
@@ -678,6 +678,28 @@ test('ranking a listing never strips the figure off the row the owner just read'
     assert.equal(row(f.controller, 'a')?.contextUsage?.totalTokens, 1234);
     await f.controller.selectSession('a');
     assert.equal(meter(f.controller), 1234);
+});
+
+test('loadMoreSessions continues the index from the server cursor without refetching the prefix', async t => {
+    const f = fixture(t);
+    const nextCursor = JSON.stringify({ createdAt: 3, sessionId: 's3' });
+    f.intercept(call => {
+        if (call.path !== '/sessions' || call.method !== 'GET') return undefined;
+        if (call.url.searchParams.get('cursor') === null) {
+            return response({ ok: true, sessions: ['s1', 's2', 's3'].map(id => session(id)),
+                limit: 3, nextCursor, hasMore: true });
+        }
+        return response({ ok: true, sessions: ['s4', 's5'].map(id => session(id)),
+            limit: 100, nextCursor: null, hasMore: false });
+    });
+    await f.controller.refresh();
+    assert.equal(f.controller.getModel().hasMoreSessions, true);
+    assert.deepEqual(f.controller.getModel().sessions.map(s => s.sessionId), ['s1', 's2', 's3']);
+    await f.controller.loadMoreSessions();
+    const page = f.calls.filter(call => call.path === '/sessions' && call.method === 'GET').at(-1)!;
+    assert.equal(page.url.searchParams.get('cursor'), nextCursor);
+    assert.deepEqual(f.controller.getModel().sessions.map(s => s.sessionId), ['s1', 's2', 's3', 's4', 's5']);
+    assert.equal(f.controller.getModel().hasMoreSessions, false);
 });
 
 // --- #703: a spent clientTurnKey is a report, not an admission ---
