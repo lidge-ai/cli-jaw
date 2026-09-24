@@ -10,6 +10,11 @@ on:
       - dev
       - preview
       - main
+  # The pull_request contract is deliberately the minimal Linux set
+  # (changes -> test, integration, gates -> ci-aggregate). Cross-platform lanes
+  # — windows-unit and macos-unit — run on push to dev/preview/main and on
+  # dispatch instead, so their evidence lands on the dev push after merge and a
+  # red lane is fixed forward rather than blocking review.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # publish.yml and the release scripts only accept `--event push` runs, so
@@ -336,6 +341,9 @@ jobs:
       - name: Validate windows-unit manifest
         run: node scripts/ci/windows-unit-manifest.mjs
 
+      - name: Validate macos-unit manifest
+        run: node scripts/ci/macos-unit-manifest.mjs
+
       - name: Release gates (gate:all)
         run: npm run gate:all
 
@@ -354,18 +362,20 @@ jobs:
           find . \( -name '*.js' -o -name '*.ts' \) -not -path './node_modules/*' -not -path './skills_ref/*' -not -name '*.d.ts' \
             | xargs wc -l | sort -rn | awk '$1 > 500 && !/total/ { print "⚠️ " $0; found=1 } END { if (!found) print "✅ All files under 500 lines" }'
 
- # Fast Windows unit lane on every non-draft code PR (#384). Before this, Windows tests
-  # ran only in postinstall-platform.yml behind a literal paths: allowlist, so
-  # a PR touching Windows behavior in unlisted files merged with zero Windows
-  # CI. The file list lives in scripts/ci/windows-unit-manifest.txt and is
-  # validated by scripts/ci/windows-unit-manifest.mjs on Linux (gates job +
+  # Windows unit lane, push/dispatch only (#384 added it to PRs; it moved off
+  # pull_request when the PR contract was cut back to the minimal Linux set).
+  # Before #384 Windows tests ran only in postinstall-platform.yml behind a
+  # literal paths: allowlist, so a PR touching Windows behavior in unlisted
+  # files merged with zero Windows CI. The file list lives in
+  # scripts/ci/windows-unit-manifest.txt and is validated by
+  # scripts/ci/windows-unit-manifest.mjs on Linux (gates job +
   # tests/unit/windows-unit-manifest.test.ts) and here, so a renamed test breaks
-  # CI instead of silently vanishing from the lane. Windows flakes in these
-  # suites block merge by design; that is the lane's purpose.
+  # CI instead of silently vanishing from the lane. Windows evidence now lands
+  # on the dev push after merge; a red lane is fixed forward.
   windows-unit:
     name: windows-unit
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.code == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.code == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -410,6 +420,65 @@ jobs:
           & node @nodeArgs
           exit $LASTEXITCODE
 
+  # macOS unit lane, push/dispatch only — the macOS twin of windows-unit.
+  # Several suites can only prove anything on a real darwin host: launchd-plist
+  # needs plutil, service-artifact's zsh repin cases are darwin-gated, and
+  # platform-kind-runtime can only assert `darwin` classification where the
+  # resolver genuinely runs on darwin. tcc.test.ts is weaker: it skips
+  # everywhere else, and on a runner without a readable TCC.db it only proves
+  # the empty-array fallback — coverage of the darwin code path, not proof of
+  # a real grant read. The
+  # file list lives in scripts/ci/macos-unit-manifest.txt and is validated by
+  # scripts/ci/macos-unit-manifest.mjs on Linux (gates job +
+  # tests/unit/macos-unit-manifest.test.ts) and here, the same contract the
+  # Windows manifest already carries.
+  macos-unit:
+    name: macos-unit
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.code == 'true' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Checkout public submodules
+        run: |
+          git submodule update --init skills_ref
+          git submodule update --init officecli
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Ensure native modules are loadable
+        run: node scripts/ensure-native-modules.cjs
+
+      # launchd-multi and db-* suites read dist/, so the compiled tree has to
+      # exist before the manifest files run (same as the Linux shards).
+      - name: Build TypeScript
+        run: npx tsc
+
+      # JAW_EXPECT_PLATFORM_KIND pins the expected real-runtime answer so a
+      # scrubbed environment cannot keep the classification test green.
+      - name: Run macOS-relevant unit tests (manifest)
+        env:
+          JAW_EXPECT_PLATFORM_KIND: darwin
+        run: |
+          set -euo pipefail
+          files=()
+          while IFS= read -r file; do files+=("$file"); done < <(node scripts/ci/macos-unit-manifest.mjs --print)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::macos-unit manifest is empty"; exit 1; }
+          echo "macos-unit: ${#files[@]} files"
+          npx tsx --import ./tests/setup/test-home.ts --experimental-test-module-mocks --test "${files[@]}"
+
   # The single required status check for the `main` ruleset.
   #
   # The check name is the job `name:` below and is load-bearing: the branch
@@ -426,7 +495,7 @@ jobs:
   # drive it; the checkout below is unconditional for that reason.
   ci-aggregate:
     name: ci-aggregate
-    needs: [changes, test, integration, gates, windows-unit]
+    needs: [changes, test, integration, gates, windows-unit, macos-unit]
     # `always()` reports upstream failures on admitted events; the draft guard
     # also suppresses this aggregate when all producer jobs are skipped on a draft.
     if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
@@ -442,12 +511,14 @@ jobs:
 
       - name: Verify producers
         env:
+          EVENT_NAME: ${{ github.event_name }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           GATES_RESULT: ${{ needs.gates.result }}
           WINDOWS_UNIT_RESULT: ${{ needs.windows-unit.result }}
+          MACOS_UNIT_RESULT: ${{ needs.macos-unit.result }}
         run: bash scripts/ci/aggregate-check.sh
 
 

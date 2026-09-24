@@ -49,20 +49,30 @@ rebase 중 만나는 충돌은 대개 두 종류이고 해소법이 정해져 �
 - **`structure/str_func.md`**: 어느 쪽도 고르지 말고 실제 트리에서 다시 만든다.
   줄 수는 파생값이다 — `bash structure/verify-counts.sh --fix` 후 재검증.
 
-**`dev` 푸시는 `test.yml` 을 돌린다 (#521부터).** 예전에는 아무것도 돌지 않아서
-`a241c6222` 같은 커밋이 check-run 0개로 `dev` 위에 앉아 있었다. 다만
-`postinstall-platform.yml` 은 여전히 `preview`/`main` push 와 `pull_request` 에만
-반응하므로 **설치 표면(installer surface) 증거는 `dev` 푸시로 얻을 수 없고**,
-피처 브랜치는 여전히 PR 을 열어야 CI 가 돈다.
+**PR 은 최소 계약만, 크로스플랫폼 CI 는 `dev` push(post-merge)가 담당한다** (opencodex
+모델). `pull_request` 에서 `test.yml` 은 `changes` → { `test 1..4/4`
+(`tests/run.mts --scope root,unit --shard i/4` 로 root+unit 4분할), `integration`
+(`npm run build` + 3457 서버 위에서 `--scope integration,manager,bin` + fresh-install smoke),
+`gates` (`gate:all` 과 나머지 스캔 1회) } → 필수 체크 `ci-aggregate` 의 리눅스 세트만 돌린다.
+`windows-unit` 과 `macos-unit` 은 PR 을 스케줄하지 않고, 집계는 그 이벤트에서 두 레인의
+skip 을 정상으로 읽는다. 피처 브랜치는 여전히 PR 을 열어야 이 최소 계약이 돈다.
 
-`test.yml` 은 샤딩된 잡 그래프다 (#565, opencodex `ci.yml` 이식):
-`changes` → { `test 1..4/4` (root+unit 을 `tests/run.mts --scope root,unit --shard i/4` 로 4분할),
-`integration` (`npm run build` + 3457 서버 위에서 `--scope integration,manager,bin` + fresh-install smoke),
-`gates` (`gate:all` 과 나머지 스캔 1회), `windows-unit`, 자문용 `coverage` } → 필수 체크 `ci-aggregate`.
-Windows 레인의 파일 목록은 `scripts/ci/windows-unit-manifest.txt` 에 있고 Linux 에서도 검증된다
-(`scripts/ci/windows-unit-manifest.mjs`). 집계 규칙은 `scripts/ci/aggregate-check.sh` 가 갖는다 —
-docs-only 변경에서만 producer skip 이 통과로 읽히고, 그 외 skip/failure/cancelled 는 실패다.
-`coverage` 는 `dev` push 와 `workflow_dispatch` 에서만 돌고 집계에 들어가지 않는다.
+`dev`/`preview`/`main` push 와 `workflow_dispatch` 에서는 전체 그래프가 돈다 — 위 리눅스 잡에
+`windows-unit`(매니페스트 `scripts/ci/windows-unit-manifest.txt`, windows-latest)과
+`macos-unit`(`scripts/ci/macos-unit-manifest.txt`, macos-latest)이 붙는다. **`dev` push CI 가
+빨갛게 깨지면 되돌리지 말고 fix-forward 한다**: dev push 가 병합 뒤 크로스플랫폼 증거를
+만드는 자리라서, 릴리스 인증(preview)까지 도달하기 전에 여기서 잡아야 한다.
+
+`postinstall-platform.yml` 도 같은 정책이다: `pull_request` 트리거는 빠졌고 `preview` + `dev`
+push(`paths:` 필터는 그대로)와 `workflow_dispatch` 에서 돈다. preview 런이 여전히 릴리스를
+인증하고(publish.yml 은 런을 SHA 로 찾는다), dev 런이 병합 뒤 설치 표면 증거를 만든다.
+
+두 매니페스트는 각각 `scripts/ci/{windows,macos}-unit-manifest.mjs` 가 Linux(gates 잡 + 단위
+테스트)와 본 레인 양쪽에서 검증한다 — 이름이 바뀐 테스트는 레인에서 조용히 빠지지 않고 CI 를
+깬다. 집계 규칙은 `scripts/ci/aggregate-check.sh` 가 갖고
+`tests/unit/ci-aggregate-rules.test.ts` 가 진리표를 돌린다: 통과로 읽히는 skip 은 docs-only
+(code=false) 와 pull_request 의 크로스플랫폼 레인 뿐이고, 그 외 skip/failure/cancelled 는 실패다.
+자문용 `coverage` 는 `coverage-advisory.yml`(주간 스케줄 + dispatch)로 빠져 있어 집계에 들어가지 않는다.
 
 `dev` 가 릴리스 브랜치가 된 것은 아니다. `publish.yml` 은 인증 런을 SHA 로 찾되
 **`preview`/`main` 런만** 받아들이고(`:76` 의 `headBranch` 필터, #521 에서 좁힘),

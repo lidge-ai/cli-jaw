@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # The ci-aggregate decision for .github/workflows/test.yml, kept in a script so
 # tests/unit/ci-aggregate-rules.test.ts can drive its truth table. Inputs are the
-# producer job results and the change classifier's output, all through env.
+# producer job results, the change classifier's output and the event name, all
+# through env.
 #
 #   changes must be success and CODE_CHANGED exactly true|false
 #   code=true : every producer must be success (a skip is a dropped job, not a pass)
 #   code=false: every producer may be success or skipped (docs-only change)
+#   windows-unit and macos-unit are never scheduled on pull_request — the PR
+#   contract is the minimal Linux set and their evidence lands on the dev push
+#   after merge — so on that event alone a skip is the expected state, not a
+#   dropped job. On push and workflow_dispatch the normal rule applies.
 #   failure, cancelled, empty, or anything unrecognised always fails
 set -uo pipefail
 
@@ -40,14 +45,26 @@ check() {
   esac
 }
 
+# The cross-platform lanes are push/dispatch-only by design, so a skipped lane
+# on pull_request is the expected shape of a green PR — everywhere else it is
+# the same dropped-job signal as any other producer.
+check_xplat() {
+  local job="$1" result="$2"
+  if [ "$result" = "skipped" ] && [ "${EVENT_NAME:-}" = "pull_request" ]; then
+    echo "PASS  $job: skipped (cross-platform lanes do not run on pull_request)"
+    return
+  fi
+  check "$job" "$result"
+}
+
 check test         "${TEST_RESULT:-}"
 check integration  "${INTEGRATION_RESULT:-}"
 check gates        "${GATES_RESULT:-}"
-check windows-unit "${WINDOWS_UNIT_RESULT:-}"
+check_xplat windows-unit "${WINDOWS_UNIT_RESULT:-}"
+check_xplat macos-unit   "${MACOS_UNIT_RESULT:-}"
 
 if [ "$failed" -ne 0 ]; then
   echo "::error::ci-aggregate failed — see the per-job results above"
   exit 1
 fi
 echo "ci-aggregate: all required jobs succeeded or were legitimately skipped"
-

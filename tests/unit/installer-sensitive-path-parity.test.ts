@@ -34,7 +34,7 @@ const workflowSrc = fs.readFileSync(workflowPath, 'utf8');
  * Deliberately NOT the detector's own parser: if the test reused it, a parser
  * bug would agree with itself and the parity assertion would prove nothing.
  */
-function workflowTriggerPaths(event: 'push' | 'pull_request'): string[] {
+function workflowTriggerPaths(event: 'push'): string[] {
     const lines = workflowSrc.split(/\r?\n/);
     const eventIndex = lines.findIndex(line => line.trim() === `${event}:` && /^\s+\S/.test(line));
     assert.notEqual(eventIndex, -1, `workflow should declare an on.${event} trigger`);
@@ -103,27 +103,17 @@ function runIsolatedDetector(workflowContent: string | null) {
 }
 
 test('G1-parity: every postinstall-platform trigger path is installer-sensitive to the release gate', () => {
+    // The pull_request trigger was removed when cross-platform evidence moved
+    // to the dev push after merge, so on.push.paths is the whole contract now:
+    // every path that can schedule the platform matrix must require evidence.
     const derived = new Set(derivedSensitivePaths());
-    const pullRequestPaths = workflowTriggerPaths('pull_request');
-    const missing = pullRequestPaths.filter(path => !derived.has(path));
+    const missing = workflowTriggerPaths('push').filter(path => !derived.has(path));
     assert.deepEqual(
         missing,
         [],
         'paths that trigger Postinstall Platform Checks but would NOT require release evidence — '
         + 'these can reach npm with no platform CI behind them',
     );
-
-    const pushMissing = workflowTriggerPaths('push').filter(path => !derived.has(path));
-    assert.deepEqual(pushMissing, [], 'on.push.paths must also be fully covered by the release gate');
-});
-
-test('G1-parity: push and pull_request trigger lists stay identical', () => {
-    // publish.yml requires a successful `--event push` run of the platform
-    // workflow, so on.push.paths is what decides whether platform evidence can
-    // exist at all. The detector unions both lists so a divergence errs toward
-    // requiring evidence; this assertion makes the divergence itself visible in
-    // CI instead of surfacing as a mysterious publish block.
-    assert.deepEqual(workflowTriggerPaths('push'), workflowTriggerPaths('pull_request'));
 });
 
 test('G1-parity: the detector does not keep a second hand-written path list', () => {
@@ -170,7 +160,7 @@ test('G1-parity: trigger paths contain no globs the detector cannot match', () =
     // Detection is exact string equality (stdin mode) and per-file git
     // comparison (base-ref mode). Neither can express a glob, so the detector
     // refuses to parse one rather than quietly under-matching.
-    const globbed = workflowTriggerPaths('pull_request').filter(path => /[*?[\]!]/.test(path));
+    const globbed = workflowTriggerPaths('push').filter(path => /[*?[\]!]/.test(path));
     assert.deepEqual(globbed, [], 'add glob support to the detector before adding a glob trigger path');
 });
 
