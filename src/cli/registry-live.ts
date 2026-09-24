@@ -1,6 +1,7 @@
 import { fetchKiroModelInventory } from '../agent/kiro-models.js';
 import { fetchAgyModelInventory } from '../agent/agy-models.js';
 import { fetchOpencodeModelInventory } from '../agent/opencode-models.js';
+import { fetchCopilotModelInventory } from '../agent/copilot-models.js';
 import { fetchCursorModelInventory } from '../agent/cursor-model-inventory.js';
 import { fetchGrokModelInventory } from '../agent/grok-models.js';
 import { CLI_REGISTRY } from './registry.js';
@@ -28,7 +29,7 @@ function unionEfforts(effortsByModel: Record<string, string[]>): string[] {
 export async function buildLiveCliRegistry() {
     const registry = structuredClone(CLI_REGISTRY) as Record<string, Record<string, unknown>>;
 
-    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory, opencodeInventory] = await Promise.all([
+    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory, opencodeInventory, copilotInventory] = await Promise.all([
         fetchKiroModelInventory(),
         resolveOpenCodexRuntime(),
         resolveClaudeCatalogForRegistry(),
@@ -36,6 +37,7 @@ export async function buildLiveCliRegistry() {
         fetchGrokModelInventory(),
         fetchAgyModelInventory(),
         fetchOpencodeModelInventory(),
+        fetchCopilotModelInventory(),
     ]);
     const codexResult = await resolveOpenCodexCodexModelsDetailed(openCodexRuntime);
 
@@ -131,6 +133,22 @@ export async function buildLiveCliRegistry() {
             ...withSelectableDefault(registry['opencode'], opencodeInventory.models),
             models: opencodeInventory.models,
             modelSource: opencodeInventory.source,
+        };
+    }
+
+    if (copilotInventory?.models.length) {
+        // The list is the signed-in plan's entitlement, so the static default is
+        // replaced when the plan does not include it. Efforts are narrowed per
+        // model like Codex: Copilot advertises a different ladder per model and
+        // none at all for some, and the value is written to ~/.copilot/config.json.
+        const merged = unionEfforts(copilotInventory.effortsByModel);
+        registry['copilot'] = {
+            ...withSelectableDefault(registry['copilot'], copilotInventory.models),
+            models: copilotInventory.models,
+            modelSource: copilotInventory.source,
+            effortsByModel: copilotInventory.effortsByModel,
+            defaultEffortByModel: copilotInventory.defaultEffortByModel,
+            ...(merged.length > 0 ? { efforts: merged } : {}),
         };
     }
 
