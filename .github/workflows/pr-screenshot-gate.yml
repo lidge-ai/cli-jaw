@@ -1,0 +1,78 @@
+name: PR screenshot gate
+
+on:
+  # pull_request_target runs the workflow from the base branch, so this gate
+  # sees trusted code even for fork PRs. The job below never checks out PR
+  # head code: the gate script is fetched raw from the trusted integration
+  # branch at run time.
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - edited
+      - synchronize
+      - ready_for_review
+      - labeled
+      - unlabeled
+
+# Read-only gate: pulls.* (files, labels, head) and issues.* (comments for the
+# maintainer-comment waiver, events for label provenance). `issues: read` also
+# covers `repos.getCollaboratorPermissionLevel`, which requires only metadata
+# read — implied by any granted permission. Nothing is written to the PR.
+permissions:
+  pull-requests: read
+  issues: read
+
+jobs:
+  screenshot-gate:
+    name: screenshot-gate
+    # Label churn on unrelated labels does not re-run the gate.
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'ui-screenshot-waived'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: screenshot-gate-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Enforce screenshot evidence for UI changes
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require("node:fs");
+            const os = require("node:os");
+            const path = require("node:path");
+            const { owner, repo } = context.repo;
+
+            // Source the gate script from the trusted integration branch,
+            // never from the PR head or the PR's base. A stacked PR's base can
+            // be another open PR's head, so non-main bases resolve to `dev` —
+            // the same rule opencodex's enforce-pr-target applies. The repo is
+            // public, so a raw fetch needs no `contents` permission.
+            const baseRef = context.payload.pull_request?.base?.ref;
+            const refsToTry = [...new Set([baseRef === "main" ? "main" : "dev", "dev"])];
+            const scriptPath = path.join(
+              process.env.RUNNER_TEMP || os.tmpdir(),
+              "pr-screenshot.cjs"
+            );
+            let fetched = false;
+            for (const ref of refsToTry) {
+              const url = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/.github/scripts/pr-screenshot.cjs`;
+              const response = await fetch(url);
+              if (response.ok) {
+                fs.writeFileSync(scriptPath, await response.text());
+                fetched = true;
+                core.info(`Loaded gate script from ${url}`);
+                break;
+              }
+              core.warning(`Gate script fetch from ${ref} returned ${response.status}.`);
+            }
+            if (!fetched) {
+              core.setFailed(
+                "Could not fetch the trusted gate script (.github/scripts/pr-screenshot.cjs) from dev/main."
+              );
+              return;
+            }
+
+            await require(scriptPath).run({ github, context, core });

@@ -189,6 +189,20 @@ Before any public push, run `npm run check:private-boundary` for the index and `
 
 The check enumerates submodule contents and fails on what it finds there, because `ls-files` stops at a gitlink and a record committed inside a submodule ships when that submodule is published. `JAW_PRIVATE_BOUNDARY_SUBMODULES=warn` downgrades that to reporting; it exists for a finding that must be fixed in the other repository first, and is not a setting to leave on. A submodule that is cloned and used on its own needs a check of its own — `skills_ref` has one in `validate_public_surface.py` — because a gate here can refuse to publish a submodule but cannot stop a commit landing inside it.
 
+The same boundary check also rejects a `pr-assets` directory at any depth: PR screenshot evidence never lands on a code branch (see below).
+
+### Pull request screenshots
+
+A PR that changes rendered UI — `public/` (the manager dashboard / web frontend the Electron shell loads) or the Electron rendered surface (`electron/src/preload/`, markup/style/component files under `electron/`; pure test files excluded — exact rules in `.github/scripts/pr-screenshot.cjs`) — must embed a screenshot in its description. `pull_request_target` workflow `pr-screenshot-gate.yml` runs check `screenshot-gate` and fails otherwise; it reads the body for a rendered image (`![alt](url)`, `<img src>`, or a defined reference image — comments and code fences do not count) and never checks out PR head code.
+
+**Never commit screenshot evidence to the PR branch.** Agents and CLI uploads with push access push images to the orphan `pr-assets` branch and link by commit SHA:
+
+```text
+https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
+```
+
+Waivers: the `ui-screenshot-waived` label counts only when the label actor has write/maintain/admin access (checked via the issue event timeline), or a maintainer comment negates UI impact ("no UI changes").
+
 ### Kanban
 
 프로젝트 보드: https://github.com/users/lidge-jun/projects/2/views/1

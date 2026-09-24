@@ -97,4 +97,30 @@ git push
 3. `npm run build && npm test` — 빌드 + 테스트 통과 확인
 4. Submit PR
 
+### UI changes need screenshot evidence
+
+A PR that changes rendered UI files must embed a screenshot in its
+description — the `screenshot-gate` check fails the PR otherwise. The gate
+counts `public/` (the manager dashboard / web frontend) and the Electron
+rendered surface (`electron/src/preload/`, markup/style/component files under
+`electron/`); pure test files are excluded — see
+`.github/scripts/pr-screenshot.cjs` for the exact rules.
+
+Only rendered images count as evidence: `![alt](url)` or `<img src="...">` in
+the description body. Dragging an image into the GitHub editor works.
+
+**Never commit screenshot files to the PR branch.** A directory named
+`pr-assets` anywhere in the tree (e.g. `docs/pr-assets/`) is rejected by
+`npm run check:private-boundary`. CLI/agent uploads with push access go to
+the orphan `pr-assets` branch instead, linked by commit SHA so the link never
+drifts:
+
+```text
+https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
+```
+
+A maintainer can waive the requirement with the `ui-screenshot-waived` label
+(only valid when the label actor has write access or above) or with a comment
+stating the change does not touch the UI.
+
 > 📋 Found a bug or have a feature idea? [Open an issue](https://github.com/lidge-jun/cli-jaw/issues)

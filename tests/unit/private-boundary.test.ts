@@ -24,10 +24,15 @@ function put(root: string, path: string, content = 'fixture') {
 
 test('private paths at any depth and case are rejected without hiding public product paths', () => {
     for (const p of ['devlog', 'DEVLOG/plan.md', 'scripts/DevLog/note.md', 'devlog.md',
-        'notes/devlog-backup/a', '.jwc/state.json', 'x/_plan/a.md', 'x/_FIN/a.md', 'cli-jaw-internal/a']) {
+        'notes/devlog-backup/a', '.jwc/state.json', 'x/_plan/a.md', 'x/_FIN/a.md', 'cli-jaw-internal/a',
+        // PR screenshot evidence lives on the orphan `pr-assets` branch only;
+        // a same-named directory must never land on a code branch.
+        'pr-assets/a.png', 'docs/pr-assets/shot.png', 'PR-ASSETS/x']) {
         assert.equal(isPrivatePath(p), true, p);
     }
-    for (const p of ['docs/architecture.md', 'src/core/config.ts', 'tests/unit/private-boundary.test.ts', 'scripts/check-private-boundary.mjs']) {
+    for (const p of ['docs/architecture.md', 'src/core/config.ts', 'tests/unit/private-boundary.test.ts', 'scripts/check-private-boundary.mjs',
+        // Mentions of the branch name in ordinary file names stay public.
+        'docs/pr-assets.md', 'docs/pr-assets-guide.md']) {
         assert.equal(isPrivatePath(p), false, p);
     }
 });
