@@ -275,7 +275,7 @@ cli-jaw/
 │   │   ├── claude-models.ts  ← Claude 정규 모델셋 (CLAUDE_CANONICAL_MODELS, CLAUDE_LEGACY_VALUE_MAP) + migration/validation helpers (156L)
 │   │   ├── compact.ts        ← /compact 슬래시 커맨드 핸들러 (Claude native + managed 경로 분기) + working_dir scoped (181L)
 │   │   ├── registry.ts       ← 10개 CLI/모델 단일 소스 + canonical defaults + top-level `pi`/`agy`/`cursor`/`kiro-code` (264L)
-│   │   ├── registry-live.ts  ← buildLiveCliRegistry — Kiro/Cursor/Grok/Claude/AGY/OpenCode inventory + ocx 모델/모델별 effort 동적 병합 (effortsByModel/defaultEffortByModel) (194L)
+│   │   ├── registry-live.ts  ← buildLiveCliRegistry — Kiro/Cursor/Grok/Claude/AGY/OpenCode/Copilot inventory + ocx 모델/모델별 effort 동적 병합 (effortsByModel/defaultEffortByModel) (212L)
 │   │   ├── readiness.ts      ← CLI별 인증/설치 상태 점검 + Pi npm-exec readiness + AGY runtime auth hint (CliReadiness[]) (156L)
 │   │   ├── acp-client.ts     ← Copilot ACP JSON-RPC 클라이언트 (391L)
 │   │   ├── command-context.ts ← 공유 커맨드 컨텍스트 팩토리 + runSkillReset 위임 + regenerateB 유지 (160L)

@@ -37,10 +37,18 @@ aliases: [model registry, 모델 레지스트리, live model discovery]
 | `grok` | `grok models` | `src/agent/grok-models.ts` |
 | `agy` | `agy models` (두 번째 열, 티어가 붙은 라벨) | `src/agent/agy-models.ts` |
 | `opencode` | `opencode models` (설정된 모든 provider, `opencode-go` 우선) | `src/agent/opencode-models.ts` |
+| `copilot` | `copilot --headless --stdio`의 `models.list` JSON-RPC | `src/agent/copilot-models.ts` |
 | `pi` | 프로필별 discovery (Settings) | `src/agent/pi-runtime.ts` `discoverPiProfileModels` |
 
 Pi는 registry 수준 목록 대신 프로필마다 opencodex `/models` 또는
 `pi --offline --list-models`로 모델을 찾는다.
+
+Copilot CLI에는 목록 서브커맨드가 없고 `--acp` 세션도 모델을 알려주지 않는다.
+공식 Copilot SDK가 쓰는 headless 서버에 `Content-Length` 프레임으로
+`models.list`를 한 번 보내고 프로세스를 끝낸다. 이 목록은 로그인한 플랜이 쓸 수
+있는 모델만 담으므로, `policy.state`가 `enabled`가 아닌 모델은 빼고 정적 기본
+모델이 플랜에 없으면 첫 모델로 바꾼다. effort는 모델마다
+`supportedReasoningEfforts`로 좁히며 `none`은 뺀다.
 
 OpenCode는 사용자가 설정한 provider가 서비스하는 모델 전체를 보여주고,
 기본 모델이 속한 `opencode-go`를 앞에 둔다.
