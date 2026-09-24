@@ -88,6 +88,7 @@ export const SKIP_POLICY: SkipEntry[] = [
     { file: 'tests/unit/npm-registry-smoke.test.ts', policy: 'platform', why: 'Executes the Linux publish workflow Bash step with POSIX npm/sleep stubs on Linux and macOS; native win32 skips this shell-specific harness.' },
     { file: 'tests/unit/electron-jaw-spawn-orphan-kill.test.ts', policy: 'platform', why: 'POSIX process-group semantics; skipped on win32 and run on the Linux shards.' },
     { file: 'tests/unit/electron-dropped-paths.test.ts', policy: 'platform', why: 'Needs working symlinks; skips where symlink() throws.' },
+    { file: 'tests/unit/copilot-models.test.ts', policy: 'platform', why: 'The two fake headless-server cases need a shebang executable; skipped on win32. The parser, missing-binary and live-registry cases run on every lane.' },
     { file: 'tests/unit/file-open-route.test.ts', policy: 'platform', why: 'POSIX-only file-open behaviour; skipped on win32.' },
     { file: 'tests/unit/cli-status-cache.test.ts', policy: 'platform', why: 'A POSIX-only path case skipped on win32; the rest of the file runs on every lane, so the Windows job loses one case rather than the file.' },
     { file: 'tests/unit/default-runtime-migration.test.ts', policy: 'platform', why: 'A POSIX-only path case skipped on win32; the migration itself is asserted on every lane.' },
