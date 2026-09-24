@@ -36,9 +36,14 @@ aliases: [model registry, 모델 레지스트리, live model discovery]
 | `cursor` | `cursor-agent --list-models` | `src/agent/cursor-model-inventory.ts` |
 | `grok` | `grok models` | `src/agent/grok-models.ts` |
 | `agy` | `agy models` (두 번째 열, 티어가 붙은 라벨) | `src/agent/agy-models.ts` |
-| `pi` / `opencode` | 정적 | — |
+| `opencode` | `opencode models` (설정된 모든 provider, `opencode-go` 우선) | `src/agent/opencode-models.ts` |
+| `pi` | 프로필별 discovery (Settings) | `src/agent/pi-runtime.ts` `discoverPiProfileModels` |
 
-정적으로 남은 것은 Pi, OpenCode 두 런타임이다.
+Pi는 registry 수준 목록 대신 프로필마다 opencodex `/models` 또는
+`pi --offline --list-models`로 모델을 찾는다.
+
+OpenCode는 사용자가 설정한 provider가 서비스하는 모델 전체를 보여주고,
+기본 모델이 속한 `opencode-go`를 앞에 둔다.
 
 AGY는 `agy models`의 두 번째 열만 선택지로 쓴다. 첫 열의 슬러그는 `--effort`를
 요구하는데 cli-jaw는 AGY에 effort를 보내지 않는다. Google은 다음 Flash 세대가

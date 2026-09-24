@@ -1,5 +1,6 @@
 import { fetchKiroModelInventory } from '../agent/kiro-models.js';
 import { fetchAgyModelInventory } from '../agent/agy-models.js';
+import { fetchOpencodeModelInventory } from '../agent/opencode-models.js';
 import { fetchCursorModelInventory } from '../agent/cursor-model-inventory.js';
 import { fetchGrokModelInventory } from '../agent/grok-models.js';
 import { CLI_REGISTRY } from './registry.js';
@@ -27,13 +28,14 @@ function unionEfforts(effortsByModel: Record<string, string[]>): string[] {
 export async function buildLiveCliRegistry() {
     const registry = structuredClone(CLI_REGISTRY) as Record<string, Record<string, unknown>>;
 
-    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory] = await Promise.all([
+    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory, opencodeInventory] = await Promise.all([
         fetchKiroModelInventory(),
         resolveOpenCodexRuntime(),
         resolveClaudeCatalogForRegistry(),
         fetchCursorModelInventory(),
         fetchGrokModelInventory(),
         fetchAgyModelInventory(),
+        fetchOpencodeModelInventory(),
     ]);
     const codexResult = await resolveOpenCodexCodexModelsDetailed(openCodexRuntime);
 
@@ -119,6 +121,16 @@ export async function buildLiveCliRegistry() {
             ...withSelectableDefault(registry['agy'], agyInventory.models),
             models: agyInventory.models,
             modelSource: agyInventory.source,
+        };
+    }
+
+    if (opencodeInventory?.models.length) {
+        // Every model the configured providers serve, opencode-go first. The
+        // static default is kept unless no configured provider serves it.
+        registry['opencode'] = {
+            ...withSelectableDefault(registry['opencode'], opencodeInventory.models),
+            models: opencodeInventory.models,
+            modelSource: opencodeInventory.source,
         };
     }
 
