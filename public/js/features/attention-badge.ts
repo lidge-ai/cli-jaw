@@ -6,6 +6,8 @@ type BadgeNavigator = Navigator & {
 const COMPLETION_DEDUPE_MS = 800;
 const BADGE_SIZE = 64;
 const BASE_TITLE_FALLBACK = 'CLI-JAW';
+const MASCOT_FAVICON_SRC = '/icons/favicon-32.png';
+const MASCOT_FALLBACK_COLOR = '#22d3ee';
 
 let initialized = false;
 let unreadCount = 0;
@@ -14,6 +16,7 @@ let faviconLink: HTMLLinkElement | null = null;
 let originalFaviconHref = '';
 let createdFaviconLink = false;
 let lastNotifyAt = 0;
+let mascotImage: HTMLImageElement | null = null;
 
 function getBadgeNavigator(): BadgeNavigator {
     return navigator as BadgeNavigator;
@@ -43,6 +46,16 @@ function getOrCreateFaviconLink(): HTMLLinkElement | null {
     return link;
 }
 
+function ensureMascotImage(): void {
+    if (mascotImage) return;
+    const img = new Image();
+    img.addEventListener('load', () => {
+        if (unreadCount > 0) applyUnreadState();
+    });
+    img.src = MASCOT_FAVICON_SRC;
+    mascotImage = img;
+}
+
 function renderBadgeFavicon(count: number): string {
     const canvas = document.createElement('canvas');
     canvas.width = BADGE_SIZE;
@@ -51,10 +64,14 @@ function renderBadgeFavicon(count: number): string {
     if (!ctx) return originalFaviconHref;
 
     ctx.clearRect(0, 0, BADGE_SIZE, BADGE_SIZE);
-    ctx.font = '44px "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🦈', 28, 36);
+    if (mascotImage && mascotImage.complete && mascotImage.naturalWidth > 0) {
+        ctx.drawImage(mascotImage, 2, 6, 52, 52);
+    } else {
+        ctx.beginPath();
+        ctx.arc(28, 32, 26, 0, Math.PI * 2);
+        ctx.fillStyle = MASCOT_FALLBACK_COLOR;
+        ctx.fill();
+    }
 
     ctx.beginPath();
     ctx.arc(50, 15, count > 1 ? 12 : 9, 0, Math.PI * 2);
@@ -122,6 +139,7 @@ export function initAttentionBadge(): void {
     initialized = true;
     baseTitle = document.title || BASE_TITLE_FALLBACK;
     getOrCreateFaviconLink();
+    ensureMascotImage();
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') clearUnreadResponses();
     });
