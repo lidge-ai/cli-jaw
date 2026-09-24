@@ -42,10 +42,26 @@ export function getDiscordSendClient(): DiscordSendClientResult {
     return { token };
 }
 
+/** The prefix a mid-answer failure leaves behind. A failed follow-up chunk is
+ *  still a failed send, but the chunks that already posted stay on screen — so
+ *  the result is a PARTIAL delivery, not a clean failure and never a success.
+ *  `retryable:false` because replaying the whole body would duplicate the
+ *  visible prefix; resuming is a caller's explicit suffix decision (#785). */
+export type DiscordPartialDelivery = {
+    sent: true;
+    partial: true;
+    retryable: false;
+    postedChunks: number;
+    totalChunks: number;
+    /** Every message id Discord returned for the posted prefix, in order. */
+    messageIds: string[];
+};
+
 export type DiscordRestSendResult =
     | ({ ok: true; failure?: never; error?: never; status?: never; confirmation?: FileConfirmation } & LiveDeliveryFields)
     | ({ ok: false; failure: DeliveryFailure; error: string; status?: number; confirmation?: FileConfirmation }
-        & Partial<LiveDeliveryFields>);
+        & Partial<LiveDeliveryFields>
+        & Partial<DiscordPartialDelivery>);
 
 /** Discord answers a message POST with the created message as JSON. The id was
  *  being thrown away by a parse that returned undefined, so nothing downstream
@@ -84,6 +100,24 @@ function sendResult<T>(result: DiscordRestResult<T>): DiscordRestSendResult {
     };
 }
 
+/** Receipt for the prefix that already posted when a later chunk fails.
+ *  Nothing posted means nothing to preserve, so the failure keeps the plain
+ *  shape it always had. Posted chunks keep their ids via `deliveryFailed` —
+ *  the same rule Slack applies to firstTs (#785). */
+function partialFields(
+    postedChunks: number,
+    totalChunks: number,
+    firstId: string | null,
+    messageIds: string[],
+): Partial<DiscordPartialDelivery> & Partial<LiveDeliveryFields> {
+    if (postedChunks === 0) return {};
+    return {
+        sent: true, partial: true, retryable: false,
+        postedChunks, totalChunks, messageIds,
+        ...deliveryFailed(firstId),
+    };
+}
+
 export async function sendDiscordTextRest(
     token: string,
     channelId: string,
@@ -110,15 +144,19 @@ export async function sendDiscordTextRest(
             failure: { kind: 'format', retryAfterMs: 0, code: 'empty_message', message: 'discord_empty_message' } };
     }
     let firstId: string | null = null;
+    const messageIds: string[] = [];
+    let postedChunks = 0;
+    const partial = () => partialFields(postedChunks, chunks.length, firstId, messageIds);
     for (const [index, chunk] of chunks.entries()) {
         // A shutdown abort between chunks is a cancellation, not a vendor
-        // failure (#417).
+        // failure (#417). Posted chunks still keep their receipt (#785).
         if (extra?.signal?.aborted) {
             return {
                 ok: false,
                 failure: { kind: 'transient', retryAfterMs: 0, code: 'aborted', message: 'discord_send_aborted' },
                 error: 'discord_send_aborted',
                 status: 499,
+                ...partial(),
             };
         }
         const body: Record<string, unknown> = { content: chunk };
@@ -135,9 +173,11 @@ export async function sendDiscordTextRest(
             }),
             parse: parseDiscordMessageId,
         });
-        if (!result.ok) return sendResult(result);
+        if (!result.ok) return { ...sendResult(result), ...partial() };
         // First chunk wins, the same rule Slack uses for firstTs.
         if (index === 0 && typeof result.value === 'string') firstId = result.value;
+        if (typeof result.value === 'string') messageIds.push(result.value);
+        postedChunks++;
     }
     return { ok: true, ...deliverySent(firstId) };
 }
@@ -172,12 +212,16 @@ export async function sendDiscordDm(
     const scheduler = new DiscordRestScheduler({ token, fetchImpl });
     const chunks = chunkDiscordMessage(text);
     let firstId: string | null = null;
+    const messageIds: string[] = [];
+    let postedChunks = 0;
     for (const [index, chunk] of chunks.entries()) {
         const body: Record<string, unknown> = { content: chunk };
         if (index === 0 && extra?.components) body['components'] = extra.components;
         const result = await scheduler.schedule({ method: 'POST', path: `/channels/${encodeURIComponent(dm.channelId)}/messages`, routeKey: 'POST:/channels/:channel/messages', majorKey: dm.channelId, makeInit: () => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), parse: parseDiscordMessageId });
-        if (!result.ok) return sendResult(result);
+        if (!result.ok) return { ...sendResult(result), ...partialFields(postedChunks, chunks.length, firstId, messageIds) };
         if (index === 0 && typeof result.value === 'string') firstId = result.value;
+        if (typeof result.value === 'string') messageIds.push(result.value);
+        postedChunks++;
     }
     return { ok: true, ...deliverySent(firstId) };
 }
