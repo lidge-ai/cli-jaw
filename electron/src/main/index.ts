@@ -1026,34 +1026,25 @@ function installManagerApplicationMenu(): void {
         ...(DEV_TOOLS_ENABLED ? [{ role: 'toggleDevTools' } as MenuItemConstructorOptions] : []),
         { type: 'separator' },
         {
-          label: 'Toggle Right Sidebar',
-          accelerator: 'CommandOrControl+B',
-          click: () => sendManagerShortcut('toggleRightPanel'),
-        },
-        {
           label: 'Toggle Left Sidebar',
           accelerator: 'CommandOrControl+Shift+B',
           click: () => sendManagerShortcut('toggleLeftSidebar'),
         },
         {
-          label: 'Reset Sidebar Width',
-          click: () => sendManagerShortcut('resetSidebarWidth'),
-        },
-        {
-          label: 'Reveal Terminal',
-          accelerator: 'Ctrl+`',
-          click: () => sendManagerShortcut('focusTerminal'),
-        },
-        {
-          label: 'New Terminal',
-          accelerator: 'Ctrl+Shift+`',
-          click: () => sendManagerShortcut('newTerminalSession'),
+          label: 'Toggle Right Sidebar',
+          accelerator: 'CommandOrControl+B',
+          click: () => sendManagerShortcut('toggleRightPanel'),
         },
         {
           label: 'Toggle Bottom Panel',
           accelerator: 'CommandOrControl+J',
           click: () => sendManagerShortcut('toggleBottomPanel'),
         },
+        {
+          label: 'Reset Sidebar Width',
+          click: () => sendManagerShortcut('resetSidebarWidth'),
+        },
+        { type: 'separator' },
         {
           label: 'Open Folder Panel',
           accelerator: 'CommandOrControl+Shift+E',
@@ -1085,7 +1076,6 @@ function installManagerApplicationMenu(): void {
           accelerator: 'CommandOrControl+4',
           click: () => sendManagerShortcut('switchTab4'),
         },
-        { type: 'separator' },
         {
           label: 'Previous Tab',
           accelerator: 'CommandOrControl+Shift+[',
@@ -1097,9 +1087,9 @@ function installManagerApplicationMenu(): void {
           click: () => sendManagerShortcut('nextTab'),
         },
         { type: 'separator' },
-        { label: 'Reset Zoom', accelerator: 'CommandOrControl+0', click: () => applyMainWindowZoom('reset') },
         { label: 'Zoom In', accelerator: 'CommandOrControl+=', click: () => applyMainWindowZoom('in') },
         { label: 'Zoom Out', accelerator: 'CommandOrControl+-', click: () => applyMainWindowZoom('out') },
+        { label: 'Reset Zoom', accelerator: 'CommandOrControl+0', click: () => applyMainWindowZoom('reset') },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
@@ -1108,13 +1098,24 @@ function installManagerApplicationMenu(): void {
       label: 'Terminal',
       submenu: [
         {
-          label: 'Clear Terminal',
-          click: () => sendManagerShortcut('terminalClear'),
+          label: 'Reveal Terminal',
+          accelerator: 'Ctrl+`',
+          click: () => sendManagerShortcut('focusTerminal'),
+        },
+        {
+          label: 'New Terminal',
+          accelerator: 'Ctrl+Shift+`',
+          click: () => sendManagerShortcut('newTerminalSession'),
         },
         {
           label: 'New Terminal Tab',
           accelerator: 'CommandOrControl+T',
           click: () => sendManagerShortcut('terminalNewTab'),
+        },
+        { type: 'separator' },
+        {
+          label: 'Clear Terminal',
+          click: () => sendManagerShortcut('terminalClear'),
         },
       ],
     },

@@ -95,6 +95,111 @@ const COPY = {
                 scope: '단축키',
                 description: '렌더된 사이드바 행 1–9로 이동합니다. Meta+1–4는 탭 전환에 남아 있어 Alt를 씁니다.',
             },
+            shortcutToggleBottomPanel: {
+                label: '하단 패널',
+                scope: '단축키',
+                description: '하단 패널(터미널·활동)을 열거나 닫습니다.',
+            },
+            shortcutToggleRightPanel: {
+                label: '오른쪽 사이드바',
+                scope: '단축키',
+                description: '오른쪽 패널을 열거나 닫고, 비어 있으면 파일 패널을 만듭니다.',
+            },
+            shortcutToggleLeftSidebar: {
+                label: '왼쪽 사이드바',
+                scope: '단축키',
+                description: '왼쪽 인스턴스 사이드바를 접거나 펼칩니다.',
+            },
+            shortcutFocusTerminal: {
+                label: '터미널 표시',
+                scope: '단축키',
+                description: '하단 터미널 탭을 열고 활성 터미널에 포커스합니다.',
+            },
+            shortcutNewTerminalSession: {
+                label: '새 터미널 세션',
+                scope: '단축키',
+                description: '터미널 탭을 열고 새 셸 세션을 시작합니다.',
+            },
+            shortcutTerminalNewTab: {
+                label: '새 터미널 탭',
+                scope: '단축키',
+                description: '새 터미널 세션을 엽니다.',
+            },
+            shortcutTerminalClear: {
+                label: '터미널 지우기',
+                scope: '단축키',
+                description: '포커스된 터미널 버퍼를 지웁니다.',
+            },
+            shortcutOpenDiff: {
+                label: 'Diff 패널',
+                scope: '단축키',
+                description: '오른쪽 diff 패널을 열거나 포커스합니다.',
+            },
+            shortcutOpenFolderTree: {
+                label: '폴더 패널',
+                scope: '단축키',
+                description: '오른쪽 파일 트리 패널을 열거나 포커스합니다.',
+            },
+            shortcutCloseFocusedTab: {
+                label: '포커스된 탭 닫기',
+                scope: '단축키',
+                description: '브라우저, 터미널, 패널 중 포커스된 탭을 닫습니다.',
+            },
+            shortcutSwitchTab1: {
+                label: 'Overview 탭',
+                scope: '단축키',
+                description: '인스턴스 Overview 탭으로 전환합니다.',
+            },
+            shortcutSwitchTab2: {
+                label: 'Preview 탭',
+                scope: '단축키',
+                description: '인스턴스 Preview 탭으로 전환합니다.',
+            },
+            shortcutSwitchTab3: {
+                label: 'Logs 탭',
+                scope: '단축키',
+                description: '인스턴스 Logs 탭으로 전환합니다.',
+            },
+            shortcutSwitchTab4: {
+                label: 'Settings 탭',
+                scope: '단축키',
+                description: 'Settings 레일 워크스페이스를 엽니다.',
+            },
+            shortcutPreviousTab: {
+                label: '이전 탭',
+                scope: '단축키',
+                description: '이전 인스턴스 상세 탭으로 전환합니다.',
+            },
+            shortcutNextTab: {
+                label: '다음 탭',
+                scope: '단축키',
+                description: '다음 인스턴스 상세 탭으로 전환합니다.',
+            },
+            shortcutBrowserReload: {
+                label: '새로고침',
+                scope: '단축키',
+                description: '포커스 위치에 따라 브라우저, 프리뷰, 앱 창을 새로고침합니다.',
+            },
+            shortcutBrowserHardReload: {
+                label: '강력 새로고침',
+                scope: '단축키',
+                description: '캐시를 무시하고 다시 로드합니다.',
+            },
+            shortcutBrowserFocusUrl: {
+                label: 'URL 바 포커스',
+                scope: '단축키',
+                description: '브라우저 패널의 주소창에 포커스합니다.',
+            },
+            shortcutBrowserBack: {
+                label: '브라우저 뒤로',
+                scope: '단축키',
+                description: '브라우저 패널에서 이전 페이지로 이동합니다.',
+            },
+            shortcutBrowserForward: {
+                label: '브라우저 앞으로',
+                scope: '단축키',
+                description: '브라우저 패널에서 다음 페이지로 이동합니다.',
+            },
         },
         support: {
             ariaLabel: '작업 제목 출처 준비 상태',
@@ -185,6 +290,111 @@ const COPY = {
                 label: 'Jump to instance',
                 scope: 'Shortcut',
                 description: 'Jump to rendered sidebar rows 1–9. Meta+1–4 stay on tab switching, so these use Alt.',
+            },
+            shortcutToggleBottomPanel: {
+                label: 'Bottom panel',
+                scope: 'Shortcut',
+                description: 'Open or close the bottom panel (terminal and activity).',
+            },
+            shortcutToggleRightPanel: {
+                label: 'Right sidebar',
+                scope: 'Shortcut',
+                description: 'Open or close the right panel; creates a files panel when empty.',
+            },
+            shortcutToggleLeftSidebar: {
+                label: 'Left sidebar',
+                scope: 'Shortcut',
+                description: 'Collapse or expand the left instance sidebar.',
+            },
+            shortcutFocusTerminal: {
+                label: 'Reveal terminal',
+                scope: 'Shortcut',
+                description: 'Open the bottom terminal tab and focus the active terminal.',
+            },
+            shortcutNewTerminalSession: {
+                label: 'New terminal session',
+                scope: 'Shortcut',
+                description: 'Open the terminal tab and start a new shell session.',
+            },
+            shortcutTerminalNewTab: {
+                label: 'New terminal tab',
+                scope: 'Shortcut',
+                description: 'Open a new terminal session.',
+            },
+            shortcutTerminalClear: {
+                label: 'Clear terminal',
+                scope: 'Shortcut',
+                description: 'Clear the focused terminal buffer.',
+            },
+            shortcutOpenDiff: {
+                label: 'Diff panel',
+                scope: 'Shortcut',
+                description: 'Open or focus the right diff panel.',
+            },
+            shortcutOpenFolderTree: {
+                label: 'Folder panel',
+                scope: 'Shortcut',
+                description: 'Open or focus the right file tree panel.',
+            },
+            shortcutCloseFocusedTab: {
+                label: 'Close focused tab',
+                scope: 'Shortcut',
+                description: 'Close the focused browser, terminal, or panel tab.',
+            },
+            shortcutSwitchTab1: {
+                label: 'Overview tab',
+                scope: 'Shortcut',
+                description: 'Switch to the instance Overview tab.',
+            },
+            shortcutSwitchTab2: {
+                label: 'Preview tab',
+                scope: 'Shortcut',
+                description: 'Switch to the instance Preview tab.',
+            },
+            shortcutSwitchTab3: {
+                label: 'Logs tab',
+                scope: 'Shortcut',
+                description: 'Switch to the instance Logs tab.',
+            },
+            shortcutSwitchTab4: {
+                label: 'Settings tab',
+                scope: 'Shortcut',
+                description: 'Open the Settings rail workspace.',
+            },
+            shortcutPreviousTab: {
+                label: 'Previous tab',
+                scope: 'Shortcut',
+                description: 'Switch to the previous instance detail tab.',
+            },
+            shortcutNextTab: {
+                label: 'Next tab',
+                scope: 'Shortcut',
+                description: 'Switch to the next instance detail tab.',
+            },
+            shortcutBrowserReload: {
+                label: 'Reload',
+                scope: 'Shortcut',
+                description: 'Reload the browser, preview, or app window depending on focus.',
+            },
+            shortcutBrowserHardReload: {
+                label: 'Hard reload',
+                scope: 'Shortcut',
+                description: 'Reload bypassing the cache.',
+            },
+            shortcutBrowserFocusUrl: {
+                label: 'Focus URL bar',
+                scope: 'Shortcut',
+                description: 'Focus the address field in the browser panel.',
+            },
+            shortcutBrowserBack: {
+                label: 'Browser back',
+                scope: 'Shortcut',
+                description: 'Navigate back in the browser panel.',
+            },
+            shortcutBrowserForward: {
+                label: 'Browser forward',
+                scope: 'Shortcut',
+                description: 'Navigate forward in the browser panel.',
             },
         },
         support: {
@@ -277,6 +487,111 @@ const COPY = {
                 scope: '快捷键',
                 description: '跳转到已渲染的侧边栏第 1–9 行。Meta+1–4 仍用于切换标签，因此这里使用 Alt。',
             },
+            shortcutToggleBottomPanel: {
+                label: '底部面板',
+                scope: '快捷键',
+                description: '打开或关闭底部面板（终端与活动）。',
+            },
+            shortcutToggleRightPanel: {
+                label: '右侧栏',
+                scope: '快捷键',
+                description: '打开或关闭右侧面板；为空时创建文件面板。',
+            },
+            shortcutToggleLeftSidebar: {
+                label: '左侧栏',
+                scope: '快捷键',
+                description: '折叠或展开左侧实例侧栏。',
+            },
+            shortcutFocusTerminal: {
+                label: '显示终端',
+                scope: '快捷键',
+                description: '打开底部终端标签并聚焦活动终端。',
+            },
+            shortcutNewTerminalSession: {
+                label: '新终端会话',
+                scope: '快捷键',
+                description: '打开终端标签并启动新的 Shell 会话。',
+            },
+            shortcutTerminalNewTab: {
+                label: '新终端标签',
+                scope: '快捷键',
+                description: '打开新的终端会话。',
+            },
+            shortcutTerminalClear: {
+                label: '清空终端',
+                scope: '快捷键',
+                description: '清空当前聚焦的终端缓冲区。',
+            },
+            shortcutOpenDiff: {
+                label: 'Diff 面板',
+                scope: '快捷键',
+                description: '打开或聚焦右侧 diff 面板。',
+            },
+            shortcutOpenFolderTree: {
+                label: '文件夹面板',
+                scope: '快捷键',
+                description: '打开或聚焦右侧文件树面板。',
+            },
+            shortcutCloseFocusedTab: {
+                label: '关闭焦点标签',
+                scope: '快捷键',
+                description: '关闭当前聚焦的浏览器、终端或面板标签。',
+            },
+            shortcutSwitchTab1: {
+                label: 'Overview 标签',
+                scope: '快捷键',
+                description: '切换到实例 Overview 标签。',
+            },
+            shortcutSwitchTab2: {
+                label: 'Preview 标签',
+                scope: '快捷键',
+                description: '切换到实例 Preview 标签。',
+            },
+            shortcutSwitchTab3: {
+                label: 'Logs 标签',
+                scope: '快捷键',
+                description: '切换到实例 Logs 标签。',
+            },
+            shortcutSwitchTab4: {
+                label: 'Settings 标签',
+                scope: '快捷键',
+                description: '打开 Settings 侧边工作区。',
+            },
+            shortcutPreviousTab: {
+                label: '上一个标签',
+                scope: '快捷键',
+                description: '切换到上一个实例详情标签。',
+            },
+            shortcutNextTab: {
+                label: '下一个标签',
+                scope: '快捷键',
+                description: '切换到下一个实例详情标签。',
+            },
+            shortcutBrowserReload: {
+                label: '重新加载',
+                scope: '快捷键',
+                description: '根据焦点位置重新加载浏览器、预览或应用窗口。',
+            },
+            shortcutBrowserHardReload: {
+                label: '强制重新加载',
+                scope: '快捷键',
+                description: '忽略缓存重新加载。',
+            },
+            shortcutBrowserFocusUrl: {
+                label: '聚焦 URL 栏',
+                scope: '快捷键',
+                description: '聚焦浏览器面板的地址栏。',
+            },
+            shortcutBrowserBack: {
+                label: '浏览器后退',
+                scope: '快捷键',
+                description: '在浏览器面板中后退一页。',
+            },
+            shortcutBrowserForward: {
+                label: '浏览器前进',
+                scope: '快捷键',
+                description: '在浏览器面板中前进一页。',
+            },
         },
         support: {
             ariaLabel: '活动标题来源就绪状态',
@@ -367,6 +682,111 @@ const COPY = {
                 label: 'インスタンスへジャンプ',
                 scope: 'ショートカット',
                 description: '描画済みサイドバー行 1–9 へ移動します。Meta+1–4 はタブ切替のままなので Alt を使います。',
+            },
+            shortcutToggleBottomPanel: {
+                label: 'ボトムパネル',
+                scope: 'ショートカット',
+                description: 'ボトムパネル（ターミナル・アクティビティ）を開閉します。',
+            },
+            shortcutToggleRightPanel: {
+                label: '右サイドバー',
+                scope: 'ショートカット',
+                description: '右パネルを開閉し、空の場合はファイルパネルを作成します。',
+            },
+            shortcutToggleLeftSidebar: {
+                label: '左サイドバー',
+                scope: 'ショートカット',
+                description: '左のインスタンスサイドバーを折りたたみ/展開します。',
+            },
+            shortcutFocusTerminal: {
+                label: 'ターミナルを表示',
+                scope: 'ショートカット',
+                description: 'ボトムのターミナルタブを開き、アクティブなターミナルにフォーカスします。',
+            },
+            shortcutNewTerminalSession: {
+                label: '新しいターミナルセッション',
+                scope: 'ショートカット',
+                description: 'ターミナルタブを開き、新しいシェルセッションを開始します。',
+            },
+            shortcutTerminalNewTab: {
+                label: '新しいターミナルタブ',
+                scope: 'ショートカット',
+                description: '新しいターミナルセッションを開きます。',
+            },
+            shortcutTerminalClear: {
+                label: 'ターミナルをクリア',
+                scope: 'ショートカット',
+                description: 'フォーカス中のターミナルバッファをクリアします。',
+            },
+            shortcutOpenDiff: {
+                label: 'Diff パネル',
+                scope: 'ショートカット',
+                description: '右の diff パネルを開くかフォーカスします。',
+            },
+            shortcutOpenFolderTree: {
+                label: 'フォルダーパネル',
+                scope: 'ショートカット',
+                description: '右のファイルツリーパネルを開くかフォーカスします。',
+            },
+            shortcutCloseFocusedTab: {
+                label: 'フォーカス中のタブを閉じる',
+                scope: 'ショートカット',
+                description: 'フォーカスされているブラウザ、ターミナル、パネルのタブを閉じます。',
+            },
+            shortcutSwitchTab1: {
+                label: 'Overview タブ',
+                scope: 'ショートカット',
+                description: 'インスタンスの Overview タブに切り替えます。',
+            },
+            shortcutSwitchTab2: {
+                label: 'Preview タブ',
+                scope: 'ショートカット',
+                description: 'インスタンスの Preview タブに切り替えます。',
+            },
+            shortcutSwitchTab3: {
+                label: 'Logs タブ',
+                scope: 'ショートカット',
+                description: 'インスタンスの Logs タブに切り替えます。',
+            },
+            shortcutSwitchTab4: {
+                label: 'Settings タブ',
+                scope: 'ショートカット',
+                description: 'Settings レールワークスペースを開きます。',
+            },
+            shortcutPreviousTab: {
+                label: '前のタブ',
+                scope: 'ショートカット',
+                description: '前のインスタンス詳細タブに切り替えます。',
+            },
+            shortcutNextTab: {
+                label: '次のタブ',
+                scope: 'ショートカット',
+                description: '次のインスタンス詳細タブに切り替えます。',
+            },
+            shortcutBrowserReload: {
+                label: '再読み込み',
+                scope: 'ショートカット',
+                description: 'フォーカス位置に応じてブラウザ、プレビュー、アプリウィンドウを再読み込みします。',
+            },
+            shortcutBrowserHardReload: {
+                label: '強制再読み込み',
+                scope: 'ショートカット',
+                description: 'キャッシュを無視して再読み込みします。',
+            },
+            shortcutBrowserFocusUrl: {
+                label: 'URL バーにフォーカス',
+                scope: 'ショートカット',
+                description: 'ブラウザパネルのアドレスバーにフォーカスします。',
+            },
+            shortcutBrowserBack: {
+                label: 'ブラウザの戻る',
+                scope: 'ショートカット',
+                description: 'ブラウザパネルで前のページに戻ります。',
+            },
+            shortcutBrowserForward: {
+                label: 'ブラウザの進む',
+                scope: 'ショートカット',
+                description: 'ブラウザパネルで次のページに進みます。',
             },
         },
         support: {
@@ -480,15 +900,48 @@ function DashboardShortcutInput(props: DashboardShortcutInputProps) {
     );
 }
 
+const SHORTCUT_COPY_KEYS: Record<DashboardShortcutAction, keyof typeof COPY.ko.fields> = {
+    toggleInstanceSettings: 'shortcutToggleInstanceSettings',
+    focusInstances: 'shortcutFocusInstances',
+    focusActiveSession: 'shortcutFocusActiveSession',
+    focusNotes: 'shortcutFocusNotes',
+    previousInstance: 'shortcutPreviousInstance',
+    nextInstance: 'shortcutNextInstance',
+    toggleBottomPanel: 'shortcutToggleBottomPanel',
+    toggleRightPanel: 'shortcutToggleRightPanel',
+    toggleLeftSidebar: 'shortcutToggleLeftSidebar',
+    focusTerminal: 'shortcutFocusTerminal',
+    newTerminalSession: 'shortcutNewTerminalSession',
+    terminalNewTab: 'shortcutTerminalNewTab',
+    terminalClear: 'shortcutTerminalClear',
+    openDiff: 'shortcutOpenDiff',
+    openFolderTree: 'shortcutOpenFolderTree',
+    closeFocusedTab: 'shortcutCloseFocusedTab',
+    switchTab1: 'shortcutSwitchTab1',
+    switchTab2: 'shortcutSwitchTab2',
+    switchTab3: 'shortcutSwitchTab3',
+    switchTab4: 'shortcutSwitchTab4',
+    previousTab: 'shortcutPreviousTab',
+    nextTab: 'shortcutNextTab',
+    browserReload: 'shortcutBrowserReload',
+    browserHardReload: 'shortcutBrowserHardReload',
+    browserFocusUrl: 'shortcutBrowserFocusUrl',
+    browserBack: 'shortcutBrowserBack',
+    browserForward: 'shortcutBrowserForward',
+    resetSidebarWidth: 'shortcutResetSidebarWidth',
+    jumpInstance1: 'shortcutJumpInstance',
+    jumpInstance2: 'shortcutJumpInstance',
+    jumpInstance3: 'shortcutJumpInstance',
+    jumpInstance4: 'shortcutJumpInstance',
+    jumpInstance5: 'shortcutJumpInstance',
+    jumpInstance6: 'shortcutJumpInstance',
+    jumpInstance7: 'shortcutJumpInstance',
+    jumpInstance8: 'shortcutJumpInstance',
+    jumpInstance9: 'shortcutJumpInstance',
+};
+
 function shortcutCopyKey(action: DashboardShortcutAction): keyof typeof COPY.ko.fields {
-    if (action === 'toggleInstanceSettings') return 'shortcutToggleInstanceSettings';
-    if (action === 'focusInstances') return 'shortcutFocusInstances';
-    if (action === 'focusActiveSession') return 'shortcutFocusActiveSession';
-    if (action === 'focusNotes') return 'shortcutFocusNotes';
-    if (action === 'previousInstance') return 'shortcutPreviousInstance';
-    if (action === 'resetSidebarWidth') return 'shortcutResetSidebarWidth';
-    if (action.startsWith('jumpInstance')) return 'shortcutJumpInstance';
-    return 'shortcutNextInstance';
+    return SHORTCUT_COPY_KEYS[action];
 }
 
 function TitleSupportSummary({ support, locale }: { support: DashboardActivityTitleSupport; locale: DashboardLocale }) {

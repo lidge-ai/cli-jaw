@@ -134,9 +134,9 @@ test('settings toggle has its own localized label in all Manager locales', async
     const globals = globalThis as unknown as Record<string, unknown>, previous = globals['React'];
     globals['React'] = React;
     try {
-        for (const [locale, expected] of [
-            ['ko', '인스턴스 설정'], ['en', 'Instance settings'],
-            ['ja', 'インスタンス設定'], ['zh', '实例设置'],
+        for (const [locale, expected, expectedTab4] of [
+            ['ko', '인스턴스 설정', 'Settings 탭'], ['en', 'Instance settings', 'Settings tab'],
+            ['ja', 'インスタンス設定', 'Settings タブ'], ['zh', '实例设置', 'Settings 标签'],
         ] as const) {
             const savedUi = defaultDashboardRegistry().ui;
             const ui = { ...savedUi, locale,
@@ -149,6 +149,10 @@ test('settings toggle has its own localized label in all Manager locales', async
             assert.equal(doc.querySelector('label[for="dashboard-shortcut-toggleInstanceSettings"] > span')?.textContent, expected);
             assert.equal(doc.querySelector<HTMLInputElement>('#dashboard-shortcut-toggleInstanceSettings')?.value, 'Meta+,');
             assert.notEqual(doc.querySelector('label[for="dashboard-shortcut-nextInstance"] > span')?.textContent, expected);
+            // Every action row must carry its own localized label — unmapped
+            // actions previously all fell back to the "next instance" copy.
+            assert.equal(doc.querySelector('label[for="dashboard-shortcut-switchTab4"] > span')?.textContent, expectedTab4);
+            assert.equal(doc.querySelector<HTMLInputElement>('#dashboard-shortcut-switchTab4')?.value, 'Meta+4');
             dom.window.close();
         }
     } finally { globals['React'] = previous; }
