@@ -148,7 +148,7 @@ describe('code native HTTP', { concurrency: false }, () => {
     }
 
     async function assignHost(home: string, hostPort: number, providers = createFakeCodeProviders().providers,
-        primeLiveModels?: () => Promise<void>): Promise<Host> {
+        primeLiveModels?: () => Promise<boolean | void>): Promise<Host> {
         const previous = host;
         host = createCodeHost({
             home,

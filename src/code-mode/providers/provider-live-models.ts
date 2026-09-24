@@ -124,9 +124,10 @@ export function readProviderLiveModels(id: LiveCatalogProviderId): ProviderLiveM
  * Fill every provider snapshot, including the ones a read will not fill on its
  * own. This is the only path that spawns Cursor's or Grok's CLI.
  */
-export async function primeProviderLiveModels(): Promise<void> {
+export async function primeProviderLiveModels(): Promise<boolean> {
     const ids: LiveCatalogProviderId[] = ['claude', 'cursor', 'grok'];
     await Promise.all(ids.map(id => refresh(id, true) ?? Promise.resolve()));
+    return ids.every(id => slotOf(id).value !== null);
 }
 
 /** @internal exported for unit tests */

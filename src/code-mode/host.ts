@@ -15,9 +15,14 @@ export interface CodeHostOptions {
     maxConcurrentSessions?: number;
     idleReapMs?: number;
     providers?: CodeProviders;
-    /** Live-model inventory filler; defaults to the shared provider probe. */
-    primeLiveModels?: () => Promise<void>;
+    /** Live-model inventory filler; defaults to the shared provider probe.
+     *  Resolving `false` (or rejecting) means the inventory came back incomplete. */
+    primeLiveModels?: () => Promise<boolean | void>;
+    /** Delay before the single follow-up probe after an incomplete prime. */
+    primeRetryMs?: number;
 }
+
+const PRIME_RETRY_MS = 300_000;
 
 /** No database, recovery or native runtime is opened until the service is used. */
 export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionManager; prime(): Promise<void>; dispose(): Promise<void> } {
@@ -25,7 +30,9 @@ export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionMa
     let manager: CodeSessionManager | undefined;
     let disposal: Promise<void> | undefined;
     let primed: Promise<void> | undefined;
+    let primeRetry: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
+    const probe = options.primeLiveModels ?? primeProviderLiveModels;
     return {
         get() {
             if (closed) throw Object.assign(new Error('Code host is closed'), { code: 'code_host_closed', statusCode: 503 });
@@ -59,14 +66,30 @@ export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionMa
          * owner allowed to start provider inventory: those probes spawn a CLI,
          * and a catalog read must never do that — so get() does not call this.
          * The explicit caller is server startup. Failure is silent by design —
-         * the static registry list stands.
+         * the static registry list stands. An incomplete first pass schedules
+         * exactly one delayed follow-up so a CLI installed after boot is found.
          */
         prime() {
             if (closed) throw Object.assign(new Error('Code host is closed'), { code: 'code_host_closed', statusCode: 503 });
-            return primed ??= (options.primeLiveModels ?? primeProviderLiveModels)();
+            if (primed) return primed;
+            const scheduleRetry = (): void => {
+                if (closed) return;
+                primeRetry = setTimeout(() => {
+                    primeRetry = undefined;
+                    if (!closed) void probe().catch(() => { /* static registry lists stand */ });
+                }, options.primeRetryMs ?? PRIME_RETRY_MS);
+                primeRetry.unref?.();
+            };
+            primed = probe().then(
+                complete => { if (complete === false) scheduleRetry(); },
+                error => { scheduleRetry(); throw error; },
+            );
+            return primed;
         },
         dispose() {
             closed = true;
+            if (primeRetry) clearTimeout(primeRetry);
+            primeRetry = undefined;
             return disposal ??= (async () => {
                 // Keep the database alive until owned runtimes finish their last callbacks.
                 await manager?.dispose();
