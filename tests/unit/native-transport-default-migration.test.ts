@@ -95,7 +95,7 @@ test('safe permissions flip only claude and stamp partial', () => {
 });
 
 test('custom permissions leave all three print and skip claude', () => {
-    for (const permissions of ['custom', ['read']]) {
+    for (const permissions of [['read'], [' read ', '']]) {
         const existing = document();
         existing.permissions = permissions as typeof existing.permissions;
         for (const cli of engines) existing.perCli[cli]!.transport = 'print';

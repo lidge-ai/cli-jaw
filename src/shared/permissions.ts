@@ -14,10 +14,9 @@
 // choice rather than the named one. The Manager editors reject an empty
 // allowlist at editing time so the value can only arrive via file or API.
 //
-// This is the strict STORED contract: tokens are validated as literals (no
-// trim, no blank-skipping). The runtime consumer `normalizeNativePermissions`
-// is intentionally more lenient on the same pattern and limit because it
-// normalizes session rows and hand-edited files, not just sanitizer output.
+// Tokens follow the runtime consumer `normalizeNativePermissions`: each entry
+// is a string, surrounding whitespace is ignored and blank entries are skipped,
+// so the stored value and the native policy it produces always agree.
 
 export type PermissionsPolicy = 'auto' | 'safe' | ReadonlyArray<string>;
 
@@ -31,13 +30,19 @@ export function isPermissionToken(value: unknown): value is string {
         && PERMISSION_TOKEN_PATTERN.test(value);
 }
 
+function isStoredPermissionEntry(value: unknown): boolean {
+    if (typeof value !== 'string') return false;
+    const token = value.trim();
+    return token.length === 0 || isPermissionToken(token);
+}
+
 export function isPermissionsPolicy(value: unknown): value is PermissionsPolicy {
     if (value === 'auto' || value === 'safe') return true;
     if (!Array.isArray(value)) return false;
     // Iterate explicitly: .every on a sparse array skips holes, and a hole is
-    // not a valid token for storage.
+    // not a valid entry for storage.
     for (let index = 0; index < value.length; index += 1) {
-        if (!isPermissionToken(value[index])) return false;
+        if (!isStoredPermissionEntry(value[index])) return false;
     }
     return true;
 }

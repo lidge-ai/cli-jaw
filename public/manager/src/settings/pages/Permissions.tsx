@@ -91,8 +91,7 @@ export function isPermissionToken(token: string): boolean {
 }
 
 /** The editing mode a stored value opens in. Anything the shared validator
- *  would not store — including a token list a trim would only clean on
- *  display — lands in 'invalid', so the editors show a recoverable state
+ *  would not store lands in 'invalid', so the editors show a recoverable state
  *  instead of silently selecting Auto (#788). */
 export function permissionsEditMode(value: unknown): PermissionEditMode {
     if (!isPermissionsPolicy(value)) return 'invalid';
