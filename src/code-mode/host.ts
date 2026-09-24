@@ -15,13 +15,16 @@ export interface CodeHostOptions {
     maxConcurrentSessions?: number;
     idleReapMs?: number;
     providers?: CodeProviders;
+    /** Live-model inventory filler; defaults to the shared provider probe. */
+    primeLiveModels?: () => Promise<void>;
 }
 
 /** No database, recovery or native runtime is opened until the service is used. */
-export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionManager; dispose(): Promise<void> } {
+export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionManager; prime(): Promise<void>; dispose(): Promise<void> } {
     let database: SqliteDatabase | undefined;
     let manager: CodeSessionManager | undefined;
     let disposal: Promise<void> | undefined;
+    let primed: Promise<void> | undefined;
     let closed = false;
     return {
         get() {
@@ -45,16 +48,22 @@ export function createCodeHost(options: CodeHostOptions): { get(): CodeSessionMa
                 service.recover();
                 database = candidate;
                 manager = service;
-                // Fill the Cursor and Grok snapshots once, here rather than on a
-                // catalog read: they are the two providers whose discovery spawns a
-                // CLI, and a catalog read must never do that. Failure is silent by
-                // design — the static registry list stands.
-                void primeProviderLiveModels().catch(() => { /* static lists stand */ });
                 return service;
             } catch (error) {
                 candidate.close();
                 throw error;
             }
+        },
+        /**
+         * Fill the Cursor and Grok snapshots once per host. This is the ONLY
+         * owner allowed to start provider inventory: those probes spawn a CLI,
+         * and a catalog read must never do that — so get() does not call this.
+         * The explicit caller is server startup. Failure is silent by design —
+         * the static registry list stands.
+         */
+        prime() {
+            if (closed) throw Object.assign(new Error('Code host is closed'), { code: 'code_host_closed', statusCode: 503 });
+            return primed ??= (options.primeLiveModels ?? primeProviderLiveModels)();
         },
         dispose() {
             closed = true;
