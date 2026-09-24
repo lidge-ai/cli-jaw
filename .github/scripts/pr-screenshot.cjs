@@ -34,9 +34,9 @@
  *   - A maintainer comment matching `UI_OVERRIDE_RE` (e.g. "no UI changes in
  *     this PR"), held to the same bar as the label: the author's collaborator
  *     permission is verified (association alone is not enough — MEMBER covers
- *     read-only org members), and the comment must postdate the head commit's
- *     server-side push time so a stale "no UI changes" cannot waive commits
- *     pushed later.
+ *     read-only org members), and the comment must postdate the head commit
+ *     (see `latestHeadPushAt`) so a stale "no UI changes" does not waive
+ *     commits pushed later.
  */
 
 /** Label that waives the gate when applied by a write+ collaborator. */
@@ -402,18 +402,13 @@ async function listChangedFiles(github, { owner, repo, pull_number, core }) {
 }
 
 /**
- * True when a waiver-style maintainer comment exists AND its author has
- * write/maintain/admin access — the same bar the label waiver is held to.
- * Association alone is not trusted (MEMBER includes read-only org members),
- * and the comment must postdate the latest pushed commit. Any lookup failure
- * fails closed — the comment is ignored rather than trusted.
- */
-/**
- * When the PR head commit arrived on GitHub — the honest cutoff for comment
- * waivers. GraphQL `pushedDate` is server-side, so an author-controlled
- * committer date cannot resurrect a stale "no UI changes", and
- * `commits(last: 1)` reads the real head even past the REST `listCommits`
- * 250-commit cap.
+ * Cutoff for comment waivers: when the PR head commit arrived. GraphQL
+ * `pushedDate` would be the server-side answer, but github.com has returned
+ * null for it since its deprecation, so in practice this falls back to
+ * `committedDate` — a value the commit author controls. The recency check is
+ * therefore best-effort against stale comments, not a trust boundary; the
+ * write-access check on the comment author is. `commits(last: 1)` reads the
+ * real head even past the REST `listCommits` 250-commit cap.
  */
 async function latestHeadPushAt(github, { owner, repo, pull_number }) {
   const data = await github.graphql(
@@ -430,6 +425,13 @@ async function latestHeadPushAt(github, { owner, repo, pull_number }) {
   return head?.pushedDate ?? head?.committedDate ?? null;
 }
 
+/**
+ * True when a waiver-style maintainer comment exists AND its author has
+ * write/maintain/admin access — the same bar the label waiver is held to.
+ * Association alone is not trusted (MEMBER includes read-only org members),
+ * and the comment must postdate the latest pushed commit. Any lookup failure
+ * fails closed — the comment is ignored rather than trusted.
+ */
 async function waiverCommentAuthorized(github, {
   owner,
   repo,
