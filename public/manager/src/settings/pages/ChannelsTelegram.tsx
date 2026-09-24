@@ -9,7 +9,7 @@
 //   telegram.forwardAll
 //   telegram.mentionOnly
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SettingsPageProps, DirtyEntry } from '../types';
 import { ToggleField, SecretField, ChipListField } from '../fields';
 import {
@@ -20,6 +20,7 @@ import {
     usePageSnapshot,
 } from './page-shell';
 import { expandPatch } from './path-utils';
+import { slackText } from './components/SlackSetup';
 import { HealthBadge, interpretTelegramProbe } from './components/HealthBadge';
 import type { MessengerChannel } from './components/ChannelEnablementControl';
 import { TransportStatusChips } from './components/TransportStatusChips';
@@ -42,6 +43,7 @@ type TelegramBlock = {
 type TelegramSnapshot = {
     channel?: MessengerChannel;
     telegram?: TelegramBlock;
+    telegramEnvironmentVariables?: string[];
     messaging?: MessagingBlock;
     [key: string]: unknown;
 };
@@ -55,6 +57,8 @@ const TELEGRAM_KEYS = [
     'telegram.forwardAll',
     'telegram.mentionOnly',
 ] as const;
+
+const CONNECTION_KEYS = ['telegram.enabled', 'telegram.token', 'telegram.allowedChatIds'];
 
 // ── pure helpers (exported for tests) ────────────────────────────────
 
@@ -97,7 +101,8 @@ export function chipsToChatIds(chips: ReadonlyArray<string>): number[] {
 
 // ── component ────────────────────────────────────────────────────────
 
-export default function ChannelsTelegram({ port, client, dirty, registerSave }: SettingsPageProps) {
+export default function ChannelsTelegram({ port, client, dirty, registerSave, manager }: SettingsPageProps) {
+    const t = useMemo(() => slackText(manager?.ui.locale ?? document.documentElement.lang), [manager?.ui.locale]);
     const { state, refresh, setData } = usePageSnapshot<TelegramSnapshot>(client, '/api/settings');
 
     const [setupOpen, setSetupOpen] = useState(false);
@@ -142,10 +147,22 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave }: 
         return state.data.telegram || {};
     }, [state]);
 
+    const environmentVariables = state.kind === 'ready' && Array.isArray(state.data.telegramEnvironmentVariables)
+        ? state.data.telegramEnvironmentVariables
+        : [];
+    const environmentManaged = environmentVariables.length > 0;
+    const savePolicyRef = useRef({ environmentManaged, environmentVariables, t });
+    useLayoutEffect(() => { savePolicyRef.current = { environmentManaged, environmentVariables, t }; },
+        [environmentManaged, environmentVariables, t]);
+
     const onSave = useCallback(async () => {
         if (setupOpen) throw new Error('Finish channel setup before saving settings.');
         const bundle = dirty.saveBundle();
         if (Object.keys(bundle).length === 0) return;
+        const policy = savePolicyRef.current;
+        if (policy.environmentManaged && CONNECTION_KEYS.some(key => key in bundle)) {
+            throw new Error(policy.t('settings.telegram.managedByEnvironment', { variables: policy.environmentVariables.join(', ') }));
+        }
         const patch = expandPatch(bundle);
         const updated = await client.put<TelegramSnapshot>('/api/settings', patch);
         const fresh = (updated && typeof updated === 'object' && 'data' in updated
@@ -212,11 +229,14 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave }: 
                 <TransportStatusChips client={client} channel="telegram" />
             </SettingsSection>
 
-            <SettingsSection title="Telegram" hint="Bot token, allow-list, and forwarding rules.">
+            <SettingsSection title="Telegram" hint={environmentManaged
+                ? t('settings.telegram.managedByEnvironment', { variables: environmentVariables.join(', ') })
+                : 'Bot token, allow-list, and forwarding rules.'}>
                 <ToggleField
                     id="tg-enabled"
                     label="Telegram enabled"
                     value={enabled}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setEnabled(next);
                         setEntry('telegram.enabled', {
@@ -231,6 +251,7 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave }: 
                     label="Bot token"
                     value={token}
                     placeholder={tokenPlaceholder}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setToken(next);
                         // Empty input means "leave existing token alone"; only
@@ -252,6 +273,7 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave }: 
                     value={chips}
                     placeholder="123456789"
                     error={chipsError}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setChips(next);
                         const allValid = next.every(isValidChatId);
@@ -303,7 +325,7 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave }: 
                 />
             </SettingsSection>
             </fieldset>
-            <ChannelSetupEntry channel="telegram" client={client} dirty={dirty}
+            <ChannelSetupEntry channel="telegram" client={client} dirty={dirty} disabled={environmentManaged}
                 open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<TelegramSnapshot>('/api/settings'))} />
         </form>
     );

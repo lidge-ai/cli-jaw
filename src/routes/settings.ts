@@ -11,6 +11,10 @@ import {
     isSettingsPersistenceBlocked,
     configuredSlackEnvironmentVariables,
     slackEnvironmentManagedPatchPaths,
+    configuredTelegramEnvironmentVariables,
+    telegramEnvironmentManagedPatchPaths,
+    configuredDiscordEnvironmentVariables,
+    discordEnvironmentManagedPatchPaths,
     wikiRouteManagedPatchPaths,
 } from '../core/config.js';
 import { sanitizeSettingsInput } from '../core/settings-merge.js';
@@ -65,6 +69,8 @@ const SERVER_OWNED_SETTINGS_KEYS = [
     'nativeTransportMigration',
     'maxConcurrentDefaultMigration',
     'slackEnvironmentVariables',
+    'telegramEnvironmentVariables',
+    'discordEnvironmentVariables',
 ] as const;
 
 function redactSttSettings(input: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -131,6 +137,10 @@ function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
         pi?: Record<string, unknown>;
         slack?: Record<string, unknown>;
         slackEnvironmentVariables?: string[];
+        telegram?: Record<string, unknown>;
+        telegramEnvironmentVariables?: string[];
+        discord?: Record<string, unknown>;
+        discordEnvironmentVariables?: string[];
     };
     const stt = redactSttSettings(safe.stt);
     const jawCeo = redactJawCeoSettings(safe.jawCeo);
@@ -151,6 +161,25 @@ function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
             teamId: '',
             channelIds: [],
             attachPort: '',
+        };
+    }
+    const telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
+    safe.telegramEnvironmentVariables = telegramEnvironmentVariables;
+    if (telegramEnvironmentVariables.length > 0 && safe.telegram) {
+        safe.telegram = {
+            ...safe.telegram,
+            token: '',
+            allowedChatIds: [],
+        };
+    }
+    const discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
+    safe.discordEnvironmentVariables = discordEnvironmentVariables;
+    if (discordEnvironmentVariables.length > 0 && safe.discord) {
+        safe.discord = {
+            ...safe.discord,
+            token: '',
+            guildId: '',
+            channelIds: [],
         };
     }
     // Channel bot tokens are full account credentials, and only the Slack
@@ -287,6 +316,22 @@ export function registerSettingsRoutes(
             fail(res, 409, 'slack_connection_managed_by_environment', {
                 environmentVariables: configuredSlackEnvironmentVariables(),
                 managedPaths: environmentManagedPaths,
+            });
+            return;
+        }
+        const telegramManagedPaths = telegramEnvironmentManagedPatchPaths(body);
+        if (telegramManagedPaths.length > 0) {
+            fail(res, 409, 'telegram_connection_managed_by_environment', {
+                environmentVariables: configuredTelegramEnvironmentVariables(),
+                managedPaths: telegramManagedPaths,
+            });
+            return;
+        }
+        const discordManagedPaths = discordEnvironmentManagedPatchPaths(body);
+        if (discordManagedPaths.length > 0) {
+            fail(res, 409, 'discord_connection_managed_by_environment', {
+                environmentVariables: configuredDiscordEnvironmentVariables(),
+                managedPaths: discordManagedPaths,
             });
             return;
         }

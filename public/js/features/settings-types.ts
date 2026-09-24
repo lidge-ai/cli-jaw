@@ -153,6 +153,8 @@ export interface SettingsData {
     discord?: DiscordConfig;
     slack?: SlackConfig;
     slackEnvironmentVariables?: string[];
+    telegramEnvironmentVariables?: string[];
+    discordEnvironmentVariables?: string[];
     /** @deprecated Use messaging.homeChannel (response alias). */
     channel?: 'telegram' | 'discord' | 'slack';
     messaging?: MessagingConfig;
