@@ -1058,6 +1058,9 @@ async function main(): Promise<void> {
         // 'appeared' diffs, or initial workers would never get SSE streams.
         startWorkerEventBridge();
         instanceRegistry.start();
+        // Provider live-model inventory (Cursor/Grok CLI probes) is owned by
+        // host activation — startup, here — never by a catalog read.
+        void nativeCodeHost.prime().catch(() => { /* static registry lists stand */ });
         if (process.env["JAW_REMINDERS_SCHEDULER"] === '1') {
             stopRemindersScheduler = startRemindersScheduler({
                 store: remindersStore,

@@ -66,6 +66,37 @@ test('lazy host recovery is isolated by role and port and never launches a provi
     assert.ok(existsSync(join(home, 'code-worker-19002.sqlite')));
 });
 
+test('catalog reads never prime provider inventory; prime() is the one-shot owner', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    let primes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers,
+        primeLiveModels: async () => { primes += 1; } });
+    t.after(async () => { await host.dispose(); rmSync(home, { recursive: true, force: true }); });
+    // The read path below the HTTP layer: models() renders every catalog.
+    assert.equal(host.get().models().providers.length, 4);
+    assert.equal(primes, 0);
+    assert.equal(fake.opens(), 0);
+    await host.prime();
+    await host.prime();
+    assert.equal(primes, 1);
+    assert.equal(fake.opens(), 0);
+});
+
+test('a failed prime keeps its receipt and never retries on a second activation', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    let primes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers,
+        primeLiveModels: async () => { primes += 1; throw new Error('inventory unavailable'); } });
+    t.after(async () => { await host.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await assert.rejects(host.prime(), { message: 'inventory unavailable' });
+    await assert.rejects(host.prime(), { message: 'inventory unavailable' });
+    assert.equal(primes, 1);
+    // Failure does not poison the host: the registry catalogs still serve.
+    assert.equal(host.get().models().providers.length, 4);
+});
+
 test('one host returns one manager and closes its database after disposal', async t => {
     const home = mkdtempSync(join(tmpdir(), 'code-host-'));
     const fake = providers();

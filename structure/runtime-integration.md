@@ -467,6 +467,9 @@ injectable store, session manager, transcript normalizer and four direct native
 adapters: Codex app-server, Claude Agent SDK, Cursor ACP and Grok ACP. Each
 provider uses its installed CLI and existing login. Catalog availability means
 an executable was found; catalog reads do not start a native session or login.
+Provider live-model inventory (the Cursor and Grok CLI probes) is owned by host
+activation — `CodeHost.prime()`, called once at server startup — never by a
+catalog read or lazy `host.get()`.
 
 Each backend uses `code-<role>-<port>.sqlite` under its own home (worker JAW_HOME,
 Manager dashboard home). Storage/recovery initializes lazily after HTTP binding;
