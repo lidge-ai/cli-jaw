@@ -419,14 +419,16 @@ export function createDashboardMemoryRouter(opts: DashboardMemoryRouterOptions):
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        let aborted = false;
-        // Tracked so shutdown can abort an in-flight reindex before the HTTP
+        const abort = new AbortController();
+        const isAborted = (): boolean => abort.signal.aborted;
+        // Tracked so shutdown can stop an in-flight reindex before the HTTP
         // server closes — the open stream would hold close() open (#790).
         const untrack = trackSseConnection(() => {
-            aborted = true;
+            abort.abort();
+            untrack();
             if (!res.writableEnded) res.end();
         });
-        req.on('close', () => { aborted = true; untrack(); });
+        req.on('close', () => { abort.abort(); untrack(); });
         res.on('close', untrack);
 
         try {
@@ -439,17 +441,18 @@ export function createDashboardMemoryRouter(opts: DashboardMemoryRouterOptions):
                 instances,
                 vecStore: vec,
                 provider,
+                signal: abort.signal,
                 onProgress: (instId, done, total) => {
-                    if (aborted) return;
+                    if (isAborted()) return;
                     res.write(`data: ${JSON.stringify({ instanceId: instId, done, total })}\n\n`);
                 },
             });
-            vec.setConfig('lastSyncAt', new Date().toISOString());
-            if (!aborted) res.write(`data: ${JSON.stringify({ complete: true, results })}\n\n`);
+            if (!isAborted()) vec.setConfig('lastSyncAt', new Date().toISOString());
+            if (!isAborted()) res.write(`data: ${JSON.stringify({ complete: true, results })}\n\n`);
         } catch (err) {
-            if (!aborted) res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+            if (!isAborted()) res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
         }
-        if (!aborted) res.end();
+        if (!isAborted()) res.end();
     });
 
     return router;
