@@ -34,8 +34,9 @@
  *   - A maintainer comment matching `UI_OVERRIDE_RE` (e.g. "no UI changes in
  *     this PR"), held to the same bar as the label: the author's collaborator
  *     permission is verified (association alone is not enough — MEMBER covers
- *     read-only org members), and the comment must postdate the latest pushed
- *     commit so a stale "no UI changes" cannot waive commits pushed later.
+ *     read-only org members), and the comment must postdate the head commit's
+ *     server-side push time so a stale "no UI changes" cannot waive commits
+ *     pushed later.
  */
 
 /** Label that waives the gate when applied by a write+ collaborator. */
@@ -72,14 +73,39 @@ const HTML_IMAGE_RE = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>"']+)[^>]*
  */
 const UI_OVERRIDE_RE = new RegExp(
   [
-    // "no UI changes", "not a ui change", "never any real gui impact"
-    /\b(?:no|not|never)\s+(?:(?:a|an|any|the|this|that|real|actual|visible)\s+){0,2}(?:ui|gui)[-\s](?:changes?|impact|modifications?|difference)\b/.source,
-    // "doesn't change the ui", "does not touch gui", "no changes to the ui"
-    /\b(?:doesn'?t|does not|didn'?t|did not|won'?t|will not|never|not|no)\b[^.!?\n]{0,30}?\b(?:changes?|touch(?:es)?|modif(?:y|ies)|affects?|alters?|reverts?)\b[^.!?\n]{0,30}?\b(?:ui|gui)\b/.source,
+    // "no UI changes", "not a ui change", "never any real gui impact",
+    // "without ui changes", "no rendered ui changes"
+    /\b(?:no|not|never|without)\s+(?:(?:a|an|any|the|this|that|real|actual|visible|rendered)\s+){0,2}(?:ui|gui)[-\s](?:changes?|impact|modifications?|difference)\b/.source,
+    // "doesn't change the ui", "no changes to the ui" — the negation must
+    // govern the change-verb within two plain words and the verb must reach
+    // ui/gui directly (optional preposition + article), so "no idea if this
+    // changes the ui" and "doesn't change the API, only the ui" cannot waive.
+    /\b(?:doesn'?t|does not|didn'?t|did not|won'?t|will not|never|not|no)\s+(?:[\w']+\s+){0,2}(?:changes?|touch(?:es)?|modif(?:y|ies)|affects?|alters?|reverts?)\b(?:\s+(?:to|in|of|for|on|at|into))?\s+(?:the|a|an|any|this|that)?\s*(?:ui|gui)\b/.source,
     // "the ui is unchanged", "ui is not touched", "gui remains unmodified"
     /\b(?:ui|gui)\b\s+(?:(?:is|was|are|remains?|stays?|looks?)\s+)?(?:un(?:touched|changed|modified|affected|altered)|not\s+(?:touched|changed|modified|affected|altered))\b/.source,
-    // Korean waivers: "UI 변경 없음", "GUI 수정 없음", "UI 영향 없음"
-    /(?:ui|gui)\s*(?:변경|수정|영향)\s*없/.source,
+    // Korean waivers ending in a final "no" — "UI 변경 없음",
+    // "UI 변경이 없습니다", "GUI 영향 없어요"; 없이/없는 never waive.
+    /(?:ui|gui)\s*(?:변경|수정|영향)[이가]?\s*없(?:음|습니다|습니까|어요|다)/.source,
+  ].join("|"),
+  "i"
+);
+
+/**
+ * Affirmative statements that a PR changes the UI. A comment matching both
+ * this and `UI_OVERRIDE_RE` is contradictory, not a waiver — e.g. "no ui
+ * changes here, but this changes the ui tests". Past-tense forms only in
+ * the trailing group: `ui changes` would collide with "no ui changes".
+ */
+const UI_CHANGE_CLAIM_RE = new RegExp(
+  [
+    // "this changes the ui", "it still modifies ui", "commits only touch gui"
+    // — up to two adverbs may sit between subject and verb, but a negation
+    // word there keeps the clause negative ("this doesn't change the ui").
+    /\b(?:this|it|that|these|those|which|who|only|code|patch|pr|pull request|branch|commits?|changes?)\s+(?:(?!no\b|not\b|never\b|doesn'?t\b|does not\b|didn'?t\b|did not\b|won'?t\b|will not\b)[\w']+\s+){0,2}(?:changes?|touch(?:es)?|modif(?:y|ies)|affects?|alters?|updates?|reverts?)\b[^.!?\n]{0,20}?\b(?:ui|gui)\b/.source,
+    // "the ui changed", "ui was modified", "gui is updated"
+    /\b(?:ui|gui)\s+(?:was|is|were|has been|was being|gets?|got)?\s*(?:changed|modified|touched|altered|updated|affected|impacted)\b/.source,
+    // Korean affirmative: "UI 변경 있음", "GUI 수정 있습니다"
+    /(?:ui|gui)\s*(?:변경|수정|영향)[이가]?\s*있/.source,
   ].join("|"),
   "i"
 );
@@ -123,11 +149,13 @@ function isChangedFileListTruncated(changedFilesCount, listedLength, headMatches
 
 /**
  * Logins of issue comments that look like screenshot-gate waivers: a trusted
- * author association (OWNER/COLLABORATOR/MEMBER), a `UI_OVERRIDE_RE` match,
- * and a timestamp after the latest pushed commit — "no UI changes" asserts a
- * state that a later push can void, so stale comments never waive. Unverifiable
- * dates fail closed. The caller still verifies each returned login's write
- * access; this stage only narrows which logins are worth an API call.
+ * author association (OWNER/COLLABORATOR/MEMBER), a `UI_OVERRIDE_RE` match
+ * with no `UI_CHANGE_CLAIM_RE` match (a comment that also asserts the UI
+ * changed is contradictory, not a waiver), and a timestamp after the latest
+ * pushed commit — "no UI changes" asserts a state that a later push can void,
+ * so stale comments never waive. Unverifiable dates fail closed. The caller
+ * still verifies each returned login's write access; this stage only narrows
+ * which logins are worth an API call.
  */
 function waiverCommentAuthors(comments = [], { latestCommitAt } = {}) {
   const cutoff = Date.parse(latestCommitAt ?? "");
@@ -141,7 +169,11 @@ function waiverCommentAuthors(comments = [], { latestCommitAt } = {}) {
     ) {
       continue;
     }
-    if (typeof comment?.body !== "string" || !UI_OVERRIDE_RE.test(comment.body)) {
+    if (
+      typeof comment?.body !== "string" ||
+      !UI_OVERRIDE_RE.test(comment.body) ||
+      UI_CHANGE_CLAIM_RE.test(comment.body)
+    ) {
       continue;
     }
     const login = comment?.user?.login;
@@ -376,6 +408,28 @@ async function listChangedFiles(github, { owner, repo, pull_number, core }) {
  * and the comment must postdate the latest pushed commit. Any lookup failure
  * fails closed — the comment is ignored rather than trusted.
  */
+/**
+ * When the PR head commit arrived on GitHub — the honest cutoff for comment
+ * waivers. GraphQL `pushedDate` is server-side, so an author-controlled
+ * committer date cannot resurrect a stale "no UI changes", and
+ * `commits(last: 1)` reads the real head even past the REST `listCommits`
+ * 250-commit cap.
+ */
+async function latestHeadPushAt(github, { owner, repo, pull_number }) {
+  const data = await github.graphql(
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          commits(last: 1) { nodes { commit { pushedDate committedDate } } }
+        }
+      }
+    }`,
+    { owner, repo, number: pull_number }
+  );
+  const head = data?.repository?.pullRequest?.commits?.nodes?.at(-1)?.commit;
+  return head?.pushedDate ?? head?.committedDate ?? null;
+}
+
 async function waiverCommentAuthorized(github, {
   owner,
   repo,
@@ -482,15 +536,11 @@ async function run({ github, context, core }) {
     per_page: 100,
   });
 
-  const commits = await github.paginate(github.rest.pulls.listCommits, {
+  const latestCommitAt = await latestHeadPushAt(github, {
     owner,
     repo,
     pull_number,
-    per_page: 100,
   });
-  const headCommit = commits.at(-1)?.commit;
-  const latestCommitAt =
-    headCommit?.committer?.date ?? headCommit?.author?.date ?? null;
 
   const waivedByComment = await waiverCommentAuthorized(github, {
     owner,
@@ -541,12 +591,14 @@ async function run({ github, context, core }) {
 module.exports = {
   UI_SCREENSHOT_WAIVER_LABEL,
   UI_OVERRIDE_RE,
+  UI_CHANGE_CLAIM_RE,
   isPureTestFile,
   isUiSurfacePath,
   uiPathsChanged,
   isChangedFileListTruncated,
   waiverCommentAuthors,
   waiverCommentAuthorized,
+  latestHeadPushAt,
   waiverLabelAuthorized,
   stripNonRenderedRegions,
   hasScreenshotEvidence,

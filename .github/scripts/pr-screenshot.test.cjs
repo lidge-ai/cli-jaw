@@ -10,6 +10,7 @@ const {
   isChangedFileListTruncated,
   waiverCommentAuthors,
   waiverCommentAuthorized,
+  latestHeadPushAt,
   stripNonRenderedRegions,
   hasScreenshotEvidence,
   authorHasPushPermission,
@@ -123,9 +124,15 @@ describe("waiverCommentAuthors", () => {
       "not a ui change",
       "doesn't touch the gui",
       "no changes to the ui",
+      "doesn't really change the ui",
+      "this doesn't change the ui",
       "the ui is unchanged",
       "gui untouched",
+      "without ui changes",
+      "No rendered UI changes",
       "UI 변경 없음",
+      "UI 변경이 없음",
+      "UI 변경 없습니다",
     ]) {
       assert.deepEqual(waiverCommentAuthors([comment(body)], cutoff), ["maintainer"], body);
     }
@@ -138,6 +145,21 @@ describe("waiverCommentAuthors", () => {
       "I do not see a ui screenshot, please add one",
       "no screenshot for ui changes",
       "no ui",
+    ]) {
+      assert.deepEqual(waiverCommentAuthors([comment(body)], cutoff), [], body);
+    }
+  });
+
+  it("rejects comments that assert the UI changed somewhere", () => {
+    for (const body of [
+      "do not forget: this changes the ui",
+      "I have no idea if this changes the ui",
+      "doesn't change the API, only the ui",
+      "no, this changes the ui",
+      "no ui changes, but it still touches the gui",
+      "UI 변경 없이 스크린샷을 빼면 안 됩니다",
+      "UI 변경 없는 PR이 아닙니다",
+      "UI 변경 있음",
     ]) {
       assert.deepEqual(waiverCommentAuthors([comment(body)], cutoff), [], body);
     }
@@ -187,6 +209,43 @@ describe("waiverCommentAuthors", () => {
     const anonymous = comment("no UI changes");
     delete anonymous.user;
     assert.deepEqual(waiverCommentAuthors([anonymous], cutoff), []);
+  });
+});
+
+describe("latestHeadPushAt", () => {
+  it("returns the head commit's server-side pushedDate", async () => {
+    const github = {
+      graphql: async () => ({
+        repository: {
+          pullRequest: {
+            commits: {
+              nodes: [{ commit: { pushedDate: "2026-01-03T00:00:00Z", committedDate: "2026-01-01T00:00:00Z" } }],
+            },
+          },
+        },
+      }),
+    };
+    assert.equal(
+      await latestHeadPushAt(github, { owner: "o", repo: "r", pull_number: 1 }),
+      "2026-01-03T00:00:00Z"
+    );
+  });
+
+  it("falls back to committedDate and then null", async () => {
+    const noPush = {
+      graphql: async () => ({
+        repository: { pullRequest: { commits: { nodes: [{ commit: { committedDate: "2026-01-01T00:00:00Z" } }] } } },
+      }),
+    };
+    assert.equal(
+      await latestHeadPushAt(noPush, { owner: "o", repo: "r", pull_number: 1 }),
+      "2026-01-01T00:00:00Z"
+    );
+    const empty = { graphql: async () => ({ repository: { pullRequest: { commits: { nodes: [] } } } }) };
+    assert.equal(
+      await latestHeadPushAt(empty, { owner: "o", repo: "r", pull_number: 1 }),
+      null
+    );
   });
 });
 
