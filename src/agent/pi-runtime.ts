@@ -1002,7 +1002,13 @@ export function spawnPersistentPiRpc(profile: PiProfile, pi: PiSettings, options
         kill() { void closeSession(true).catch(() => {}); },
     };
 
-    const stdoutLines = readPiRpcLines(child, dispatchLine, () => activePrompt?.turn?.markFrameLost());
+    const stdoutLines = readPiRpcLines(child, dispatchLine, () => {
+        // The turn's terminal record may be the one dropped, and the stream position
+        // is no longer trustworthy for a reused process: fail the prompt and the session.
+        if (!activePrompt?.turn) return;
+        activePrompt.turn.markFrameLost();
+        failSession(new Error('pi rpc stdout frame dropped'));
+    });
     child.stderr?.on('data', (chunk) => {
         // Persistent RPC sessions live for the pool's idle window (15 min) and
         // longer under load, so an uncapped accumulator grows for the whole
@@ -1146,7 +1152,12 @@ export function openPiRpc(profile: PiProfile, pi: PiSettings, options: OpenPiRpc
             version?.cancel();
             void owner.teardown().then(() => finish(code ?? 1, signal || child.killed ? 'stopped' : 'error'));
         });
-        const stdoutLines = readPiRpcLines(child, dispatchLine, () => turn?.markFrameLost());
+        const stdoutLines = readPiRpcLines(child, dispatchLine, () => {
+            if (!promptDispatched || !turn) return;
+            // Settles now, like a terminal record would; the lost frame makes it an error.
+            turn.markFrameLost();
+            finish(0);
+        });
         child.stderr?.on('data', (chunk) => {
             if (stderr.length < PI_RPC_STDERR_MAX_CHARS) stderr += stderrReader.write(chunk);
         });
