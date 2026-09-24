@@ -38,7 +38,7 @@ cli-jaw/
 │   └── mime-detect.ts        ← MIME 타입 감지 헬퍼 (67L)
 ├── src/
 │   ├── core/                 ← 의존 0 인프라 계층 (31 files, 3847L)
-│   │   ├── config.ts         ← JAW_HOME, settings, APP_VERSION + migrateSettings legacy Claude model normalization + avatar settings deep merge + default `settings.pi` + corrupt settings backup + CLI 탐지 re-export hub (1905L)
+│   │   ├── config.ts         ← JAW_HOME, settings, APP_VERSION + migrateSettings legacy Claude model normalization + avatar settings deep merge + default `settings.pi` + corrupt settings backup + CLI 탐지 re-export hub (1916L)
 │   │   ├── cli-detection.ts  ← CLI 탐지 + `pi` npm-exec fallback + `kiro-code`(`kiro-cli` binary) 탐지 + local package release/debug candidates (57L)
 │   │   ├── compact.ts        ← compact 헬퍼 (COMPACT_MARKER_CONTENT, managed summary builder, cutoff logic, harvestGitGrep + harvestChatGrep 1KB/1KB budget split) (782L)
 │   │   ├── instance.ts       ← 인스턴스 ID, node/jaw 경로, 유닛명 sanitize (61L)
@@ -68,7 +68,7 @@ cli-jaw/
 │   │   ├── launchd-cleanup.ts ← launchd stale plist / runtime cleanup (16L)
 │   │   ├── launchd-plist.ts  ← launchd plist 생성 helper (90L)
 │   │   ├── tcc.ts            ← macOS TCC / screen-recording 권한 점검 (55L)
-│   │   ├── settings-merge.ts ← perCli/activeOverrides/pi deep merge (247L)
+│   │   ├── settings-merge.ts ← perCli/activeOverrides/pi deep merge (257L)
 │   │   └── skill-cache.ts    ← 활성 스킬 슬래시 커맨드 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache) (44L)
 │   ├── code-mode/            ← native Code sessions, independent of Jaw orchestration
 │   │   ├── host.ts ← per-backend lazy composition and storage (70L)
@@ -105,7 +105,7 @@ cli-jaw/
 │   │   │   │   ├── notification-queue.ts ← per-turn serialized work with byte/count caps (87L)
 │   │   │   │   ├── wire.ts  ← strict single-envelope decoder shared with Copilot (43L)
 │   │   │   │   ├── connection.ts ← bounded full-duplex framing, dispatch/result and close ownership (214L)
-│   │   │   │   ├── permissions.ts ← native kind policy and opaque decision handles (137L)
+│   │   │   │   ├── permissions.ts ← native kind policy and opaque decision handles (136L)
 │   │   │   │   └── callbacks.ts ← bounded permission wait, cancellation latches and private replies (184L)
 │   │   │   ├── liveness.ts ← private captured identity observer, composed with collector callbacks (25L)
 │   │   │   ├── requests.ts   ← ephemeral exact-bound decision registry and safe-view admission (175L)

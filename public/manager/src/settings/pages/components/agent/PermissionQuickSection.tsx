@@ -4,6 +4,7 @@ import {
     configuredPolicyLabel,
     isAllowlistValid,
     parsePermissionsValue,
+    permissionsEditMode,
     seedAutoAllowlist,
 } from '../../Permissions';
 
@@ -22,8 +23,9 @@ const MODE_OPTIONS = [
 export function PermissionQuickSection({ value, configuredValue, onChange }: PermissionQuickSectionProps) {
     const parsed = parsePermissionsValue(value);
     // Never fall through to 'auto': a Safe instance shown as Auto (YOLO) means the user cannot
-    // see the permission they are about to lose when they touch this control.
-    const mode = parsed.mode === 'custom' ? 'custom' : parsed.mode === 'safe' ? 'safe' : 'auto';
+    // see the permission they are about to lose when they touch this control. An unrecognized
+    // stored value lands in 'invalid' — no option is pre-selected, and picking one repairs it.
+    const mode = permissionsEditMode(value);
     const tokens = parsed.mode === 'custom' ? parsed.tokens : [];
     const summary = parsed.mode === 'custom'
         ? `Editor draft: ${tokens.length} explicit token${tokens.length === 1 ? '' : 's'}`
@@ -39,12 +41,18 @@ export function PermissionQuickSection({ value, configuredValue, onChange }: Per
                 label="Change policy to"
                 value={mode}
                 options={MODE_OPTIONS}
+                missingValueLabel={mode === 'invalid' ? 'Unrecognized saved policy' : undefined}
                 onChange={(next) => {
                     if (next === 'auto') onChange('auto');
                     else if (next === 'safe') onChange('safe');
                     else onChange(tokens.length > 0 && isAllowlistValid(tokens) ? tokens : seedAutoAllowlist(null));
                 }}
             />
+            {mode === 'invalid' ? (
+                <p className="settings-agent-note" role="alert">
+                    The saved permissions value is not a recognized policy. Choose a policy to replace it.
+                </p>
+            ) : null}
             {summary ? <p className="settings-agent-note">{summary}</p> : null}
             <p className="settings-agent-note" id="agent-configured-policy">Configured policy: {configuredPolicyLabel(configuredValue)}</p>
         </SettingsSection>

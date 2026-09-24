@@ -20,7 +20,9 @@ import {
 test('configuredPolicyLabel reports stored shape without changing parser or editor semantics', () => {
     const cases: Array<[unknown, string]> = [
         ['auto', 'Auto (YOLO)'], ['safe', 'Safe'], [[], 'Custom (0 entries)'], [['auto'], 'Custom (1 entry)'],
-        [[' read ', ''], 'Custom (2 entries)'], [null, 'Not provided'], [undefined, 'Not provided'],
+        // A token list the shared validator would not store is Unrecognized, not
+        // "Custom" — the readout must agree with the editors' invalid state (#788).
+        [[' read ', ''], 'Unrecognized'], [null, 'Not provided'], [undefined, 'Not provided'],
         ['AUTO', 'Unrecognized'], [' auto ', 'Unrecognized'], ['deny', 'Unrecognized'],
         [42, 'Unrecognized'], [{ secret: 'not for display' }, 'Unrecognized'], [['read', false], 'Unrecognized'],
     ];

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RuntimeRequestView } from '../../../shared/runtime-contract.js';
+import { PERMISSION_TOKEN_LIMIT, PERMISSION_TOKEN_PATTERN } from '../../../shared/permissions.js';
 
 export type AcpPermissionOption = {
     optionId: string;
@@ -10,8 +11,6 @@ export type AcpPermissionOption = {
 const OPTION_LIMIT = 20;
 const ID_LIMIT = 240;
 const TEXT_LIMIT = 1000;
-const TOKEN_LIMIT = 64;
-const TOKEN_PATTERN = /^[a-zA-Z0-9._:*-]+$/;
 
 function record(value: unknown): value is Record<string, unknown> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -71,7 +70,7 @@ export function normalizeNativePermissions(value: unknown): 'auto' | 'safe' | Re
         if (typeof entry !== 'string') throw new Error('invalid_native_permissions');
         const token = entry.trim();
         if (!token) continue;
-        if (token.length > TOKEN_LIMIT || !TOKEN_PATTERN.test(token)) throw new Error('invalid_native_permissions');
+        if (token.length > PERMISSION_TOKEN_LIMIT || !PERMISSION_TOKEN_PATTERN.test(token)) throw new Error('invalid_native_permissions');
         tokens.push(token);
     }
     // Capture policy for this runtime without freezing or modifying persisted settings.
