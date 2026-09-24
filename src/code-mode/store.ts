@@ -42,6 +42,8 @@ function initialTitle(text: string): string {
 
 // Capabilities and the captured policy are stored alongside the durable session,
 // so metadata reads never require a provider import or a live runtime.
+const SESSION_LIST_INDEX_COLUMNS = 'archived_at,created_at,session_id';
+
 export const CREATE_CODE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS code_sessions (
     session_id TEXT PRIMARY KEY, provider TEXT NOT NULL, cwd TEXT NOT NULL,
@@ -68,8 +70,6 @@ CREATE TABLE IF NOT EXISTS code_items (
     item_json TEXT NOT NULL, PRIMARY KEY(session_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_code_items_order ON code_items(session_id, first_sequence);
-DROP INDEX IF EXISTS idx_code_sessions_list;
-CREATE INDEX IF NOT EXISTS idx_code_sessions_list ON code_sessions(archived_at, created_at, session_id);
 `;
 
 export type CodeNativePolicy = Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>;
@@ -265,7 +265,19 @@ export class CodeStore {
             }
         }
         this.database.exec(CREATE_CODE_SCHEMA_SQL);
+        this.ensureSessionListIndex();
         this.ensureBudgetColumns();
+    }
+
+    /** Rebuild the list index only when it does not already match the page key. */
+    private ensureSessionListIndex(): void {
+        const columns = (this.database.prepare("PRAGMA index_info('idx_code_sessions_list')").all() as { name: string }[])
+            .map(column => column.name).join(',');
+        if (columns === SESSION_LIST_INDEX_COLUMNS) return;
+        this.database.transaction(() => {
+            this.database.exec('DROP INDEX IF EXISTS idx_code_sessions_list');
+            this.database.exec(`CREATE INDEX idx_code_sessions_list ON code_sessions(${SESSION_LIST_INDEX_COLUMNS})`);
+        })();
     }
 
     private ensureBudgetColumns(): void {

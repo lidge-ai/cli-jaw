@@ -133,6 +133,7 @@ export function registerNativeCodeRoutes(
         if (scope === 'cwd' && directory === undefined) return invalid('absolute_cwd_required');
         const archived = req.query['archived'];
         if (archived !== undefined && archived !== 'true' && archived !== 'false') return invalid('invalid_archived');
+        if (req.query['offset'] !== undefined) return invalid('offset_unsupported');
         const limit = Math.min(queryInteger(req.query['limit'], 'limit', 100, 1), 1000);
         const cursor = req.query['cursor'] === undefined ? undefined : sessionCursor(req.query['cursor']);
         const sessions = getService().list({ limit, ...(cursor === undefined ? {} : { cursor }),

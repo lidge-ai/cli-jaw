@@ -135,6 +135,8 @@ test('index, snapshot and replay reads preserve filters, caps and exact returned
         assert.equal((await request(`${url}/sessions?archived=perhaps`)).status, 400);
         assert.equal((await request(`${url}/sessions?limit=0`)).status, 400);
         assert.equal((await request(`${url}/sessions?cursor=not-json`)).status, 400);
+        assert.equal((await request(`${url}/sessions?offset=10`)).status, 400);
+        assert.equal((await request(`${url}/sessions?offset=abc`)).status, 400);
         assert.equal((await request(`${url}/sessions?cursor=${encodeURIComponent('{"createdAt":-1,"sessionId":"s3"}')}`)).status, 400);
         const cursor = encodeURIComponent(JSON.stringify({ createdAt: 3, sessionId: 's3' }));
         const listing = await request(`${url}/sessions?cwd=${encodeURIComponent(tmpdir())}&archived=false&limit=25&cursor=${cursor}`);

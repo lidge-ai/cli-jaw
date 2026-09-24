@@ -958,3 +958,17 @@ test('cursor streams stay inside the archived and cwd filters and creation ties 
     expectError(() => store.list({ cursor: { createdAt: -1, sessionId: 'x' } }), 'invalid_cursor', 400);
     expectError(() => store.list({ cursor: { createdAt: 1, sessionId: '' } }), 'invalid_cursor', 400);
 });
+
+test('session list index is upgraded once and left alone when it already matches', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    new CodeStore(db);
+    db.exec('DROP INDEX idx_code_sessions_list; CREATE INDEX idx_code_sessions_list ON code_sessions(archived_at, last_used_at)');
+    const indexColumns = () => (db.prepare("PRAGMA index_info('idx_code_sessions_list')").all() as { name: string }[])
+        .map(column => column.name);
+    new CodeStore(db);
+    assert.deepEqual(indexColumns(), ['archived_at', 'created_at', 'session_id']);
+    const before = db.pragma('schema_version', { simple: true });
+    new CodeStore(db);
+    assert.equal(db.pragma('schema_version', { simple: true }), before, 'a matching index is not dropped and rebuilt');
+});
