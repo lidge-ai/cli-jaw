@@ -100,11 +100,10 @@ public/
 ├── theme-test.html       ← 테마 점검 페이지
 ├── assets/
 │   ├── fonts/            ← 2 fonts (GeistVF, JetBrainsMono variable)
-│   ├── providers/        ← 18 SVG provider assets
-│   └── shark.svg
+│   └── providers/        ← 18 SVG provider assets
 ├── css/                  ← 12 CSS files
-├── icons/                ← 3 PWA icons
-├── img/                  ← shark sprite
+├── icons/                ← 5 PWA icons (favicon-32, mascot, 192/512/maskable)
+├── img/                  ← mascot runner sprite (scripts/brand/generate-brand-assets.py)
 ├── js/                   ← 90 TypeScript modules
 │   ├── diagram/          ← 3 diagram pipeline modules
 │   ├── features/         ← 51 feature modules
@@ -130,7 +129,7 @@ public/
 | `public/locales/` | 4 | `ko.json`, `en.json`, `ja.json`, `zh.json` |
 | `public/assets/providers/` | 18 | provider SVG 세트 |
 | `public/assets/fonts/` | 2 | 로컬 폰트 자산 |
-| `public/icons/` | 3 | PWA icons |
+| `public/icons/` | 5 | PWA icons (`favicon-32.png`, `mascot.png` 포함) |
 
 ---
 
@@ -277,7 +276,7 @@ settings.ts (barrel)
 | `css/layout.css` | 전체 grid layout, sidebar width, base UI scaffolding |
 | `css/chat.css` | chat area, message layout, input bar, attachments, voice button, virtual scroll container, slash command workflow chips, unknown-command recovery block, `.file-path-link` open states, `.chat-inline-img` 최소 높이/`object-fit: contain`, `.chat-inline-img-error` fallback |
 | `css/chat-search.css` | in-chat search overlay styling |
-| `css/orc-state.css` | PABCD roadmap, shark runner, orc glow, state badge, interview panel (known/unknown 트래커, dimension bars, budget panel) |
+| `css/orc-state.css` | PABCD roadmap, mascot runner, orc glow, state badge, interview panel (known/unknown 트래커, dimension bars, budget panel) |
 | `css/sidebar.css` | left/right sidebar, collapse behavior, status / CLI / app name sections |
 | `css/modals.css` | prompt/template/heartbeat/memory modal shells + form controls |
 | `css/markdown.css` | markdown rendering, code block, copy button, tables, mermaid/KaTeX styles |
@@ -508,12 +507,14 @@ tool history의 canonical UI는 `features/process-block.ts`다. `ui.ts`는 live 
 
 | 자산 | 현재 구현 |
 | --- | --- |
-| `manifest.json` | `standalone`, `theme_color: #22d3ee`, 192/512/maskable icons |
+| `manifest.json` | `standalone`, `background_color: #0b1220`, `theme_color: #22d3ee`, 192/512/maskable icons |
 | `sw.js` | navigation network-first, `/dist/assets/*` cache-first, 그 외 stale-while-revalidate |
-| `icons/` | `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` |
+| `icons/` | `favicon-32.png`, `icon-192.png`, `icon-512.png`, `icon-512-maskable.png`, `mascot.png` |
 | `assets/providers/` | `antigravity(-color)`, `claude(-color)`, `copilot(-color)`, `cursor(-color)`, `gemini(-color)`, `grok(-color)`, `kiro(-color)`, `openai`, `opencode`, `discord`, `telegram`, `slack` |
 | `assets/fonts/` | `GeistVF.woff2`, `JetBrainsMono-Variable.woff2` |
 | `locales/` | `ko.json`, `en.json`, `ja.json`, `zh.json` |
+
+브랜드 PNG/ICNS/tray template은 모두 `scripts/brand/mascot-master.png` 마스터에서 `scripts/brand/generate-brand-assets.py`로 재생성한다.
 
 ---
 

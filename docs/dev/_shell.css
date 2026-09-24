@@ -49,9 +49,8 @@ a:hover { text-decoration: underline; }
 .docs-sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .docs-logo { display: flex; align-items: center; gap: 10px; padding: 0 20px 18px; font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 .docs-logo::before {
-  content: ""; width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%;
-  background: url('../assets/app-icon.png') center / cover no-repeat;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 12px rgba(34, 211, 238, 0.25);
+  content: ""; width: 26px; height: 26px; flex: 0 0 26px;
+  background: url('../assets/mascot.png') center / contain no-repeat;
 }
 .docs-logo a { color: inherit; }
 .docs-search { padding: 8px 20px 12px; }
