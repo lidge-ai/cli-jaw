@@ -125,7 +125,7 @@ export function App() { if (readTrayRemindersMode(window.location.search) && REM
     const activeJawCeoPort = selectedInstance?.port ?? view.selectedPort ?? null;
     const jawCeoBridge = useJawCeoDashboardBridge({ selectedPort: activeJawCeoPort, managerEvents: managerEvents.events, messageEvents: messageActivity.events, onOpenWorker: handleOpenJawCeoWorker });
     usePreviewSttLifecycle(jawCeoBridge.voice);
-    usePreviewShortcutMessages({ enabled: view.dashboardShortcutsEnabled, keymap: view.dashboardShortcutKeymap, onAction: runManagerShortcut });
+    usePreviewShortcutMessages({ enabled: view.dashboardShortcutsEnabled, keymap: view.dashboardShortcutKeymap, menuOwned: getDesktop() != null, onAction: runManagerShortcut });
     const activePreviewPort = view.activeDetailTab === 'preview' && view.sidebarMode === 'instances' ? (selectedInstance?.port ?? null) : null;
     const activityEvents = useMemo(() => {
         return [...managerEvents.events, ...messageActivity.events];
@@ -391,7 +391,6 @@ export function App() { if (readTrayRemindersMode(window.location.search) && REM
     useEffect(() => {
         if (!view.dashboardShortcutsEnabled) return undefined;
         const unsubscribe = getDesktop()?.shortcuts?.onAction?.((action) => {
-            if (document.activeElement?.tagName === 'IFRAME' && action !== 'browserReload' && action !== 'browserHardReload') return;
             runManagerShortcut(action);
         });
         return unsubscribe;
@@ -409,7 +408,7 @@ export function App() { if (readTrayRemindersMode(window.location.search) && REM
             }
             if (!view.dashboardShortcutsEnabled) return;
             if (isManagerShortcutEditableTarget(event.target)) return;
-            const action = actionForShortcutEvent(event, view.dashboardShortcutKeymap);
+            const action = actionForShortcutEvent(event, view.dashboardShortcutKeymap, { menuOwned: getDesktop() != null });
             if (!action) return;
             event.preventDefault();
             runManagerShortcut(action);
