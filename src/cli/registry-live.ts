@@ -1,4 +1,5 @@
 import { fetchKiroModelInventory } from '../agent/kiro-models.js';
+import { fetchAgyModelInventory } from '../agent/agy-models.js';
 import { fetchCursorModelInventory } from '../agent/cursor-model-inventory.js';
 import { fetchGrokModelInventory } from '../agent/grok-models.js';
 import { CLI_REGISTRY } from './registry.js';
@@ -26,12 +27,13 @@ function unionEfforts(effortsByModel: Record<string, string[]>): string[] {
 export async function buildLiveCliRegistry() {
     const registry = structuredClone(CLI_REGISTRY) as Record<string, Record<string, unknown>>;
 
-    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory] = await Promise.all([
+    const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory] = await Promise.all([
         fetchKiroModelInventory(),
         resolveOpenCodexRuntime(),
         resolveClaudeCatalogForRegistry(),
         fetchCursorModelInventory(),
         fetchGrokModelInventory(),
+        fetchAgyModelInventory(),
     ]);
     const codexResult = await resolveOpenCodexCodexModelsDetailed(openCodexRuntime);
 
@@ -109,6 +111,17 @@ export async function buildLiveCliRegistry() {
         };
     }
 
+    if (agyInventory?.models.length) {
+        // `defaultModel` stays static for the buildDefaultPerCli() seeding reason,
+        // except when AGY no longer offers it: Google retires the previous Flash
+        // generation from Antigravity, and a retired default would be unselectable.
+        registry['agy'] = {
+            ...withSelectableDefault(registry['agy'], agyInventory.models),
+            models: agyInventory.models,
+            modelSource: agyInventory.source,
+        };
+    }
+
     if (claudeCatalog) {
         // `defaultModel` stays static for the same reason it does for Codex:
         // buildDefaultPerCli() seeds user settings from it, so a bundle update must
@@ -139,6 +152,17 @@ export async function buildLiveCliRegistry() {
     }
 
     return registry;
+}
+
+/**
+ * Keep a registry entry's static default unless the live list no longer offers it,
+ * in which case the first live model takes its place so the picker stays valid.
+ */
+function withSelectableDefault(entry: Record<string, unknown> | undefined, models: string[]): Record<string, unknown> {
+    const base = entry ?? {};
+    const staticDefault = base['defaultModel'];
+    if (typeof staticDefault === 'string' && models.includes(staticDefault)) return base;
+    return { ...base, defaultModel: models[0] };
 }
 
 /**
