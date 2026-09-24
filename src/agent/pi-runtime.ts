@@ -755,12 +755,15 @@ function launchPiRpcExecution(profile: PiProfile, pi: PiSettings, options: {
  * `dispatch` already refuses an unconfirmed child, and it must stay on `close`
  * rather than `exit` so the caller's own settlement still runs after it.
  */
-function readPiRpcLines(child: ChildProcess, dispatch: (line: string) => void): { flush: () => void } {
+function readPiRpcLines(
+    child: ChildProcess, dispatch: (line: string) => void, onDrop: () => void,
+): { flush: () => void } {
     const decoder = new StringDecoder('utf8');
     const framer = createNdjsonFramer();
     const reportDrops = (drops: readonly { frameChars: number }[]): void => {
         for (const drop of drops) {
             console.warn(`[jaw:pi] stdout frame exceeded the ${MAX_PENDING_LINE_CHARS}-char limit — dropped ${drop.frameChars} chars`);
+            onDrop();
         }
     };
     child.stdout?.on('data', (chunk) => {
@@ -999,7 +1002,7 @@ export function spawnPersistentPiRpc(profile: PiProfile, pi: PiSettings, options
         kill() { void closeSession(true).catch(() => {}); },
     };
 
-    const stdoutLines = readPiRpcLines(child, dispatchLine);
+    const stdoutLines = readPiRpcLines(child, dispatchLine, () => activePrompt?.turn?.markFrameLost());
     child.stderr?.on('data', (chunk) => {
         // Persistent RPC sessions live for the pool's idle window (15 min) and
         // longer under load, so an uncapped accumulator grows for the whole
@@ -1143,7 +1146,7 @@ export function openPiRpc(profile: PiProfile, pi: PiSettings, options: OpenPiRpc
             version?.cancel();
             void owner.teardown().then(() => finish(code ?? 1, signal || child.killed ? 'stopped' : 'error'));
         });
-        const stdoutLines = readPiRpcLines(child, dispatchLine);
+        const stdoutLines = readPiRpcLines(child, dispatchLine, () => turn?.markFrameLost());
         child.stderr?.on('data', (chunk) => {
             if (stderr.length < PI_RPC_STDERR_MAX_CHARS) stderr += stderrReader.write(chunk);
         });
