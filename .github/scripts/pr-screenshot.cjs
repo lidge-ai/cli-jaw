@@ -5,10 +5,11 @@
  *
  * Ported from opencodex's `.github/scripts/pr-quality.cjs`, narrowed to the
  * screenshot gate only. `.github/workflows/pr-screenshot-gate.yml` runs on
- * `pull_request_target`, fetches this file from the trusted integration
- * branch (`dev`, or `main` for main-targeting PRs), and calls `run()`. The
- * workflow never checks out PR head code and needs only
- * `pull-requests: read` + `issues: read`.
+ * `pull_request_target` — so the workflow file itself executes from the
+ * repo's default branch — and fetches this file from the trusted
+ * integration branch (`dev`, or `main` for main-targeting PRs) at run time
+ * before calling `run()`. The workflow never checks out PR head code and
+ * needs only `pull-requests: read` + `issues: read`.
  *
  * UI surface (decided here, mirrored in CONTRIBUTING.md):
  *
@@ -30,8 +31,11 @@
  *   - The `ui-screenshot-waived` label, but only when the actor who applied
  *     it (from the issue event timeline) has write/maintain/admin access —
  *     checked via `repos.getCollaboratorPermissionLevel`.
- *   - A maintainer comment (OWNER/COLLABORATOR/MEMBER association) matching
- *     `UI_OVERRIDE_RE`, e.g. "no UI changes in this PR".
+ *   - A maintainer comment matching `UI_OVERRIDE_RE` (e.g. "no UI changes in
+ *     this PR"), held to the same bar as the label: the author's collaborator
+ *     permission is verified (association alone is not enough — MEMBER covers
+ *     read-only org members), and the comment must postdate the latest pushed
+ *     commit so a stale "no UI changes" cannot waive commits pushed later.
  */
 
 /** Label that waives the gate when applied by a write+ collaborator. */
@@ -58,14 +62,27 @@ const MARKDOWN_REFERENCE_DEF_RE = /^\s*\[([^\]]+)\]:\s*\S+/gm;
 const HTML_IMAGE_RE = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>"']+)[^>]*>/i;
 
 /**
- * Phrases in a maintainer comment that waive the UI-screenshot gate. The
- * negation word must appear within a short window before `ui`/`gui`, so a
- * comment like "this touches ui but only the config" (no negation) keeps the
- * gate. The window cannot cross a sentence or line boundary: "This does not
- * change the API. Please add a ui screenshot." must not waive the gate.
+ * Phrases in a maintainer comment that waive the UI-screenshot gate. A waiver
+ * must assert that the UI does not change — a bare negation near `ui`/`gui` is
+ * not enough, or "doesn't ship without a UI screenshot" would waive the gate
+ * it complains about. So the match must couple a negation to a change-family
+ * word (no UI changes, doesn't touch the UI, the UI is unchanged), and the
+ * span cannot cross a sentence or line boundary: "This does not change the
+ * API. Please add a ui screenshot." must not waive the gate.
  */
-const UI_OVERRIDE_RE =
-  /\b(?:no|not|doesn'?t|does not|never|without)\b[^.!?\n]{0,40}?\b(?:ui|gui)\b/i;
+const UI_OVERRIDE_RE = new RegExp(
+  [
+    // "no UI changes", "not a ui change", "never any real gui impact"
+    /\b(?:no|not|never)\s+(?:(?:a|an|any|the|this|that|real|actual|visible)\s+){0,2}(?:ui|gui)[-\s](?:changes?|impact|modifications?|difference)\b/.source,
+    // "doesn't change the ui", "does not touch gui", "no changes to the ui"
+    /\b(?:doesn'?t|does not|didn'?t|did not|won'?t|will not|never|not|no)\b[^.!?\n]{0,30}?\b(?:changes?|touch(?:es)?|modif(?:y|ies)|affects?|alters?|reverts?)\b[^.!?\n]{0,30}?\b(?:ui|gui)\b/.source,
+    // "the ui is unchanged", "ui is not touched", "gui remains unmodified"
+    /\b(?:ui|gui)\b\s+(?:(?:is|was|are|remains?|stays?|looks?)\s+)?(?:un(?:touched|changed|modified|affected|altered)|not\s+(?:touched|changed|modified|affected|altered))\b/.source,
+    // Korean waivers: "UI 변경 없음", "GUI 수정 없음", "UI 영향 없음"
+    /(?:ui|gui)\s*(?:변경|수정|영향)\s*없/.source,
+  ].join("|"),
+  "i"
+);
 
 function isPureTestFile(file) {
   if (typeof file !== "string" || !file) return false;
@@ -105,31 +122,57 @@ function isChangedFileListTruncated(changedFilesCount, listedLength, headMatches
 }
 
 /**
- * True when a maintainer (OWNER / COLLABORATOR / MEMBER) issue comment waives
- * the UI-screenshot requirement. Only the comment author's association counts:
- * the PR author (`CONTRIBUTOR`/`NONE`) cannot override their own requirement.
+ * Logins of issue comments that look like screenshot-gate waivers: a trusted
+ * author association (OWNER/COLLABORATOR/MEMBER), a `UI_OVERRIDE_RE` match,
+ * and a timestamp after the latest pushed commit — "no UI changes" asserts a
+ * state that a later push can void, so stale comments never waive. Unverifiable
+ * dates fail closed. The caller still verifies each returned login's write
+ * access; this stage only narrows which logins are worth an API call.
  */
-function hasUiOverride({ comments = [] }) {
-  return comments.some(
-    (comment) =>
-      (comment?.author_association === "OWNER" ||
-        comment?.author_association === "COLLABORATOR" ||
-        comment?.author_association === "MEMBER") &&
-      typeof comment?.body === "string" &&
-      UI_OVERRIDE_RE.test(comment.body)
-  );
+function waiverCommentAuthors(comments = [], { latestCommitAt } = {}) {
+  const cutoff = Date.parse(latestCommitAt ?? "");
+  const authors = new Set();
+  for (const comment of comments) {
+    const association = comment?.author_association;
+    if (
+      association !== "OWNER" &&
+      association !== "COLLABORATOR" &&
+      association !== "MEMBER"
+    ) {
+      continue;
+    }
+    if (typeof comment?.body !== "string" || !UI_OVERRIDE_RE.test(comment.body)) {
+      continue;
+    }
+    const login = comment?.user?.login;
+    const at = Date.parse(comment?.created_at ?? "");
+    if (!login || !Number.isFinite(cutoff) || !Number.isFinite(at) || at <= cutoff) {
+      continue;
+    }
+    authors.add(login);
+  }
+  return [...authors];
 }
 
+/** Inline code spans (`...`), whose contents GitHub renders literally. */
+const INLINE_CODE_RE = /`[^`\n]*`/g;
+
 /**
- * Drop the regions GitHub does not render as Markdown: HTML comments and
- * fenced code blocks. Image syntax there is literal text, not evidence.
+ * Drop the regions GitHub does not render as Markdown: HTML comments, fenced
+ * code blocks, and inline code spans. Image syntax there is literal text, not
+ * evidence.
  */
 function stripNonRenderedRegions(body) {
   // Fenced code MUST be removed first. GFM treats fence contents as literal
   // text, so a `<!--` inside a fence never opens an HTML comment. Stripping
   // comments first let an unclosed comment-like literal in a code sample run
   // through EOF and swallow the real body after it (opencodex regression).
-  return body.replace(FENCED_CODE_RE, "").replace(HTML_COMMENT_RE, "");
+  // Inline code goes before comments for the same reason: a `<!--` inside
+  // backticks is literal text, not a comment opener.
+  return body
+    .replace(FENCED_CODE_RE, "")
+    .replace(INLINE_CODE_RE, "")
+    .replace(HTML_COMMENT_RE, "");
 }
 
 /**
@@ -200,7 +243,7 @@ function evaluateScreenshotGate({
   changedFilePaths = [],
   filesTruncated = false,
   body = "",
-  comments = [],
+  waivedByComment = false,
   waivedByLabel = false,
 }) {
   const uiChanged = uiPathsChanged(changedFilePaths);
@@ -210,7 +253,7 @@ function evaluateScreenshotGate({
   if (hasScreenshotEvidence(body)) {
     return { status: "pass", reason: "screenshot_present", uiChanged, filesTruncated };
   }
-  if (hasUiOverride({ comments })) {
+  if (waivedByComment) {
     return { status: "pass", reason: "maintainer_comment_waiver", uiChanged, filesTruncated };
   }
   if (waivedByLabel) {
@@ -266,10 +309,12 @@ function buildFailureSummary({
     "",
     "### Waivers",
     "",
-    `- A maintainer can apply the \`${UI_SCREENSHOT_WAIVER_LABEL}\` label`,
-    "  (only counts when the label actor has write/maintain/admin access), or",
+    `- A maintainer can apply the \`${UI_SCREENSHOT_WAIVER_LABEL}\` label, or`,
     "- a maintainer can comment that the change does not touch the UI",
     "  (e.g. \"no UI changes in this PR\").",
+    "",
+    "Both only count when the actor has write/maintain/admin access; a waiver",
+    "comment must also postdate the latest pushed commit.",
     ""
   );
   return lines.join("\n");
@@ -322,6 +367,41 @@ async function listChangedFiles(github, { owner, repo, pull_number, core }) {
     };
   }
   return { paths: [], listedCount: 0, reportedCount: null, truncated: true };
+}
+
+/**
+ * True when a waiver-style maintainer comment exists AND its author has
+ * write/maintain/admin access — the same bar the label waiver is held to.
+ * Association alone is not trusted (MEMBER includes read-only org members),
+ * and the comment must postdate the latest pushed commit. Any lookup failure
+ * fails closed — the comment is ignored rather than trusted.
+ */
+async function waiverCommentAuthorized(github, {
+  owner,
+  repo,
+  comments,
+  latestCommitAt,
+  core,
+}) {
+  for (const login of waiverCommentAuthors(comments, { latestCommitAt })) {
+    try {
+      const { data: permission } =
+        await github.rest.repos.getCollaboratorPermissionLevel({
+          owner,
+          repo,
+          username: login,
+        });
+      if (authorHasPushPermission(permission.permission)) return true;
+      core.info(
+        `${login} left a waiver-style comment but has '${permission.permission}' access; ignoring it.`
+      );
+    } catch (error) {
+      core.warning(
+        `Could not resolve ${login}'s permission for a waiver-style comment; ignoring it. (${error.message})`
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -402,6 +482,24 @@ async function run({ github, context, core }) {
     per_page: 100,
   });
 
+  const commits = await github.paginate(github.rest.pulls.listCommits, {
+    owner,
+    repo,
+    pull_number,
+    per_page: 100,
+  });
+  const headCommit = commits.at(-1)?.commit;
+  const latestCommitAt =
+    headCommit?.committer?.date ?? headCommit?.author?.date ?? null;
+
+  const waivedByComment = await waiverCommentAuthorized(github, {
+    owner,
+    repo,
+    comments,
+    latestCommitAt,
+    core,
+  });
+
   const waivedByLabel = await waiverLabelAuthorized(github, {
     owner,
     repo,
@@ -414,7 +512,7 @@ async function run({ github, context, core }) {
     changedFilePaths: files.paths,
     filesTruncated: files.truncated,
     body: pr.body ?? "",
-    comments,
+    waivedByComment,
     waivedByLabel,
   });
 
@@ -447,7 +545,9 @@ module.exports = {
   isUiSurfacePath,
   uiPathsChanged,
   isChangedFileListTruncated,
-  hasUiOverride,
+  waiverCommentAuthors,
+  waiverCommentAuthorized,
+  waiverLabelAuthorized,
   stripNonRenderedRegions,
   hasScreenshotEvidence,
   authorHasPushPermission,

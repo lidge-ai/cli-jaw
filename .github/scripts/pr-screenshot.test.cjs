@@ -8,7 +8,8 @@ const {
   isUiSurfacePath,
   uiPathsChanged,
   isChangedFileListTruncated,
-  hasUiOverride,
+  waiverCommentAuthors,
+  waiverCommentAuthorized,
   stripNonRenderedRegions,
   hasScreenshotEvidence,
   authorHasPushPermission,
@@ -109,43 +110,146 @@ describe("isChangedFileListTruncated", () => {
   });
 });
 
-describe("hasUiOverride", () => {
-  const comment = (body, author_association = "MEMBER") => ({ body, author_association });
+describe("waiverCommentAuthors", () => {
+  const comment = (
+    body,
+    { author_association = "MEMBER", login = "maintainer", created_at = "2026-01-02T00:00:00Z" } = {}
+  ) => ({ body, author_association, created_at, user: { login } });
+  const cutoff = { latestCommitAt: "2026-01-01T00:00:00Z" };
 
-  it("accepts a maintainer negation comment", () => {
-    assert.equal(
-      hasUiOverride({ comments: [comment("No UI changes in this PR.", "MEMBER")] }),
-      true
-    );
-    assert.equal(
-      hasUiOverride({ comments: [comment("doesn't touch the gui", "COLLABORATOR")] }),
-      true
-    );
+  it("collects maintainers whose comment asserts no UI change", () => {
+    for (const body of [
+      "No UI changes in this PR.",
+      "not a ui change",
+      "doesn't touch the gui",
+      "no changes to the ui",
+      "the ui is unchanged",
+      "gui untouched",
+      "UI 변경 없음",
+    ]) {
+      assert.deepEqual(waiverCommentAuthors([comment(body)], cutoff), ["maintainer"], body);
+    }
+  });
+
+  it("rejects comments that report or demand a screenshot instead of asserting no UI change", () => {
+    for (const body of [
+      "without a UI screenshot",
+      "Do not ship the ui without a screenshot.",
+      "I do not see a ui screenshot, please add one",
+      "no screenshot for ui changes",
+      "no ui",
+    ]) {
+      assert.deepEqual(waiverCommentAuthors([comment(body)], cutoff), [], body);
+    }
   });
 
   it("rejects non-maintainer comments", () => {
-    assert.equal(
-      hasUiOverride({ comments: [comment("no ui changes", "CONTRIBUTOR")] }),
-      false
-    );
-    assert.equal(
-      hasUiOverride({ comments: [comment("no ui changes", "NONE")] }),
-      false
-    );
+    for (const association of ["CONTRIBUTOR", "NONE"]) {
+      assert.deepEqual(
+        waiverCommentAuthors([comment("no ui changes", { author_association: association })], cutoff),
+        []
+      );
+    }
   });
 
   it("rejects negations across a sentence boundary", () => {
-    assert.equal(
-      hasUiOverride({
-        comments: [comment("This does not change the API. Please add a ui screenshot.")],
-      }),
-      false
+    assert.deepEqual(
+      waiverCommentAuthors(
+        [comment("This does not change the API. Please add a ui screenshot.")],
+        cutoff
+      ),
+      []
     );
   });
 
   it("rejects non-negated ui mentions", () => {
+    assert.deepEqual(
+      waiverCommentAuthors([comment("this touches ui but only the config")], cutoff),
+      []
+    );
+  });
+
+  it("rejects comments that predate the latest pushed commit or carry unusable dates", () => {
+    assert.deepEqual(
+      waiverCommentAuthors(
+        [comment("no UI changes", { created_at: "2026-01-01T00:00:00Z" })],
+        cutoff
+      ),
+      []
+    );
+    assert.deepEqual(
+      waiverCommentAuthors([comment("no UI changes")], { latestCommitAt: "not-a-date" }),
+      []
+    );
+  });
+
+  it("rejects comments without a usable login", () => {
+    const anonymous = comment("no UI changes");
+    delete anonymous.user;
+    assert.deepEqual(waiverCommentAuthors([anonymous], cutoff), []);
+  });
+});
+
+describe("waiverCommentAuthorized", () => {
+  const cutoff = { latestCommitAt: "2026-01-01T00:00:00Z" };
+  const comment = (login) => ({
+    body: "no UI changes",
+    author_association: "MEMBER",
+    created_at: "2026-01-02T00:00:00Z",
+    user: { login },
+  });
+  const quiet = { info: () => {}, warning: () => {} };
+  const githubWith = (permissions) => ({
+    rest: {
+      repos: {
+        getCollaboratorPermissionLevel: async ({ username }) => ({
+          data: { permission: permissions[username] },
+        }),
+      },
+    },
+  });
+
+  it("waives when the comment author has write access", async () => {
     assert.equal(
-      hasUiOverride({ comments: [comment("this touches ui but only the config")] }),
+      await waiverCommentAuthorized(githubWith({ alice: "write" }), {
+        owner: "o",
+        repo: "r",
+        comments: [comment("alice")],
+        ...cutoff,
+        core: quiet,
+      }),
+      true
+    );
+  });
+
+  it("ignores read-only members and permission lookup failures", async () => {
+    assert.equal(
+      await waiverCommentAuthorized(githubWith({ bob: "read" }), {
+        owner: "o",
+        repo: "r",
+        comments: [comment("bob")],
+        ...cutoff,
+        core: quiet,
+      }),
+      false
+    );
+    const failing = {
+      rest: {
+        repos: {
+          getCollaboratorPermissionLevel: async () => {
+            throw new Error("404");
+          },
+        },
+      },
+    };
+    assert.equal(
+      await waiverCommentAuthorized(failing, {
+        owner: "o",
+        repo: "r",
+        comments: [comment("bob")],
+        ...cutoff,
+        core: quiet,
+      }),
       false
     );
   });
@@ -169,13 +273,21 @@ describe("hasScreenshotEvidence", () => {
     assert.equal(hasScreenshotEvidence("![shot][cap]"), false);
   });
 
-  it("ignores images inside code fences and HTML comments", () => {
+  it("ignores images inside code fences, inline code, and HTML comments", () => {
     assert.equal(
       hasScreenshotEvidence("```\n![shot](https://x/i.png)\n```"),
       false
     );
     assert.equal(
       hasScreenshotEvidence("<!-- ![shot](https://x/i.png) -->"),
+      false
+    );
+    assert.equal(
+      hasScreenshotEvidence("`![shot](https://x/i.png)`"),
+      false
+    );
+    assert.equal(
+      hasScreenshotEvidence("run `![shot](https://x/i.png)` in the body"),
       false
     );
   });
@@ -197,6 +309,10 @@ describe("stripNonRenderedRegions", () => {
   it("strips fences before comments", () => {
     const body = "a\n```\n<!--\n```\nb";
     assert.equal(stripNonRenderedRegions(body), "a\nb");
+  });
+
+  it("strips inline code before comments so a comment marker inside code is literal", () => {
+    assert.equal(stripNonRenderedRegions("`<!--` ![shot](https://x/i.png)"), " ![shot](https://x/i.png)");
   });
 });
 
@@ -287,12 +403,9 @@ describe("evaluateScreenshotGate", () => {
     assert.equal(verdict.reason, "file_list_truncated");
   });
 
-  it("passes on a maintainer override comment or authorized label", () => {
+  it("passes on an authorized maintainer comment or label waiver", () => {
     assert.equal(
-      evaluateScreenshotGate({
-        ...uiChange,
-        comments: [{ body: "no UI changes", author_association: "OWNER" }],
-      }).status,
+      evaluateScreenshotGate({ ...uiChange, waivedByComment: true }).status,
       "pass"
     );
     assert.equal(

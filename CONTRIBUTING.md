@@ -121,6 +121,7 @@ https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<nam
 
 A maintainer can waive the requirement with the `ui-screenshot-waived` label
 (only valid when the label actor has write access or above) or with a comment
-stating the change does not touch the UI.
+stating the change does not touch the UI — e.g. "no UI changes" — posted after
+the latest push by someone with write access or above.
 
 > 📋 Found a bug or have a feature idea? [Open an issue](https://github.com/lidge-jun/cli-jaw/issues)
