@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendPreviewTheme, buildPreviewState, normalizePreviewUrlForCurrentHost } from '../../public/manager/src/preview.js';
+import { appendPreviewDesktop, appendPreviewTheme, buildPreviewState, normalizePreviewUrlForCurrentHost } from '../../public/manager/src/preview.js';
 import type { DashboardInstance, DashboardScanResult } from '../../public/manager/src/types.js';
 
 const online: DashboardInstance = {
@@ -55,6 +55,24 @@ test('preview helper appends theme to proxy preview url', () => {
 
 test('preview helper preserves query and hash when appending theme', () => {
     assert.equal(appendPreviewTheme('/i/3457/?existing=1#top', 'light'), '/i/3457/?existing=1&jawTheme=light#top');
+});
+
+test('preview helper appends desktop marker for the Electron shell', () => {
+    const state = buildPreviewState(online, data, { desktop: true });
+
+    assert.equal(state.src, '/i/3457/0?jawDesktop=1');
+    assert.equal(state.transport, 'legacy-path');
+});
+
+test('preview helper combines desktop marker with theme', () => {
+    const state = buildPreviewState(online, data, { theme: 'dark', desktop: true });
+
+    assert.equal(state.src, '/i/3457/0?jawTheme=dark&jawDesktop=1');
+});
+
+test('preview helper preserves query when appending desktop marker', () => {
+    assert.equal(appendPreviewDesktop('/i/3457/?existing=1', true), '/i/3457/?existing=1&jawDesktop=1');
+    assert.equal(appendPreviewDesktop('/i/3457/0', false), '/i/3457/0');
 });
 
 test('preview helper prefers origin-port preview url', () => {

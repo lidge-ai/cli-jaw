@@ -46,6 +46,15 @@
 body.is-resizing-horizontal { cursor: col-resize !important; user-select: none; }
 body.is-resizing-vertical { cursor: row-resize !important; user-select: none; }
 
+/* While a drag resizes the grid, no pointer may reach a framed preview and no
+   scrollable subtree may let scroll anchoring rewrite its scrollTop — the page
+   and the iframe must only reflow, never scroll. */
+body.is-resizing-horizontal iframe,
+body.is-resizing-vertical iframe { pointer-events: none; }
+
+body.is-resizing-horizontal *,
+body.is-resizing-vertical * { overflow-anchor: none; }
+
 .panel-resize-overlay {
     position: fixed;
     inset: 0;

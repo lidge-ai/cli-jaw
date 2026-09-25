@@ -10,11 +10,17 @@
           localStorage.setItem('jaw.uiTheme', localStorage.getItem('theme'));
           localStorage.removeItem('theme');
         }
-        var q = new URLSearchParams(location.search).get('jawTheme');
+        var params = new URLSearchParams(location.search);
+        var q = params.get('jawTheme');
         var raw = (q === 'dark' || q === 'light') ? q : localStorage.getItem('jaw.uiTheme');
         var t = (raw === 'dark' || raw === 'light') ? raw :
           (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
         document.documentElement.setAttribute('data-theme', t);
+        // The desktop shell's preload can't mark this document when it loads in
+        // a cross-origin iframe, so the manager passes the flag on the URL.
+        if (params.get('jawDesktop') === '1') {
+          document.documentElement.setAttribute('data-cli-jaw-desktop', 'true');
+        }
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">

@@ -281,7 +281,7 @@ export function InstancePreview(props: InstancePreviewProps) {
         // Keep the dedicated preview origin as the default. The legacy `/i`
         // path is only a fallback because root-relative `/api` and `/ws`
         // requests must keep targeting the managed instance.
-        { theme: props.theme },
+        { theme: props.theme, desktop: isElectron() },
     );
     const disabledReason = props.instance?.ok
         ? 'Preview is off. Turn it on from the header to mount the iframe.'
