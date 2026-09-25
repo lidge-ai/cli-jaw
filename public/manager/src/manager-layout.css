@@ -128,7 +128,7 @@
 }
 .manager-mobile-nav { display: none; grid-area: mobile-nav; }
 .sidebar-rail {
-    min-height: 54px;
+    min-height: var(--workspace-topbar-height);
     display: flex;
     align-items: center;
     gap: 10px;

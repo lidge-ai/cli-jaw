@@ -754,6 +754,7 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
     align-items: center;
+    min-height: var(--workspace-topbar-height);
     border-bottom: 1px solid var(--border-subtle);
     padding: 8px 12px;
 }

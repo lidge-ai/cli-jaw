@@ -569,7 +569,7 @@ body.right-collapsed .sidebar-right {
 }
 
 /* Classic header geometry; chat.css owns header typography and pills. */
-.chat-header { height: 44px; flex-shrink: 0; }
+.chat-header { height: var(--workspace-topbar-height, 44px); flex-shrink: 0; }
 @media (max-width: 900px) {
     .chat-header { height: auto; min-height: 44px; }
 }
