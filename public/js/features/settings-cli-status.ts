@@ -5,7 +5,7 @@ import { t } from './i18n.js';
 import { state } from '../state.js';
 import { ICONS } from '../icons.js';
 import { providerIcon, providerLabel } from '../provider-icons.js';
-import { describeCliProbe, describeNativeStartFailure, isCliStatusUsable, resolveQuotaWindowDisplay, type CliStatusInfo, type QuotaEntry } from './settings-types.js';
+import { describeCliProbe, describeNativeStartFailure, hasUsableCliStatus, isCliStatusUsable, resolveQuotaWindowDisplay, type CliStatusInfo, type QuotaEntry } from './settings-types.js';
 import {
     buildAccountParts,
     normalizeQuotaWindowLabel,
@@ -479,19 +479,10 @@ function renderCliStatus(data: { cliStatus: Record<string, CliStatusInfo> | null
     if (el) el.innerHTML = html;
 
     const allEntries = Object.entries(cliStatus);
-    // While probes are failing we cannot tell ready from unready, so the
-    // "no ready CLI" alarm would be exactly the false alarm #277 reports —
-    // the runtime worked the whole time.
-    const anyProbeUnavailable = allEntries.some(([, info]) => {
-        const state = describeCliProbe(info);
-        return state === 'probe-failing' || state === 'unknown';
-    });
-    const hasReadyCli = allEntries.some(([name, info]) => {
-        if (describeCliProbe(info) !== 'ready') return false;
-        const q = quota?.[name];
-        return !q || q.authenticated !== false;
-    });
-    if (!hasReadyCli && !anyProbeUnavailable && allEntries.length > 0 && el) {
+    // The alarm shares the partition's usable rule: a stale-but-preserved row
+    // or an unsettled probe is last-known-good, not evidence of absence —
+    // otherwise it false-alarms through every re-check window (#277).
+    if (allEntries.length > 0 && !hasUsableCliStatus(allEntries, quota) && el) {
         el.insertAdjacentHTML('afterbegin',
             `<div style="padding:8px 10px;margin-bottom:8px;background:var(--warning-dim);border:1px solid var(--warning);border-radius:6px;font-size:11px;color:var(--warning)">
                 ${ICONS.warning} ${t('cli.noReadyCli')}
