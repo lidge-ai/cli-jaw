@@ -16,6 +16,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SettingsPageProps, DirtyEntry } from '../types';
 import { NumberField, SelectField, ToggleField } from '../fields';
 import {
+    SettingsActions,
+    SettingsNote,
     SettingsSection,
     PageError,
     PageLoading,
@@ -335,55 +337,42 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                 hint={`Read-only browse of the key/value memory table (${MEMORY_PAGE_SIZE}/page).`}
             >
                 {memorySnap.state.kind === 'loading' ? (
-                    <p className="settings-section-hint">Loading entries…</p>
+                    <SettingsNote>Loading entries…</SettingsNote>
                 ) : memorySnap.state.kind === 'offline' ? (
                     <PageOffline port={port} />
                 ) : memorySnap.state.kind === 'error' ? (
                     <PageError message={memorySnap.state.message} />
                 ) : allRows.length === 0 ? (
-                    <p className="settings-section-hint">No memory entries yet.</p>
+                    <SettingsNote>No memory entries yet.</SettingsNote>
                 ) : (
                     <>
-                        <table className="settings-memory-table">
-                            <thead>
-                                <tr>
-                                    <th scope="col">Key</th>
-                                    <th scope="col">Source</th>
-                                    <th scope="col">Length</th>
-                                    <th scope="col">Preview</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {slice.map((row) => (
-                                    <MemoryRow
-                                        key={row.key}
-                                        row={row}
-                                        onOpen={setOpenEntry}
-                                    />
-                                ))}
-                            </tbody>
-                        </table>
-                        <div className="settings-memory-pagination">
+                        {slice.map((row) => (
+                            <MemoryRow
+                                key={row.key}
+                                row={row}
+                                onOpen={setOpenEntry}
+                            />
+                        ))}
+                        <SettingsActions
+                            status={<span>Page {page + 1} / {pageCount}</span>}
+                        >
                             <button
                                 type="button"
-                                className="settings-action settings-action-discard"
+                                className="settings-action"
                                 disabled={page === 0}
                                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                             >
                                 Prev
                             </button>
-                            <span className="settings-memory-pageinfo">
-                                Page {page + 1} / {pageCount}
-                            </span>
                             <button
                                 type="button"
-                                className="settings-action settings-action-discard"
+                                className="settings-action"
                                 disabled={!hasMore}
                                 onClick={() => setPage((p) => p + 1)}
                             >
                                 Next
                             </button>
-                        </div>
+                        </SettingsActions>
                     </>
                 )}
             </SettingsSection>
@@ -392,7 +381,13 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                 title="Actions"
                 hint="Flush runs async — the browse list refreshes when it finishes."
             >
-                <div className="settings-memory-actions">
+                <SettingsActions
+                    status={
+                        actionState.notice ? (
+                            <span role="status">{actionState.notice}</span>
+                        ) : undefined
+                    }
+                >
                     <button
                         type="button"
                         className="settings-action settings-action-save"
@@ -411,28 +406,23 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                     </button>
                     <button
                         type="button"
-                        className="settings-action settings-action-discard"
+                        className="settings-action"
                         disabled={memorySnap.state.kind !== 'ready'}
                         onClick={onExport}
                     >
                         Export memory
                     </button>
-                </div>
-                {actionState.notice ? (
-                    <p className="settings-section-hint" role="status">
-                        {actionState.notice}
-                    </p>
-                ) : null}
+                </SettingsActions>
                 {actionState.error ? (
-                    <p className="settings-field-error" role="alert">
+                    <SettingsNote tone="error" role="alert">
                         {actionState.error}
-                    </p>
+                    </SettingsNote>
                 ) : null}
             </SettingsSection>
 
             {openEntry ? (
                 <div
-                    className="settings-memory-modal"
+                    className="settings-memory-modal settings-pi-modal"
                     role="dialog"
                     aria-modal="true"
                     aria-label={`Memory entry ${openEntry.key}`}
@@ -445,14 +435,27 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                             <h3>{openEntry.key}</h3>
                             <button
                                 type="button"
-                                className="settings-action settings-action-discard"
+                                className="settings-action"
                                 onClick={() => setOpenEntry(null)}
                                 aria-label="Close memory entry"
                             >
                                 Close
                             </button>
                         </header>
-                        <pre className="settings-memory-modal-body">{openEntry.value}</pre>
+                        <pre
+                            className="settings-memory-modal-body"
+                            style={{
+                                margin: 0,
+                                fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                                fontSize: 12,
+                                whiteSpace: 'pre-wrap',
+                                overflowWrap: 'anywhere',
+                                overflow: 'auto',
+                                maxHeight: '60vh',
+                            }}
+                        >
+                            {openEntry.value}
+                        </pre>
                     </div>
                 </div>
             ) : null}

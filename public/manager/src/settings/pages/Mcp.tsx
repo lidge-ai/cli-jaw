@@ -5,10 +5,13 @@ import {
     PageError,
     PageLoading,
     PageOffline,
+    SettingsActions,
+    SettingsNote,
     SettingsSection,
+    SettingsToolbar,
+    StatusBadge,
     usePageSnapshot,
 } from './page-shell';
-import { InlineWarn } from './components/InlineWarn';
 import { McpServerCard } from './components/McpServerCard';
 import {
     countInstallBundleCandidates,
@@ -337,46 +340,44 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                 title="MCP servers"
                 hint="Edit each server's command/args/env. Save writes back to mcp.json; Sync pushes the saved config to all CLIs."
             >
-                <div className="mcp-servers-list">
-                    {order.length === 0 && (
-                        <p className="settings-section-hint">
-                            No servers configured. Add one or run <code>Reset to defaults</code>.
-                        </p>
-                    )}
-                    {order.map((name) => {
-                        const srv = draft.servers[name] ?? makeEmptyServer();
-                        const lower = name.toLowerCase();
-                        const isDupe = duplicates.has(lower);
-                        const validation = validateServer(name, srv);
-                        const error = isDupe
-                            ? 'Duplicate server name (case-insensitive).'
-                            : validation.kind === 'invalid'
-                                ? validation.reason
-                                : null;
-                        return (
-                            <McpServerCard
-                                key={name}
-                                name={name}
-                                server={srv}
-                                onRename={(next) => onRenameServer(name, next)}
-                                onChange={(next) => onChangeServer(name, next)}
-                                onRemove={() => onRemoveServer(name)}
-                                nameError={error}
-                            />
-                        );
-                    })}
-                </div>
+                {order.length === 0 && (
+                    <SettingsNote>
+                        No servers configured. Add one or run <code>Reset to defaults</code>.
+                    </SettingsNote>
+                )}
+                {order.map((name) => {
+                    const srv = draft.servers[name] ?? makeEmptyServer();
+                    const lower = name.toLowerCase();
+                    const isDupe = duplicates.has(lower);
+                    const validation = validateServer(name, srv);
+                    const error = isDupe
+                        ? 'Duplicate server name (case-insensitive).'
+                        : validation.kind === 'invalid'
+                            ? validation.reason
+                            : null;
+                    return (
+                        <McpServerCard
+                            key={name}
+                            name={name}
+                            server={srv}
+                            onRename={(next) => onRenameServer(name, next)}
+                            onChange={(next) => onChangeServer(name, next)}
+                            onRemove={() => onRemoveServer(name)}
+                            nameError={error}
+                        />
+                    );
+                })}
                 {hasDupes && (
-                    <InlineWarn role="alert">
+                    <SettingsNote tone="error" role="alert">
                         Duplicate server name{dupeNames.length === 1 ? '' : 's'}: {dupeNames.join(', ')}.
                         Saving is blocked until names are unique.
-                    </InlineWarn>
+                    </SettingsNote>
                 )}
                 {hasFieldErrors && !hasDupes && (
-                    <InlineWarn role="alert">
+                    <SettingsNote tone="error" role="alert">
                         Some servers have errors (missing command/URL or invalid name).
                         Saving is blocked until they are fixed.
-                    </InlineWarn>
+                    </SettingsNote>
                 )}
             </SettingsSection>
 
@@ -384,7 +385,15 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                 title="Actions"
                 hint="These act on the saved config. Save edits first if you want them included."
             >
-                <div className="mcp-action-buttons">
+                <SettingsActions
+                    status={
+                        actionState.kind === 'pending' ? (
+                            <span role="status">{actionState.label}…</span>
+                        ) : actionState.kind === 'success' ? (
+                            <span role="status">{actionState.message}</span>
+                        ) : undefined
+                    }
+                >
                     <button
                         type="button"
                         className="settings-action"
@@ -410,7 +419,7 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                     </button>
                     <button
                         type="button"
-                        className="settings-action settings-action-discard"
+                        className="settings-action settings-action-danger"
                         disabled={actionState.kind === 'pending'}
                         onClick={() => {
                             if (
@@ -424,15 +433,9 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                     >
                         Reset to defaults
                     </button>
-                </div>
-                {actionState.kind === 'pending' && (
-                    <p className="settings-section-hint" role="status">{actionState.label}…</p>
-                )}
-                {actionState.kind === 'success' && (
-                    <p className="settings-section-hint" role="status">{actionState.message}</p>
-                )}
+                </SettingsActions>
                 {actionState.kind === 'error' && (
-                    <InlineWarn role="alert">{actionState.message}</InlineWarn>
+                    <SettingsNote tone="error" role="alert">{actionState.message}</SettingsNote>
                 )}
             </SettingsSection>
 
@@ -458,183 +461,202 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                     />
                 )}
                 {!isValid && (
-                    <p className="settings-section-hint">
+                    <SettingsNote>
                         Save is disabled while validation errors are present.
-                    </p>
+                    </SettingsNote>
                 )}
             </SettingsSection>
 
             {modalOpen && (
-                <div className="mcp-modal-backdrop" onClick={closeModal}>
+                <div
+                    className="settings-memory-modal settings-pi-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="MCP Server Management"
+                    onClick={closeModal}
+                >
                     <div
-                        className="mcp-modal"
-                        role="dialog"
-                        aria-modal="true"
-                        aria-label="MCP Server Management"
+                        className="settings-memory-modal-card"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="mcp-modal-tabs">
+                        <header className="settings-memory-modal-header">
+                            <h3>MCP servers</h3>
                             <button
                                 type="button"
-                                className={`mcp-modal-tab${modalTab === 'active' ? ' is-active' : ''}`}
+                                className="settings-action"
+                                onClick={closeModal}
+                            >
+                                Close
+                            </button>
+                        </header>
+
+                        <SettingsToolbar>
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={modalTab === 'active'}
+                                className={`settings-action${modalTab === 'active' ? ' settings-action-save' : ''}`}
                                 onClick={() => setModalTab('active')}
                             >
                                 Active Servers
                             </button>
                             <button
                                 type="button"
-                                className={`mcp-modal-tab${modalTab === 'add' ? ' is-active' : ''}`}
+                                role="tab"
+                                aria-selected={modalTab === 'add'}
+                                className={`settings-action${modalTab === 'add' ? ' settings-action-save' : ''}`}
                                 onClick={() => { setModalTab('add'); resetAddForm(); }}
                             >
                                 Add New
                             </button>
-                        </div>
+                        </SettingsToolbar>
 
-                        <div className="mcp-modal-body">
-                            {modalTab === 'active' && (
-                                <div className="mcp-active-list">
-                                    {Object.keys(original.servers).length === 0 && (
-                                        <p className="settings-section-hint">No active MCP servers.</p>
-                                    )}
-                                    {Object.entries(original.servers).map(([name, srv]) => {
-                                        const tag = getServerTag(srv);
-                                        return (
-                                            <div key={name} className="mcp-active-row">
-                                                <span className="mcp-active-name">{name}</span>
-                                                <span className="mcp-active-detail">
-                                                    {srv.url || [srv.command, ...(srv.args || [])].filter(Boolean).join(' ')}
-                                                </span>
-                                                {tag && <span className="mcp-server-tag" data-tag={tag}>[{tag}]</span>}
-                                                <button
-                                                    type="button"
-                                                    className="settings-action settings-action-discard mcp-active-remove"
-                                                    onClick={() => void handleRemoveFromModal(name)}
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {modalTab === 'add' && (
-                                <div className="mcp-add-form">
-                                    <div className="mcp-add-subtabs">
-                                        <button
-                                            type="button"
-                                            className={`mcp-modal-tab${addSubTab === 'local' ? ' is-active' : ''}`}
-                                            onClick={() => setAddSubTab('local')}
+                        {modalTab === 'active' && (
+                            <>
+                                {Object.keys(original.servers).length === 0 && (
+                                    <SettingsNote>No active MCP servers.</SettingsNote>
+                                )}
+                                {Object.entries(original.servers).map(([name, srv]) => {
+                                    const tag = getServerTag(srv);
+                                    return (
+                                        <SettingsActions
+                                            key={name}
+                                            status={
+                                                <>
+                                                    <strong>{name}</strong>{' '}
+                                                    <code>
+                                                        {srv.url || [srv.command, ...(srv.args || [])].filter(Boolean).join(' ')}
+                                                    </code>{' '}
+                                                    {tag ? <StatusBadge tone="neutral">{tag}</StatusBadge> : null}
+                                                </>
+                                            }
                                         >
-                                            Local
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={`mcp-modal-tab${addSubTab === 'remote' ? ' is-active' : ''}`}
-                                            onClick={() => setAddSubTab('remote')}
-                                        >
-                                            Remote
-                                        </button>
-                                    </div>
+                                            <button
+                                                type="button"
+                                                className="settings-action settings-action-danger"
+                                                onClick={() => void handleRemoveFromModal(name)}
+                                            >
+                                                Remove
+                                            </button>
+                                        </SettingsActions>
+                                    );
+                                })}
+                            </>
+                        )}
 
-                                    <label className="settings-field settings-field-text">
-                                        <span className="settings-field-label">Name</span>
-                                        <input
-                                            type="text"
-                                            value={addName}
-                                            placeholder="my-server"
-                                            spellCheck={false}
-                                            onChange={(e) => setAddName(e.target.value)}
-                                        />
-                                    </label>
+                        {modalTab === 'add' && (
+                            <>
+                                <SettingsToolbar>
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={addSubTab === 'local'}
+                                        className={`settings-action${addSubTab === 'local' ? ' settings-action-save' : ''}`}
+                                        onClick={() => setAddSubTab('local')}
+                                    >
+                                        Local
+                                    </button>
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={addSubTab === 'remote'}
+                                        className={`settings-action${addSubTab === 'remote' ? ' settings-action-save' : ''}`}
+                                        onClick={() => setAddSubTab('remote')}
+                                    >
+                                        Remote
+                                    </button>
+                                </SettingsToolbar>
 
-                                    {addSubTab === 'local' ? (
-                                        <>
-                                            <label className="settings-field settings-field-text">
-                                                <span className="settings-field-label">Command</span>
-                                                <input
-                                                    type="text"
-                                                    value={addCommand}
-                                                    placeholder="npx"
-                                                    spellCheck={false}
-                                                    onChange={(e) => setAddCommand(e.target.value)}
-                                                />
-                                            </label>
-                                            <label className="settings-field settings-field-text">
-                                                <span className="settings-field-label">Args (one per line)</span>
-                                                <textarea
-                                                    value={addArgs}
-                                                    rows={3}
-                                                    spellCheck={false}
-                                                    placeholder="-y&#10;@upstash/context7-mcp"
-                                                    onChange={(e) => setAddArgs(e.target.value)}
-                                                />
-                                            </label>
-                                            <label className="settings-field settings-field-text">
-                                                <span className="settings-field-label">Env (KEY=value per line)</span>
-                                                <textarea
-                                                    value={addEnv}
-                                                    rows={2}
-                                                    spellCheck={false}
-                                                    onChange={(e) => setAddEnv(e.target.value)}
-                                                />
-                                            </label>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <label className="settings-field settings-field-text">
-                                                <span className="settings-field-label">URL</span>
-                                                <input
-                                                    type="text"
-                                                    value={addUrl}
-                                                    placeholder="https://mcp.example.com/sse"
-                                                    spellCheck={false}
-                                                    onChange={(e) => setAddUrl(e.target.value)}
-                                                />
-                                            </label>
-                                            <label className="settings-field settings-field-text">
-                                                <span className="settings-field-label">Headers (KEY=value per line)</span>
-                                                <textarea
-                                                    value={addHeaders}
-                                                    rows={2}
-                                                    spellCheck={false}
-                                                    onChange={(e) => setAddHeaders(e.target.value)}
-                                                />
-                                            </label>
-                                        </>
-                                    )}
+                                <label className="settings-field settings-field-text">
+                                    <span className="settings-field-label">Name</span>
+                                    <input
+                                        type="text"
+                                        value={addName}
+                                        placeholder="my-server"
+                                        spellCheck={false}
+                                        onChange={(e) => setAddName(e.target.value)}
+                                    />
+                                </label>
 
-                                    {addError && <InlineWarn role="alert">{addError}</InlineWarn>}
+                                {addSubTab === 'local' ? (
+                                    <>
+                                        <label className="settings-field settings-field-text">
+                                            <span className="settings-field-label">Command</span>
+                                            <input
+                                                type="text"
+                                                value={addCommand}
+                                                placeholder="npx"
+                                                spellCheck={false}
+                                                onChange={(e) => setAddCommand(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="settings-field settings-field-text">
+                                            <span className="settings-field-label">Args (one per line)</span>
+                                            <textarea
+                                                value={addArgs}
+                                                rows={3}
+                                                spellCheck={false}
+                                                placeholder="-y&#10;@upstash/context7-mcp"
+                                                onChange={(e) => setAddArgs(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="settings-field settings-field-text">
+                                            <span className="settings-field-label">Env (KEY=value per line)</span>
+                                            <textarea
+                                                value={addEnv}
+                                                rows={2}
+                                                spellCheck={false}
+                                                onChange={(e) => setAddEnv(e.target.value)}
+                                            />
+                                        </label>
+                                    </>
+                                ) : (
+                                    <>
+                                        <label className="settings-field settings-field-text">
+                                            <span className="settings-field-label">URL</span>
+                                            <input
+                                                type="text"
+                                                value={addUrl}
+                                                placeholder="https://mcp.example.com/sse"
+                                                spellCheck={false}
+                                                onChange={(e) => setAddUrl(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="settings-field settings-field-text">
+                                            <span className="settings-field-label">Headers (KEY=value per line)</span>
+                                            <textarea
+                                                value={addHeaders}
+                                                rows={2}
+                                                spellCheck={false}
+                                                onChange={(e) => setAddHeaders(e.target.value)}
+                                            />
+                                        </label>
+                                    </>
+                                )}
 
-                                    <div className="mcp-add-actions">
-                                        <button
-                                            type="button"
-                                            className="settings-action"
-                                            onClick={closeModal}
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="settings-action"
-                                            disabled={addPending}
-                                            onClick={() => void handleAddAndSync()}
-                                        >
-                                            {addPending ? 'Adding…' : 'Add & Sync'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                                {addError && (
+                                    <SettingsNote tone="error" role="alert">{addError}</SettingsNote>
+                                )}
 
-                        <button
-                            type="button"
-                            className="mcp-modal-close"
-                            aria-label="Close"
-                            onClick={closeModal}
-                        >
-                            &times;
-                        </button>
+                                <SettingsActions>
+                                    <button
+                                        type="button"
+                                        className="settings-action"
+                                        onClick={closeModal}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="settings-action settings-action-save"
+                                        disabled={addPending}
+                                        onClick={() => void handleAddAndSync()}
+                                    >
+                                        {addPending ? 'Adding…' : 'Add & Sync'}
+                                    </button>
+                                </SettingsActions>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

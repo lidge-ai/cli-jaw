@@ -1,3 +1,8 @@
+// Single MCP server editor. Renders as shared card-body rows — a
+// `settings-card-actions` header (name + transport badge + remove) followed
+// by the standard `.settings-field` divided rows — so server entries read
+// like every other settings row instead of a bespoke card.
+
 import type { McpServer } from '../mcp-helpers';
 import {
     formatArgsText,
@@ -6,6 +11,7 @@ import {
     parseEnvText,
     getServerTag,
 } from '../mcp-helpers';
+import { StatusBadge } from '../page-shell';
 
 type Props = {
     name: string;
@@ -32,39 +38,45 @@ export function McpServerCard({
     const isRemote = tag === 'remote';
 
     return (
-        <article className="mcp-server-card" aria-label={`MCP server ${name || '(unnamed)'}`}>
-            <header className="mcp-server-card-header">
-                <label className="settings-field settings-field-text" htmlFor={`${id}-name`}>
-                    <span className="settings-field-label">Server name</span>
-                    <input
-                        id={`${id}-name`}
-                        type="text"
-                        value={name}
-                        spellCheck={false}
-                        placeholder="my-server"
-                        aria-invalid={Boolean(nameError)}
-                        onChange={(event) => onRename(event.target.value)}
-                    />
-                    {nameError ? (
-                        <span className="settings-field-error" role="alert">
-                            {nameError}
-                        </span>
-                    ) : null}
-                </label>
-                <div className="mcp-server-card-actions">
-                    {tag ? (
-                        <span className="mcp-server-tag" data-tag={tag}>[{tag}]</span>
-                    ) : null}
+        <>
+            <div
+                className="settings-card-actions"
+                role="group"
+                aria-label={`MCP server ${name || '(unnamed)'}`}
+            >
+                <div className="settings-card-actions-status">
+                    <strong>{name || '(unnamed)'}</strong>
+                    {tag ? <StatusBadge tone="neutral">{tag}</StatusBadge> : null}
+                </div>
+                <div className="settings-card-actions-buttons">
                     <button
                         type="button"
-                        className="settings-action settings-action-discard"
+                        className="settings-action settings-action-danger"
                         onClick={onRemove}
                         aria-label={`Remove ${name || 'server'}`}
                     >
                         Remove
                     </button>
                 </div>
-            </header>
+            </div>
+
+            <label className="settings-field settings-field-text" htmlFor={`${id}-name`}>
+                <span className="settings-field-label">Server name</span>
+                <input
+                    id={`${id}-name`}
+                    type="text"
+                    value={name}
+                    spellCheck={false}
+                    placeholder="my-server"
+                    aria-invalid={Boolean(nameError)}
+                    onChange={(event) => onRename(event.target.value)}
+                />
+                {nameError ? (
+                    <span className="settings-field-error" role="alert">
+                        {nameError}
+                    </span>
+                ) : null}
+            </label>
 
             {isRemote ? (
                 <>
@@ -142,6 +154,7 @@ export function McpServerCard({
             )}
 
             <label className="settings-field settings-field-toggle" htmlFor={`${id}-autostart`}>
+                <span className="settings-field-label">Autostart</span>
                 <input
                     id={`${id}-autostart`}
                     type="checkbox"
@@ -150,8 +163,7 @@ export function McpServerCard({
                         onChange({ ...server, autostart: event.target.checked })
                     }
                 />
-                <span className="settings-field-label">Autostart</span>
             </label>
-        </article>
+        </>
     );
 }

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { DirtyStore, SettingsClient } from '../../types';
-import { PageError, PageOffline } from '../page-shell';
+import { PageError, PageOffline, SettingsActions, SettingsNote } from '../page-shell';
 import type { SnapshotState } from '../page-shell';
 
 type Props = {
@@ -54,7 +54,7 @@ export function HeartbeatMarkdownSection({ port, client, dirty, snapshot }: Prop
     }, [client, dirty, content]);
 
     if (snapshot.kind === 'loading') {
-        return <p className="settings-section-hint">Loading template…</p>;
+        return <SettingsNote>Loading template…</SettingsNote>;
     }
     if (snapshot.kind === 'offline') return <PageOffline port={port} />;
     if (snapshot.kind === 'error') return <PageError message={snapshot.message} />;
@@ -71,10 +71,10 @@ export function HeartbeatMarkdownSection({ port, client, dirty, snapshot }: Prop
                     spellCheck={false}
                     value={content}
                     onChange={(event) => setContent(event.target.value)}
-                    style={{ fontFamily: 'ui-monospace, monospace' }}
+                    style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
                 />
             </label>
-            <div className="settings-heartbeat-md-footer">
+            <SettingsActions>
                 <button
                     type="button"
                     className="settings-action settings-action-save"
@@ -83,11 +83,11 @@ export function HeartbeatMarkdownSection({ port, client, dirty, snapshot }: Prop
                 >
                     {saving ? 'Saving…' : 'Save template'}
                 </button>
-            </div>
+            </SettingsActions>
             {error ? (
-                <p className="settings-field-error" role="alert">
+                <SettingsNote tone="error" role="alert">
                     {error}
-                </p>
+                </SettingsNote>
             ) : null}
         </>
     );

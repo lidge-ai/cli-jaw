@@ -31,10 +31,10 @@ import {
     PageError,
     PageLoading,
     PageOffline,
+    SettingsNote,
     usePageSnapshot,
 } from './page-shell';
 import { expandPatch } from './path-utils';
-import { EngineSubsection } from './components/EngineSubsection';
 
 export const STT_ENGINES = ['auto', 'gemini', 'openai', 'whisper', 'vertex'] as const;
 export type SttEngine = (typeof STT_ENGINES)[number];
@@ -231,43 +231,41 @@ export default function SpeechKeys({ port, client, dirty, registerSave }: Settin
                     title="Gemini"
                     hint="Google AI Studio key. Used by the Gemini transcription path."
                 >
-                    <EngineSubsection title="Credentials">
-                        <SecretField
-                            id="stt-gemini-key"
-                            label="API key"
-                            value={geminiApiKey}
-                            placeholder={geminiPlaceholder}
-                            onChange={(next) => {
-                                setGeminiApiKey(next);
-                                if (next.length === 0) {
-                                    dirty.remove('stt.geminiApiKey');
-                                    return;
-                                }
-                                setEntry('stt.geminiApiKey', {
-                                    value: next,
-                                    // Server doesn't echo the secret back, so
-                                    // we use empty-string as the original. Any
-                                    // typed value is a real change.
-                                    original: '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                        <TextField
-                            id="stt-gemini-model"
-                            label="Model"
-                            value={geminiModel}
-                            placeholder="gemini-2.5-flash-lite"
-                            onChange={(next) => {
-                                setGeminiModel(next);
-                                setEntry('stt.geminiModel', {
-                                    value: next,
-                                    original: original.geminiModel ?? '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                    </EngineSubsection>
+                    <SecretField
+                        id="stt-gemini-key"
+                        label="API key"
+                        value={geminiApiKey}
+                        placeholder={geminiPlaceholder}
+                        onChange={(next) => {
+                            setGeminiApiKey(next);
+                            if (next.length === 0) {
+                                dirty.remove('stt.geminiApiKey');
+                                return;
+                            }
+                            setEntry('stt.geminiApiKey', {
+                                value: next,
+                                // Server doesn't echo the secret back, so
+                                // we use empty-string as the original. Any
+                                // typed value is a real change.
+                                original: '',
+                                valid: true,
+                            });
+                        }}
+                    />
+                    <TextField
+                        id="stt-gemini-model"
+                        label="Model"
+                        value={geminiModel}
+                        placeholder="gemini-2.5-flash-lite"
+                        onChange={(next) => {
+                            setGeminiModel(next);
+                            setEntry('stt.geminiModel', {
+                                value: next,
+                                original: original.geminiModel ?? '',
+                                valid: true,
+                            });
+                        }}
+                    />
                 </SettingsSection>
             ) : null}
 
@@ -276,54 +274,52 @@ export default function SpeechKeys({ port, client, dirty, registerSave }: Settin
                     title="OpenAI"
                     hint="Compatible with OpenAI-style transcription endpoints (incl. self-hosted)."
                 >
-                    <EngineSubsection title="Credentials">
-                        <SecretField
-                            id="stt-openai-key"
-                            label="API key"
-                            value={openaiApiKey}
-                            placeholder={openaiPlaceholder}
-                            onChange={(next) => {
-                                setOpenaiApiKey(next);
-                                if (next.length === 0) {
-                                    dirty.remove('stt.openaiApiKey');
-                                    return;
-                                }
-                                setEntry('stt.openaiApiKey', {
-                                    value: next,
-                                    original: '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                        <TextField
-                            id="stt-openai-base-url"
-                            label="Base URL (optional)"
-                            value={openaiBaseUrl}
-                            placeholder="https://api.openai.com/v1"
-                            onChange={(next) => {
-                                setOpenaiBaseUrl(next);
-                                setEntry('stt.openaiBaseUrl', {
-                                    value: next,
-                                    original: original.openaiBaseUrl ?? '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                        <TextField
-                            id="stt-openai-model"
-                            label="Model"
-                            value={openaiModel}
-                            placeholder="whisper-1"
-                            onChange={(next) => {
-                                setOpenaiModel(next);
-                                setEntry('stt.openaiModel', {
-                                    value: next,
-                                    original: original.openaiModel ?? '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                    </EngineSubsection>
+                    <SecretField
+                        id="stt-openai-key"
+                        label="API key"
+                        value={openaiApiKey}
+                        placeholder={openaiPlaceholder}
+                        onChange={(next) => {
+                            setOpenaiApiKey(next);
+                            if (next.length === 0) {
+                                dirty.remove('stt.openaiApiKey');
+                                return;
+                            }
+                            setEntry('stt.openaiApiKey', {
+                                value: next,
+                                original: '',
+                                valid: true,
+                            });
+                        }}
+                    />
+                    <TextField
+                        id="stt-openai-base-url"
+                        label="Base URL (optional)"
+                        value={openaiBaseUrl}
+                        placeholder="https://api.openai.com/v1"
+                        onChange={(next) => {
+                            setOpenaiBaseUrl(next);
+                            setEntry('stt.openaiBaseUrl', {
+                                value: next,
+                                original: original.openaiBaseUrl ?? '',
+                                valid: true,
+                            });
+                        }}
+                    />
+                    <TextField
+                        id="stt-openai-model"
+                        label="Model"
+                        value={openaiModel}
+                        placeholder="whisper-1"
+                        onChange={(next) => {
+                            setOpenaiModel(next);
+                            setEntry('stt.openaiModel', {
+                                value: next,
+                                original: original.openaiModel ?? '',
+                                valid: true,
+                            });
+                        }}
+                    />
                 </SettingsSection>
             ) : null}
 
@@ -332,22 +328,20 @@ export default function SpeechKeys({ port, client, dirty, registerSave }: Settin
                     title="Whisper (local MLX)"
                     hint="Runs on-device via mlx-whisper. No API key required."
                 >
-                    <EngineSubsection title="Model">
-                        <TextField
-                            id="stt-whisper-model"
-                            label="Model identifier"
-                            value={whisperModel}
-                            placeholder="mlx-community/whisper-large-v3-mlx"
-                            onChange={(next) => {
-                                setWhisperModel(next);
-                                setEntry('stt.whisperModel', {
-                                    value: next,
-                                    original: original.whisperModel ?? '',
-                                    valid: true,
-                                });
-                            }}
-                        />
-                    </EngineSubsection>
+                    <TextField
+                        id="stt-whisper-model"
+                        label="Model identifier"
+                        value={whisperModel}
+                        placeholder="mlx-community/whisper-large-v3-mlx"
+                        onChange={(next) => {
+                            setWhisperModel(next);
+                            setEntry('stt.whisperModel', {
+                                value: next,
+                                original: original.whisperModel ?? '',
+                                valid: true,
+                            });
+                        }}
+                    />
                 </SettingsSection>
             ) : null}
 
@@ -356,41 +350,40 @@ export default function SpeechKeys({ port, client, dirty, registerSave }: Settin
                     title="Vertex AI"
                     hint="Service-account credentials JSON for Google Cloud Vertex transcription."
                 >
-                    <EngineSubsection
-                        title="Service account"
-                        hint="Paste the service-account credentials JSON. Treated as a secret — invalid JSON refuses to save."
-                    >
-                        <JsonEditorField
-                            id="stt-vertex-config"
-                            label="Credentials JSON"
-                            value={vertexConfig}
-                            onChange={(next, valid) => {
-                                // JsonEditorField stores either parsed JSON
-                                // (valid) or the draft string (invalid). We
-                                // need a string for the dirty entry so the
-                                // server receives the raw JSON it expects.
-                                const asString =
-                                    typeof next === 'string'
-                                        ? next
-                                        : next === null || next === undefined
-                                          ? ''
-                                          : JSON.stringify(next);
-                                setVertexConfig(asString);
-                                const validity = validateVertexConfig(asString);
-                                setVertexError(valid ? null : validity.error);
-                                setEntry('stt.vertexConfig', {
-                                    value: asString,
-                                    original: original.vertexConfig ?? '',
-                                    valid: valid && validity.valid,
-                                });
-                            }}
-                        />
-                        {vertexError ? (
-                            <p className="settings-field-error" role="alert">
-                                {vertexError}
-                            </p>
-                        ) : null}
-                    </EngineSubsection>
+                    <SettingsNote>
+                        Paste the service-account credentials JSON. Treated as a
+                        secret — invalid JSON refuses to save.
+                    </SettingsNote>
+                    <JsonEditorField
+                        id="stt-vertex-config"
+                        label="Credentials JSON"
+                        value={vertexConfig}
+                        onChange={(next, valid) => {
+                            // JsonEditorField stores either parsed JSON
+                            // (valid) or the draft string (invalid). We
+                            // need a string for the dirty entry so the
+                            // server receives the raw JSON it expects.
+                            const asString =
+                                typeof next === 'string'
+                                    ? next
+                                    : next === null || next === undefined
+                                      ? ''
+                                      : JSON.stringify(next);
+                            setVertexConfig(asString);
+                            const validity = validateVertexConfig(asString);
+                            setVertexError(valid ? null : validity.error);
+                            setEntry('stt.vertexConfig', {
+                                value: asString,
+                                original: original.vertexConfig ?? '',
+                                valid: valid && validity.valid,
+                            });
+                        }}
+                    />
+                    {vertexError ? (
+                        <SettingsNote tone="error" role="alert">
+                            {vertexError}
+                        </SettingsNote>
+                    ) : null}
                 </SettingsSection>
             ) : null}
 
@@ -398,10 +391,10 @@ export default function SpeechKeys({ port, client, dirty, registerSave }: Settin
                 title="Probe"
                 hint="A live mic-test isn't available yet — verify by triggering speech-to-text from the active channel."
             >
-                <p className="settings-section-hint">
+                <SettingsNote>
                     No backend self-test endpoint is exposed for speech today;
                     this lands as a Phase 9 polish.
-                </p>
+                </SettingsNote>
             </SettingsSection>
         </form>
     );
