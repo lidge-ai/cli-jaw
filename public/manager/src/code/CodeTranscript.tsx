@@ -91,12 +91,30 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
     const toolBlocks: Array<{ key: string; label: string; content: string; className: string; copyable: boolean }> = [];
     if (tool) {
         if (inputDisplay) toolBlocks.push({ key: 'input', label: 'Input', content: inputDisplay.content, className: 'code-tool-args', copyable: true });
+        if (inputDisplay?.parameters) toolBlocks.push({ key: 'params', label: 'Parameters', content: inputDisplay.parameters, className: 'code-tool-json', copyable: false });
+        if (inputDisplay?.description) toolBlocks.push({ key: 'description', label: 'Description', content: inputDisplay.description, className: 'code-tool-text', copyable: false });
         if (item.tool?.output !== undefined) toolBlocks.push({ key: 'output', label: 'Output', content: item.tool.output, className: 'code-tool-output', copyable: false });
     }
     const toolBodyTall = toolBlocks.some(block => isTallToolText(block.content))
         || (item.tool?.detail !== undefined && isTallToolText(item.tool.detail))
         || (item.text !== undefined && isTallToolText(item.text));
     const [showAll, setShowAll] = useState(false);
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    // The toggle measures real overflow once the body lays out (browser); where
+    // layout cannot be measured (jsdom reports 0 everywhere) the character
+    // estimate stands in, the same rule the activity rows use. While expanded
+    // the cap is off, so measuring is skipped — the button must stay to toggle
+    // back — and closing the body resets the measure for the next open.
+    const [measuredTall, setMeasuredTall] = useState<boolean | null>(null);
+    useEffect(() => {
+        if (!open || showAll) return;
+        const pres = bodyRef.current?.querySelectorAll('pre');
+        if (!pres || pres.length === 0) { setMeasuredTall(null); return; }
+        const list = [...pres];
+        const measured = list.some(pre => pre.scrollHeight > pre.clientHeight + 2);
+        setMeasuredTall(measured || (list.every(pre => pre.scrollHeight === 0) && toolBodyTall));
+    }, [open, showAll, toolBodyTall]);
+    const toolBodyOverflowing = measuredTall ?? toolBodyTall;
     const [copied, setCopied] = useState(false);
     const copiedTimerRef = useRef<number | null>(null);
     useEffect(() => () => { if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current); }, []);
@@ -120,7 +138,7 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
                 {toolNote && <span className="code-tool-status">{toolNote}</span>}</summary>
             {/* Built only while open: a collapsed call's output can be megabytes,
                 and constructing it costs the same whether or not it is painted. */}
-            {open && <div className="code-tool-body" data-expanded={showAll}>
+            {open && <div ref={bodyRef} className="code-tool-body" data-expanded={showAll}>
                 {item.tool?.detail !== undefined && <p className="code-tool-text">{item.tool.detail}</p>}
                 {toolBlocks.map(block => <section key={block.key} className="code-tool-section">
                     <div className="code-tool-section-head">
@@ -135,7 +153,7 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
                 </section>)}
                 {item.text !== undefined && <pre className="code-tool-text">{item.text}</pre>}
                 {running && item.tool?.output === undefined && <p className="code-tool-waiting">Waiting for output…</p>}
-                {toolBodyTall && <button type="button" className="code-tool-toggle" aria-expanded={showAll}
+                {toolBodyOverflowing && <button type="button" className="code-tool-toggle" aria-expanded={showAll}
                     onClick={() => setShowAll(value => !value)}>{showAll ? 'Show less' : 'Show all'}</button>}
             </div>}
         </details> : reasoning ? <details className="code-thinking" open={open}

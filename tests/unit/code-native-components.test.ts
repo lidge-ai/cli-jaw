@@ -373,14 +373,19 @@ test('a tool card shows the decoded call, its description and a waiting line', b
     const h = await surface(t);
     const heredoc = "ssh host 'cat > file <<EOF\nalpha\nbeta\nEOF'";
     const running = item({ kind: 'tool_call', status: 'running',
-        tool: { name: 'bash', input: JSON.stringify({ command: heredoc, description: 'Deploy the config' }) } });
+        tool: { name: 'bash', input: JSON.stringify({ command: heredoc, timeout: 30, cwd: '/work/repo', description: 'Deploy the config\nThen verify workers' }) } });
     await h.render(createElement(CodeTranscriptItem, { item: running, provider: 'cursor', sessionKey: 's', expanded: true }));
     assert.match(h.container.textContent ?? '', /Running ssh host/, 'the label is the decoded first line');
+    // The row borrows one line of the description; the body keeps all of it.
     assert.equal(h.container.querySelector('.code-tool-desc')?.textContent, 'Deploy the config');
+    assert.equal(h.container.querySelector('pre.code-tool-text')?.textContent, 'Deploy the config\nThen verify workers');
     // The Input block is the command with real newlines, never the JSON envelope.
     const args = h.container.querySelector<HTMLElement>('pre.code-tool-args');
     assert.equal(args?.textContent, heredoc);
     assert.ok(button(h.container, 'Copy input'), 'the command offers a copy button');
+    // Envelope fields beyond the command stay visible instead of disappearing.
+    assert.equal(h.container.querySelector('pre.code-tool-json')?.textContent,
+        JSON.stringify({ timeout: 30, cwd: '/work/repo' }, null, 2));
     // A call in flight with nothing back yet reads as waiting, not a blank box.
     assert.match(h.container.textContent ?? '', /Waiting for output…/);
     assert.equal(h.container.querySelector('pre.code-tool-output'), null);

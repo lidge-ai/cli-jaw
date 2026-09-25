@@ -85,6 +85,25 @@ test('the expanded input block decodes commands and pretty-prints the rest', () 
     assert.equal(toolInputDisplay(undefined), null);
 });
 
+test('a command envelope keeps its extra fields as parameters and its description in full', () => {
+    const display = toolInputDisplay(JSON.stringify({ command: 'npm test', timeout: 30, cwd: '/work/repo', description: 'first\nsecond' }));
+    assert.equal(display?.command, true);
+    assert.equal(display?.content, 'npm test');
+    assert.equal(display?.parameters, JSON.stringify({ timeout: 30, cwd: '/work/repo' }, null, 2),
+        'envelope fields beyond the command and description stay visible');
+    assert.equal(display?.description, 'first\nsecond', 'the body keeps the whole description, not just the row\'s line');
+    // No extra envelope fields, no Parameters block.
+    assert.equal(toolInputDisplay(JSON.stringify({ command: 'npm test' }))?.parameters, null);
+    assert.equal(toolInputDisplay(JSON.stringify({ pattern: 'x' }))?.parameters, null, 'non-command calls do not split parameters');
+});
+
+test('a retention-truncated input still decodes its recognised field', () => {
+    const truncated = '{"command": "ssh host \'cat > f <<EOF\\nalpha\\nbeta';
+    const display = toolInputDisplay(truncated);
+    assert.equal(display?.command, true);
+    assert.equal(display?.content, 'ssh host \'cat > f <<EOF\nalpha\nbeta');
+});
+
 test('only actionable states are worth a badge', () => {
     assert.equal(noteworthyStatus(item({ status: 'done' })), null, 'success is the default and needs no label');
     assert.equal(noteworthyStatus(item({ status: 'running' })), 'Running');
