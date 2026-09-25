@@ -1,151 +1,86 @@
 #!/usr/bin/env bash
-# verify-counts.sh — str_func.md 파일 트리 항목의 멤버십(경로 존재) 검증
-# Usage: bash structure/verify-counts.sh [--fix]
-# --fix is accepted as a no-op for backward compatibility.
-
+# verify-counts.sh — structure/str_func.md file-tree membership check.
+#
+# str_func.md is a membership map: every file entry ("├── name ← description")
+# must resolve to a real tracked path. It no longer records line or file counts;
+# those were derived values that conflicted on every stacked merge.
+#
+# Usage: bash structure/verify-counts.sh [--verbose] [--fix]
+#   --verbose  list every tracked file that has no str_func.md entry (advisory)
+#   --fix      accepted for backward compatibility; there is nothing to repair
+# Exit: 0 when every listed path exists, 1 otherwise. The advisory list never fails.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Portable matcher: prefer ripgrep, fall back to grep -E when rg is not on PATH.
-if ! command -v rg >/dev/null 2>&1; then
-  rg() { grep -E "$@"; }
-fi
-
-DOC="structure/str_func.md"
-FIX=false
-if [[ "${1:-}" == "--fix" ]]; then
-  FIX=true
-  echo "💡 --fix is now a no-op; str_func.md is a membership map with no line counts to repair."
-fi
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-DIM='\033[0;90m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-
-echo -e "${BOLD}📐 str_func.md 멤버십 검증${RESET}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-if [[ ! -f "$DOC" ]]; then
-  echo -e "  ${RED}❌ 문서 없음: $DOC${RESET}"
-  exit 1
-fi
-
-# Advisory: tracked files under src/bin/lib/public/electron/scripts that have no entry in str_func.md.
-advisory_tmp=$(mktemp)
-ADVISORY_SET="${ADVISORY_SET:-src bin lib public electron scripts}"
-ADVISORY_EXCLUDE="${ADVISORY_EXCLUDE:-public/dist}"
-
-# Build a set of paths that str_func.md already mentions (file-tree entries only).
-mentioned_tmp=$(mktemp)
-python3 - "$DOC" <<PY > "$mentioned_tmp"
-import re, sys
-doc = sys.argv[1]
-with open(doc, "r", encoding="utf-8") as f:
-    text = f.read()
-stack = []
-mentioned = set()
-for raw in text.splitlines():
-    m = re.match(r"^([│ ]*)(?:├──|└──)\s+([^←\s]+)", raw)
-    if not m:
-        continue
-    depth = len(m.group(1)) // 4
-    name = m.group(2)
-    if name.endswith("/"):
-        stack[depth:depth+1] = [name[:-1]]
-        stack = stack[:depth+1]
-        continue
-    if "←" not in raw:
-        continue
-    rel = "/".join([p for p in stack[:depth] + [name] if p])
-    mentioned.add(rel)
-for p in sorted(mentioned):
-    print(p)
-PY
-
-for top in $ADVISORY_SET; do
-  if [[ ! -d "$top" ]]; then
-    continue
-  fi
-  git ls-files "$top" | while read -r tracked; do
-    skip=false
-    for ex in $ADVISORY_EXCLUDE; do
-      case "$tracked" in
-        $ex/*) skip=true; break ;;
-      esac
-    done
-    $skip && continue
-    if ! rg -q -Fx "$tracked" "$mentioned_tmp"; then
-      echo "$tracked" >> "$advisory_tmp"
-    fi
-  done
+VERBOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    --verbose) VERBOSE=1 ;;
+    --fix) echo "note: --fix is a no-op; str_func.md carries no counts to repair." ;;
+    *) echo "usage: bash structure/verify-counts.sh [--verbose] [--fix]" >&2; exit 2 ;;
+  esac
 done
 
-# Membership check: every file-tree entry resolves to a real path.
-fail_tmp=$(mktemp)
-python3 - "$DOC" "$fail_tmp" <<PY
-import re, sys, os
-doc = sys.argv[1]
-fail_path = sys.argv[2]
-with open(doc, "r", encoding="utf-8") as f:
-    text = f.read()
-stack = []
-with open(fail_path, "w", encoding="utf-8") as out:
-    for i, raw in enumerate(text.splitlines(), start=1):
-        m = re.match(r"^([│ ]*)(?:├──|└──)\s+([^←\s]+)", raw)
-        if not m:
-            continue
-        depth = len(m.group(1)) // 4
-        name = m.group(2)
-        if name.endswith("/"):
-            stack[depth:depth+1] = [name[:-1]]
-            stack = stack[:depth+1]
-            continue
-        if "←" not in raw:
-            continue
-        rel = "/".join([p for p in stack[:depth] + [name] if p])
-        if not os.path.exists(rel):
-            out.write(f"{rel}\t{i}\n")
-        elif os.path.isdir(rel):
-            out.write(f"{rel}\t{i}\tdirectory\n")
-PY
+VERBOSE="$VERBOSE" node <<'NODE'
+const fs = require('fs');
+const { execFileSync } = require('child_process');
 
-if [[ -s "$fail_tmp" ]]; then
-  while IFS=$'\t' read -r fpath line kind; do
-    if [[ "$kind" == "directory" ]]; then
-      echo -e "  ${RED}❌ $fpath (line $line) — 트리 항목이 디렉터리를 가리킴${RESET}"
-    else
-      echo -e "  ${RED}❌ $fpath (line $line) — 경로가 존재하지 않음${RESET}"
-    fi
-    FAIL=$((FAIL + 1))
-  done < "$fail_tmp"
-else
-  echo -e "  ${GREEN}✅ 파일 트리 항목 — 모두 실제 경로로 존재${RESET}"
-  PASS=$((PASS + 1))
-fi
+const DOC = 'structure/str_func.md';
+if (!fs.existsSync(DOC)) {
+  console.log(`❌ missing ${DOC}`);
+  process.exit(1);
+}
 
-if [[ -s "$advisory_tmp" ]]; then
-  echo ""
-  echo -e "${DIM}📎 advisory: str_func.md 에 미기재된 tracked 파일${RESET}"
-  sort -u "$advisory_tmp" | while read -r tracked; do
-    echo -e "  ${DIM}   $tracked${RESET}"
-  done
-fi
+// Rebuild each entry's path from the tree indentation ("│   " per level).
+const lines = fs.readFileSync(DOC, 'utf8').split('\n');
+const stack = [];
+const listed = [];
+for (let i = 0; i < lines.length; i += 1) {
+  const m = lines[i].match(/^([│ ]*)(?:├──|└──)\s+([^←\s]+)/);
+  if (!m) continue;
+  const depth = Math.floor(m[1].length / 4);
+  const name = m[2];
+  if (name.endsWith('/')) {
+    stack[depth] = name.slice(0, -1);
+    stack.length = depth + 1;
+    continue;
+  }
+  if (!lines[i].includes('←')) continue;
+  listed.push({ rel: [...stack.slice(0, depth), name].filter(Boolean).join('/'), line: i + 1 });
+}
 
-rm -f "$fail_tmp" "$advisory_tmp" "$mentioned_tmp"
+// Entries under a submodule that is not checked out (promotion clones use
+// --no-recurse-submodules) cannot be verified here; report them, never fail on them.
+let submodules = [];
+try {
+  submodules = execFileSync('git', ['config', '-f', '.gitmodules', '--get-regexp', 'path'], { encoding: 'utf8' })
+    .split('\n').map((l) => l.split(' ')[1]).filter(Boolean);
+} catch { /* no .gitmodules */ }
+const uninitialised = submodules.filter((dir) => !fs.existsSync(dir) || fs.readdirSync(dir).length === 0);
+const underUninitialised = (rel) => uninitialised.some((dir) => rel === dir || rel.startsWith(dir + '/'));
+const skipped = listed.filter(({ rel }) => underUninitialised(rel));
+const missing = listed.filter(({ rel }) => !underUninitialised(rel) && (!fs.existsSync(rel) || !fs.statSync(rel).isFile()));
+console.log('📐 str_func.md membership');
+for (const { rel, line } of missing) console.log(`  ❌ ${rel} (str_func.md:${line}) — no such file`);
+if (missing.length === 0) console.log(`  ✅ ${listed.length - skipped.length} file entries resolve to real files`);
+if (skipped.length > 0) console.log(`  ⏭️  ${skipped.length} entries skipped: submodule not checked out (${uninitialised.join(', ')})`);
 
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if [[ $FAIL -eq 0 ]]; then
-  echo -e "  ${GREEN}${BOLD}🎉 ALL PASS — 멤버십 일치${RESET}"
-  exit 0
-else
-  echo -e "  ${RED}${BOLD}💥 MEMBERSHIP CHECK FAILED — ${FAIL} issue(s)${RESET}"
-  exit 1
-fi
+// Advisory only: tracked source files with no entry. Never fails the check.
+let tracked = [];
+try {
+  tracked = execFileSync('git', ['ls-files', '--', 'src', 'bin', 'lib', 'public', 'electron', 'scripts'], { encoding: 'utf8' })
+    .split('\n').filter((p) => p && !p.startsWith('public/dist/'));
+} catch {
+  console.log('  (advisory skipped: git ls-files unavailable)');
+}
+const listedSet = new Set(listed.map((e) => e.rel));
+const unlisted = tracked.filter((p) => !listedSet.has(p));
+if (unlisted.length > 0) {
+  const show = process.env.VERBOSE === '1' ? unlisted : unlisted.slice(0, 20);
+  console.log(`  📎 advisory: ${unlisted.length} tracked file(s) have no entry${process.env.VERBOSE === '1' ? '' : ' (first 20; --verbose for all)'}`);
+  for (const p of show) console.log(`     ${p}`);
+}
+process.exit(missing.length === 0 ? 0 : 1);
+NODE

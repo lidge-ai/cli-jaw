@@ -481,15 +481,18 @@ const GATES = {
         },
     },
     'doc-drift': {
-        description: 'no tracked file carries merge conflict markers (every run) + structure docs match live inventory (local only)',
+        description: 'no tracked file carries merge conflict markers (every run) + structure docs match live inventory',
         check() {
             // A merge that commits its own conflict markers is the one docs
-            // failure CI has to catch, and nothing did: the #660 merge landed 14
-            // unresolved blocks on dev (README.md, AGENTS.md, CLAUDE.md,
-            // structure/str_func.md) and gate:all still went green, because the
-            // inventory steps below are skipped on CI and nothing else reads
-            // those files' contents. This scan is a string match on tracked
-            // paths — platform-neutral — so it runs before that skip.
+            // failure CI has to catch: the #660 merge landed 14 unresolved
+            // blocks on dev (README.md, AGENTS.md, CLAUDE.md,
+            // structure/str_func.md) while gate:all stayed green. This scan is a
+            // string match on tracked paths, platform-neutral, and runs first.
+            //
+            // The inventory steps below used to be skipped on CI because
+            // str_func.md carried line counts that differ per checkout (no
+            // public/dist, different tracked-file set). str_func.md is now a
+            // membership map checked against tracked paths, so they run on CI too.
             const markers = trackedConflictMarkers();
             if (markers.error) return { ok: false, detail: markers.error };
             if (markers.hits.length) {
@@ -500,12 +503,6 @@ const GATES = {
             const unscanned = markers.unscanned?.length
                 ? ` (not scanned, uninitialised submodule(s): ${markers.unscanned.join(', ')})`
                 : '';
-            // CI runners produce platform-dependent file/line inventories
-            // (no public/dist, different tracked-file set) that this gate
-            // cannot reconcile; it stays a local/pre-release discipline gate.
-            if (process.env.CI) {
-                return { ok: true, detail: `conflict-marker scan clean${unscanned}; inventory steps skipped on CI (local/pre-release only)` };
-            }
             const steps = [
                 { name: 'docs:check', cmd: 'npm', args: ['run', 'docs:check', '--silent'], timeout: 120_000 },
                 { name: 'check-doc-drift.sh', cmd: 'bash', args: ['structure/check-doc-drift.sh'], timeout: 120_000 },

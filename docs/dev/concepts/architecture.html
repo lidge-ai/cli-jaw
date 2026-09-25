@@ -121,7 +121,7 @@ jaw dashboard serve → src/manager/ → public/manager/</code></pre>
 <p>Architecture docs are checked by the structure scripts:</p>
 <pre><code>bash structure/verify-counts.sh
 bash structure/check-doc-drift.sh</code></pre>
-<p><code>verify-counts.sh</code> validates every file-tree <code>(NNNL)</code> entry in <code>structure/str_func.md</code>, plus curated aggregate counts. <code>check-doc-drift.sh</code> validates command counts, route tables, and event inventory.</p>
+<p><code>verify-counts.sh</code> checks that every file-tree entry in <code>structure/str_func.md</code> points at a real file (the tree records no line counts). <code>check-doc-drift.sh</code> validates command counts, route tables, and event inventory.</p>
 
 <div class="callout callout-info">
 <strong>Source of truth:</strong> For implementation-level details, start with <code>structure/INDEX.md</code>, then read <code>structure/str_func.md</code>, <code>structure/server_api.md</code>, <code>structure/commands.md</code>, and <code>structure/stream-events.md</code>.

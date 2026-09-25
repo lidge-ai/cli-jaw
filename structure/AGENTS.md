@@ -18,7 +18,7 @@
 - Keep this folder aligned with the live `cli-jaw` tree; `INDEX.md` lists the public architecture docs and support tools.
 - Private plans, audits, evidence, and history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal); request access through an [issue](https://github.com/lidge-ai/cli-jaw/issues). Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth, even when generic skill defaults suggest them. `docs/` and `structure/` are for public product documentation; omit private record paths from public docs and source.
 - Update `INDEX.md` whenever a doc is added, removed, renamed, or re-scoped. Keep the doc map, tier list, and quick links in sync.
-- Update `str_func.md` and `verify-counts.sh` together when source counts, `server.ts`, `src/routes/*`, `src/cli/handlers*.ts`, `src/cli/api-auth.ts`, `src/manager/*` (multi-instance dashboard), `bin/commands/*`, `bin/star-prompt.ts`, `tests/`, `public/`, or generated-dist exclusions change. The verifier now checks every file-tree `(NNNL)` entry in `str_func.md`, not only curated hotspots.
+- Update `str_func.md` file-tree entries when files are added, removed or renamed in `server.ts`, `src/routes/*`, `src/cli/handlers*.ts`, `src/cli/api-auth.ts`, `src/manager/*` (multi-instance dashboard), `bin/commands/*`, `bin/star-prompt.ts`, `tests/`, `public/`, or generated-dist exclusions change. `verify-counts.sh` checks that every file-tree entry in `str_func.md` points at a real file (it records no line counts).
 - `stream-events.md` is the SSE/WS/event-trace companion for `frontend.md`, `server_api.md`, and the ProcessBlock pipeline. Keep `GET /api/events`, replay behavior, and fallback WS current.
 - When a command, API, UI, memory, or orchestration surface changes, sync the relevant doc(s) in this directory in the same change.
 - Route refactors belong in `INDEX.md`, `server_api.md`, `infra.md`, and `str_func.md`. CLI handler splits and auth helper changes belong in `commands.md`, `memory_architecture.md`, `telegram.md`, and `str_func.md`.
@@ -94,7 +94,7 @@ When refreshing docs from recent non-strict commits, check these first:
 - `bin/commands/service.ts` / `src/core/instance-lifecycle.ts`: home-scoped `service stop|restart`, ownership pidfile, and native-service delegation — `commands.md`, root README/AGENTS/CLAUDE.
 - `src/orchestrator/attestation.ts`: PABCD `--attest` evidence gate — `prompt_flow.md`, `INDEX.md`.
 - `src/cli/handlers-skill-invoke.ts`: dynamic `/skill:<id>` — `commands.md`, `INDEX.md`.
-- `src/browser/adaptive-fetch/scheduler.ts` / `src/browser/web-ai/session-artifacts.ts`: adaptive-fetch P0 + web-ai parity wave — `infra.md`, `str_func.md` counts (web-ai 96, adaptive-fetch 34).
+- `src/browser/adaptive-fetch/scheduler.ts` / `src/browser/web-ai/session-artifacts.ts`: adaptive-fetch P0 + web-ai parity wave — `infra.md`, `str_func.md` entries.
 - Keep root `AGENTS.md`, `CLAUDE.md`, `README.md`, and public `docs/dev/` pages aligned with this folder when the architecture map changes.
 
 - The Classic permission selector offers Auto (YOLO) / Safe choices, stored as literal `auto` / `safe`. Server startup preserves the saved policy; never reintroduce the obsolete safe-to-auto coercion. Existing runtime-specific policy support and settings invalidation still apply.

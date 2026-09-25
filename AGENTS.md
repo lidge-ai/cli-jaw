@@ -48,8 +48,8 @@ rebase 중 만나는 충돌은 대개 두 종류이고 해소법이 정해져 �
 - **버전 파일**(`package.json`, `package-lock.json`, `electron/*`): main 쪽을 취한다
   (`--theirs`). 이건 릴리스 장부이지 작업 산출물이 아니다. 오래된 preview 승격
   커밋이 replay 되려 하면 `git rebase --skip` — 버전을 되돌리는 것 말고 하는 일이 없다.
-- **`structure/str_func.md`**: 어느 쪽도 고르지 말고 실제 트리에서 다시 만든다.
-  줄 수는 파생값이다 — `bash structure/verify-counts.sh --fix` 후 재검증.
+- **`structure/str_func.md`**: 파일 트리 항목만 있으므로 양쪽 항목을 합친다.
+  그다음 `bash structure/verify-counts.sh` 로 모든 항목이 실제 파일을 가리키는지 확인한다.
 
 **PR 은 최소 계약만, 크로스플랫폼 CI 는 `dev` push(post-merge)가 담당한다** (opencodex
 모델). `pull_request` 에서 `test.yml` 은 `changes` → { `test 1..4/4`
@@ -387,19 +387,17 @@ npx tsx --experimental-test-module-mocks tests/run.mts --scope unit --shard 2/4 
 - 소스를 정규식으로 검사하는 테스트는 리팩터링 때마다 의미 없이 깨진다. 새로 만들지 말고,
   기존 것이 깨지면 문자열을 갱신하기 전에 **동작 검증으로 교체할 수 있는지** 먼저 볼 것.
 
-### Line Count Format (`str_func.md`)
+### File Tree Format (`str_func.md`)
 
-File tree の行数は **`(NNNL)`** 형식으로 기재. 두 가지 변형 허용:
+`str_func.md` 의 파일 트리는 **멤버십 지도**다. 줄 수·파일 수 같은 파생값은 적지 않는다
+(스택 병합마다 충돌을 만들던 원인이었다).
 
 ```
-├── server.js          ← 설명 (757L)           ← 단순 형식
-├── chat.js            ← 설명 (3모드, ..., 843L) ← 다중 메타 형식
+├── server.ts          ← 설명
 ```
 
-- 숫자 + `L` + `)` 또는 `,` 로 끝나야 detection 가능
-- 검증: `bash structure/verify-counts.sh` (exit code = 불일치 수; 현재는 `str_func.md` 파일 트리의 모든 `(NNNL)` 파일 항목도 검사)
-- 자동 수정: `bash structure/verify-counts.sh --fix`
-- **파일 수정 후 반드시 verify-counts 실행해서 문서 동기화**
+- 검증: `bash structure/verify-counts.sh` — 모든 파일 항목이 실제 파일을 가리켜야 통과 (`gate:doc-drift` 가 CI 에서도 실행)
+- 새 파일은 항목을 추가하고, 지운 파일은 항목도 지운다. 항목이 없는 추적 파일은 `--verbose` 로 볼 수 있다 (권고, 실패 아님)
 
 ### OfficeCLI (On-Demand)
 

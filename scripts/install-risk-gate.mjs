@@ -109,8 +109,7 @@ function runPackageContentsCheck() {
 function structureVerifierSkipReason() {
   if (!hasBash) return 'bash not available';
   if (!existsSync('structure/verify-counts.sh')) return 'structure verifier not available';
-  if (!commandExists('rg')) return 'ripgrep not available';
-  if (!existsSync('public/dist')) return 'public/dist build output not available';
+  // The membership verifier needs only node + git; it no longer reads build output.
   return '';
 }
 
@@ -161,7 +160,7 @@ checks.push(() => run('electron staged sidecar no-JWC contract', npm, ['run', 'c
 }));
 checks.push(() => run('app icon asset contract', npm, ['run', 'check:app-icons']));
 
-checks.push(() => run('structure line-count sync', 'bash', ['structure/verify-counts.sh'], {
+checks.push(() => run('structure tree membership', 'bash', ['structure/verify-counts.sh'], {
   skip: structureVerifierSkipReason(),
 }));
 

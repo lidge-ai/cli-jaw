@@ -9,7 +9,7 @@ aliases: [CLI-JAW Source Structure, str_func, source structure reference]
 # CLI-JAW — Source Structure & Function Reference
 
 > 마지막 검증: 2026-07-10 (image inlay/channel relay SoT sync)
-> Native Code sessions live in `src/code-mode/`; the two HTTP hosts share `src/routes/code-body-parser.ts`. The route inventory and its partial-AST boundary are documented in [server_api.md](server_api.md); runtime ownership and replay are documented in [runtime-integration.md](runtime-integration.md). File-tree entries below are a membership map; run `bash structure/verify-counts.sh` to confirm each listed path exists.
+> Native Code sessions live in `src/code-mode/`; the two HTTP hosts share `src/routes/code-body-parser.ts`. The route inventory and its partial-AST boundary are documented in [server_api.md](server_api.md); runtime ownership and replay are documented in [runtime-integration.md](runtime-integration.md). The file tree below is a membership map checked by `verify-counts.sh`; it records no line counts.
 >
 > 상세 모듈 문서는 [서브 문서](#서브-문서)를 참조하세요.
 
@@ -19,7 +19,7 @@ aliases: [CLI-JAW Source Structure, str_func, source structure reference]
 
 ```text
 cli-jaw/
-├── server.ts                 ← Express 라우트 base + auth/CORS/rate-limit + WS bootstrap + `register*Routes` glue + startup stale orc_state guard + graceful shutdown(closeDb) + employee migration + seed defaults + registerAvatarRoutes + async listen bootstrap (await initActiveMessagingRuntime) + orphaned jaw-emp-* cleanup + clearAllEmployeeSessions startup + no-store Vite index serving
+├── server.ts                 ← Express 라우트 base + auth/CORS/rate-limit + WS bootstrap + `register*Routes()` glue + startup stale orc_state guard + graceful shutdown(closeDb) + employee migration + seed defaults + registerAvatarRoutes + async listen bootstrap (await initActiveMessagingRuntime) + orphaned jaw-emp-* cleanup + clearAllEmployeeSessions startup + no-store Vite index serving
 ├── lib/                      ← 외부 통합/공용 헬퍼 (root files + mcp/)
 │   ├── mcp-sync.ts           ← MCP 통합 + 스킬 복사 + softResetSkills + runSkillReset + trusted repair gate + clone cooldown
 │   ├── mcp/                  ← MCP 모듈 분리
@@ -43,7 +43,7 @@ cli-jaw/
 │   │   ├── compact.ts        ← compact 헬퍼 (COMPACT_MARKER_CONTENT, managed summary builder, cutoff logic, harvestGitGrep + harvestChatGrep 1KB/1KB budget split)
 │   │   ├── instance.ts       ← 인스턴스 ID, node/jaw 경로, 유닛명 sanitize
 │   │   ├── session-generation.ts ← persistent chat_sessions.generation (not process-local spawn tokens)
-│   │   ├── db.ts             ← SQLite 스키마 + prepared statements + trace + tool_log + working_dir migration + user_version schema migration + closeDb WAL checkpoint + checkOrphanedWal + busy_timeout + clearMessagesScoped + queued_messages table + model-aware clearEmployeeSession + getRecentMessagesLite + searchMessages(days+recent scope) + getMessageContext(±N range)
+│   │   ├── db.ts             ← SQLite 스키마 + prepared statements + trace + tool_log + working_dir migration + user_version schema migration + closeDb() WAL checkpoint + checkOrphanedWal + busy_timeout + clearMessagesScoped + queued_messages table + model-aware clearEmployeeSession + getRecentMessagesLite + searchMessages(days+recent scope) + getMessageContext(±N range)
 │   │   ├── db-maintenance.ts ← legacy tool_log 재살균 1회 마이그레이션(schema_migrations 마커) + page/freelist 통계 + checkpoint+VACUUM (`jaw db maintain`)
 │   │   ├── chat-sessions.ts  ← 채팅 세션 CRUD + 활성 세션 전환
 │   │   ├── rate-limit.ts     ← 클라이언트 클래스별(cli/manager/browser/lan/remote) 슬라이딩 윈도 리미터 + atomic peek/commit + Retry-After 미들웨어 팩토리
@@ -57,7 +57,7 @@ cli-jaw/
 │   │   ├── runtime-settings.ts ← settings side effects 통합 helper
 │   │   ├── runtime-settings-gate.ts ← settings mutation in-flight gate
 │   │   ├── codex-config.ts   ← Codex config.toml read-only diagnostics
-│   │   ├── runtime-path.ts   ← buildServicePath PATH 보강 (nvm/fnm/homebrew/volta/asdf/cargo/bun/yarn/pnpm 14+ dirs) + win32 MSYS/Cygwin 항목 정규화
+│   │   ├── runtime-path.ts   ← buildServicePath() PATH 보강 (nvm/fnm/homebrew/volta/asdf/cargo/bun/yarn/pnpm 14+ dirs) + win32 MSYS/Cygwin 항목 정규화
 │   │   ├── noninteractive-path.ts ← 비대화형 셸(ssh 원샷)에서 jaw 해석 가능 여부 판정 + 처방 (#479)
 │   │   ├── cli-detect.ts     ← PATH 후보 spawnability 검사 + rejected candidate reason 수집
 │   │   ├── browser-open.ts   ← 브라우저 open 정책/명령 실행 helper
@@ -163,7 +163,7 @@ cli-jaw/
 │   │   │   ├── summary.ts    ← event summary formatters
 │   │   │   ├── tool-labels.ts ← tool name→label mapping
 │   │   │   └── types.ts      ← event type definitions
-│   │   ├── spawn-env.ts      ← spawn용 child env 빌더 (AGY NO_COLOR, OpenCode/Gemini permissions config 주입 등,)
+│   │   ├── spawn-env.ts      ← spawn용 child env 빌더 (AGY NO_COLOR, OpenCode/Gemini permissions config 주입 등)
 │   │   ├── args.ts           ← CLI별 인자 빌더 + AGY print-mode/`--log-file`/`--conversation` resume args + Pi session bucket 분리
 │   │   ├── agy-bootstrap.ts  ← AGY bootstrap/context preparation helpers
 │   │   ├── agy-capabilities.ts ← AGY `--help`/`--version` capability probe + cached optional flag support map + legacy emit-all fallback marker
@@ -423,7 +423,7 @@ cli-jaw/
 │   │   └── web-ai/           ← Web AI 브라우저 자동화 (96 TS files; ChatGPT/Gemini/Grok + session-artifacts/capability-probe/tier-timeout/watcher-lock)
 │   ├── ide/                   ← IDE 연동 (jaw chat TUI 전용)
 │   │   └── diff.ts            ← git diff 감지 + IDE diff 뷰 + 서브모듈 재귀 + fingerprint 비교
-│   ├── project-git-summary.ts ← Web UI header용 read-only primary project git summary helper (`projectDirs[0]`, branch/hash, modified/untracked counts, home path guard,) ✨
+│   ├── project-git-summary.ts ← Web UI header용 read-only primary project git summary helper (`projectDirs[0]`, branch/hash, modified/untracked counts, home path guard) ✨
 │   ├── routes/               ← Express 라우트 추출 (36 TS files: registrar + helper modules + extracted base-route modules, 199 direct app route registrations incl. `/`)
 │   │   ├── code-body-parser.ts ← shared worker/Manager Code envelope policy
 │   │   ├── code-native.ts ← native session API and retired-route responses
@@ -464,7 +464,7 @@ cli-jaw/
 │   │   ├── network-acl.ts    ← isPrivateIP, isAllowedHost, isAllowedOrigin, originMatchesHost, extractHost
 │   │   └── security-audit-log.ts ← SQLite-backed security audit event log ✨
 │   ├── http/                 ← 응답 계약
-│   │   ├── response.ts       ← ok, fail 표준 응답
+│   │   ├── response.ts       ← ok(), fail() 표준 응답
 │   │   ├── async-handler.ts  ← asyncHandler 래퍼
 │   │   └── error-middleware.ts ← notFoundHandler, errorHandler
 │   ├── types/                ← 공유 타입 정의
@@ -493,7 +493,7 @@ cli-jaw/
 │   │   ├── activity-retention.ts ← raw-first pruning and whole-prefix retention
 │   │   ├── runtime-body-codec.ts ← canonical runtime body tuples + contextual redaction
 │   │   ├── store.ts          ← startTraceRun + appendTraceEvent + stampTraceTool + finalizeTraceRun + pruneTraceEvents
-│   │   ├── retention.ts      ← startTraceRetention: boot prune + 6h sweep, {stop, stopped} 핸들 (server.ts shutdown 이 소유)
+│   │   ├── retention.ts      ← startTraceRetention: boot prune + 6h sweep, {stop(), stopped} 핸들 (server.ts shutdown 이 소유)
 │   │   ├── types.ts          ← TraceRunInput, TraceEventInput, TracePointer, TraceRunRow 타입
 │   │   └── redact.ts         ← trace event redaction helpers
 │   ├── shared/               ← shared runtime, presentation and policy contracts
@@ -513,7 +513,7 @@ cli-jaw/
 │   │   ├── tool-log-sanitize.ts ← tool log sanitization helpers
 │   │   └── reminders/tray-triage.ts ← tray reminder badge/count triage helper
 │   │   └── shell-command-display.ts ← shell command display formatter
-│   ├── manager/              ← Multi-instance 대시보드 매니저 (100 TS/TSX files; +telegram-hub/ forum topic routing; design workspace routes; embedded-browser routes; project pick; git scm-snapshot/scm-operation)
+│   ├── manager/              ← Multi-instance 대시보드 매니저 (+telegram-hub/ forum topic routing; design workspace routes; embedded-browser routes; project pick; git scm-snapshot/scm-operation)
 │   ├── team/                 ← Team dispatch planner ✨
 │   │   ├── planner.ts        ← team task planning logic
 │   │   ├── collector.ts      ← team result collector
@@ -555,7 +555,7 @@ cli-jaw/
 │       ├── checkpoint/       ← checkpoint store + types ✨
 │       ├── permissions/      ← permission policy + types ✨
 │       └── context-map/      ← context map builder ✨
-├── public/                   ← Web UI (Vite 8 + ES Modules, source/assets; generated `public/dist` and `public/public/dist` excluded)
+├── public/                   ← Web UI (Vite 8 + ES Modules, source/assets,; generated `public/dist` and `public/public/dist` excluded)
 │   ├── settings/ ← standalone instance settings entry
 │   │   └── index.html ← Classic settings iframe HTML
 │   ├── index.html            ← 뼈대 + header project/git status anchor
@@ -578,7 +578,7 @@ cli-jaw/
 │   │   ├── pages/manager/Embedding.tsx ← dedicated memory API settings
 │   │   └── pages/manager/TelegramHub.tsx ← shared Shell dirty owner for Hub API
 │   ├── locales/              ← i18n (ko/en/ja/zh .json)
-│   └── js/                   ← (root + features/ + diagram/ + render/, 전 파일 TypeScript)
+│   └── js/                   ← (root 21 + features/ 70 + diagram/ 3 + render/ 20, 전 파일 TypeScript; `features/project-git-status.ts`)
 │       ├── bounded-api.ts    ← bounded authenticated JSON reads and decision writes
 │       ├── ws.ts             ← legacy event dispatch plus scoped snapshot/native request bridge
 │       ├── features/
@@ -593,7 +593,7 @@ cli-jaw/
 │       └── render/
 │           ├── markdown.ts   ← marked/sanitize pipeline + `/media`/guarded `/api/image` inline media rewrite
 │           └── delegations.ts ← one-time document capture image-error delegation + render delegation registry
-├── electron/                 ← Electron tray background app ✨
+├── electron/                 ← Electron tray background app (41 TS/TSX files) ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
 │       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC
@@ -610,11 +610,11 @@ cli-jaw/
 │   ├── agent-driven.ts       ← 에이전트·CI 실행 감지, 동의 프롬프트를 유저에게 넘기는 판단
 │   ├── postinstall.ts        ← npm install 후 CLI 런타임/MCP/스킬 safe 가드; OfficeCLI는 postinstall 자동설치가 아니라 `scripts/install-officecli.sh` 온디맨드 설치
 │   ├── helpers/help.ts       ← CLI help text helper
-│   └── commands/             ← `tui/` helper 모듈
+│   └── commands/             ← top-level ts files + `tui/` helper 모듈
 │       ├── serve.ts          ← 서버 시작 (--port/--host/--open) + SIGINT child.kill('SIGINT') orphan fix
 │       ├── dispatch.ts       ← 직원 호출 (pipe mode 호환) + default safe live progress follow + `--quiet`/`--json` quiet paths + virtual employee dispatch + batch dispatch safe summary + stale/non-JSON route diagnostics + worker result polling + ECONNREFUSED retry
-│       ├── chat.ts           ← 터미널 채팅 TUI (3모드, locale bootstrap, refreshInfo, active model 표시, no-arg `/model`·`/cli` selector intercept, transcript 축적, overlay wiring, batched key tokenization, settings snapshot,)
-│       ├── chat-search.ts    ← 채팅 메시지 히스토리 검색 (--days/--recent/--context/--limit,)
+│       ├── chat.ts           ← 터미널 채팅 TUI (3모드, locale bootstrap, refreshInfo, active model 표시, no-arg `/model`·`/cli` selector intercept, transcript 축적, overlay wiring, batched key tokenization, settings snapshot)
+│       ├── chat-search.ts    ← 채팅 메시지 히스토리 검색 (--days/--recent/--context/--limit)
 │       ├── goal.ts           ← goal autonomy CLI (start/status/pause/resume/stop) ✨
 │       ├── project.ts        ← project directory management CLI ✨
 │       ├── lock.ts           ← instance lock/unlock for process protection
@@ -626,15 +626,15 @@ cli-jaw/
 │       ├── status.ts         ← 서버 상태 (--json)
 │       ├── mcp.ts            ← MCP 관리 (install/sync/list/reset)
 │       ├── skill.ts          ← 스킬 관리 (install/remove/info/list/reset soft·hard)
-│       ├── employee.ts       ← 직원 관리 (list/reset, REST API 호출, JSON/table 출력,)
+│       ├── employee.ts       ← 직원 관리 (list/reset, REST API 호출, JSON/table 출력)
 │       ├── worker.ts         ← 직원 progress status/watch CLI + explicit raw `read <runId>` output reader + employee name/id/runId resolver + safe-summary printer
 │       ├── reset.ts          ← 전체 초기화 (MCP/스킬/직원/세션)
 │       ├── clone.ts          ← 인스턴스 복제 (--from, --with-memory, regenerateB)
 │       ├── memory.ts         ← 메모리 CLI (search/read/save/list/init, --chat 통합검색)
 │       ├── launchd.ts        ← macOS LaunchAgent 관리
-│       ├── service.ts        ← 크로스 플랫폼 서비스 관리 (systemd/launchd/docker,)
+│       ├── service.ts        ← 크로스 플랫폼 서비스 관리 (systemd/launchd/docker)
 │       ├── orchestrate.ts    ← IPABCD 상태 제어 CLI (jaw orchestrate [I|P|A|B|C|D|reset]) + Phase60 --attest evidence arg + x-jaw-boss-token header attach
-│       ├── browser.ts        ← 브라우저 CLI (primitive + tab/debug + web-ai delegator,)
+│       ├── browser.ts        ← 브라우저 CLI (primitive + tab/debug + web-ai delegator)
 │       ├── browser-web-ai.ts ← `jaw browser web-ai` ChatGPT/Gemini/Grok 자동화 helper
 │       ├── dashboard.ts      ← `jaw dashboard serve` + dashboard memory delegation
 │       ├── dashboard-memory.ts ← `jaw dashboard memory` L2 federation CLI helper
@@ -648,7 +648,7 @@ cli-jaw/
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 ├── scripts/                  ← 도구 스크립트 (TypeScript + Shell + CJS; atomic build, sidecar bundle, release gates, install-risk evidence)
 ├── officecli/                ← OfficeCLI 포크 서브모듈 (lidge-jun/OfficeCLI, Apache 2.0)
-├── skills_ref/               ← 레퍼런스 스킬 (top-level dirs)
+├── skills_ref/               ← 레퍼런스 스킬
 │   ├── registry.json         ← public reference skill registry + `codex-imagegen` metadata
 │   └── codex-imagegen/
 │       └── SKILL.md          ← Codex native image generation, uploads 저장, web/channel 중복 방지 계약
@@ -737,9 +737,9 @@ graph LR
 15. **Kiro provider**: `kiro-auth.ts` (auth store reader) + `kiro-models.ts` (live inventory) + `kiro-runtime.ts` (stdout parser) + `registry-live.ts` (dynamic merge)
 16. **Pi runtime**: `pi-runtime.ts` + `settings.pi` + `/api/pi/profiles/register` — first-class RPC runtime with isolated profile config and model discovery
 17. **Interview enhancement**: `orchestrator/friction.ts` (5-level clarity + oscillation detection) + `seed.ts` (evidence-ref ontology) + `sanitize.ts` (tracker strip) + pipeline.ts budget gate
-18. **TUI**: `src/cli/tui/`  — event normalizer + transcript model + composer (paste collapse) + overlay (help/palette/selector) + slash-surface + settings-screen + text-buffer + theme + render/ sub-modules; `bin/commands/tui/`  — SSE-first `channel.ts`, fullscreen/simple mode + `raw-pipe-mode` (piped `--raw` NDJSON protocol) + input-handler + ws-handler
+18. **TUI**: `src/cli/tui/` — event normalizer + transcript model + composer (paste collapse) + overlay (help/palette/selector) + slash-surface + settings-screen + text-buffer + theme + render/ sub-modules; `bin/commands/tui/` — SSE-first `channel.ts`, fullscreen/simple mode + `raw-pipe-mode` (piped `--raw` NDJSON protocol) + input-handler + ws-handler
 19. **Electron tray**: `electron/` — sidecar-first packaged server spawn, tray CLI install flow, deep-link, terminal IPC, folder/drop path IPC, navigation policy, permission diagnostics
-20. **Adaptive fetch**: `src/browser/adaptive-fetch/`  — multi-strategy web fetch (direct → reader API → browser escalation) with WAF detection + content scoring
+20. **Adaptive fetch**: `src/browser/adaptive-fetch/` — multi-strategy web fetch (direct → reader API → browser escalation) with WAF detection + content scoring
 21. **Team dispatch**: `src/team/` — planner/collector/dispatcher/preflight for structured multi-employee coordination
 22. **Jaw CEO**: `src/jaw-ceo/` — OpenAI Realtime API sideband channel + coordinator (admin/workers/completions/realtime-tools)
 23. **SSE event channel**: `src/core/event-bus.ts` + `src/routes/events.ts` + `public/js/event-channel.ts` provide `GET /api/events` with replay; worker-run lifecycle publishes safe `worker_run_*` events through the same topic/replay path and bgtask/worker-run payloads share additive `statusCategory` vocabulary; `public/js/ws.ts` remains the legacy browser fallback dispatcher and `bin/commands/tui/channel.ts` provides the SSE-first terminal chat transport.
