@@ -1,3 +1,5 @@
+import { currentClientPlatform, isMacLikePlatform } from '../client-platform';
+
 export type FolderShortcutAction = 'copy-path' | 'copy-relative-path' | 'reveal-path' | 'start-chord' | 'cancel-chord';
 
 type KeyboardLike = {
@@ -20,14 +22,8 @@ export type FolderClickModifierLike = {
     ctrlKey: boolean;
 };
 
-function platformLooksMac(platform: string): boolean {
-    return /mac|iphone|ipad|ipod/i.test(platform);
-}
-
 export function currentFolderShortcutPlatform(): string {
-    if (typeof navigator === 'undefined') return '';
-    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-    return nav.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
+    return currentClientPlatform();
 }
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
@@ -40,14 +36,14 @@ export function isEditableShortcutTarget(target: EventTarget | null): boolean {
 }
 
 export function isPlatformToggleClick(event: FolderClickModifierLike, platform = currentFolderShortcutPlatform()): boolean {
-    return platformLooksMac(platform) ? event.metaKey : event.ctrlKey;
+    return isMacLikePlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
 export function folderShortcutAction(event: KeyboardLike, options: FolderShortcutOptions): FolderShortcutAction | null {
     if (isEditableShortcutTarget(event.target ?? null)) return null;
     const key = event.key.toLowerCase();
     const code = event.code ?? '';
-    const isMac = platformLooksMac(options.platform ?? currentFolderShortcutPlatform());
+    const isMac = isMacLikePlatform(options.platform ?? currentFolderShortcutPlatform());
     const primary = isMac ? event.metaKey : event.ctrlKey;
     const quickModifier = primary && event.altKey && !event.shiftKey;
 

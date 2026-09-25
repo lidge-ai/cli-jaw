@@ -199,7 +199,10 @@ function normalizeShortcutChord(value: unknown, fallback: string): string {
     if (parts.length === 0) return fallback;
     return parts.map(part => {
         const lower = part.toLowerCase();
-        if (lower === 'cmd' || lower === 'meta') return 'Meta';
+        // Meta is the primary modifier (⌘ on macOS, Ctrl elsewhere); Win keeps
+        // the physical Windows/Super key. The client resolves both at match time.
+        if (lower === 'cmd' || lower === 'meta' || lower === 'command' || lower === 'mod') return 'Meta';
+        if (lower === 'win' || lower === 'windows' || lower === 'super') return 'Win';
         if (lower === 'ctrl' || lower === 'control') return 'Ctrl';
         if (lower === 'alt' || lower === 'option') return 'Alt';
         if (lower === 'shift') return 'Shift';

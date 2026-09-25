@@ -164,7 +164,8 @@ test('settings shortcut captures ordinary inputs once and yields to keybinding e
     Object.defineProperty(globalThis, 'Element', { configurable: true, value: dom.window.Element });
     const actions: string[] = [];
     let bubbled = 0;
-    const handler = createManagerCaptureKeydownHandler(() => DEFAULT_MANAGER_SHORTCUT_KEYMAP, action => actions.push(action));
+    // Meta is the primary modifier; pin macOS so metaKey is the expected chord on every CI OS.
+    const handler = createManagerCaptureKeydownHandler(() => DEFAULT_MANAGER_SHORTCUT_KEYMAP, action => actions.push(action), { platform: 'MacIntel' });
     dom.window.addEventListener('keydown', handler, true);
     dom.window.document.addEventListener('keydown', () => { bubbled++; });
     const key = () => new dom.window.KeyboardEvent('keydown', { key: ',', metaKey: true, bubbles: true, cancelable: true });
@@ -250,7 +251,7 @@ test('App host guards real settings drafts through document and desktop subscrip
         latest = props;
         React.useEffect(() => {
             if (!props.view.dashboardShortcutsEnabled) return;
-            const handler = createManagerCaptureKeydownHandler(() => props.view.dashboardShortcutKeymap, props.onShortcutAction);
+            const handler = createManagerCaptureKeydownHandler(() => props.view.dashboardShortcutKeymap, props.onShortcutAction, { platform: 'MacIntel' });
             window.addEventListener('keydown', handler, true);
             return () => window.removeEventListener('keydown', handler, true);
         }, [props.view.dashboardShortcutsEnabled, props.view.dashboardShortcutKeymap, props.onShortcutAction]);

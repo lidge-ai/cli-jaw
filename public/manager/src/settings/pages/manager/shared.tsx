@@ -53,7 +53,7 @@ const COPY = {
             shortcuts: {
                 label: '전역 단축키',
                 scope: 'Manager dashboard',
-                description: '입력창과 에디터 바깥에서만 작동하는 Manager 이동 단축키를 켭니다.',
+                description: '입력창과 에디터 바깥에서만 작동하는 Manager 이동 단축키를 켭니다. Meta는 macOS에서 ⌘, Windows·Linux에서 Ctrl이고, Windows 키는 Win으로 적습니다.',
             },
             shortcutFocusInstances: {
                 label: '인스턴스 목록',
@@ -244,7 +244,7 @@ const COPY = {
             shortcuts: {
                 label: 'Global shortcuts',
                 scope: 'Manager dashboard',
-                description: 'Enable Manager navigation shortcuts outside inputs and editors.',
+                description: 'Enable Manager navigation shortcuts outside inputs and editors. Meta means ⌘ on macOS and Ctrl on Windows/Linux; write Win for the Windows key.',
             },
             shortcutFocusInstances: {
                 label: 'Instance list',
@@ -435,7 +435,7 @@ const COPY = {
             shortcuts: {
                 label: '全局快捷键',
                 scope: 'Manager dashboard',
-                description: '在输入框和编辑器外启用 Manager 导航快捷键。',
+                description: '在输入框和编辑器外启用 Manager 导航快捷键。Meta 在 macOS 上是 ⌘，在 Windows/Linux 上是 Ctrl；Windows 键请写作 Win。',
             },
             shortcutFocusInstances: {
                 label: '实例列表',
@@ -626,7 +626,7 @@ const COPY = {
             shortcuts: {
                 label: 'グローバルショートカット',
                 scope: 'Manager dashboard',
-                description: '入力欄とエディタ外で Manager ナビゲーションショートカットを有効にします。',
+                description: '入力欄とエディタ外で Manager ナビゲーションショートカットを有効にします。Meta は macOS では ⌘、Windows/Linux では Ctrl です。Windows キーは Win と書きます。',
             },
             shortcutFocusInstances: {
                 label: 'インスタンス一覧',

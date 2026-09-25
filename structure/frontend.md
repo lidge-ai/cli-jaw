@@ -303,6 +303,8 @@ settings.ts (barrel)
 
 `AppChrome`이 capture-phase window keydown(`createManagerCaptureKeydownHandler`)으로 `toggleLeftSidebar` / `toggleRightPanel` / `resetSidebarWidth`를 포커스된 에디터보다 먼저 처리한다. `[data-keybinding-capture]` 조상이 있으면 건너뛴다. keymap 기본값(`Meta+B` 우측, `Meta+Shift+B` 좌측)은 바뀌지 않았다. 레일 버튼은 32px, 아이콘 18px stroke 1.5, active는 `--sidebar-row-active` + 왼쪽 2px `--accent`.
 
+Keymap `Meta`(`Cmd`/`Command`/`Mod`)는 주 수정자다. 클라이언트 플랫폼(`public/manager/src/client-platform.ts`, `userAgentData.platform` → `navigator.platform` → `userAgent`)이 macOS면 ⌘, Windows/Linux면 Ctrl로 해석하며 Electron 메뉴의 `CommandOrControl`과 같다. 서버 `process.platform`은 쓰지 않는다(원격 접속 시 화면 쪽 OS와 다를 수 있음). 물리 Windows/Super 키는 `Win`/`Super` 토큰이다. 저장된 `Meta+…` 문자열은 바꾸지 않고 해석만 바뀌며, `formatShortcut`은 macOS에서 `⌘⇧B`, 그 외에서 `Ctrl + Shift + B`로 표기한다. 메뉴 소유 chord 판정도 같은 해석을 써서 Windows 데스크톱의 Ctrl+W가 두 번 실행되지 않는다. 명령 팔레트(`useCommandPalette`)와 폴더 패널도 같은 helper를 쓴다.
+
 Sidebar width keeps the user's preferred value separate from the displayed, viewport-clamped value. Opening a right panel or narrowing the window does not overwrite the preference; space returning restores it. Pointer completion and handled resize arrows persist the latest width. Unavailable browser storage leaves resizing usable in memory.
 
 ### Manager sidebar rows (260902 t3 shell polish, wp3)
