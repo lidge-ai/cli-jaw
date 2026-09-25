@@ -172,13 +172,13 @@ export function StatusBadge({ tone, children }: { tone: StatusTone; children: Re
     );
 }
 
-export type KeyValueItem = { label: string; value: ReactNode; mono?: boolean };
+export type KeyValueItem = { label: string; value: ReactNode; mono?: boolean; className?: string };
 
 export function SettingsKeyValue({ items }: { items: ReadonlyArray<KeyValueItem> }) {
     return (
         <dl className="settings-kv">
             {items.map((item, index) => (
-                <div className="settings-kv-row" key={index}>
+                <div className={item.className ? `settings-kv-row ${item.className}` : 'settings-kv-row'} key={index}>
                     <dt>{item.label}</dt>
                     <dd className={item.mono ? 'settings-kv-mono' : undefined}>{item.value}</dd>
                 </div>

@@ -10,6 +10,7 @@ import { ChipListField, SelectField } from '../fields';
 import {
     SettingsSection,
     SettingsNote,
+    SettingsKeyValue,
     StatusBadge,
     type StatusTone,
     PageError,
@@ -123,7 +124,7 @@ export function isAllowlistValid(tokens: ReadonlyArray<string>): boolean {
 }
 
 // Badge tone for the saved-policy readout: Auto (YOLO) is the risky policy,
-// Unrecognized needs attention, Safe/Custom/Not provided read neutrally.
+// Safe reads as healthy, Unrecognized needs attention, Custom/Not provided read neutrally.
 function configuredPolicyTone(value: unknown): StatusTone {
     if (value === 'auto') return 'warn';
     if (value === 'safe') return 'ok';
@@ -284,15 +285,13 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
             >
                 {/* `.settings-readonly-line` is a test contract: its textContent
                     must read "Configured policy: <label>". */}
-                <dl className="settings-kv">
-                    <div className="settings-kv-row settings-readonly-line">
-                        <dt>Configured policy:</dt>
-                        <dd>
-                            {' '}
-                            <StatusBadge tone={policyTone}>{activeSummary}</StatusBadge>
-                        </dd>
-                    </div>
-                </dl>
+                <SettingsKeyValue
+                    items={[{
+                        label: 'Configured policy:',
+                        value: <>{' '}<StatusBadge tone={policyTone}>{activeSummary}</StatusBadge></>,
+                        className: 'settings-readonly-line',
+                    }]}
+                />
                 {original?.mode === 'unknown' && (
                     <SettingsNote>
                         Unrecognized value: choose a policy below (or in Agent) to replace it.

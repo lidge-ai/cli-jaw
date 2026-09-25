@@ -12,7 +12,7 @@ type Props = {
 export function InlineWarn({ children, tone = 'warn', role = 'note' }: Props) {
     const className = tone === 'warn'
         ? 'settings-card-note settings-card-note-warn'
-        : 'settings-card-note';
+        : 'settings-card-note settings-card-note-muted';
     return (
         <p className={className} role={role}>
             {children}
