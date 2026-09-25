@@ -147,6 +147,44 @@ const FORBIDDEN_IN_READY = [
 ];
 
 const GATES = {
+    'dev-ff-main': {
+        description: 'dev branch is fast-forwardable on origin/main',
+        check() {
+            // actions/checkout leaves HEAD detached, so on Actions read the ref the
+            // run was triggered for (push and workflow_dispatch both use
+            // refs/heads/<branch>; pull_request uses refs/pull/* and is skipped).
+            const ghRef = process.env.GITHUB_REF || '';
+            const branch = ghRef.startsWith('refs/heads/')
+                ? ghRef.slice('refs/heads/'.length)
+                : run('git', ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
+            if (branch !== 'dev') {
+                return { ok: true, detail: `not on dev (branch=${branch}); skipped` };
+            }
+            // Always refresh: a stale local origin/main would pass vacuously.
+            const fetched = run('git', ['fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'], { timeout: 60_000 });
+            if (fetched.status !== 0) {
+                return { ok: false, detail: `could not fetch origin/main: ${(fetched.stderr || '').trim()}` };
+            }
+            const ff = run('git', ['merge-base', '--is-ancestor', 'origin/main', 'HEAD']);
+            if (ff.status !== 0) {
+                return { ok: false, detail: 'dev is not fast-forwardable on main: merge/rebase origin/main (AGENTS.md Remote/브랜치 정책)' };
+            }
+            return { ok: true, detail: 'dev is fast-forwardable on origin/main' };
+        },
+    },
+    'agents-size': {
+        description: 'AGENTS.md line-count ratchet',
+        check() {
+            const AGENTS_MD_MAX_LINES = 480; // rounded-up new line count; lowering is the ratchet
+            const text = readFile('AGENTS.md');
+            // Same count as `wc -l`: newline characters.
+            const lines = (text.match(/\n/g) || []).length;
+            if (lines > AGENTS_MD_MAX_LINES) {
+                return { ok: false, detail: `AGENTS.md is ${lines} lines (max ${AGENTS_MD_MAX_LINES}); shrink or document the raise` };
+            }
+            return { ok: true, detail: `AGENTS.md: ${lines}/${AGENTS_MD_MAX_LINES} lines` };
+        },
+    },
     'typecheck': {
         description: 'tsc --noEmit (server + frontend) clean',
         check() {
