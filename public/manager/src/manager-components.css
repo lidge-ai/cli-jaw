@@ -11,6 +11,7 @@
     background: var(--sidebar-row-active, var(--bg-raised));
     border-color: transparent;
     color: var(--accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .rail-collapse-button { margin-left: auto; }
 .manager-shell.is-sidebar-collapsed .rail-collapse-button { margin-left: 0; }
@@ -559,7 +560,8 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
 .instance-session-row:hover:not(:disabled) { background: var(--row-bg-hover); color: var(--text-primary); }
 .instance-session-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .instance-session-row:disabled { cursor: default; opacity: 0.6; }
-.instance-session-row.is-active {
+.instance-session-row.is-active,
+.instance-session-row.is-active:hover:not(:disabled) {
     color: var(--text-primary);
     background: var(--accent-soft);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
