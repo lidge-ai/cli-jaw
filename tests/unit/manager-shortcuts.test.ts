@@ -20,6 +20,13 @@ function keyEvent(key: string, modifiers: Partial<Pick<KeyboardEvent, 'altKey' |
     } as KeyboardEvent;
 }
 
+// Meta resolves per client platform (⌘ on macOS, Ctrl elsewhere), and Node exposes
+// its own navigator.platform, so every assertion that depends on it pins one.
+const MAC = 'MacIntel';
+const WIN = 'Win32';
+const LINUX = 'Linux x86_64';
+const onMac = { platform: MAC };
+
 test('manager shortcut matching requires exact modifiers and normalized keys', () => {
     assert.equal(shortcutMatches(keyEvent('i', { altKey: true }), 'Alt+I'), true);
     assert.equal(shortcutMatches(keyEvent('I', { altKey: true }), 'Alt+I'), true);
@@ -30,42 +37,97 @@ test('manager shortcut matching requires exact modifiers and normalized keys', (
 
 test('manager shortcut action lookup uses the configured keymap', () => {
     assert.equal(
-        actionForShortcutEvent(keyEvent('p', { altKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('p', { altKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'focusActiveSession',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('j', { altKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('j', { altKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'nextInstance',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('j', { ctrlKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('j', { ctrlKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         null,
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('~', { ctrlKey: true, shiftKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('~', { ctrlKey: true, shiftKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'newTerminalSession',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('`', { ctrlKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('`', { ctrlKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'focusTerminal',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('`', { metaKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('`', { metaKey: true, code: 'Backquote' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'focusTerminal',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('b', { metaKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('b', { metaKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'toggleRightPanel',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('b', { metaKey: true, shiftKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('b', { metaKey: true, shiftKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'toggleLeftSidebar',
     );
 });
 
 test('manager shortcut labels render readable chords', () => {
-    assert.equal(formatShortcut('Alt+I'), 'Alt + I');
-    assert.equal(formatShortcut('Ctrl + Shift + N'), 'Ctrl + Shift + N');
+    assert.equal(formatShortcut('Alt+I', LINUX), 'Alt + I');
+    assert.equal(formatShortcut('Ctrl + Shift + N', LINUX), 'Ctrl + Shift + N');
+});
+
+test('Meta is the primary modifier: ⌘ on macOS, Ctrl on Windows and Linux', () => {
+    for (const platform of [WIN, LINUX]) {
+        const options = { platform };
+        assert.equal(actionForShortcutEvent(keyEvent(',', { ctrlKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), 'toggleInstanceSettings');
+        assert.equal(actionForShortcutEvent(keyEvent('b', { ctrlKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), 'toggleRightPanel');
+        assert.equal(actionForShortcutEvent(keyEvent('b', { ctrlKey: true, shiftKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), 'toggleLeftSidebar');
+        assert.equal(actionForShortcutEvent(keyEvent('1', { ctrlKey: true, code: 'Digit1' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), 'switchTab1');
+        // The physical Windows/Super key alone no longer triggers Meta chords off macOS.
+        assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), null);
+        assert.equal(actionForShortcutEvent(keyEvent('b', { metaKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, options), null);
+        assert.equal(shortcutMatches(keyEvent('k', { ctrlKey: true }), 'Cmd+K', platform), true);
+        assert.equal(shortcutMatches(keyEvent('k', { ctrlKey: true }), 'Mod+K', platform), true);
+    }
+    // macOS keeps the existing meaning, and Ctrl stays a distinct modifier there.
+    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac), 'toggleInstanceSettings');
+    assert.equal(actionForShortcutEvent(keyEvent(',', { ctrlKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac), null);
+});
+
+test('Win and Super name the physical meta key on every platform', () => {
+    for (const platform of [MAC, WIN, LINUX]) {
+        assert.equal(shortcutMatches(keyEvent('e', { metaKey: true }), 'Win+E', platform), true);
+        assert.equal(shortcutMatches(keyEvent('e', { metaKey: true }), 'Super+E', platform), true);
+        assert.equal(shortcutMatches(keyEvent('e', { ctrlKey: true }), 'Win+E', platform), false);
+    }
+    const rebound = { ...DEFAULT_MANAGER_SHORTCUT_KEYMAP, openFolderTree: 'Win+E' };
+    assert.equal(actionForShortcutEvent(keyEvent('e', { metaKey: true }), rebound, { platform: WIN }), 'openFolderTree');
+});
+
+test('menu-owned chords follow the same Meta meaning on Windows desktop', () => {
+    const desktop = { menuOwned: true, platform: WIN };
+    // The Electron menu accelerator is CommandOrControl+W, i.e. Ctrl+W on Windows:
+    // the renderer must yield it or one press closes two tabs.
+    assert.equal(actionForShortcutEvent(keyEvent('w', { ctrlKey: true, code: 'KeyW' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, desktop), null);
+    assert.equal(actionForShortcutEvent(keyEvent('b', { ctrlKey: true, code: 'KeyB' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, desktop), null);
+    assert.equal(actionForShortcutEvent(keyEvent('w', { ctrlKey: true, code: 'KeyW' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, { platform: WIN }), 'closeFocusedTab');
+    // A non-menu Meta chord still resolves on Windows desktop.
+    assert.equal(actionForShortcutEvent(keyEvent('k', { ctrlKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, desktop), 'terminalClear');
+});
+
+test('shortcut labels follow the client platform', () => {
+    assert.equal(formatShortcut('Meta+Shift+B', MAC), '⌘⇧B');
+    assert.equal(formatShortcut('Meta+,', MAC), '⌘,');
+    assert.equal(formatShortcut('Alt+I', MAC), '⌥I');
+    assert.equal(formatShortcut('Ctrl+`', MAC), '⌃`');
+    assert.equal(formatShortcut('Meta+Left', MAC), '⌘←');
+    assert.equal(formatShortcut('Win+E', MAC), '⌘E');
+    for (const platform of [WIN, LINUX]) {
+        assert.equal(formatShortcut('Meta+Shift+B', platform), 'Ctrl + Shift + B');
+        assert.equal(formatShortcut('Cmd+,', platform), 'Ctrl + ,');
+        assert.equal(formatShortcut('Win+E', platform), 'Win + E');
+        assert.equal(formatShortcut('Option+I', platform), 'Alt + I');
+        assert.equal(formatShortcut('Ctrl+Meta+K', platform), 'Ctrl + K');
+    }
 });
 
 test('manager shortcut keymap normalizes legacy registry values', () => {
@@ -83,26 +145,26 @@ test('manager shortcut keymap normalizes legacy registry values', () => {
     assert.equal(normalized.focusNotes, 'Ctrl+Shift+N');
     assert.equal(normalized.previousInstance, DEFAULT_MANAGER_SHORTCUT_KEYMAP.previousInstance);
     assert.equal(normalized.nextInstance, DEFAULT_MANAGER_SHORTCUT_KEYMAP.nextInstance);
-    assert.equal(actionForShortcutEvent(keyEvent('i', { altKey: true }), undefined), 'focusInstances');
+    assert.equal(actionForShortcutEvent(keyEvent('i', { altKey: true }), undefined, onMac), 'focusInstances');
 });
 
 test('reload shortcuts are owned by the Electron menu and ignored by the renderer matcher', () => {
     // Default keymap binds Meta+R / Meta+Shift+R, but the renderer must not match
     // them (the Electron menu accelerator is the single source → no double reload).
-    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP), null);
-    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true, shiftKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP), null);
+    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac), null);
+    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true, shiftKey: true }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac), null);
 
     // Even a persisted keymap explicitly carrying these bindings stays inert.
     const persisted = { ...DEFAULT_MANAGER_SHORTCUT_KEYMAP, browserReload: 'Meta+R', browserHardReload: 'Meta+Shift+R' };
-    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true }), persisted), null);
-    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true, shiftKey: true }), persisted), null);
+    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true }), persisted, onMac), null);
+    assert.equal(actionForShortcutEvent(keyEvent('r', { metaKey: true, shiftKey: true }), persisted, onMac), null);
 
     assert.ok(RENDERER_DISABLED_SHORTCUT_ACTIONS.has('browserReload'));
     assert.ok(RENDERER_DISABLED_SHORTCUT_ACTIONS.has('browserHardReload'));
 });
 
 test('menu-owned chords resolve on web but not on the Electron desktop', () => {
-    const menuOwned = { menuOwned: true };
+    const menuOwned = { menuOwned: true, platform: MAC };
     // Menu accelerator chords: the renderer matcher (document keydown and the
     // preview iframe bridge) must ignore them on desktop — the menu already
     // dispatched them via manager:shortcut, so resolving again double-fires.
@@ -120,7 +182,7 @@ test('menu-owned chords resolve on web but not on the Electron desktop', () => {
     ]) {
         assert.equal(actionForShortcutEvent(event, DEFAULT_MANAGER_SHORTCUT_KEYMAP, menuOwned), null,
             `desktop matcher must skip menu-owned chord ${JSON.stringify(event)}`);
-        assert.notEqual(actionForShortcutEvent(event, DEFAULT_MANAGER_SHORTCUT_KEYMAP), null,
+        assert.notEqual(actionForShortcutEvent(event, DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac), null,
             `web matcher must keep resolving ${JSON.stringify(event)}`);
     }
     // Chords the menu does not own still resolve on desktop.
@@ -139,11 +201,11 @@ test('menu-owned chords resolve on web but not on the Electron desktop', () => {
 
 test('Alt+Digit recovers jumpInstance even when macOS rewrites the key character', () => {
     assert.equal(
-        actionForShortcutEvent(keyEvent('1', { altKey: true, code: 'Digit1' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('1', { altKey: true, code: 'Digit1' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'jumpInstance1',
     );
     assert.equal(
-        actionForShortcutEvent(keyEvent('£', { altKey: true, code: 'Digit3' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP),
+        actionForShortcutEvent(keyEvent('£', { altKey: true, code: 'Digit3' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
         'jumpInstance3',
     );
 });
@@ -151,12 +213,12 @@ test('Alt+Digit recovers jumpInstance even when macOS rewrites the key character
 test('instance settings shortcut defaults and overrides survive normalization', () => {
     const defaults = normalizeManagerShortcutKeymap({});
     assert.equal(defaults.toggleInstanceSettings, 'Meta+,');
-    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), defaults), 'toggleInstanceSettings');
-    assert.equal(actionForShortcutEvent(keyEvent(',', { ctrlKey: true }), defaults), null);
-    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true, shiftKey: true }), defaults), null);
+    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), defaults, onMac), 'toggleInstanceSettings');
+    assert.equal(actionForShortcutEvent(keyEvent(',', { ctrlKey: true }), defaults, onMac), null);
+    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true, shiftKey: true }), defaults, onMac), null);
     const changed = normalizeManagerShortcutKeymap({ toggleInstanceSettings: 'Alt+S' });
-    assert.equal(actionForShortcutEvent(keyEvent('s', { altKey: true }), changed), 'toggleInstanceSettings');
-    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), changed), null);
+    assert.equal(actionForShortcutEvent(keyEvent('s', { altKey: true }), changed, onMac), 'toggleInstanceSettings');
+    assert.equal(actionForShortcutEvent(keyEvent(',', { metaKey: true }), changed, onMac), null);
 });
 
 test('settings toggle has its own localized label in all Manager locales', async () => {

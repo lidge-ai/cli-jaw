@@ -8,6 +8,7 @@ const folderRowsSource = readFileSync('public/manager/src/folder-panel/FolderTre
 const folderCss = readFileSync('public/manager/src/folder-panel/folder-panel.css', 'utf8');
 const shortcutsSource = readFileSync('public/manager/src/manager-shortcuts.ts', 'utf8');
 const folderShortcutsSource = readFileSync('public/manager/src/folder-panel/folder-shortcuts.ts', 'utf8');
+const clientPlatformSource = readFileSync('public/manager/src/client-platform.ts', 'utf8');
 const folderContextMenuSource = readFileSync('public/manager/src/folder-panel/FolderContextMenu.tsx', 'utf8');
 const folderContextMenuHookSource = readFileSync('public/manager/src/folder-panel/use-folder-context-menu.ts', 'utf8');
 
@@ -67,7 +68,8 @@ test('FolderPanel click toggle helper follows VS Code platform modifiers', () =>
 });
 
 test('FolderPanel shortcut helper guards browser globals for tests and SSR', () => {
-    assert.ok(folderShortcutsSource.includes("typeof navigator === 'undefined'"), 'platform detection must not assume browser navigator exists');
+    assert.ok(folderShortcutsSource.includes("from '../client-platform'"), 'folder shortcuts must use the shared client platform helper');
+    assert.ok(clientPlatformSource.includes("typeof navigator === 'undefined'"), 'platform detection must not assume browser navigator exists');
     assert.ok(folderShortcutsSource.includes("typeof HTMLElement === 'undefined'"), 'editable target checks must not assume browser HTMLElement exists');
 });
 

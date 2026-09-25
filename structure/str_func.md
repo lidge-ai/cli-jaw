@@ -556,7 +556,7 @@ cli-jaw/
 │       ├── checkpoint/       ← checkpoint store + types (2 files, 59L) ✨
 │       ├── permissions/      ← permission policy + types (2 files, 80L) ✨
 │       └── context-map/      ← context map builder (1 file, 71L) ✨
-├── public/                   ← Web UI (Vite 8 + ES Modules, 608 files source/assets, ~104820L; generated `public/dist` and `public/public/dist` excluded)
+├── public/                   ← Web UI (Vite 8 + ES Modules, 609 files source/assets, ~105080L; generated `public/dist` and `public/public/dist` excluded)
 │   ├── settings/ ← standalone instance settings entry
 │   │   └── index.html ← Classic settings iframe HTML (13L)
 │   ├── index.html            ← 뼈대 + header project/git status anchor (693L)

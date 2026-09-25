@@ -1,5 +1,5 @@
 import type { DashboardDetailTab, DashboardInstance, DashboardShortcutAction, DashboardShortcutKeymap, DashboardSidebarMode } from './types';
-import { actionForShortcutEvent } from './manager-shortcuts';
+import { actionForShortcutEvent, type ShortcutPlatformOptions } from './manager-shortcuts';
 import { panelShortcutBus } from './panels/panel-shortcut-bus';
 import { getDesktop } from './panels/desktop-bridge';
 import { getInstanceJumpSelector, jumpInstanceIndexFromAction, readRenderedInstancePorts } from './components/sidebar-keyboard';
@@ -140,12 +140,13 @@ const CAPTURE_TOGGLE_ACTIONS = new Set<DashboardShortcutAction>([
 export function createManagerCaptureKeydownHandler(
     getKeymap: () => DashboardShortcutKeymap,
     onAction: (action: DashboardShortcutAction) => void,
+    options: ShortcutPlatformOptions = {},
 ): (event: KeyboardEvent) => void {
     return (event: KeyboardEvent) => {
         if (event.defaultPrevented) return;
         const target = event.target;
         if (target instanceof Element && target.closest('[data-keybinding-capture]')) return;
-        const action = actionForShortcutEvent(event, getKeymap());
+        const action = actionForShortcutEvent(event, getKeymap(), options);
         if (!action || !CAPTURE_TOGGLE_ACTIONS.has(action)) return;
         event.preventDefault();
         event.stopPropagation();

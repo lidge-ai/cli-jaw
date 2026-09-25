@@ -1,4 +1,5 @@
 import type { DashboardShortcutAction, DashboardShortcutKeymap } from './types';
+import { currentClientPlatform, isMacLikePlatform } from './client-platform';
 
 export const MANAGER_SHORTCUT_ACTIONS: DashboardShortcutAction[] = [
     'toggleInstanceSettings',
@@ -84,6 +85,23 @@ const MANAGER_SHORTCUT_ALIASES: Partial<Record<DashboardShortcutAction, string[]
     newTerminalSession: ['Ctrl+Shift+`'],
 };
 
+/**
+ * Keymap modifier tokens. `Meta` (and its spellings `Cmd`, `Command`, `Mod`) is
+ * the primary modifier: ⌘ on macOS, Ctrl on Windows/Linux — the same meaning as
+ * the Electron menu's `CommandOrControl`. Persisted keymaps keep their `Meta+…`
+ * strings; only the interpretation follows the client platform. `Win`/`Super`
+ * names the physical Windows/Super key (`metaKey`) on every platform.
+ */
+const PRIMARY_MODIFIER_TOKENS = new Set(['meta', 'cmd', 'command', 'mod']);
+const SUPER_MODIFIER_TOKENS = new Set(['win', 'windows', 'super']);
+const CTRL_MODIFIER_TOKENS = new Set(['ctrl', 'control']);
+const ALT_MODIFIER_TOKENS = new Set(['alt', 'option']);
+
+export type ShortcutPlatformOptions = {
+    /** Client platform string; defaults to the current browser/window platform. */
+    platform?: string;
+};
+
 type ParsedShortcut = {
     key: string;
     altKey: boolean;
@@ -104,7 +122,7 @@ function normalizeKey(value: string): string {
     return lower;
 }
 
-function parseShortcut(raw: string): ParsedShortcut | null {
+function parseShortcut(raw: string, mac: boolean): ParsedShortcut | null {
     const parts = raw.split('+').map(part => part.trim()).filter(Boolean);
     if (parts.length === 0) return null;
     const parsed: ParsedShortcut = {
@@ -116,9 +134,12 @@ function parseShortcut(raw: string): ParsedShortcut | null {
     };
     for (const part of parts) {
         const lower = part.toLowerCase();
-        if (lower === 'alt' || lower === 'option') parsed.altKey = true;
-        else if (lower === 'ctrl' || lower === 'control') parsed.ctrlKey = true;
-        else if (lower === 'meta' || lower === 'cmd' || lower === 'command') parsed.metaKey = true;
+        if (ALT_MODIFIER_TOKENS.has(lower)) parsed.altKey = true;
+        else if (CTRL_MODIFIER_TOKENS.has(lower)) parsed.ctrlKey = true;
+        else if (PRIMARY_MODIFIER_TOKENS.has(lower)) {
+            if (mac) parsed.metaKey = true;
+            else parsed.ctrlKey = true;
+        } else if (SUPER_MODIFIER_TOKENS.has(lower)) parsed.metaKey = true;
         else if (lower === 'shift') parsed.shiftKey = true;
         else parsed.key = normalizeKey(part);
     }
@@ -148,8 +169,8 @@ function resolveEventKey(event: KeyboardEvent): string {
     return k;
 }
 
-export function shortcutMatches(event: KeyboardEvent, raw: string): boolean {
-    const parsed = parseShortcut(raw);
+export function shortcutMatches(event: KeyboardEvent, raw: string, platform: string = currentClientPlatform()): boolean {
+    const parsed = parseShortcut(raw, isMacLikePlatform(platform));
     if (!parsed) return false;
     return event.altKey === parsed.altKey
         && event.ctrlKey === parsed.ctrlKey
@@ -203,26 +224,63 @@ export const MENU_ACCELERATOR_SHORTCUT_CHORDS: string[] = [
 export function actionForShortcutEvent(
     event: KeyboardEvent,
     keymap: unknown,
-    options?: { menuOwned?: boolean },
+    options?: { menuOwned?: boolean } & ShortcutPlatformOptions,
 ): DashboardShortcutAction | null {
-    if (options?.menuOwned && MENU_ACCELERATOR_SHORTCUT_CHORDS.some(chord => shortcutMatches(event, chord))) {
+    // Resolve once: the menu-owned check and the keymap must agree on what Meta
+    // means, or Ctrl+W on Windows desktop would fire from both menu and renderer.
+    const platform = options?.platform ?? currentClientPlatform();
+    if (options?.menuOwned && MENU_ACCELERATOR_SHORTCUT_CHORDS.some(chord => shortcutMatches(event, chord, platform))) {
         return null;
     }
     const shortcuts = normalizeManagerShortcutKeymap(keymap);
     for (const action of MANAGER_SHORTCUT_ACTIONS) {
         if (RENDERER_DISABLED_SHORTCUT_ACTIONS.has(action)) continue;
-        if (shortcutMatches(event, shortcuts[action])) return action;
-        if (MANAGER_SHORTCUT_ALIASES[action]?.some(shortcut => shortcutMatches(event, shortcut))) return action;
+        if (shortcutMatches(event, shortcuts[action], platform)) return action;
+        if (MANAGER_SHORTCUT_ALIASES[action]?.some(shortcut => shortcutMatches(event, shortcut, platform))) return action;
     }
     return null;
 }
 
-export function formatShortcut(raw: string): string {
-    return raw
-        .split('+')
-        .map(part => part.trim())
-        .filter(Boolean)
-        .join(' + ');
+const MAC_KEY_LABELS: Record<string, string> = {
+    left: '←', arrowleft: '←', right: '→', arrowright: '→',
+    up: '↑', arrowup: '↑', down: '↓', arrowdown: '↓',
+};
+
+function macModifierLabel(lower: string): string | null {
+    if (PRIMARY_MODIFIER_TOKENS.has(lower) || SUPER_MODIFIER_TOKENS.has(lower)) return '⌘';
+    if (CTRL_MODIFIER_TOKENS.has(lower)) return '⌃';
+    if (ALT_MODIFIER_TOKENS.has(lower)) return '⌥';
+    if (lower === 'shift') return '⇧';
+    return null;
+}
+
+function otherModifierLabel(lower: string): string | null {
+    if (PRIMARY_MODIFIER_TOKENS.has(lower) || CTRL_MODIFIER_TOKENS.has(lower)) return 'Ctrl';
+    if (SUPER_MODIFIER_TOKENS.has(lower)) return 'Win';
+    if (ALT_MODIFIER_TOKENS.has(lower)) return 'Alt';
+    if (lower === 'shift') return 'Shift';
+    return null;
+}
+
+/**
+ * Human label for a stored chord on the client platform: `Meta+Shift+B` reads
+ * `⌘⇧B` on macOS and `Ctrl + Shift + B` on Windows/Linux. The stored string is
+ * not changed; this is display only.
+ */
+export function formatShortcut(raw: string, platform: string = currentClientPlatform()): string {
+    const parts = raw.split('+').map(part => part.trim()).filter(Boolean);
+    const mac = isMacLikePlatform(platform);
+    const labels: string[] = [];
+    for (const part of parts) {
+        const lower = part.toLowerCase();
+        const modifier = mac ? macModifierLabel(lower) : otherModifierLabel(lower);
+        const label = modifier
+            ?? (mac ? (MAC_KEY_LABELS[lower] ?? (part.length === 1 ? part.toUpperCase() : part)) : part);
+        // Meta and Ctrl both read Ctrl off macOS; show a doubled modifier once.
+        if (modifier && labels.includes(label)) continue;
+        labels.push(label);
+    }
+    return labels.join(mac ? '' : ' + ');
 }
 
 export function isManagerShortcutEditableTarget(target: EventTarget | null): boolean {
