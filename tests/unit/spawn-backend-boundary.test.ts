@@ -28,11 +28,33 @@ test('backend bodies live in their modules, not in spawn.ts', () => {
     }
 });
 
+// Type-only imports are erased at compile time; every other reference to ../spawn
+// (static, multi-line, export-from, dynamic import() or require()) loads it at runtime.
+const TYPE_ONLY_SPAWN_IMPORT = /\bimport\s+type\s[^;]*?from\s*['"]\.\.\/spawn(?:\.js|\.ts)?['"]\s*;?/gs;
+const SPAWN_SPECIFIER = /['"]\.\.\/spawn(?:\.js|\.ts)?['"]/g;
+
+function runtimeSpawnReferences(src: string): string[] {
+    return src.replace(TYPE_ONLY_SPAWN_IMPORT, '').match(SPAWN_SPECIFIER) ?? [];
+}
+
+test('runtime spawn.ts reference matcher catches every import form', () => {
+    for (const form of [
+        "import { spawnAgent } from '../spawn.js';",
+        "import {\n    spawnAgent,\n} from '../spawn.js';",
+        "export { spawnAgent } from '../spawn.js';",
+        "const m = await import('../spawn.js');",
+        "const m = require('../spawn');",
+    ]) assert.equal(runtimeSpawnReferences(form).length, 1, form);
+    for (const form of [
+        "import type { SpawnOpts } from '../spawn.js';",
+        "import type {\n    SpawnOpts,\n} from '../spawn.js';",
+        "import { x } from '../spawn/queue.js';",
+    ]) assert.equal(runtimeSpawnReferences(form).length, 0, form);
+});
+
 test('backend modules never import spawn.ts at runtime', () => {
     assert.deepEqual([...SPAWN_BACKEND_FILES].sort(), BACKENDS.map((b) => b.file).sort());
     for (const file of [...SPAWN_BACKEND_FILES, 'backend-context.ts', 'types.ts']) {
-        const src = readSpawnFile(file);
-        const valueImports = src.split('\n').filter((l) => /^import\s+(?!type\b)[^;]*from '\.\.\/spawn(\.js)?';/.test(l));
-        assert.deepEqual(valueImports, [], `${file} must not value-import ../spawn.js`);
+        assert.deepEqual(runtimeSpawnReferences(readSpawnFile(file)), [], `${file} must not load ../spawn.js at runtime`);
     }
 });

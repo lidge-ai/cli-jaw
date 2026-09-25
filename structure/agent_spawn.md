@@ -41,11 +41,6 @@ and print/native session buckets remain under their existing owners. See
 | File | Role |
 | --- | --- |
 | `src/agent/spawn.ts` | spawn entry, standard CLI (stream/DB/broadcast) path, backend dispatch + queue drain 핵심 |
-| `src/agent/spawn/backend-native-acp.ts` | Cursor/Grok native ACP main backend, dispatched from `spawnAgent` |
-| `src/agent/spawn/backend-copilot.ts` | Copilot ACP backend |
-| `src/agent/spawn/backend-pi.ts` | Pi RPC backend |
-| `src/agent/spawn/backend-codex-app.ts` | Codex AppServer backend |
-| `src/agent/spawn/backend-context.ts` | `SpawnBackendLocals` (values captured at dispatch) and `SpawnBackendHost` (spawn.ts module state/helpers) |
 | `src/agent/lifecycle-handler.ts` | child lifecycle, fallback, retry, queue resume, goal continuation |
 | `src/agent/args.ts` | CLI별 신규/재개 인자 생성 |
 | `src/agent/pi-runtime.ts` | Pi profile normalization, isolated `PI_CODING_AGENT_DIR` config generation, model discovery, JSONL RPC parser/spawner |
@@ -73,11 +68,17 @@ and print/native session buckets remain under their existing owners. See
 
 ### src/agent/spawn/ — Extracted Submodules
 
-| File | Line count | Role |
-| --- | ---: | --- |
-| `spawn/queue.ts` | 373L | Message queue controller (factory pattern, fair policy, race fix) |
-| `spawn/resume.ts` | 84L | ACP heartbeat helper + resume bucket decision (pure functions) |
-| `spawn/process-kill.ts` | 22L | Recursive process tree kill via `pgrep -P` (no shell injection) |
+| File | Role |
+| --- | --- |
+| `spawn/backend-native-acp.ts` | Cursor/Grok native ACP main backend, dispatched from `spawnAgent` |
+| `spawn/backend-copilot.ts` | Copilot ACP backend |
+| `spawn/backend-pi.ts` | Pi RPC backend |
+| `spawn/backend-codex-app.ts` | Codex AppServer backend |
+| `spawn/backend-context.ts` | Readonly `SpawnBackendLocals` (values captured at dispatch) and `SpawnBackendHost` (spawn.ts module state/helpers) |
+| `spawn/types.ts` | Shared spawn types (`MainRunState`, `SpawnOpts`, `SpawnResult`, …), re-exported from spawn.ts |
+| `spawn/queue.ts` | Message queue controller (factory pattern, fair policy, race fix) |
+| `spawn/resume.ts` | ACP heartbeat helper + resume bucket decision (pure functions) |
+| `spawn/process-kill.ts` | Recursive process tree kill via `pgrep -P` (no shell injection) |
 
 ### src/agent/events/ — Event Adapters
 

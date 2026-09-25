@@ -6,7 +6,7 @@ import os from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSource } from './source-normalize.js';
-import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
+import { readSpawnAgentSource, readSpawnFile } from '../helpers/spawn-source.mts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,9 +45,13 @@ test('TMPISO-003: spawnCwd is used (not settings.workingDir) for AcpClient', () 
 
 test('TMPISO-004: acp.createSession uses spawnCwd (both occurrences)', () => {
     const src = readSpawnAgentSource({ normalized: true });
-    const matches = src.match(/acp\.createSession\(spawnCwd,\s*getEmployeeMcpServers\(\)\)/g);
+    // Both calls live in the Copilot backend; count them there, and confirm no third
+    // call exists anywhere else in spawnAgent's source.
+    const pattern = /acp\.createSession\(spawnCwd,\s*getEmployeeMcpServers\(\)\)/g;
+    const matches = readSpawnFile('backend-copilot.ts', { normalized: true }).match(pattern);
     assert.ok(matches, 'should have acp.createSession(spawnCwd, getEmployeeMcpServers()) calls');
     assert.equal(matches.length, 2, 'exactly 2 acp.createSession(spawnCwd, getEmployeeMcpServers()) calls');
+    assert.equal(src.match(pattern)?.length, 2, 'no acp.createSession(spawnCwd, ...) call outside the Copilot backend');
     // Verify no acp.createSession(settings.workingDir) remains
     assert.ok(!src.includes('acp.createSession(settings.workingDir)'));
 });
