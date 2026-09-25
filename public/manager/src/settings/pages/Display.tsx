@@ -7,6 +7,7 @@ import { isPresentationMode, presentationMode, type PresentationMode } from '../
 import { describeError } from '../components/error-normalize';
 import {
     SettingsSection,
+    SettingsNote,
     PageError,
     PageLoading,
     PageOffline,
@@ -151,11 +152,11 @@ export default function Display({ port, client, dirty, registerSave }: SettingsP
                 });
             }}
         >
-            {saveError ? <PageError message={saveError} /> : null}
             <SettingsSection
                 title="Conversation display"
                 hint="Changes conversation display only. Runtime and permissions stay unchanged."
             >
+                {saveError ? <SettingsNote tone="error" role="alert">{saveError}</SettingsNote> : null}
                 <SelectField
                     disabled={saving}
                     id="display-presentation-mode"
