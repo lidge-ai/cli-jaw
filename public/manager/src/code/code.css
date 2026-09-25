@@ -447,6 +447,102 @@
     font-size: 13px; text-align: center;
 }
 .code-transcript-cwd { font-size: 11px; margin-top: 8px; font-family: monospace; color: var(--text-secondary); }
+
+/* Draft empty state: the workspace is the one decision that gates a new
+   session, so it owns the prominent control; everything else is secondary. */
+.code-draft-empty {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* `safe` keeps the first line reachable when the draft content is taller
+       than the pane; plain `center` clips it out of scroll range. */
+    justify-content: safe center;
+    gap: 14px;
+    padding: 32px 24px;
+    text-align: center;
+}
+.code-draft-empty-title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 650;
+    color: var(--text-primary);
+}
+.code-draft-empty-picker {
+    max-width: min(72vw, 520px);
+    height: 34px;
+    padding: 0 14px;
+    font-size: 14px;
+}
+.code-draft-empty-selection {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.code-draft-recents {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    max-width: min(72vw, 520px);
+}
+.code-draft-recents-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+}
+.code-draft-recent {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 5px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: var(--bg-panel);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-family: monospace;
+    cursor: pointer;
+}
+.code-draft-recent:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+.code-draft-recent:focus-visible,
+.code-draft-prompt:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+}
+.code-draft-recent:disabled,
+.code-draft-prompt:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.code-draft-prompts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    max-width: min(78vw, 560px);
+}
+.code-draft-prompt {
+    padding: 6px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    background: var(--bg-base);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.code-draft-prompt:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
 .code-message { margin-bottom: 16px; }
 .code-message-tool { margin-bottom: 1px; }
 .code-transcript-virtual-spacer {
