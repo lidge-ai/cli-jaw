@@ -457,7 +457,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* `safe` keeps the first line reachable when the draft content is taller
+       than the pane; plain `center` clips it out of scroll range. */
+    justify-content: safe center;
     gap: 14px;
     padding: 32px 24px;
     text-align: center;

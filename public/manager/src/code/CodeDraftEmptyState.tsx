@@ -15,6 +15,14 @@ const SUGGESTED_PROMPTS: readonly string[] = [
     'Review uncommitted changes',
 ];
 
+// A chip and a recent both unmount the control that was activated -- the chip
+// disappears once the draft is non-empty and the chosen recent leaves the
+// list -- so keyboard focus is handed to the composer instead of dropping to
+// <body>.
+function focusComposer(): void {
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Code prompt"]')?.focus();
+}
+
 export function CodeDraftEmptyState({ controller: c }: { controller: CodeControllerModel }) {
     const cwd = c.selection.cwd;
     // Same freeze rule as CodeWorkspaceHeader: once creation is in flight the
@@ -28,14 +36,15 @@ export function CodeDraftEmptyState({ controller: c }: { controller: CodeControl
         if (frozen || picking) return;
         void c.pickWorkspace();
     }
-    function useWorkspace(dir: string) {
+    function chooseWorkspace(dir: string) {
         if (frozen) return;
         void c.setSelection({ cwd: dir });
+        focusComposer();
     }
     return <section className="code-draft-empty" aria-label="New session draft">
         <h2 className="code-draft-empty-title">New session</h2>
         {frozen ? <span className="code-workspace-chip" title={cwd}>{cwd || 'Workspace not set'}</span>
-            : <button type="button" className="code-workspace-picker code-draft-empty-picker" aria-label="Choose Code workspace"
+            : <button type="button" className="code-workspace-picker code-draft-empty-picker" aria-label="Choose workspace for the new session"
                 disabled={picking} title={cwd || 'Choose a folder'} onClick={pick}>
                 <span className="code-workspace-picker-label">{picking ? 'Choosing folder…' : cwd || 'Choose workspace'}</span>
             </button>}
@@ -45,11 +54,11 @@ export function CodeDraftEmptyState({ controller: c }: { controller: CodeControl
         {recents.length > 0 && <div className="code-draft-recents">
             <span className="code-draft-recents-label">Recent workspaces</span>
             {recents.map(dir => <button type="button" key={dir} className="code-draft-recent" title={dir}
-                disabled={frozen} onClick={() => useWorkspace(dir)}>{dir}</button>)}
+                disabled={frozen} onClick={() => chooseWorkspace(dir)}>{dir}</button>)}
         </div>}
         {!c.input.trim() && <div className="code-draft-prompts">
             {SUGGESTED_PROMPTS.map(text => <button type="button" key={text} className="code-draft-prompt"
-                disabled={frozen} onClick={() => c.setInput(text)}>{text}</button>)}
+                disabled={frozen} onClick={() => { c.setInput(text); focusComposer(); }}>{text}</button>)}
         </div>}
     </section>;
 }

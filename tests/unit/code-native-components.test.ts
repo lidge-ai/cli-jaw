@@ -687,17 +687,45 @@ test('draft empty state offers workspace, recents and suggested prompts without 
     await click(button(empty, 'Explain this codebase'));
     assert.deepEqual(inputs, ['Explain this codebase']);
     assert.equal(sends, 0, 'a suggested prompt fills the composer draft, never sends');
-    await click(button(empty, 'Choose Code workspace')); assert.equal(picks, 1);
+    await click(button(empty, 'Choose workspace for the new session')); assert.equal(picks, 1);
     assert.equal(document.activeElement?.getAttribute('aria-label'), 'Code prompt', 'entering the draft lands focus in the composer');
     // One folder dialog at a time: while the pick is in flight both the header
     // and the empty-state picker read as busy, not just the one that was clicked.
     await h.render(createElement(CodeWorkbench, { controller: { ...draft, workspacePicking: true }, endpointKey: '43225' }));
-    const pickers = [...h.container.querySelectorAll<HTMLButtonElement>('[aria-label="Choose Code workspace"]')];
-    assert.equal(pickers.length, 2);
-    for (const picker of pickers) assert.equal(picker.disabled, true);
+    // The two pickers sit in the same view, so each accessible name must resolve
+    // to exactly one of them for a screen reader to tell them apart.
+    const headerPicker = h.container.querySelectorAll<HTMLButtonElement>('[aria-label="Choose Code workspace"]');
+    const draftPicker = h.container.querySelectorAll<HTMLButtonElement>('[aria-label="Choose workspace for the new session"]');
+    assert.equal(headerPicker.length, 1); assert.equal(draftPicker.length, 1);
+    for (const picker of [...headerPicker, ...draftPicker]) assert.equal(picker.disabled, true);
     // A prompt the composer already holds must not be silently overwritten by a chip.
     await h.render(createElement(CodeWorkbench, { controller: { ...draft, input: 'Explain this codebase' }, endpointKey: '43225' }));
     assert.equal(h.container.querySelector('.code-draft-prompt'), null);
+});
+
+test('activating a draft chip or a recent hands focus to the composer', bounded, async t => {
+    const h = await surface(t);
+    const inputs: string[] = [];
+    const draft = model({ selectedId: null, session: null, items: [], input: '',
+        selection: { provider: 'codex-app', cwd: '/work/current', model: 'native-model', effort: null, permissionMode: 'ask' },
+        sessions: [session({ cwd: '/work/recent', lastUsedAt: 8 })],
+        setInput(text) { inputs.push(text); }, async setSelection() {} });
+    await h.render(createElement(CodeWorkbench, { controller: draft, endpointKey: '43225' }));
+    const focused = () => document.activeElement?.getAttribute('aria-label');
+    const chip = button(h.container, 'Explain this codebase');
+    chip.focus(); assert.equal(document.activeElement, chip);
+    await click(chip);
+    assert.deepEqual(inputs, ['Explain this codebase']);
+    assert.equal(focused(), 'Code prompt', 'the chip unmounts once the draft is filled, so focus moves into the composer');
+    // The chip really disappears rather than merely losing focus, so the focus
+    // has to be re-homed rather than kept by the control that was activated.
+    await h.render(createElement(CodeWorkbench, { controller: { ...draft, input: 'Explain this codebase' }, endpointKey: '43225' }));
+    assert.equal(h.container.querySelector('.code-draft-prompt'), null);
+    assert.equal(focused(), 'Code prompt');
+    const recent = button(h.container, '/work/recent');
+    recent.focus(); assert.equal(document.activeElement, recent);
+    await click(recent);
+    assert.equal(focused(), 'Code prompt', 'choosing a recent changes the list, so focus moves into the composer');
 });
 
 test('recent list still fills five slots when the current workspace is among the most used', bounded, async t => {
