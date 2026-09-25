@@ -41,6 +41,8 @@ git merge-base --is-ancestor origin/main HEAD && echo ff-able
 git push --force-with-lease origin dev
 ```
 
+스택 PR 은 아래부터 squash 병합하고, 부모가 들어갈 때마다 `scripts/restack-pr.sh` 로 자식을 옮긴다 (CONTRIBUTING.md §Stacked pull requests).
+
 rebase 중 만나는 충돌은 대개 두 종류이고 해소법이 정해져 있다.
 
 - **버전 파일**(`package.json`, `package-lock.json`, `electron/*`): main 쪽을 취한다
