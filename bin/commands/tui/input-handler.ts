@@ -9,6 +9,7 @@ import {
 } from '../../../src/cli/tui/composer.js';
 import { classifyKeyAction } from '../../../src/cli/tui/keymap.js';
 import { findAtMentionMatch } from '../../../src/cli/tui/file-mention.js';
+import { findSkillMentionMatch } from '../../../src/cli/tui/skill-mention.js';
 import { openExternalEditor } from '../../../src/cli/tui/editor.js';
 import { renderAutocomplete, filterSelectorItems, syncAutocompleteWindow } from '../../../src/cli/tui/overlay.js';
 import { clipTextToCols } from '../../../src/cli/tui/renderers.js';
@@ -48,6 +49,16 @@ function applyFileMentionPick(ctx: TuiContext, relPath: string): void {
     const mention = findAtMentionMatch(trailing.text, composer.cursor);
     if (!mention) return;
     insertAtMention(composer, mention.replaceStart, relPath);
+    closeAutocompleteForCtx(ctx);
+    redrawPromptLine(ctx);
+}
+
+function applySkillMentionPick(ctx: TuiContext, id: string): void {
+    const composer = ctx.store.composer;
+    const trailing = getTrailingTextSegment(composer);
+    const mention = findSkillMentionMatch(trailing.text, composer.cursor);
+    if (!mention) return;
+    insertAtMention(composer, mention.replaceStart, id, '$');
     closeAutocompleteForCtx(ctx);
     redrawPromptLine(ctx);
 }
@@ -328,6 +339,10 @@ export function handleKeyInput(ctx: TuiContext, rawKey: string): void {
                 applyFileMentionPick(ctx, picked.name);
                 return;
             }
+            if (pickedStage === 'argument' && picked.kind === 'skill-mention') {
+                applySkillMentionPick(ctx, picked.name);
+                return;
+            }
             clearComposer(composer);
             if (pickedStage === 'argument') {
                 appendTextToComposer(composer, picked.insertText || `/${picked.command || ''} ${picked.name}`.trim());
@@ -350,6 +365,10 @@ export function handleKeyInput(ctx: TuiContext, rawKey: string): void {
             if (picked) {
                 if (pickedStage === 'argument' && picked.kind === 'file-mention') {
                     applyFileMentionPick(ctx, picked.name);
+                    return;
+                }
+                if (pickedStage === 'argument' && picked.kind === 'skill-mention') {
+                    applySkillMentionPick(ctx, picked.name);
                     return;
                 }
                 const commandQuery = currentDraft?.startsWith('/')
