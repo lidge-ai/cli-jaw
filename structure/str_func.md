@@ -556,7 +556,7 @@ cli-jaw/
 │       ├── checkpoint/       ← checkpoint store + types (2 files, 59L) ✨
 │       ├── permissions/      ← permission policy + types (2 files, 80L) ✨
 │       └── context-map/      ← context map builder (1 file, 71L) ✨
-├── public/                   ← Web UI (Vite 8 + ES Modules, 609 files source/assets, ~105253L; generated `public/dist` and `public/public/dist` excluded)
+├── public/                   ← Web UI (Vite 8 + ES Modules, 610 files source/assets, ~105797L; generated `public/dist` and `public/public/dist` excluded)
 │   ├── settings/ ← standalone instance settings entry
 │   │   └── index.html ← Classic settings iframe HTML (13L)
 │   ├── index.html            ← 뼈대 + header project/git status anchor (699L)
@@ -572,9 +572,9 @@ cli-jaw/
 │   │   ├── settings-icons.ts ← category glyph mapping (17L)
 │   │   ├── settings-registry.ts ← scope-filtered page registry (35L)
 │   │   ├── pages/components/SlackSetup.tsx ← native Slack setup dialog (126L)
-│   │   ├── pages/manager/shared.tsx ← Manager locale copy and row controls (949L)
-│   │   ├── pages/manager/Display.tsx ← Manager display registry UI settings (92L)
-│   │   ├── pages/manager/Activity.tsx ← read-only title support (8L)
+│   │   ├── pages/manager/shared.tsx ← Manager locale copy and row controls (939L)
+│   │   ├── pages/manager/Display.tsx ← Manager display registry UI settings (87L)
+│   │   ├── pages/manager/Activity.tsx ← read-only title support (12L)
 │   │   ├── pages/manager/Developer.tsx ← Manager diff defaults (7L)
 │   │   ├── pages/manager/Embedding.tsx ← dedicated memory API settings (8L)
 │   │   └── pages/manager/TelegramHub.tsx ← shared Shell dirty owner for Hub API (5L)
