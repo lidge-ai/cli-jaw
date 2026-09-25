@@ -194,7 +194,7 @@ dev Electron or packaged-sidecar QA.
 
 ## Internal Claude SDK session core
 
-`runtime/claude-sdk-session.ts` owns one persistent query from the optional, exact-pinned `@anthropic-ai/claude-agent-sdk@0.3.261`. One reader consumes sequential parent-text turns; explicit resume is passed to a new query. The factory captures prepared options, environment and cancellation before lazy loading. The input stream has one unconsumed text slot (at most1MiB) and one active turn; this does not bound the SDK's internal buffers or provide in-band steer.
+`runtime/claude-sdk-session.ts` owns one persistent query from the optional, exact-pinned `@anthropic-ai/claude-agent-sdk@0.3.282`. One reader consumes sequential parent-text turns; explicit resume is passed to a new query. The factory captures prepared options, environment and cancellation before lazy loading. The input stream has one unconsumed text slot (at most1MiB) and one active turn; this does not bound the SDK's internal buffers or provide in-band steer.
 
 Turn bindings separate jaw IDs from the provider session ID. Bounded terminal dedupe, explicit user-message UUID checks and owner rechecks prevent stale identified results from completing a replacement turn. Anonymous output still relies on the SDK's single-query ordering contract. Final text remains authoritative, including empty versus absent; partial text is never promoted after error or Stop. Cleanup fences admission immediately and succeeds only after reader completion and observed owned-process closure. Native Windows launch is covered by resolver simulations, not installed-provider proof.
 

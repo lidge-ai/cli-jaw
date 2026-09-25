@@ -125,6 +125,7 @@ cli-jaw/
 │   │   │   ├── claude-sdk-close.ts ← synchronous fence and physical close barrier
 │   │   │   ├── claude-sdk-metadata.ts ← per-turn tokens and cumulative-cost delta
 │   │   │   ├── claude-sdk-hooks.ts ← foreground-only unsupported-task boundary
+│   │   │   ├── claude-sdk-version.ts ← exact pinned Claude Agent SDK version (asserted against package.json/lock)
 │   │   │   ├── claude-run-controls.ts ← captured cancellation/completion registry, not a scheduler
 │   │   │   ├── start-failure.ts ← last native start failure code per CLI, codes only
 │   │   │   ├── grok-main.ts  ← Grok replacement and aggregate-usage composition
