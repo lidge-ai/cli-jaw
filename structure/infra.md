@@ -712,7 +712,7 @@ fast-forwards `main` to that same object. There is no PR and no post-merge
 certification window.
 
 `main` still has **no ruleset and no branch protection** (`gh api
-repos/lidge-jun/cli-jaw/rulesets` returns `[]`), so nothing stops a human from
+repos/lidge-ai/cli-jaw/rulesets` returns `[]`), so nothing stops a human from
 pushing to it by hand — that, not the promotion path, is how a bad commit
 reaches `main` now. Repo-admin rights to install a ruleset are tracked in #333.
 

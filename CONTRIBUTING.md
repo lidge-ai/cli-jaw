@@ -4,7 +4,7 @@
 
 ```bash
 # Clone with public submodules
-git clone --recursive https://github.com/lidge-jun/cli-jaw.git
+git clone --recursive https://github.com/lidge-ai/cli-jaw.git
 cd cli-jaw
 npm install
 npm test
@@ -13,7 +13,7 @@ npm test
 ## Repository Structure
 
 ```
-lidge-jun/cli-jaw              ← this repo (public)
+lidge-ai/cli-jaw              ← this repo (public)
 ├── skills_ref/  (submodule)   ← lidge-jun/cli-jaw-skills (public)
 └── officecli/   (submodule)   ← lidge-jun/OfficeCLI (public)
 ```
@@ -25,7 +25,7 @@ lidge-jun/cli-jaw              ← this repo (public)
 | `skills_ref/` | [cli-jaw-skills](https://github.com/lidge-jun/cli-jaw-skills) | public | 100+ bundled skills |
 | `officecli/` | [OfficeCLI](https://github.com/lidge-jun/OfficeCLI) | public | Office document tools |
 
-Private plans, audits, evidence, and history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-jun/cli-jaw/issues). Public builds and tests do not require it.
+Private plans, audits, evidence, and history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-ai/cli-jaw/issues). Public builds and tests do not require it.
 
 Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth, even when a generic skill suggests them. Keep `docs/` and `structure/` for public product documentation and omit private record paths from public docs and source.
 
@@ -33,10 +33,10 @@ Never create private records inside this checkout, including `devlog`, `_plan`, 
 
 ```bash
 # 1. 코드만 (일반 유저 / CI)
-git clone https://github.com/lidge-jun/cli-jaw.git
+git clone https://github.com/lidge-ai/cli-jaw.git
 
 # 2. 코드 + 공개 서브모듈 (개발자)
-git clone --recursive https://github.com/lidge-jun/cli-jaw.git
+git clone --recursive https://github.com/lidge-ai/cli-jaw.git
 
 # 3. 이미 clone 한 후 submodule 추가
 git submodule update --init --recursive
@@ -116,7 +116,7 @@ the orphan `pr-assets` branch instead, linked by commit SHA so the link never
 drifts:
 
 ```text
-https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
+https://raw.githubusercontent.com/lidge-ai/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
 ```
 
 A maintainer can waive the requirement with the `ui-screenshot-waived` label
@@ -124,4 +124,4 @@ A maintainer can waive the requirement with the `ui-screenshot-waived` label
 stating the change does not touch the UI — e.g. "no UI changes" — posted after
 the latest push by someone with write access or above.
 
-> 📋 Found a bug or have a feature idea? [Open an issue](https://github.com/lidge-jun/cli-jaw/issues)
+> 📋 Found a bug or have a feature idea? [Open an issue](https://github.com/lidge-ai/cli-jaw/issues)

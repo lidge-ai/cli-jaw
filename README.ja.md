@@ -7,7 +7,7 @@ Claude、Codex、Cursor、Grok、Copilot、OpenCode、Kiro、Antigravity、Pi �
 
 <p align="center">
   <a href="https://npmjs.com/package/cli-jaw"><img src="https://img.shields.io/npm/v/cli-jaw?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-jun/cli-jaw?label=release" alt="latest release"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-ai/cli-jaw?label=release" alt="latest release"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.4-339933?logo=node.js&logoColor=white" alt="Node.js 22.4+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
@@ -19,9 +19,9 @@ jaw dashboard
 ```
 
 <p align="center">
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
 </p>
 
 <table>
@@ -58,7 +58,7 @@ WYSIWYG 編集、数式、Mermaid 図に対応した組み込みの Markdown ワ
 </table>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">中文</a> · <b>日本語</b> · 📖 <a href="https://lidge-jun.github.io/cli-jaw/"><b>ウェブサイト</b></a> · <a href="https://lidge-jun.github.io/cli-jaw/dev/">ドキュメント</a>
+  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">中文</a> · <b>日本語</b> · 📖 <a href="https://lidge-ai.github.io/cli-jaw/"><b>ウェブサイト</b></a> · <a href="https://lidge-ai.github.io/cli-jaw/dev/">ドキュメント</a>
 </p>
 
 ---
@@ -95,13 +95,13 @@ jaw init                              # interactive setup later when you're read
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 -->
 
 **Windows サポート。** 安定して使うなら WSL 経路をおすすめします。ネイティブ PowerShell 用のインストーラーもありますが、まだ beta です:
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 ```
 
 Node.js 22.4+ が必要です。
@@ -163,7 +163,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS ワンクリック</b> — Node.js がない場合はこちらで全部入ります</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -182,7 +182,7 @@ wsl --install
 
 ```bash
 # 2. Install CLI-JAW + all dependencies
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -284,7 +284,7 @@ foreach ($path in @($outLog, $errLog)) {
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -295,7 +295,7 @@ bash "$COLLECTOR" --target wsl
 Windows PowerShell からは、対応している WSL 経路に入ります:
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 collector が WSL 内では `powershell.exe` が使えないと報告する場合は、監査の前に Windows PowerShell から次を実行してください:
@@ -435,7 +435,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 | **C — Check** | 型チェック、ドキュメント更新、整合性チェック |
 | **D — Done** | すべての変更のサマリーを提示し、アイドル状態に戻ります |
 
-状態は再起動後も保持されます。`jaw orchestrate` または `/pabcd` で開始し、`/continue` で再開し、長期の目的は `/goal` で維持します。詳しくは [PABCD](https://lidge-jun.github.io/cli-jaw/dev/concepts/pabcd.html) を参照してください。
+状態は再起動後も保持されます。`jaw orchestrate` または `/pabcd` で開始し、`/continue` で再開し、長期の目的は `/goal` で維持します。詳しくは [PABCD](https://lidge-ai.github.io/cli-jaw/dev/concepts/pabcd.html) を参照してください。
 
 ### メモリ、スキル、MCP
 
@@ -472,7 +472,7 @@ DevTools Protocol 経由で Chrome を操作し、`jaw browser vision-click "Log
 
 ### デスクトップアプリ
 
-Electron アプリはマネージャーダッシュボードを起動し、同梱の Node.js サイドカーを備え、メニューバーに常駐します。[GitHub Releases](https://github.com/lidge-jun/cli-jaw/releases/latest) からダウンロードできます:
+Electron アプリはマネージャーダッシュボードを起動し、同梱の Node.js サイドカーを備え、メニューバーに常駐します。[GitHub Releases](https://github.com/lidge-ai/cli-jaw/releases/latest) からダウンロードできます:
 
 - **macOS (Apple Silicon)** — DMG を開き、CLI-JAW を Applications にドラッグします。ビルドは Developer ID 署名、公証、staple 済みで、アプリ内から更新できます。
 - **Windows (x64)** — Setup の `.exe` を実行します。未署名のため、SmartScreen が確認を求めることがあります。
@@ -532,7 +532,7 @@ jaw memory search <query>
 jaw browser fetch "https://example.com" --json
 ```
 
-`jaw clone` で作成した各インスタンスは、設定、メモリ、データベース、MCP 設定をそれぞれ独立して持ち、マネージャーダッシュボードからすべてを確認できます。リモートやヘッドレスホストについては [structure/remote-headless.md](structure/remote-headless.md) を参照してください。コマンドの完全なリファレンス: [CLI ドキュメント](https://lidge-jun.github.io/cli-jaw/dev/reference/cli.html)。
+`jaw clone` で作成した各インスタンスは、設定、メモリ、データベース、MCP 設定をそれぞれ独立して持ち、マネージャーダッシュボードからすべてを確認できます。リモートやヘッドレスホストについては [structure/remote-headless.md](structure/remote-headless.md) を参照してください。コマンドの完全なリファレンス: [CLI ドキュメント](https://lidge-ai.github.io/cli-jaw/dev/reference/cli.html)。
 
 ---
 
@@ -540,8 +540,8 @@ jaw browser fetch "https://example.com" --json
 
 | トピック | 場所 |
 |---|---|
-| ウェブサイトとクイックスタート | [lidge-jun.github.io/cli-jaw](https://lidge-jun.github.io/cli-jaw/) |
-| ガイド、概念、リファレンス | [開発者ドキュメント](https://lidge-jun.github.io/cli-jaw/dev/) |
+| ウェブサイトとクイックスタート | [lidge-ai.github.io/cli-jaw](https://lidge-ai.github.io/cli-jaw/) |
+| ガイド、概念、リファレンス | [開発者ドキュメント](https://lidge-ai.github.io/cli-jaw/dev/) |
 | アーキテクチャ | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [structure/](structure/) |
 | Slack ツールとローカル API | [docs/slack-tools.md](docs/slack-tools.md) |
 | ランタイム統合（廃止されたランタイムを含む） | [structure/runtime-integration.md](structure/runtime-integration.md) |
@@ -579,7 +579,7 @@ npm run electron:dev   # desktop app with hot reload
 
 ## コントリビュート
 
-公開コードと製品ドキュメントはこのリポジトリにあります。非公開の計画と履歴は、別の兄弟クローンである [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) にのみ置かれます。アクセスが必要な場合は [issue](https://github.com/lidge-jun/cli-jaw/issues) から依頼してください。このチェックアウト内に非公開の記録（`devlog`、`_plan`、`_fin`、`.jwc` エイリアスなど）を作成しないでください。公開ドキュメントやソースに非公開記録のパスを含めないでください。変更をアップロードする前に [ローカルの pre-push セットアップとチェック](CONTRIBUTING.md#local-private-path-check) に従ってください。
+公開コードと製品ドキュメントはこのリポジトリにあります。非公開の計画と履歴は、別の兄弟クローンである [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) にのみ置かれます。アクセスが必要な場合は [issue](https://github.com/lidge-ai/cli-jaw/issues) から依頼してください。このチェックアウト内に非公開の記録（`devlog`、`_plan`、`_fin`、`.jwc` エイリアスなど）を作成しないでください。公開ドキュメントやソースに非公開記録のパスを含めないでください。変更をアップロードする前に [ローカルの pre-push セットアップとチェック](CONTRIBUTING.md#local-private-path-check) に従ってください。
 
 1. `dev` から Fork してブランチを作成
 2. `npm run build && npm run build:frontend && npm test`

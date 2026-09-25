@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
 #  🦈 CLI-JAW — WSL One-Click Installer
-#  Usage:  curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install-wsl.sh | bash
+#  Usage:  curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 

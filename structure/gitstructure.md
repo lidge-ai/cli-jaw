@@ -13,7 +13,7 @@ live working tree + `.gitmodules` 기준으로 정리한 Git 구조/운영 요�
 ## 1) Repository Topology
 
 ```text
-lidge-jun/cli-jaw              ← public parent repo
+lidge-ai/cli-jaw              ← public parent repo
 ├── skills_ref/  (submodule)   ← lidge-jun/cli-jaw-skills (public)
 ├── officecli/   (submodule)   ← lidge-jun/OfficeCLI (public)
 └── .npmignore                 ← npm publish 시 submodule 제외
@@ -37,10 +37,10 @@ Manager/Electron Diff panel에서 이 repo를 볼 때 source repo root와 runtim
 
 ```bash
 # 코드만 (일반 사용자/CI)
-git clone https://github.com/lidge-jun/cli-jaw.git
+git clone https://github.com/lidge-ai/cli-jaw.git
 
 # 코드 + 공개 submodule 전체
-git clone --recursive https://github.com/lidge-jun/cli-jaw.git
+git clone --recursive https://github.com/lidge-ai/cli-jaw.git
 
 # 이미 clone 후 submodule 초기화
 git submodule update --init --recursive
@@ -68,7 +68,7 @@ git push
 
 ## 4) Private records boundary
 
-비공개 계획·감사·증거·개발 이력은 별도 sibling clone인 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal)에만 보관합니다. 접근 권한은 [이슈](https://github.com/lidge-jun/cli-jaw/issues)로 요청하세요.
+비공개 계획·감사·증거·개발 이력은 별도 sibling clone인 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal)에만 보관합니다. 접근 권한은 [이슈](https://github.com/lidge-ai/cli-jaw/issues)로 요청하세요.
 
 이 체크아웃 안에는 어느 깊이에서도 private 기록을 만들지 않습니다. `devlog`, `_plan`, `_fin`, `.jwc` 별칭도 금지하며, 이 규칙은 일반 스킬의 기본 경로보다 우선합니다. `docs/`와 `structure/`는 공개 제품 문서용이고, 공개 문서·소스에 비공개 기록 경로를 넣지 않습니다.
 

@@ -25,11 +25,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lidge-jun/cli-jaw.git"
+    "url": "git+https://github.com/lidge-ai/cli-jaw.git"
   },
-  "homepage": "https://github.com/lidge-jun/cli-jaw#readme",
+  "homepage": "https://github.com/lidge-ai/cli-jaw#readme",
   "bugs": {
-    "url": "https://github.com/lidge-jun/cli-jaw/issues"
+    "url": "https://github.com/lidge-ai/cli-jaw/issues"
   },
   "engines": {
     "node": ">=22.4.0"

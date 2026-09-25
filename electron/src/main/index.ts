@@ -301,7 +301,7 @@ function configureEmbeddedBrowserSession(): void {
   });
 }
 const AUTOMATION_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation';
-const DESKTOP_RELEASES_URL = 'https://github.com/lidge-jun/cli-jaw/releases/latest';
+const DESKTOP_RELEASES_URL = 'https://github.com/lidge-ai/cli-jaw/releases/latest';
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

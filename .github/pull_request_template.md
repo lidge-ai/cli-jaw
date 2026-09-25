@@ -18,7 +18,7 @@
   the orphan `pr-assets` branch, linked by commit SHA:
 
   ```text
-  https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
+  https://raw.githubusercontent.com/lidge-ai/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
   ```
 
 - A maintainer can waive the requirement with the `ui-screenshot-waived`

@@ -9,7 +9,7 @@ Native Code interruption seals callbacks before persisting accepted buffered con
 ## Repository Structure
 
 ```
-lidge-jun/cli-jaw              ← public (this repo)
+lidge-ai/cli-jaw              ← public (this repo)
 ├── skills_ref/  (submodule)   ← lidge-jun/cli-jaw-skills (public reference skills)
 ├── officecli/   (submodule)   ← lidge-jun/OfficeCLI (public)
 └── .npmignore                 ← npm publish 시 submodules 제외
@@ -17,14 +17,14 @@ lidge-jun/cli-jaw              ← public (this repo)
 
 ### Remote / 브랜치 정책 (푸시 전 필수)
 
-`origin`은 `https://github.com/lidge-jun/cli-jaw.git` 이다. 체크아웃에 따라
-`bitkyc08-arch/cli-jaw` 로 남아 있을 수 있는데, 이건 **같은 저장소의 옛 이름**이라
-GitHub이 리다이렉트해 준다. 동작은 하지만 `gh`(항상 `lidge-jun/cli-jaw` 로 해석)와
+`origin`은 `https://github.com/lidge-ai/cli-jaw.git` 이다. 체크아웃에 따라
+`lidge-jun/cli-jaw` 나 `bitkyc08-arch/cli-jaw` 로 남아 있을 수 있는데, 둘 다 **같은 저장소의 옛 이름**이라
+GitHub이 리다이렉트해 준다. 동작은 하지만 `gh`(항상 `lidge-ai/cli-jaw` 로 해석)와
 이름이 갈려서 "이슈는 A에, 푸시는 B에" 처럼 보이는 착시를 만든다. 발견하면 고칠 것:
 
 ```bash
 git remote -v                                                    # 확인
-git remote set-url origin https://github.com/lidge-jun/cli-jaw.git
+git remote set-url origin https://github.com/lidge-ai/cli-jaw.git
 ```
 
 **작업은 전부 `dev` 에서 한다. `main` 과 `preview` 는 머지만 받는 브랜치다.**
@@ -161,10 +161,10 @@ ssh <host> 'ps -o lstart= -p $(sed -n "s/.*pid.: *\\([0-9]*\\).*/\\1/p" ~/.cli-j
 
 ```bash
 # 코드만
-git clone https://github.com/lidge-jun/cli-jaw.git
+git clone https://github.com/lidge-ai/cli-jaw.git
 
 # 코드 + 공개 서브모듈 (skills, OfficeCLI)
-git clone --recursive https://github.com/lidge-jun/cli-jaw.git
+git clone --recursive https://github.com/lidge-ai/cli-jaw.git
 ```
 
 **Windows**: 추적 경로 길이는 `npm run check:path-length` 가 150자로 묶는다 (`gate:all` 포함).
@@ -175,7 +175,7 @@ git clone --recursive https://github.com/lidge-jun/cli-jaw.git
 **절반만 실패한다**: 앞선 서브모듈은 정상이고 하나만 비어 있어 워킹트리가 멀쩡해 보인다.
 
 ```bash
-git -c core.longpaths=true clone --recursive https://github.com/lidge-jun/cli-jaw.git
+git -c core.longpaths=true clone --recursive https://github.com/lidge-ai/cli-jaw.git
 ```
 
 ### Submodule Update
@@ -191,7 +191,7 @@ git add skills_ref && git commit -m "chore: update skills_ref ref" && git push
 
 ### Private records boundary
 
-Private plans, audits, evidence, and development history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-jun/cli-jaw/issues).
+Private plans, audits, evidence, and development history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-ai/cli-jaw/issues).
 
 Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth. This boundary overrides generic skill defaults. `docs/` and `structure/` hold public product documentation only; do not put private logs or private record paths in public docs or source.
 
@@ -208,7 +208,7 @@ A PR that changes rendered UI — `public/` (the manager dashboard / web fronten
 **Never commit screenshot evidence to the PR branch.** Agents and CLI uploads with push access push images to the orphan `pr-assets` branch and link by commit SHA:
 
 ```text
-https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
+https://raw.githubusercontent.com/lidge-ai/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png
 ```
 
 Waivers: the `ui-screenshot-waived` label counts only when the label actor has write/maintain/admin access (checked via the issue event timeline), or a comment asserting no UI change ("no UI changes", "UI 변경 없음") posted after the latest push by someone with write/maintain/admin access (verified via `repos.getCollaboratorPermissionLevel`).

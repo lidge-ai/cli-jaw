@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 
 const EXPECTED_PROVIDER = Object.freeze({
   provider: 'github',
-  owner: 'lidge-jun',
+  owner: 'lidge-ai',
   repo: 'cli-jaw',
 });
 

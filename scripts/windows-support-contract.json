@@ -12,6 +12,6 @@
   "managerPort": 24576,
   "runtimePort": 3457,
   "registeredService": "windows-startup",
-  "installCommand": "irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex",
+  "installCommand": "irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex",
   "recoveryCommand": "jaw.cmd doctor"
 }

@@ -215,7 +215,7 @@ test('Electron updater stays in the trusted main process and preserves coordinat
     assert.ok(main.includes('appUpdaterController?.dispose()'), 'shutdown must dispose updater timers and listeners');
     assert.equal(preload.includes('updater'), false, 'renderer preload must not expose update-source or install control');
     assert.ok(builder.includes('provider: github'), 'packaged update config must use the public GitHub provider');
-    assert.ok(builder.includes('owner: lidge-jun') && builder.includes('repo: cli-jaw'), 'update provider must pin repository ownership');
+    assert.ok(builder.includes('owner: lidge-ai') && builder.includes('repo: cli-jaw'), 'update provider must pin repository ownership');
     assert.ok(vite.includes("'electron-updater'"), 'electron-updater must remain an external packaged runtime dependency');
 });
 

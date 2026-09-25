@@ -2,7 +2,7 @@ import { dialog, shell } from 'electron';
 
 export type JawNotFoundChoice = 'guide' | 'pick' | 'quit';
 
-const INSTALL_GUIDE_URL = 'https://github.com/lidge-jun/cli-jaw#installation';
+const INSTALL_GUIDE_URL = 'https://github.com/lidge-ai/cli-jaw#installation';
 
 export async function showJawNotFoundDialog(
   searched: string[],

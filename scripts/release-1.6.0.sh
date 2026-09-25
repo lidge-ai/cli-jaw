@@ -66,4 +66,4 @@ gh release create "v$VERSION" \
 echo ""
 echo "✅ cli-jaw@$VERSION released"
 echo "   Install: npm install -g cli-jaw"
-echo "   Release: https://github.com/lidge-jun/cli-jaw/releases/tag/v$VERSION"
+echo "   Release: https://github.com/lidge-ai/cli-jaw/releases/tag/v$VERSION"

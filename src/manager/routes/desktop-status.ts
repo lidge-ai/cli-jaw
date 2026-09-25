@@ -3,7 +3,7 @@ import { Router as createRouter } from 'express';
 import { APP_VERSION } from '../../core/config.js';
 
 export const CLI_JAW_ELECTRON_HEADER = 'x-cli-jaw-electron';
-export const CLI_JAW_DESKTOP_DOWNLOAD_URL = 'https://github.com/lidge-jun/cli-jaw/releases/latest';
+export const CLI_JAW_DESKTOP_DOWNLOAD_URL = 'https://github.com/lidge-ai/cli-jaw/releases/latest';
 
 export type DesktopStatusResponse = {
     inDesktop: boolean;
