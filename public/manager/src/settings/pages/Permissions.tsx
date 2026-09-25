@@ -9,6 +9,9 @@ import type { SettingsPageProps, DirtyEntry } from '../types';
 import { ChipListField, SelectField } from '../fields';
 import {
     SettingsSection,
+    SettingsNote,
+    StatusBadge,
+    type StatusTone,
     PageError,
     PageLoading,
     PageOffline,
@@ -117,6 +120,16 @@ export function seedAutoAllowlist(
 export function isAllowlistValid(tokens: ReadonlyArray<string>): boolean {
     if (tokens.length === 0) return false;
     return tokens.every(isPermissionToken);
+}
+
+// Badge tone for the saved-policy readout: Auto (YOLO) is the risky policy,
+// Unrecognized needs attention, Safe/Custom/Not provided read neutrally.
+function configuredPolicyTone(value: unknown): StatusTone {
+    if (value === 'auto') return 'warn';
+    if (value === 'safe') return 'ok';
+    if (Array.isArray(value) && isPermissionsPolicy(value)) return 'neutral';
+    if (value === null || value === undefined) return 'neutral';
+    return 'error';
 }
 
 // ─── Page component ──────────────────────────────────────────────────
@@ -261,11 +274,34 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
     const isEmpty = mode === 'custom' && tokens.length === 0;
 
     const activeSummary = configuredPolicyLabel(state.data.permissions);
+    const policyTone = configuredPolicyTone(state.data.permissions);
 
     return (
         <form className="settings-page-form" onSubmit={(event) => event.preventDefault()}>
             <SettingsSection
-                title="Permissions"
+                title="Saved policy"
+                hint="The permission policy currently saved on this instance."
+            >
+                {/* `.settings-readonly-line` is a test contract: its textContent
+                    must read "Configured policy: <label>". */}
+                <dl className="settings-kv">
+                    <div className="settings-kv-row settings-readonly-line">
+                        <dt>Configured policy:</dt>
+                        <dd>
+                            {' '}
+                            <StatusBadge tone={policyTone}>{activeSummary}</StatusBadge>
+                        </dd>
+                    </div>
+                </dl>
+                {original?.mode === 'unknown' && (
+                    <SettingsNote>
+                        Unrecognized value: choose a policy below (or in Agent) to replace it.
+                    </SettingsNote>
+                )}
+            </SettingsSection>
+
+            <SettingsSection
+                title="Change policy"
                 hint="Selecting a value changes the draft. Save applies it. Auto (YOLO) requests automatic approval or permission bypass. Behavior varies by runtime."
             >
                 <SelectField
@@ -298,10 +334,10 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
                                         : null
                             }
                         />
-                        <p className="settings-section-hint">
+                        <SettingsNote>
                             Each chip is a permission token. Examples: <code>bash</code>,
                             <code> read</code>, <code> write</code>, <code> mcp.*</code>.
-                        </p>
+                        </SettingsNote>
                         {isEmpty && (
                             <InlineWarn role="alert">
                                 An empty Custom allowlist cannot be saved.
@@ -310,19 +346,6 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
                         )}
                     </>
                 )}
-            </SettingsSection>
-
-            <SettingsSection
-                title="Saved policy"
-                hint="Shows the saved permission policy."
-            >
-                <p className="settings-readonly-line">
-                    <span className="settings-field-label">Configured policy:</span>{' '}
-                    <span>{activeSummary}</span>
-                </p>
-                {original?.mode === 'unknown' ? (
-                    <p className="settings-section-hint">Unrecognized value: choose a policy above (or in Agent) to replace it.</p>
-                ) : null}
             </SettingsSection>
         </form>
     );

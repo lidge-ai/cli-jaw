@@ -9,6 +9,7 @@ import type { SettingsPageProps, DirtyEntry } from '../types';
 import { TextField, SelectField, ToggleField } from '../fields';
 import {
     SettingsSection,
+    SettingsNote,
     PageError,
     PageLoading,
     PageOffline,
@@ -297,18 +298,18 @@ export default function Network({ port, client, dirty, registerSave }: SettingsP
                         });
                     }}
                 />
-                <p className="settings-section-hint">
+                <SettingsNote>
                     <strong>off</strong> — only loopback can talk to the API.{' '}
                     <strong>http-only</strong> — remote can issue HTTP requests but no
                     WebSocket upgrades. <strong>full</strong> — HTTP + WebSocket open to
                     remote (use with auth).
-                </p>
+                </SettingsNote>
                 {lockoutRisk && (
-                    <InlineWarn role="alert">
+                    <SettingsNote tone="error" role="alert">
                         Saving will close remote access while you're connected from
                         <code> {typeof window !== 'undefined' ? window.location.host : ''} </code>
                         — you will be locked out. Reach the dashboard over loopback first.
-                    </InlineWarn>
+                    </SettingsNote>
                 )}
                 {remoteEnabled && (
                     <>
