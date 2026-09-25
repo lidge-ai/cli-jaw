@@ -13,7 +13,10 @@ import {
     clearAllEmployeeSessions,
     getRecentMessagesLite,
     getLatestUnconsumedAnchor,
+    getSession,
 } from '../core/db.js';
+import { resolveMainCli, type MainSessionRecord } from '../core/main-session.js';
+import { withSkillMentions } from '../core/skill-mentions.js';
 import { getActiveChatSession } from '../core/chat-sessions.js';
 import { currentSessionScope, withSessionScope } from '../core/session-context.js';
 
@@ -503,6 +506,14 @@ export async function orchestrate(
     const approvedPlanBlock = origin === 'heartbeat' ? '' : buildApprovedPlanPromptBlock(ctx, state, settings["workingDir"] || null);
     if (approvedPlanBlock) {
         prompt = `${approvedPlanBlock}\n${prompt}`;
+    }
+    // `$skill-id` mentions are read from the user's own words only. A worker
+    // result that quotes `$jaw-browser` is not a request to load it. The CLI is
+    // resolved the way the gateway admits it (gateway.ts), so argv CLIs get stubs.
+    if (!meta["_workerResult"]) {
+        const mentionCli = (meta["overrides"] as { cli?: string } | undefined)?.cli
+            ?? resolveMainCli(null, settings, getSession() as MainSessionRecord | undefined);
+        prompt = withSkillMentions(prompt, userText, { cli: mentionCli });
     }
     const remoteChannelElicitationGuard = buildRemoteChannelElicitationGuard(origin);
     if (remoteChannelElicitationGuard) {
