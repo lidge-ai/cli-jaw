@@ -1,8 +1,16 @@
 import { Tray, Menu, nativeImage, app, clipboard, Notification, dialog } from 'electron';
+import type { MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { isCliInstalled, installCli } from './install-cli.js';
 import { readIsolatedQaPolicy, type IsolatedQaPolicy } from '../../../../src/shared/isolated-qa.js';
+import {
+  EMPTY_TRAY_INSTANCES,
+  instanceMenuLabel,
+  instancesSummaryLabel,
+  visibleInstances,
+  type TrayInstancesSnapshot,
+} from './tray-menu-model.js';
 
 const PREFS_FILENAME = 'tray-preferences.json';
 
@@ -46,12 +54,22 @@ let serverStatus = 'Starting...';
 let currentMenu: Menu | null = null;
 let onTrayClick: (() => void) | null = null;
 let qaPolicy: IsolatedQaPolicy | null = null;
+let instancesSnapshot: TrayInstancesSnapshot = EMPTY_TRAY_INSTANCES;
 
 export interface TrayCallbacks {
   onOpenDashboard: () => void;
   onRestartServer: () => void;
   onQuit: () => void;
   getManagerUrl: () => string;
+  /** App version shown in the menu header. */
+  getAppVersion?: () => string;
+  /** Opens the dashboard focused on one instance. */
+  onOpenInstance?: (port: number) => void;
+  /** Refreshes live data just before the menu opens (must not block). */
+  onBeforePopup?: () => void;
+  canCheckForUpdates?: () => boolean;
+  onCheckForUpdates?: () => void;
+  onOpenReleases?: () => void;
 }
 
 export function isKeepRunning(): boolean {
@@ -89,6 +107,11 @@ export function updateServerStatus(status: string): void {
   rebuildMenu();
 }
 
+export function setTrayInstances(snapshot: TrayInstancesSnapshot): void {
+  instancesSnapshot = snapshot;
+  rebuildMenu();
+}
+
 export function setTrayBadge(count: number): void {
   if (!tray) return;
   tray.setTitle(count > 0 ? ` ${count}` : '');
@@ -115,6 +138,7 @@ export function setTrayClickHandler(fn: () => void): void {
 }
 
 export function popUpTrayMenu(): void {
+  callbacks?.onBeforePopup?.();
   if (tray && currentMenu) tray.popUpContextMenu(currentMenu);
 }
 
@@ -128,6 +152,7 @@ export function destroyTray(): void {
   callbacks = null;
   currentMenu = null;
   onTrayClick = null;
+  instancesSnapshot = EMPTY_TRAY_INSTANCES;
 }
 
 function syncLoginItemSetting(): void {
@@ -138,11 +163,26 @@ function syncLoginItemSetting(): void {
   });
 }
 
+function instancesSubmenu(cb: TrayCallbacks): MenuItemConstructorOptions[] {
+  const { rows, hidden } = visibleInstances(instancesSnapshot);
+  const items: MenuItemConstructorOptions[] = rows.map((instance) => ({
+    label: instanceMenuLabel(instance),
+    click: () => (cb.onOpenInstance ? cb.onOpenInstance(instance.port) : cb.onOpenDashboard()),
+  }));
+  if (items.length === 0) items.push({ label: 'No instances found', enabled: false });
+  if (hidden > 0) items.push({ label: `${hidden} more in Dashboard…`, enabled: false });
+  items.push({ type: 'separator' }, { label: 'Show All in Dashboard', click: cb.onOpenDashboard });
+  return items;
+}
+
 function rebuildMenu(): void {
   if (!tray || !callbacks) return;
   const cb = callbacks;
+  const version = cb.getAppVersion?.();
   const menu = Menu.buildFromTemplate([
+    { label: version ? `cli-jaw v${version}` : 'cli-jaw', enabled: false },
     { label: serverStatus, enabled: false },
+    { label: instancesSummaryLabel(instancesSnapshot), submenu: instancesSubmenu(cb) },
     { type: 'separator' },
     {
       label: 'Open Dashboard',
@@ -191,6 +231,17 @@ function rebuildMenu(): void {
         });
         if (result.ok) rebuildMenu();
       },
+    },
+    { type: 'separator' },
+    {
+      label: 'Check for Updates…',
+      enabled: !qaPolicy && (cb.canCheckForUpdates?.() ?? false),
+      click: () => { if (!qaPolicy) cb.onCheckForUpdates?.(); },
+    },
+    {
+      label: 'Open Releases Page',
+      enabled: !qaPolicy && Boolean(cb.onOpenReleases),
+      click: () => { if (!qaPolicy) cb.onOpenReleases?.(); },
     },
     { type: 'separator' },
     { label: 'Quit cli-jaw', click: cb.onQuit },

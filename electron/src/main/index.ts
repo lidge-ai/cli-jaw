@@ -14,9 +14,11 @@ import {
   createTray, isKeepRunning, destroyTray,
   updateServerStatus, notifyServerCrash, setTrayBadge,
   setTrayClickHandler, popUpTrayMenu, getTrayBoundsSafe,
+  setTrayInstances,
 } from './lib/tray-manager.js';
 import { createReminderPopover, type ReminderPopover } from './lib/reminder-popover.js';
 import { createReminderBadgePoller, type ReminderBadgePoller } from './lib/reminder-badge.js';
+import { createTrayInstancesPoller, type TrayInstancesPoller } from './lib/tray-instances.js';
 import { waitForManagerReady, isManagerHealthy, probeOnce } from './lib/health-check.js';
 import {
   buildManagerCsp,
@@ -250,6 +252,7 @@ let metricsCollector: MetricsCollectorHandle | null = null;
 let webContentsHardeningRegistered = false;
 let reminderPopover: ReminderPopover | null = null;
 let reminderBadgePoller: ReminderBadgePoller | null = null;
+let trayInstancesPoller: TrayInstancesPoller | null = null;
 let trayPopupMenuIpcRegistered = false;
 let trayRemindersShortcutRegistered = false;
 let appUpdaterController: AppUpdaterController | null = null;
@@ -298,6 +301,7 @@ function configureEmbeddedBrowserSession(): void {
   });
 }
 const AUTOMATION_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation';
+const DESKTOP_RELEASES_URL = 'https://github.com/lidge-jun/cli-jaw/releases/latest';
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -500,6 +504,7 @@ async function forceQuit(): Promise<void> {
 function installTrayReminders(): void {
   reminderPopover?.destroy();
   reminderBadgePoller?.stop();
+  trayInstancesPoller?.stop();
   reminderPopover = createReminderPopover({
     managerUrl: MANAGER_URL,
     managerOrigin: MANAGER_ORIGIN,
@@ -508,6 +513,11 @@ function installTrayReminders(): void {
   reminderBadgePoller = createReminderBadgePoller({
     managerUrl: MANAGER_URL,
     setBadge: setTrayBadgeFromReminderPoller,
+    log: (message) => ringBuffer.append(`${message}\n`),
+  });
+  trayInstancesPoller = createTrayInstancesPoller({
+    managerUrl: MANAGER_URL,
+    onUpdate: setTrayInstances,
     log: (message) => ringBuffer.append(`${message}\n`),
   });
   setTrayClickHandler(toggleTrayRemindersPopover);
@@ -529,6 +539,8 @@ function destroyTrayReminders(): void {
   unregisterTrayRemindersShortcut();
   reminderBadgePoller?.stop();
   reminderBadgePoller = null;
+  trayInstancesPoller?.stop();
+  trayInstancesPoller = null;
   reminderPopover?.destroy();
   reminderPopover = null;
 }
@@ -582,10 +594,23 @@ async function openTrayRemindersDashboard(): Promise<void> {
 
 function startTrayReminderBadgePolling(): void {
   reminderBadgePoller?.start();
+  trayInstancesPoller?.start();
 }
 
 function stopTrayReminderBadgePolling(): void {
   reminderBadgePoller?.stop();
+  trayInstancesPoller?.stop();
+}
+
+async function openTrayInstance(port: number): Promise<void> {
+  await createManagerWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    await mainWindow.loadURL(new URL(`/?port=${port}`, MANAGER_URL).toString());
+    focusWindow(mainWindow);
+  } catch (err) {
+    ringBuffer.append(`[jaw-tray] open instance failed: ${(err as Error)?.message ?? err}\n`);
+  }
 }
 
 function markManagerRunning(status = 'Server: Running'): void {
@@ -688,6 +713,20 @@ async function bootstrap(): Promise<void> {
       void forceQuit();
     },
     getManagerUrl: () => MANAGER_URL,
+    getAppVersion: () => app.getVersion(),
+    onOpenInstance: (port) => {
+      void openTrayInstance(port);
+    },
+    onBeforePopup: () => {
+      void trayInstancesPoller?.refreshNow();
+    },
+    canCheckForUpdates: () => appUpdaterController?.enabled ?? false,
+    onCheckForUpdates: () => {
+      void appUpdaterController?.checkManually();
+    },
+    onOpenReleases: () => {
+      void shell.openExternal(DESKTOP_RELEASES_URL);
+    },
   }, QA_POLICY);
 
   await ensureManagerRunning();
