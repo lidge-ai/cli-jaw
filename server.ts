@@ -13,6 +13,7 @@ import { isFullAccessRequest } from './src/http/full-access.js';
 import express from 'express';
 import helmet from 'helmet';
 import { log } from './src/core/logger.js';
+import { installedClaudeSupports } from './src/cli/claude-default-model-boot.js';
 import { openServeLog } from './src/core/serve-log.js';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
@@ -92,7 +93,7 @@ import { refreshHostToolchain } from './src/memory/host-toolchain.js';
 import { loadLocales } from './src/core/i18n.js';
 import {
     PROMPTS_DIR, DB_PATH, JAW_HOME,
-    settings, loadSettings, saveSettings,
+    settings, loadSettings, saveSettings, applyClaudeDefaultModelMigration,
     ensureDirs, runMigration, TOKEN_PATH, APP_VERSION,
 } from './src/core/config.js';
 import { clearPidfileIfOurs, defaultLifecycleDeps, processStartedAt, writePidfile } from './src/core/instance-lifecycle.js';
@@ -631,6 +632,17 @@ server.listen(PORT, bindHost, async () => {
 
     // #233: pick up external settings writes (terminal `cli-jaw project set`)
     startSettingsWatch();
+
+    // Move a home still on the old Claude default to claude-opus-5-5 once the installed
+    // Claude Code is known to accept it. Also warms the catalog cache the spawn preflight reads.
+    void (async () => {
+        try {
+            const supports = await installedClaudeSupports();
+            if (applyClaudeDefaultModelMigration(settings, supports).didChange) saveSettings(settings);
+        } catch (error) {
+            log.warn(`[settings] claude default-model migration skipped: ${(error as Error).message}`);
+        }
+    })();
 
     // Bootstrap i18n locale dictionaries
     loadLocales(join(projectRoot, 'public', 'locales'));

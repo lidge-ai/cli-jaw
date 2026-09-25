@@ -45,6 +45,7 @@ export function stripServerOwnedSettingsFields(settings: Record<string, unknown>
         multiSessionDefaultMigration: _sessionMigration,
         nativeTransportMigration: _nativeTransportMigration,
         maxConcurrentDefaultMigration: _maxConcurrentDefaultMigration,
+        claudeDefaultModelMigration: _claudeDefaultModelMigration,
         slackEnvironmentVariables: _slackEnvironmentVariables,
         telegramEnvironmentVariables: _telegramEnvironmentVariables,
         discordEnvironmentVariables: _discordEnvironmentVariables,
