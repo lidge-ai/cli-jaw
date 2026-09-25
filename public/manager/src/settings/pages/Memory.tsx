@@ -444,15 +444,6 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                         </header>
                         <pre
                             className="settings-memory-modal-body"
-                            style={{
-                                margin: 0,
-                                fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                                fontSize: 12,
-                                whiteSpace: 'pre-wrap',
-                                overflowWrap: 'anywhere',
-                                overflow: 'auto',
-                                maxHeight: '60vh',
-                            }}
                         >
                             {openEntry.value}
                         </pre>

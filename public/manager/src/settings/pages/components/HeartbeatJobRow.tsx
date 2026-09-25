@@ -66,12 +66,12 @@ export function HeartbeatJobRow({
     const title = job.name || `Job ${index + 1}`;
 
     return (
-        <>
-            <div
-                className="settings-card-actions"
-                role="group"
-                aria-label={`Heartbeat job ${index + 1}${job.name ? ` (${job.name})` : ''}`}
-            >
+        <div
+            className="settings-card-group"
+            role="group"
+            aria-label={`Heartbeat job ${index + 1}${job.name ? ` (${job.name})` : ''}`}
+        >
+            <div className="settings-card-actions">
                 <div className="settings-card-actions-status">
                     <strong>{title}</strong>{' '}
                     {job.enabled ? (
@@ -213,6 +213,6 @@ export function HeartbeatJobRow({
                     onChange={(event) => onChange({ prompt: event.target.value })}
                 />
             </label>
-        </>
+        </div>
     );
 }
