@@ -873,6 +873,8 @@
   "settings.slack.resetFailed": "Could not reset the Slack app connection. Try again.",
   "settings.slack.resetManagedByEnvironment": "This Slack connection is managed by environment variables ({variables}). Remove them and restart cli-jaw before resetting the connection.",
   "settings.slack.managedByEnvironment": "Connection settings are read-only because they are managed by environment variables: {variables}. Remove them and restart cli-jaw to edit here.",
+  "settings.telegram.managedByEnvironment": "Connection settings are read-only because they are managed by environment variables: {variables}. Remove them and restart cli-jaw to edit here.",
+  "settings.discord.managedByEnvironment": "Connection settings are read-only because they are managed by environment variables: {variables}. Remove them and restart cli-jaw to edit here.",
   "settings.slack.attachPort": "Attach instance port",
   "settings.channel.notAttachInstanceHint": "Another instance owns this Slack connection (check the attach instance port)",
   "settings.slack.guide.step2Desc": "App settings → OAuth & Permissions → confirm files:read → Reinstall to Workspace → copy Bot User OAuth Token",

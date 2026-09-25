@@ -11,7 +11,7 @@
 //   discord.allowBots
 //   discord.mentionOnly
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SettingsPageProps, DirtyEntry } from '../types';
 import { ToggleField, SecretField, ChipListField, TextField } from '../fields';
 import {
@@ -22,6 +22,7 @@ import {
     usePageSnapshot,
 } from './page-shell';
 import { expandPatch } from './path-utils';
+import { slackText } from './components/SlackSetup';
 import { HealthBadge, interpretDiscordHealth } from './components/HealthBadge';
 import type { MessengerChannel } from './components/ChannelEnablementControl';
 import { TransportStatusChips } from './components/TransportStatusChips';
@@ -46,6 +47,7 @@ type DiscordBlock = {
 type DiscordSnapshot = {
     channel?: MessengerChannel;
     discord?: DiscordBlock;
+    discordEnvironmentVariables?: string[];
     messaging?: MessagingBlock;
     [key: string]: unknown;
 };
@@ -62,13 +64,16 @@ const DISCORD_KEYS = [
     'discord.mentionOnly',
 ] as const;
 
+const CONNECTION_KEYS = ['discord.enabled', 'discord.token', 'discord.guildId', 'discord.channelIds'];
+
 /** Discord IDs are snowflakes — long numeric strings. Be lenient: 16+ digits typical. */
 export function isValidSnowflake(chip: string): boolean {
     if (!chip) return false;
     return /^\d{5,32}$/.test(chip.trim());
 }
 
-export default function ChannelsDiscord({ port, client, dirty, registerSave }: SettingsPageProps) {
+export default function ChannelsDiscord({ port, client, dirty, registerSave, manager }: SettingsPageProps) {
+    const t = useMemo(() => slackText(manager?.ui.locale ?? document.documentElement.lang), [manager?.ui.locale]);
     const { state, refresh, setData } = usePageSnapshot<DiscordSnapshot>(client, '/api/settings');
 
     const [setupOpen, setSetupOpen] = useState(false);
@@ -114,10 +119,22 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
         return state.data.discord || {};
     }, [state]);
 
+    const environmentVariables = state.kind === 'ready' && Array.isArray(state.data.discordEnvironmentVariables)
+        ? state.data.discordEnvironmentVariables
+        : [];
+    const environmentManaged = environmentVariables.length > 0;
+    const savePolicyRef = useRef({ environmentManaged, environmentVariables, t });
+    useLayoutEffect(() => { savePolicyRef.current = { environmentManaged, environmentVariables, t }; },
+        [environmentManaged, environmentVariables, t]);
+
     const onSave = useCallback(async () => {
         if (setupOpen) throw new Error('Finish channel setup before saving settings.');
         const bundle = dirty.saveBundle();
         if (Object.keys(bundle).length === 0) return;
+        const policy = savePolicyRef.current;
+        if (policy.environmentManaged && CONNECTION_KEYS.some(key => key in bundle)) {
+            throw new Error(policy.t('settings.discord.managedByEnvironment', { variables: policy.environmentVariables.join(', ') }));
+        }
         const patch = expandPatch(bundle);
         const updated = await client.put<DiscordSnapshot>('/api/settings', patch);
         const fresh = (updated && typeof updated === 'object' && 'data' in updated
@@ -189,11 +206,14 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
                 <TransportStatusChips client={client} channel="discord" />
             </SettingsSection>
 
-            <SettingsSection title="Discord" hint="Bot token, guild + channels, forwarding rules.">
+            <SettingsSection title="Discord" hint={environmentManaged
+                ? t('settings.discord.managedByEnvironment', { variables: environmentVariables.join(', ') })
+                : 'Bot token, guild + channels, forwarding rules.'}>
                 <ToggleField
                     id="dc-enabled"
                     label="Discord enabled"
                     value={enabled}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setEnabled(next);
                         setEntry('discord.enabled', {
@@ -208,6 +228,7 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
                     label="Bot token"
                     value={token}
                     placeholder={tokenPlaceholder}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setToken(next);
                         if (next.length === 0) {
@@ -227,6 +248,7 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
                     value={guildId}
                     placeholder="123456789012345678"
                     error={guildError}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setGuildId(next);
                         const valid = next.length === 0 || isValidSnowflake(next);
@@ -243,6 +265,7 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
                     value={channelIds}
                     placeholder="987654321098765432"
                     error={channelIdsError}
+                    disabled={environmentManaged}
                     onChange={(next) => {
                         setChannelIds(next);
                         const allValid = next.every(isValidSnowflake);
@@ -307,7 +330,7 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave }: S
                 />
             </SettingsSection>
             </fieldset>
-            <ChannelSetupEntry channel="discord" client={client} dirty={dirty}
+            <ChannelSetupEntry channel="discord" client={client} dirty={dirty} disabled={environmentManaged}
                 open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<DiscordSnapshot>('/api/settings'))} />
         </form>
     );

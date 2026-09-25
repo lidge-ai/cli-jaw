@@ -11,6 +11,12 @@ import {
     isSettingsPersistenceBlocked,
     configuredSlackEnvironmentVariables,
     slackEnvironmentManagedPatchPaths,
+    configuredTelegramEnvironmentVariables,
+    telegramEnvironmentManagedSettingKeys,
+    telegramEnvironmentManagedPatchPaths,
+    configuredDiscordEnvironmentVariables,
+    discordEnvironmentManagedSettingKeys,
+    discordEnvironmentManagedPatchPaths,
     wikiRouteManagedPatchPaths,
 } from '../core/config.js';
 import { sanitizeSettingsInput } from '../core/settings-merge.js';
@@ -65,6 +71,8 @@ const SERVER_OWNED_SETTINGS_KEYS = [
     'nativeTransportMigration',
     'maxConcurrentDefaultMigration',
     'slackEnvironmentVariables',
+    'telegramEnvironmentVariables',
+    'discordEnvironmentVariables',
 ] as const;
 
 function redactSttSettings(input: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -124,6 +132,38 @@ function redactMcpSecrets(config: unknown): unknown {
     return out;
 }
 
+const ENVIRONMENT_BLANK_VALUES: Record<string, unknown> = {
+    token: '', allowedChatIds: [], guildId: '', channelIds: [],
+};
+
+/** Blank only the fields a configured variable owns; a file-held value the
+ *  environment does not own stays visible (tokens are masked afterwards). */
+function blankOwnedFields(
+    channel: Record<string, unknown> | undefined,
+    ownedKeys: readonly string[],
+): Record<string, unknown> | undefined {
+    if (!channel) return channel;
+    const blanked = { ...channel };
+    for (const key of ownedKeys) {
+        if (key in ENVIRONMENT_BLANK_VALUES) blanked[key] = ENVIRONMENT_BLANK_VALUES[key];
+    }
+    return blanked;
+}
+
+function blankEnvironmentOwnedMessagingFields(safe: {
+    telegram?: Record<string, unknown>;
+    telegramEnvironmentVariables?: string[];
+    discord?: Record<string, unknown>;
+    discordEnvironmentVariables?: string[];
+}): void {
+    safe.telegramEnvironmentVariables = configuredTelegramEnvironmentVariables();
+    const telegram = blankOwnedFields(safe.telegram, telegramEnvironmentManagedSettingKeys());
+    if (telegram) safe.telegram = telegram;
+    safe.discordEnvironmentVariables = configuredDiscordEnvironmentVariables();
+    const discord = blankOwnedFields(safe.discord, discordEnvironmentManagedSettingKeys());
+    if (discord) safe.discord = discord;
+}
+
 function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
     const safe = { ...input } as T & {
         stt?: Record<string, unknown>;
@@ -131,6 +171,10 @@ function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
         pi?: Record<string, unknown>;
         slack?: Record<string, unknown>;
         slackEnvironmentVariables?: string[];
+        telegram?: Record<string, unknown>;
+        telegramEnvironmentVariables?: string[];
+        discord?: Record<string, unknown>;
+        discordEnvironmentVariables?: string[];
     };
     const stt = redactSttSettings(safe.stt);
     const jawCeo = redactJawCeoSettings(safe.jawCeo);
@@ -153,6 +197,7 @@ function redactRuntimeSettings<T extends Record<string, unknown>>(input: T): T {
             attachPort: '',
         };
     }
+    blankEnvironmentOwnedMessagingFields(safe);
     // Channel bot tokens are full account credentials, and only the Slack
     // env-managed case was being masked — a file-configured Telegram or Discord
     // token came back verbatim (#449). The UI needs to know whether a token is
@@ -287,6 +332,22 @@ export function registerSettingsRoutes(
             fail(res, 409, 'slack_connection_managed_by_environment', {
                 environmentVariables: configuredSlackEnvironmentVariables(),
                 managedPaths: environmentManagedPaths,
+            });
+            return;
+        }
+        const telegramManagedPaths = telegramEnvironmentManagedPatchPaths(body);
+        if (telegramManagedPaths.length > 0) {
+            fail(res, 409, 'telegram_connection_managed_by_environment', {
+                environmentVariables: configuredTelegramEnvironmentVariables(),
+                managedPaths: telegramManagedPaths,
+            });
+            return;
+        }
+        const discordManagedPaths = discordEnvironmentManagedPatchPaths(body);
+        if (discordManagedPaths.length > 0) {
+            fail(res, 409, 'discord_connection_managed_by_environment', {
+                environmentVariables: configuredDiscordEnvironmentVariables(),
+                managedPaths: discordManagedPaths,
             });
             return;
         }

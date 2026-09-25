@@ -1,9 +1,22 @@
 // ── Discord Settings ──
 import { apiJson } from '../api.js';
 import { openSetupGuideIfUnconfigured } from './channel-setup-guide.js';
+import { t } from './i18n.js';
 import type { SettingsData } from './settings-types.js';
 
+let discordEnvironmentVariables: string[] = [];
+
+function discordEnvironmentMessage(): string {
+    return t('settings.discord.managedByEnvironment', {
+        variables: discordEnvironmentVariables.join(', ') || 'DISCORD_*',
+    });
+}
+
 export async function saveDiscordSettings(): Promise<void> {
+    if (discordEnvironmentVariables.length > 0) {
+        window.alert(discordEnvironmentMessage());
+        return;
+    }
     const token = (document.getElementById('dcToken') as HTMLInputElement)?.value.trim() || '';
     const guildId = (document.getElementById('dcGuildId') as HTMLInputElement)?.value.trim() || '';
     const channelIdsRaw = (document.getElementById('dcChannelIds') as HTMLInputElement)?.value.trim() || '';
@@ -14,6 +27,10 @@ export async function saveDiscordSettings(): Promise<void> {
 }
 
 export async function setDiscord(enabled: boolean): Promise<void> {
+    if (discordEnvironmentVariables.length > 0) {
+        window.alert(discordEnvironmentMessage());
+        return;
+    }
     document.getElementById('dcOn')?.classList.toggle('active', enabled);
     document.getElementById('dcOff')?.classList.toggle('active', !enabled);
     await apiJson('/api/settings', 'PUT', { discord: { enabled } });
@@ -41,16 +58,33 @@ export async function setDiscordMentionOnly(enabled: boolean): Promise<void> {
 export function loadDiscordSettings(s: SettingsData): void {
     if (!s.discord) return;
     const dc = s.discord;
+    discordEnvironmentVariables = Array.isArray(s.discordEnvironmentVariables)
+        ? s.discordEnvironmentVariables
+        : [];
+    const environmentManaged = discordEnvironmentVariables.length > 0;
+    const notice = document.getElementById('discord-environment-managed');
+    if (notice) {
+        notice.style.display = environmentManaged ? '' : 'none';
+        notice.textContent = environmentManaged
+            ? t('settings.discord.managedByEnvironment', { variables: discordEnvironmentVariables.join(', ') })
+            : '';
+    }
+    for (const id of ['dcToken', 'dcGuildId', 'dcChannelIds']) {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input) input.disabled = environmentManaged;
+    }
+    for (const id of ['dcOff', 'dcOn', 'discord-onboarding-trigger']) {
+        const button = document.getElementById(id) as HTMLButtonElement | null;
+        if (button) button.disabled = environmentManaged;
+    }
     document.getElementById('dcOn')?.classList.toggle('active', !!dc.enabled);
     document.getElementById('dcOff')?.classList.toggle('active', !dc.enabled);
     const dcToken = document.getElementById('dcToken') as HTMLInputElement | null;
-    if (dc.token && dcToken) dcToken.value = dc.token;
+    if (dcToken) dcToken.value = environmentManaged ? '' : dc.token || '';
     const dcGuildId = document.getElementById('dcGuildId') as HTMLInputElement | null;
-    if (dc.guildId && dcGuildId) dcGuildId.value = dc.guildId;
+    if (dcGuildId) dcGuildId.value = environmentManaged ? '' : dc.guildId || '';
     const dcChannelIds = document.getElementById('dcChannelIds') as HTMLInputElement | null;
-    if (dc.channelIds?.length && dcChannelIds) {
-        dcChannelIds.value = dc.channelIds.join(', ');
-    }
+    if (dcChannelIds) dcChannelIds.value = environmentManaged ? '' : dc.channelIds?.join(', ') || '';
     const fwdOn = dc.forwardAll !== false;
     document.getElementById('dcForwardOn')?.classList.toggle('active', fwdOn);
     document.getElementById('dcForwardOff')?.classList.toggle('active', !fwdOn);

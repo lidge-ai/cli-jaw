@@ -12,6 +12,8 @@ import {
     SETTINGS_PATH, settings, replaceSettings, migrateSettings,
     normalizeProjectDirs, getLastSavedSettingsRaw,
     slackEnvironmentManagedPatchPaths, slackEnvironmentManagedSettingKeys,
+    telegramEnvironmentManagedPatchPaths, telegramEnvironmentManagedSettingKeys,
+    discordEnvironmentManagedPatchPaths, discordEnvironmentManagedSettingKeys,
     wikiRouteManagedPatchPaths, WIKI_ROUTE_MANAGED_SETTING_KEYS,
 } from './config.js';
 import { mergeSettingsPatch, sanitizeSettingsInput } from './settings-merge.js';
@@ -28,6 +30,8 @@ const SERVER_OWNED_SETTINGS_KEYS = [
     'nativeTransportMigration',
     'maxConcurrentDefaultMigration',
     'slackEnvironmentVariables',
+    'telegramEnvironmentVariables',
+    'discordEnvironmentVariables',
 ] as const;
 
 export type SettingsWatchOptions = {
@@ -109,6 +113,20 @@ export function reloadSettingsFromDisk(options: ReloadOptions = {}): boolean {
         for (const key of slackEnvironmentManagedSettingKeys()) delete slack[key];
         externalPatch["slack"] = slack;
         console.warn(`[settings-watch] ignored environment-managed settings fields: ${environmentManagedSlackPaths.join(', ')}`);
+    }
+    const environmentManagedTelegramPaths = telegramEnvironmentManagedPatchPaths(externalPatch);
+    if (environmentManagedTelegramPaths.length > 0) {
+        const telegram = { ...(externalPatch["telegram"] as Record<string, unknown>) };
+        for (const key of telegramEnvironmentManagedSettingKeys()) delete telegram[key];
+        externalPatch["telegram"] = telegram;
+        console.warn(`[settings-watch] ignored environment-managed settings fields: ${environmentManagedTelegramPaths.join(', ')}`);
+    }
+    const environmentManagedDiscordPaths = discordEnvironmentManagedPatchPaths(externalPatch);
+    if (environmentManagedDiscordPaths.length > 0) {
+        const discord = { ...(externalPatch["discord"] as Record<string, unknown>) };
+        for (const key of discordEnvironmentManagedSettingKeys()) delete discord[key];
+        externalPatch["discord"] = discord;
+        console.warn(`[settings-watch] ignored environment-managed settings fields: ${environmentManagedDiscordPaths.join(', ')}`);
     }
     const ignoredKeys = SERVER_OWNED_SETTINGS_KEYS.filter((key) => key in externalPatch);
     for (const key of ignoredKeys) delete externalPatch[key];

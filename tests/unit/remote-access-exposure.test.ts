@@ -55,9 +55,13 @@ test('SEC-449e: env-provided channel tokens are stripped before the file is writ
     const src = read('src/core/config.ts');
     const fn = src.slice(src.indexOf('function serializeSettingsForSave'));
     const body = fn.slice(0, 1200);
-    for (const key of ['TELEGRAM_TOKEN', 'DISCORD_TOKEN']) {
-        assert.match(body, new RegExp(key),
+    for (const [channel, key] of [['telegram', 'TELEGRAM_TOKEN'], ['discord', 'DISCORD_TOKEN']]) {
+        const owner = `${channel}EnvironmentManagedSettingKeys`;
+        assert.match(body, new RegExp(`${owner}\\(\\)`),
             `${key} must be stripped like the Slack keys already are`);
+        const table = src.slice(src.indexOf(`function ${owner}`) - 1200, src.indexOf(`function ${owner}`));
+        assert.match(table, new RegExp(`${key}: \\[[^\\]]*'token'`),
+            `${key} must own the ${channel} token field`);
     }
 });
 

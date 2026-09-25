@@ -900,6 +900,111 @@ export function slackEnvironmentManagedPatchPaths(
         .map((key) => `slack.${key}`);
 }
 
+export const TELEGRAM_CONNECTION_ENV_KEYS = [
+    'TELEGRAM_TOKEN',
+    'TELEGRAM_ALLOWED_CHAT_IDS',
+] as const;
+
+export const TELEGRAM_CONNECTION_SETTING_KEYS = [
+    'enabled',
+    'token',
+    'allowedChatIds',
+] as const;
+
+type TelegramConnectionSettingKey = typeof TELEGRAM_CONNECTION_SETTING_KEYS[number];
+
+const TELEGRAM_ENV_SETTING_OWNERSHIP: Record<
+    typeof TELEGRAM_CONNECTION_ENV_KEYS[number],
+    readonly TelegramConnectionSettingKey[]
+> = {
+    TELEGRAM_TOKEN: ['enabled', 'token'],
+    TELEGRAM_ALLOWED_CHAT_IDS: ['allowedChatIds'],
+};
+
+export function configuredTelegramEnvironmentVariables(
+    env: NodeJS.ProcessEnv = process.env,
+): string[] {
+    return TELEGRAM_CONNECTION_ENV_KEYS.filter((key) => Boolean(env[key]));
+}
+
+export function telegramEnvironmentManagedSettingKeys(
+    env: NodeJS.ProcessEnv = process.env,
+): TelegramConnectionSettingKey[] {
+    const managed = new Set<TelegramConnectionSettingKey>();
+    for (const envKey of TELEGRAM_CONNECTION_ENV_KEYS) {
+        if (!env[envKey]) continue;
+        for (const settingKey of TELEGRAM_ENV_SETTING_OWNERSHIP[envKey]) managed.add(settingKey);
+    }
+    return [...managed];
+}
+
+export function telegramEnvironmentManagedPatchPaths(
+    patch: Record<string, unknown>,
+    env: NodeJS.ProcessEnv = process.env,
+): string[] {
+    const managed = new Set(telegramEnvironmentManagedSettingKeys(env));
+    if (managed.size === 0) return [];
+    const telegram = patch["telegram"];
+    if (!telegram || typeof telegram !== 'object' || Array.isArray(telegram)) return [];
+    return TELEGRAM_CONNECTION_SETTING_KEYS
+        .filter((key) => managed.has(key) && Object.prototype.hasOwnProperty.call(telegram, key))
+        .map((key) => `telegram.${key}`);
+}
+
+export const DISCORD_CONNECTION_ENV_KEYS = [
+    'DISCORD_TOKEN',
+    'DISCORD_GUILD_ID',
+    'DISCORD_CHANNEL_IDS',
+] as const;
+
+export const DISCORD_CONNECTION_SETTING_KEYS = [
+    'enabled',
+    'token',
+    'guildId',
+    'channelIds',
+] as const;
+
+type DiscordConnectionSettingKey = typeof DISCORD_CONNECTION_SETTING_KEYS[number];
+
+const DISCORD_ENV_SETTING_OWNERSHIP: Record<
+    typeof DISCORD_CONNECTION_ENV_KEYS[number],
+    readonly DiscordConnectionSettingKey[]
+> = {
+    DISCORD_TOKEN: ['enabled', 'token'],
+    DISCORD_GUILD_ID: ['guildId'],
+    DISCORD_CHANNEL_IDS: ['channelIds'],
+};
+
+export function configuredDiscordEnvironmentVariables(
+    env: NodeJS.ProcessEnv = process.env,
+): string[] {
+    return DISCORD_CONNECTION_ENV_KEYS.filter((key) => Boolean(env[key]));
+}
+
+export function discordEnvironmentManagedSettingKeys(
+    env: NodeJS.ProcessEnv = process.env,
+): DiscordConnectionSettingKey[] {
+    const managed = new Set<DiscordConnectionSettingKey>();
+    for (const envKey of DISCORD_CONNECTION_ENV_KEYS) {
+        if (!env[envKey]) continue;
+        for (const settingKey of DISCORD_ENV_SETTING_OWNERSHIP[envKey]) managed.add(settingKey);
+    }
+    return [...managed];
+}
+
+export function discordEnvironmentManagedPatchPaths(
+    patch: Record<string, unknown>,
+    env: NodeJS.ProcessEnv = process.env,
+): string[] {
+    const managed = new Set(discordEnvironmentManagedSettingKeys(env));
+    if (managed.size === 0) return [];
+    const discord = patch["discord"];
+    if (!discord || typeof discord !== 'object' || Array.isArray(discord)) return [];
+    return DISCORD_CONNECTION_SETTING_KEYS
+        .filter((key) => managed.has(key) && Object.prototype.hasOwnProperty.call(discord, key))
+        .map((key) => `discord.${key}`);
+}
+
 export const WIKI_ROUTE_MANAGED_SETTING_KEYS = ['enabled', 'root'] as const;
 
 export function wikiRouteManagedPatchPaths(patch: Record<string, unknown>): string[] {
@@ -911,24 +1016,28 @@ export function wikiRouteManagedPatchPaths(patch: Record<string, unknown>): stri
 }
 
 /**
- * Environment-managed Slack connections have a single source of truth. Clear
+ * Environment-managed channel connections have a single source of truth. Clear
  * persisted connection fields before applying the runtime-only environment
  * overlay; behavior fields such as forwardAll and mentionOnly stay editable.
  */
-function clearPersistedSlackConnectionForEnvironment(
+function clearPersistedConnectionForEnvironment(
+    channel: 'slack' | 'telegram' | 'discord',
     input: Record<string, any>,
     env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-    const managed = slackEnvironmentManagedSettingKeys(env);
+    const managed = channel === 'slack' ? slackEnvironmentManagedSettingKeys(env)
+        : channel === 'telegram' ? telegramEnvironmentManagedSettingKeys(env)
+        : discordEnvironmentManagedSettingKeys(env);
     if (managed.length === 0) return false;
-    const slack = input["slack"] || {};
+    const block = input[channel] || {};
     const changed = managed.some((key) => {
-        if (key === 'enabled') return slack.enabled !== false;
-        if (key === 'channelIds') return Array.isArray(slack.channelIds) && slack.channelIds.length > 0;
-        return Boolean(slack[key]);
+        if (key === 'enabled') return block.enabled !== false;
+        const value = block[key];
+        if (Array.isArray(value)) return value.length > 0;
+        return Boolean(value);
     });
-    for (const key of managed) delete slack[key];
-    input["slack"] = slack;
+    for (const key of managed) delete block[key];
+    input[channel] = block;
     return changed;
 }
 
@@ -1438,7 +1547,9 @@ export function loadSettings() {
         // A previous runtime could have copied its effective environment token
         // into settings.json during an unrelated save. Environment mode is
         // intentionally exclusive, so remove all persisted connection fields.
-        if (clearPersistedSlackConnectionForEnvironment(merged)) needsSave = true;
+        if (clearPersistedConnectionForEnvironment('slack', merged)) needsSave = true;
+        if (clearPersistedConnectionForEnvironment('telegram', merged)) needsSave = true;
+        if (clearPersistedConnectionForEnvironment('discord', merged)) needsSave = true;
 
         const candidate = { value: merged, shape: nextShape } satisfies SettingsStateCandidate;
         if (needsSave) persistAndCommit(candidate);
@@ -1529,12 +1640,13 @@ export function serializeSettingsForSave(candidate: SettingsStateCandidate): str
     // onto the live settings object, so any later save — a port write, a target
     // persist — copied that secret onto disk. Slack was stripped here; Telegram
     // and Discord were not, which contradicted the documented promise that env
-    // values never enter settings.json (#449).
-    if (process.env["TELEGRAM_TOKEN"] && value["telegram"] && typeof value["telegram"] === 'object') {
-        delete value["telegram"].token;
+    // values never enter settings.json (#449). Every field an env variable owns
+    // is stripped, not only the token (#787).
+    if (value["telegram"] && typeof value["telegram"] === 'object') {
+        for (const key of telegramEnvironmentManagedSettingKeys()) delete value["telegram"][key];
     }
-    if (process.env["DISCORD_TOKEN"] && value["discord"] && typeof value["discord"] === 'object') {
-        delete value["discord"].token;
+    if (value["discord"] && typeof value["discord"] === 'object') {
+        for (const key of discordEnvironmentManagedSettingKeys()) delete value["discord"][key];
     }
     const runtime = value["runtime"];
     if (candidate.shape === 'absent' && runtime?.codexApp?.multiplex === false) {

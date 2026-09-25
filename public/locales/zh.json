@@ -862,6 +862,8 @@
   "settings.slack.resetFailed": "无法重置 Slack 应用连接，请重试。",
   "settings.slack.resetManagedByEnvironment": "此 Slack 连接由环境变量（{variables}）管理。请删除这些环境变量并重启 cli-jaw，然后再重置连接。",
   "settings.slack.managedByEnvironment": "连接设置由环境变量（{variables}）管理，因此为只读。若要在此编辑，请删除这些变量并重启 cli-jaw。",
+  "settings.telegram.managedByEnvironment": "连接设置由环境变量（{variables}）管理，因此为只读。若要在此编辑，请删除这些变量并重启 cli-jaw。",
+  "settings.discord.managedByEnvironment": "连接设置由环境变量（{variables}）管理，因此为只读。若要在此编辑，请删除这些变量并重启 cli-jaw。",
   "settings.slack.attachPort": "连接实例端口",
   "settings.channel.notAttachInstanceHint": "另一个实例拥有此 Slack 连接（请检查连接实例端口）",
   "settings.slack.guide.step2Desc": "应用设置 → OAuth & Permissions → 确认 files:read → Reinstall to Workspace → 复制 Bot User OAuth Token",

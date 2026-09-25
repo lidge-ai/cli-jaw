@@ -9,10 +9,11 @@ type Props = {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSaved: () => Promise<void>;
+    disabled?: boolean;
 };
 
 /** The page retains its save owner; setup starts only after any page draft is saved. */
-export function ChannelSetupEntry({ channel, client, dirty, open, onOpenChange, onSaved }: Props) {
+export function ChannelSetupEntry({ channel, client, dirty, open, onOpenChange, onSaved, disabled = false }: Props) {
     const trigger = useRef<HTMLButtonElement>(null);
     const active = useRef(false);
     const key = `${channel}.setup`;
@@ -24,8 +25,8 @@ export function ChannelSetupEntry({ channel, client, dirty, open, onOpenChange, 
     const pendingDraft = !open && dirty.isDirty();
     return <>
         <button ref={trigger} type="button" data-onboard-channel={channel}
-            disabled={open || pendingDraft} onClick={() => {
-                if (dirty.isDirty()) return;
+            disabled={disabled || open || pendingDraft} onClick={() => {
+                if (disabled || dirty.isDirty()) return;
                 dirty.set(key, { value: true, original: false, valid: false });
                 onOpenChange(true);
             }}>{t('onboarding.open')}</button>

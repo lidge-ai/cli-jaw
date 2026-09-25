@@ -10,6 +10,7 @@ import {
     RUNTIME_DEFAULT_MIGRATION_ID, type RuntimeDefaultMigration,
     MULTI_SESSION_DEFAULT_MIGRATION_ID, type MultiSessionDefaultMigration,
     type SettingsStateCandidate, type SettingsWrite, slackEnvironmentManagedPatchPaths,
+    telegramEnvironmentManagedPatchPaths, discordEnvironmentManagedPatchPaths,
     wikiRouteManagedPatchPaths,
 } from './config.js';
 import { broadcast } from './bus.js';
@@ -343,6 +344,12 @@ async function applyRuntimeSettingsPatchSerialised(
         }
         if (slackEnvironmentManagedPatchPaths(patch).length > 0) {
             throw new Error('slack_connection_managed_by_environment');
+        }
+        if (telegramEnvironmentManagedPatchPaths(patch).length > 0) {
+            throw new Error('telegram_connection_managed_by_environment');
+        }
+        if (discordEnvironmentManagedPatchPaths(patch).length > 0) {
+            throw new Error('discord_connection_managed_by_environment');
         }
         const merged = mergeSettingsPatch(prevSnapshot, patch);
         if ('projectDirs' in patch) {

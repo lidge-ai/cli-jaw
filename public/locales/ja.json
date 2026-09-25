@@ -862,6 +862,8 @@
   "settings.slack.resetFailed": "Slack アプリの接続をリセットできませんでした。もう一度お試しください。",
   "settings.slack.resetManagedByEnvironment": "この Slack 接続は環境変数（{variables}）で管理されています。環境変数を削除して cli-jaw を再起動してから、接続をリセットしてください。",
   "settings.slack.managedByEnvironment": "接続設定は環境変数（{variables}）で管理されているため読み取り専用です。ここで編集するには環境変数を削除し、cli-jaw を再起動してください。",
+  "settings.telegram.managedByEnvironment": "接続設定は環境変数（{variables}）で管理されているため読み取り専用です。ここで編集するには環境変数を削除し、cli-jaw を再起動してください。",
+  "settings.discord.managedByEnvironment": "接続設定は環境変数（{variables}）で管理されているため読み取り専用です。ここで編集するには環境変数を削除し、cli-jaw を再起動してください。",
   "settings.slack.attachPort": "接続インスタンスのポート",
   "settings.channel.notAttachInstanceHint": "別のインスタンスがこの Slack 接続を所有しています（接続インスタンスのポートを確認）",
   "settings.slack.guide.step2Desc": "アプリ設定 → OAuth & Permissions → files:read を確認 → Reinstall to Workspace → Bot User OAuth Token をコピー",
