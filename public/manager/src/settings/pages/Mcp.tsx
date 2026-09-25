@@ -493,18 +493,16 @@ export default function Mcp({ port, client, dirty, registerSave }: SettingsPageP
                         <SettingsToolbar>
                             <button
                                 type="button"
-                                role="tab"
-                                aria-selected={modalTab === 'active'}
-                                className={`settings-action${modalTab === 'active' ? ' settings-action-save' : ''}`}
+                                aria-pressed={modalTab === 'active'}
+                                className="settings-action"
                                 onClick={() => setModalTab('active')}
                             >
                                 Active Servers
                             </button>
                             <button
                                 type="button"
-                                role="tab"
-                                aria-selected={modalTab === 'add'}
-                                className={`settings-action${modalTab === 'add' ? ' settings-action-save' : ''}`}
+                                aria-pressed={modalTab === 'add'}
+                                className="settings-action"
                                 onClick={() => { setModalTab('add'); resetAddForm(); }}
                             >
                                 Add New

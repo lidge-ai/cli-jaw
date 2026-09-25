@@ -269,7 +269,7 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                     <span className="settings-field-label">a2.md</span>
                     <textarea
                         id="prompt-system-body"
-                        style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+                        className="settings-mono-input"
                         value={systemDraft}
                         rows={14}
                         spellCheck={false}
@@ -322,7 +322,7 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                             </span>
                             <textarea
                                 id="prompt-template-body"
-                                style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+                                className="settings-mono-input"
                                 value={templateDraft}
                                 rows={16}
                                 spellCheck={false}
