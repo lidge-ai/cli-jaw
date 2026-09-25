@@ -1,5 +1,5 @@
 import { SelectField } from '../../../fields';
-import { SettingsSection } from '../../page-shell';
+import { SettingsNote, SettingsSection } from '../../page-shell';
 import {
     configuredPolicyLabel,
     isAllowlistValid,
@@ -49,12 +49,12 @@ export function PermissionQuickSection({ value, configuredValue, onChange }: Per
                 }}
             />
             {mode === 'invalid' ? (
-                <p className="settings-agent-note" role="alert">
+                <SettingsNote tone="error" role="alert">
                     The saved permissions value is not a recognized policy. Choose a policy to replace it.
-                </p>
+                </SettingsNote>
             ) : null}
-            {summary ? <p className="settings-agent-note">{summary}</p> : null}
-            <p className="settings-agent-note" id="agent-configured-policy">Configured policy: {configuredPolicyLabel(configuredValue)}</p>
+            {summary ? <SettingsNote>{summary}</SettingsNote> : null}
+            <SettingsNote><span id="agent-configured-policy">Configured policy: {configuredPolicyLabel(configuredValue)}</span></SettingsNote>
         </SettingsSection>
     );
 }

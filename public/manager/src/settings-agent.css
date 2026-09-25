@@ -11,10 +11,11 @@
     font-size: 12px;
 }
 
+/* Flush runtime disclosure: the summary mirrors a shared key-value row and
+ * the expanded fields take the same divided-row rhythm as the card. */
 .settings-agent-flush summary {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
     cursor: pointer;
     color: var(--text-primary);
@@ -30,6 +31,192 @@
 
 .settings-agent-flush[open] summary {
     margin-bottom: 12px;
+}
+
+.settings-shell .settings-agent-flush {
+    min-width: 0;
+}
+
+.settings-shell .settings-agent-flush summary {
+    justify-content: flex-start;
+    list-style: none;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.settings-shell .settings-agent-flush summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-shell .settings-agent-flush summary::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-right: 1.8px solid currentColor;
+    border-bottom: 1.8px solid currentColor;
+    opacity: 0.7;
+    transform: translateY(-1px) rotate(-45deg);
+    transition: transform 150ms ease, opacity 150ms ease;
+}
+
+.settings-shell .settings-agent-flush[open] summary {
+    margin-bottom: 0;
+}
+
+.settings-shell .settings-agent-flush[open] summary::before {
+    transform: translateY(2px) rotate(45deg);
+}
+
+.settings-shell .settings-agent-flush summary:hover::before {
+    opacity: 1;
+}
+
+.settings-shell .settings-agent-flush summary code {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 400;
+}
+
+.settings-shell .settings-agent-flush > .settings-field-error {
+    display: block;
+    margin: 0;
+    padding: 0 16px 12px;
+}
+
+/* Page-level inline notices share the section card chrome. */
+.settings-shell .settings-inline-notice {
+    border: 1px solid var(--settings-border);
+    border-radius: 12px;
+    background: var(--settings-card);
+    padding: 12px 16px;
+    font-size: 13px;
+    line-height: 20px;
+    color: var(--text-secondary);
+}
+
+.settings-shell .settings-inline-notice > strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.settings-shell .settings-inline-notice > p {
+    margin: 0;
+}
+
+.settings-shell .settings-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.settings-shell .settings-inline-notice > .settings-field-error {
+    display: block;
+    margin-top: 8px;
+}
+
+/* Per-CLI model defaults: each group is a divided block inside the card;
+ * notes tuck under their field instead of drawing their own divider. */
+.settings-shell .settings-percli-row {
+    border-bottom: 0;
+    border-top: 1px solid var(--settings-border);
+    padding-bottom: 0;
+    min-width: 0;
+}
+
+/* The grid class stays as the test-facing row wrapper; inside the shell the
+ * fields stack in the card's divided-row rhythm instead of a track grid. */
+.settings-shell .settings-percli-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: stretch;
+    min-width: 0;
+}
+
+.settings-shell .settings-percli-grid > .settings-action {
+    align-self: flex-start;
+    margin: 0 16px 12px;
+}
+
+.settings-shell .settings-percli-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-shell .settings-percli-note {
+    margin: 0;
+    padding: 0 16px 10px;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.settings-shell .settings-percli-note--effort {
+    margin-bottom: 0;
+}
+
+.settings-shell .settings-percli-row > .settings-field-error {
+    display: block;
+    margin: 0;
+    padding: 0 16px 10px;
+}
+
+/* Nested groups (STT engine sub-sections, runtime employees) become divided
+ * blocks of the same rows rather than floating fieldsets. */
+.settings-shell .settings-engine-subsection {
+    border-top: 1px solid var(--settings-border);
+    min-width: 0;
+}
+
+.settings-shell .settings-engine-subsection-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-shell .settings-engine-subsection-hint {
+    margin: 0;
+    padding: 0 16px 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.settings-shell .settings-runtime-employee-row {
+    border: 0;
+    border-top: 1px solid var(--settings-border);
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+}
+
+.settings-shell .settings-runtime-employee-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 16px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.settings-shell .settings-runtime-employee-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .settings-runtime-employee-summary {
@@ -53,51 +240,11 @@
     font-weight: 600;
 }
 
-.settings-runtime-employee-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.settings-runtime-employee-row {
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    padding: 10px;
-    margin: 0;
-}
-
-.settings-runtime-employee-row legend {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 4px;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.settings-runtime-employee-row legend span {
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-}
-
 .settings-runtime-employee-grid {
     display: grid;
     grid-template-columns: minmax(120px, 1fr) minmax(100px, 0.8fr) minmax(160px, 1.2fr) minmax(120px, 1fr);
     gap: 10px;
     align-items: end;
-}
-
-.settings-runtime-employee-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-top: 4px;
-    color: var(--text-secondary);
-    font-size: 11px;
 }
 
 @media (max-width: 900px) {
@@ -112,6 +259,7 @@
 .settings-shell .settings-runtime-employee-grid {
     min-width: 0;
     align-items: start;
+    padding: 0 16px;
 }
 .settings-shell .settings-runtime-employee-grid > .settings-field {
     grid-template-columns: minmax(0, 1fr);
