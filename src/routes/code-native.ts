@@ -10,7 +10,7 @@ import { httpCode, httpStatus } from './_http-error.js';
 import { CODE_PROMPT_MAX_BYTES } from './code-body-parser.js';
 
 export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'list' | 'snapshot' | 'readEvents' | 'history'
-    | 'prompt' | 'cancel' | 'attach' | 'patch' | 'answerPermission' | 'models'>;
+    | 'prompt' | 'cancel' | 'attach' | 'visit' | 'patch' | 'answerPermission' | 'models'>;
 
 const PROVIDERS: readonly CodeProviderId[] = ['codex-app', 'claude', 'cursor', 'grok'];
 const PERMISSION_MODES: readonly CodePermissionMode[] = ['ask', 'auto', 'read-only'];
@@ -193,6 +193,11 @@ export function registerNativeCodeRoutes(
         const sessionId = id(req.params['id']);
         body(req.body ?? {}, []);
         res.json({ ok: true, session: await getService().attach(sessionId) });
+    }));
+    router.post('/sessions/:id/visit', asyncHandler(async (req, res) => {
+        const sessionId = id(req.params['id']);
+        body(req.body ?? {}, []);
+        res.json({ ok: true, session: getService().visit(sessionId) });
     }));
     router.post('/permissions/:id', asyncHandler(async (req, res) => {
         const permissionId = id(req.params['id']);

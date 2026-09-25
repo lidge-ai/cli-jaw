@@ -20,7 +20,7 @@ const creation: CodeSessionCreate = {
 const dtoKeys = [
     'sessionId', 'provider', 'cwd', 'title', 'model', 'effort', 'permissionMode', 'status',
     'turnId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
-    'createdAt', 'lastUsedAt',
+    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt',
 ].sort();
 
 function fixture(t: { after(fn: () => void): void }, options: CodeStoreOptions = {}) {
@@ -288,6 +288,7 @@ test('legacy turn schema gains durable byte accounting without losing keys or bl
         sessionId: 'legacy', provider: 'claude', cwd: '/workspace', title: null, model: 'model', effort: null,
         permissionMode: 'ask', status: 'starting', turnId: 'old-turn', archivedAt: null, error: null,
         capabilities, resume: { available: false, reason: 'not_started' }, epoch: 1, sequence: 4, revision: 0, createdAt: 1, lastUsedAt: 1,
+        lastTurnCompletedAt: null, lastVisitedAt: null,
     };
     const oldEvents: CodeWireEvent[] = [
         { topic: 'code', event: 'code_session', sessionId: 'legacy', sequence: 1, epoch: 0,
@@ -398,7 +399,7 @@ test('full row mapping includes every field and public surfaces exclude private 
         model: 'stored-model', effort: 'low', permissionMode: 'auto', status: 'suspended', turnId: null,
         archivedAt: null, error: { code: 'stored_error', message: 'diagnostic', at: 56, recoverable: true },
         resume: { available: true, reason: null }, capabilities, epoch: 7, sequence: 1, revision: 8,
-        createdAt: 111, lastUsedAt: 222,
+        createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null,
     };
     assert.deepEqual(store.read('session-a'), expected);
     const record = store.readRecord('session-a')!;
@@ -418,7 +419,7 @@ test('public mapper also strips future private properties nested in capabilities
     const record: CodeSessionRecord = {
         ...creation, sessionId: 's', title: null, status: 'idle', turnId: null,
         archivedAt: null, error: null, epoch: 0, sequence: 0, revision: 0, createdAt: 1, lastUsedAt: 2,
-        nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
+        lastTurnCompletedAt: null, lastVisitedAt: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
     };
     const extra = { ...record, privateFutureField: 'private', capabilities: { ...capabilities, nativeCursor: 'hidden' } };
     assert.deepEqual(Object.keys(toCodeSessionInfo(extra)).sort(), dtoKeys);
@@ -971,4 +972,50 @@ test('session list index is upgraded once and left alone when it already matches
     const before = db.pragma('schema_version', { simple: true });
     new CodeStore(db);
     assert.equal(db.pragma('schema_version', { simple: true }), before, 'a matching index is not dropped and rebuilt');
+});
+
+// ─── Sidebar activity clocks (unread = lastTurnCompletedAt > lastVisitedAt) ───
+
+test('activity clocks start null and move only on completed/failed turns and on visits', t => {
+    let clock = 1000;
+    const { store } = fixture(t, { now: () => clock });
+    assert.equal(store.read('session-a').lastTurnCompletedAt, null);
+    assert.equal(store.read('session-a').lastVisitedAt, null);
+
+    clock = 2000;
+    const first = admit(store);
+    store.settleTurn(owner(first.session), { status: 'completed' });
+    assert.equal(store.read('session-a').lastTurnCompletedAt, 2000);
+
+    clock = 3000;
+    const cancelled = admit(store, 'key-b');
+    store.settleTurn(owner(cancelled.session), { status: 'cancelled' });
+    assert.equal(store.read('session-a').lastTurnCompletedAt, 2000, 'a stopped turn is not unread news');
+
+    clock = 4000;
+    const failed = admit(store, 'key-c');
+    store.settleTurn(owner(failed.session), { status: 'failed', error: { code: 'x', message: 'x', at: 4000, recoverable: true } });
+    assert.equal(store.read('session-a').lastTurnCompletedAt, 4000);
+
+    clock = 5000;
+    const before = store.read('session-a');
+    const visited = store.markVisited('session-a');
+    assert.equal(visited.session.lastVisitedAt, 5000);
+    assert.equal(visited.session.revision, before.revision, 'a read receipt is not a metadata change');
+    assert.equal(visited.events.length, 1);
+    assert.equal(visited.events[0]?.event, 'code_session');
+    assert.equal(store.read('session-a').lastVisitedAt, 5000);
+});
+
+test('databases created before the activity clocks gain both columns as null', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    db.exec(CREATE_CODE_SCHEMA_SQL.replace(',\n    last_turn_completed_at INTEGER, last_visited_at INTEGER', ''));
+    const legacyColumns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.equal(legacyColumns.includes('last_visited_at'), false);
+    const store = new CodeStore(db, { now: () => 1234, newId: () => 'turn-x' });
+    store.create(creation);
+    const columns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.ok(columns.includes('last_turn_completed_at') && columns.includes('last_visited_at'));
+    assert.equal(store.read('session-a').lastVisitedAt, null);
 });

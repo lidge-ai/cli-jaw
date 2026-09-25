@@ -21,7 +21,7 @@ function fixture() {
         archivedAt: null, error: null, resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false,
             efforts: ['high'], permissionModes: ['ask', 'auto', 'read-only'] },
-        epoch: 4, sequence: 7, revision: 2, createdAt: 1, lastUsedAt: 2,
+        epoch: 4, sequence: 7, revision: 2, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
     };
     const calls: Array<{ method: string; args: unknown[] }> = [];
     let duplicate = false;
@@ -38,6 +38,7 @@ function fixture() {
         },
         async cancel(...args) { capture('cancel', ...args); return session; },
         async attach(id) { capture('attach', id); return session; },
+        visit(id) { capture('visit', id); return { ...session, lastVisitedAt: 99 }; },
         async patch(id, input) { capture('patch', id, input); return { ...session, title: input.title ?? session.title }; },
         answerPermission(...args) { capture('permission', ...args); },
         models() { capture('models'); return { providers: [], defaultProvider: 'codex-app' }; },
@@ -251,6 +252,11 @@ test('metadata conflicts return current public state without retrying or accepti
         assert.deepEqual(await conflict.json(), { ok: false, error: 'revision_conflict', session: f.session });
         assert.equal((await request(`${url}/sessions/session-one/attach`, 'POST', {})).status, 200);
         assert.equal(f.calls.at(-1)?.method, 'attach');
+        const visited = await request(`${url}/sessions/session-one/visit`, 'POST', {});
+        assert.equal(visited.status, 200);
+        assert.equal((await visited.json()).session.lastVisitedAt, 99);
+        assert.deepEqual(f.calls.at(-1), { method: 'visit', args: ['session-one'] });
+        assert.equal((await request(`${url}/sessions/session-one/visit`, 'POST', { extra: 1 })).status, 400);
     });
 });
 
