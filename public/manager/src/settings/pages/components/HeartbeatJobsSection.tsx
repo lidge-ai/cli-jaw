@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { DirtyStore, SettingsClient } from '../../types';
-import { PageError, PageOffline } from '../page-shell';
+import { PageError, PageOffline, SettingsActions, SettingsNote } from '../page-shell';
 import { HeartbeatJobRow, type HbJob } from './HeartbeatJobRow';
 import {
     jobScheduleBodyError,
@@ -77,7 +77,7 @@ export function HeartbeatJobsSection({ port, client, dirty, snapshot }: Props) {
     }, [client, dirty, jobs]);
 
     if (snapshot.kind === 'loading') {
-        return <p className="settings-section-hint">Loading jobs…</p>;
+        return <SettingsNote>Loading jobs…</SettingsNote>;
     }
     if (snapshot.kind === 'offline') return <PageOffline port={port} />;
     if (snapshot.kind === 'error') return <PageError message={snapshot.message} />;
@@ -98,11 +98,11 @@ export function HeartbeatJobsSection({ port, client, dirty, snapshot }: Props) {
     return (
         <>
             {jobs.length === 0 ? (
-                <p className="settings-section-hint">
+                <SettingsNote>
                     No jobs configured. Add one below.
-                </p>
+                </SettingsNote>
             ) : (
-                <div className="settings-heartbeat-jobs-list">
+                <>
                     {jobs.map((job, idx) => (
                         <HeartbeatJobRow
                             key={job.id}
@@ -113,12 +113,12 @@ export function HeartbeatJobsSection({ port, client, dirty, snapshot }: Props) {
                             onRemove={() => removeJob(idx)}
                         />
                     ))}
-                </div>
+                </>
             )}
-            <div className="settings-heartbeat-jobs-footer">
+            <SettingsActions>
                 <button
                     type="button"
-                    className="settings-action settings-action-discard"
+                    className="settings-action"
                     onClick={addJob}
                 >
                     + Add job
@@ -131,11 +131,11 @@ export function HeartbeatJobsSection({ port, client, dirty, snapshot }: Props) {
                 >
                     {saving ? 'Saving…' : 'Apply jobs'}
                 </button>
-            </div>
+            </SettingsActions>
             {error ? (
-                <p className="settings-field-error" role="alert">
+                <SettingsNote tone="error" role="alert">
                     {error}
-                </p>
+                </SettingsNote>
             ) : null}
         </>
     );

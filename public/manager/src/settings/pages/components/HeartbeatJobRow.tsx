@@ -5,9 +5,16 @@
 // array. Conditionally renders the schedule-body field based on
 // `schedule.kind` to avoid stale `cron` strings hanging around when
 // the user toggles to `every`, and vice versa.
+//
+// Layout follows the shared row language used by MCP servers and memory
+// entries: a `settings-card-actions` header (name + enabled/kind badges +
+// Remove) then the standard `.settings-field` rows. The component returns a
+// fragment so the header lands as a direct child of
+// `.settings-section-body` and picks up the standard item divider.
 
 import { useId } from 'react';
 import { TextField, ToggleField, SelectField } from '../../fields';
+import { StatusBadge } from '../page-shell';
 
 export type HbScheduleEvery = {
     kind: 'every';
@@ -56,15 +63,37 @@ export function HeartbeatJobRow({
     const idBase = useId();
     const kind = job.schedule.kind;
     const tz = job.schedule.timeZone ?? '';
+    const title = job.name || `Job ${index + 1}`;
 
     return (
-        <fieldset
-            className="settings-heartbeat-job"
+        <div
+            className="settings-card-group"
+            role="group"
             aria-label={`Heartbeat job ${index + 1}${job.name ? ` (${job.name})` : ''}`}
         >
-            <legend className="settings-heartbeat-job-legend">
-                {job.name || `Job ${index + 1}`}
-            </legend>
+            <div className="settings-card-actions">
+                <div className="settings-card-actions-status">
+                    <strong>{title}</strong>{' '}
+                    {job.enabled ? (
+                        <StatusBadge tone="ok">Enabled</StatusBadge>
+                    ) : (
+                        <StatusBadge tone="neutral">Disabled</StatusBadge>
+                    )}{' '}
+                    <StatusBadge tone="neutral">
+                        {kind === 'every' ? 'interval' : 'cron'}
+                    </StatusBadge>
+                </div>
+                <div className="settings-card-actions-buttons">
+                    <button
+                        type="button"
+                        className="settings-action settings-action-danger"
+                        onClick={onRemove}
+                        aria-label={`Remove heartbeat job ${title}`}
+                    >
+                        Remove job
+                    </button>
+                </div>
+            </div>
 
             <ToggleField
                 id={`${idBase}-enabled`}
@@ -184,16 +213,6 @@ export function HeartbeatJobRow({
                     onChange={(event) => onChange({ prompt: event.target.value })}
                 />
             </label>
-
-            <div className="settings-heartbeat-job-footer">
-                <button
-                    type="button"
-                    className="settings-action settings-action-discard"
-                    onClick={onRemove}
-                >
-                    Remove job
-                </button>
-            </div>
-        </fieldset>
+        </div>
     );
 }

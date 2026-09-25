@@ -78,3 +78,19 @@
     .settings-kv-row dd { text-align: left; }
     .settings-card-actions-buttons { margin-left: 0; }
 }
+
+.settings-shell .settings-card-group > .settings-card-actions { border-top: 1px solid var(--settings-border); }
+.settings-shell .settings-section-body > .settings-card-group:first-child > .settings-card-actions:first-child { border-top: 0; }
+
+.settings-card-toolbar .settings-action[aria-pressed="true"] { background: var(--settings-hover); border-color: var(--text-primary); color: var(--text-primary); }
+
+.settings-shell .settings-mono-input { font-family: var(--font-mono, ui-monospace, monospace); }
+.settings-shell .settings-memory-modal-body {
+    margin: 0;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: auto;
+    max-height: 60vh;
+}

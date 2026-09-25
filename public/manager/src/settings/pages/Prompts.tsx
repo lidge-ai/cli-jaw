@@ -16,10 +16,11 @@ import {
     PageError,
     PageLoading,
     PageOffline,
+    SettingsNote,
     SettingsSection,
+    StatusBadge,
     usePageSnapshot,
 } from './page-shell';
-import { InlineWarn } from './components/InlineWarn';
 
 type PromptResponse = { content?: string };
 
@@ -268,7 +269,7 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                     <span className="settings-field-label">a2.md</span>
                     <textarea
                         id="prompt-system-body"
-                        className="settings-field-monospace"
+                        className="settings-mono-input"
                         value={systemDraft}
                         rows={14}
                         spellCheck={false}
@@ -276,9 +277,10 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                     />
                 </label>
                 {systemDraft !== originalSystem && (
-                    <p className="settings-section-hint">
+                    <SettingsNote>
+                        <StatusBadge tone="warn">Unsaved</StatusBadge>{' '}
                         Pending edits to a2.md.
-                    </p>
+                    </SettingsNote>
                 )}
             </SettingsSection>
 
@@ -287,9 +289,9 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                 hint="Edit individual prompt template bodies. Saving regenerates b automatically."
             >
                 {flatList.length === 0 ? (
-                    <InlineWarn tone="info">
+                    <SettingsNote>
                         No templates returned by /api/prompt-templates.
-                    </InlineWarn>
+                    </SettingsNote>
                 ) : (
                     <>
                         <label
@@ -320,7 +322,7 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                             </span>
                             <textarea
                                 id="prompt-template-body"
-                                className="settings-field-monospace"
+                                className="settings-mono-input"
                                 value={templateDraft}
                                 rows={16}
                                 spellCheck={false}
@@ -329,9 +331,10 @@ export default function Prompts({ port, client, dirty, registerSave }: SettingsP
                             />
                         </label>
                         {templateBodyDirty && (
-                            <p className="settings-section-hint">
+                            <SettingsNote>
+                                <StatusBadge tone="warn">Unsaved</StatusBadge>{' '}
                                 Pending edits to {activeTemplateId}.md.
-                            </p>
+                            </SettingsNote>
                         )}
                     </>
                 )}
