@@ -29,6 +29,7 @@ import { stopCauseFromKillReason } from './stop-cause.js';
 import { attachWatchdog } from '../watchdog.js';
 import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js';
 import type { SpawnPromiseResult, SpawnResult } from './types.js';
+import { stripSkillMentionBlock } from '../../core/skill-mentions.js';
 
 export function runNativeAcpBackend(backendLocals: SpawnBackendLocals, backendHost: SpawnBackendHost): SpawnResult {
     const { agentLabel, cfg, chatSessionId, cli, currentBucket, detected, effectiveLiveScope, effectiveProvider, effort, empSid, forceNew, isResume, liveScope, mainManaged, mainRun, opts, origin, ownerGeneration, parentLiveScopeForChild, permissions, persistenceOwner, prompt, promptForArgs, promptForSnapshot, resolve, resolvedAgyPrintTimeoutMs, resultPromise, resumeKey, resumeSessionId, runPin, runtimeModel, runtimeTransport, scopeKey, slackToolGrant, spawnCwd, spawnEnv, sysPrompt, traceAudience } = backendLocals;
@@ -197,7 +198,7 @@ export function runNativeAcpBackend(backendLocals: SpawnBackendLocals, backendHo
             capturedRun.process = lease.child;
             // This start reached its lease, so the previous start failure is spent.
             clearNativeStartFailure(cli);
-            if (!opts._skipInsert) insertMessage.run('user', prompt, cli, runtimeModel, nativeCwd, chatSessionId);
+            if (!opts._skipInsert) insertMessage.run('user', stripSkillMentionBlock(prompt), cli, runtimeModel, nativeCwd, chatSessionId);
             capturedRun.starting = false;
             ctx.sessionId = lease.session.nativeSessionId || null;
             if (capturedRun.cancelPending === cancelHook) delete capturedRun.cancelPending;

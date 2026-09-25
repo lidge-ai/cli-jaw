@@ -18,6 +18,11 @@ export const MAX_INLINE_SKILL_CHARS = 200_000;
  * write the prompt to stdin (src/agent/spawn.ts) and keep the inline budget. */
 const ARGV_PROMPT_CLIS: ReadonlySet<string> = new Set(['cursor', 'grok', 'kiro-code', 'opencode', 'agy']);
 
+const SKILL_BLOCK_HEADER = '[Inline Skills — the user mentioned these skills with $skill-id in this message. Follow each one for this message.]';
+/** Header + every following <skill>…</skill> block, with the blank line that joined it.
+ * Bodies cannot contain `</skill>` (neutralized below), so the match is exact. */
+const SKILL_BLOCK_RE = /\n\n\[Inline Skills — [^\n]*\]\n<skill>[\s\S]*?<\/skill>(?:\n<skill>[\s\S]*?<\/skill>)*/g;
+
 export interface SkillMentionOptions {
     /** The CLI that will receive this prompt; argv CLIs get path stubs only. */
     cli?: string | undefined;
@@ -74,10 +79,7 @@ export function buildSkillMentionBlock(
             '</skill>',
         ].join('\n');
     });
-    return [
-        '[Inline Skills — the user mentioned these skills with $skill-id in this message. Follow each one for this message.]',
-        ...blocks,
-    ].join('\n');
+    return [SKILL_BLOCK_HEADER, ...blocks].join('\n');
 }
 
 /** Append the mentioned skills to a prompt. No mention → the prompt is returned unchanged. */
@@ -88,4 +90,10 @@ export function withSkillMentions(prompt: string, userText: string, options: Ski
         skillsDir: options.skillsDir,
     });
     return block ? `${prompt}\n\n${block}` : prompt;
+}
+
+/** Remove the appended inline-skill block, e.g. before a spawn-level prompt is stored
+ * as the user's chat row: the runtime gets the skills, the history keeps what was written. */
+export function stripSkillMentionBlock(text: string): string {
+    return String(text ?? '').replace(SKILL_BLOCK_RE, '');
 }

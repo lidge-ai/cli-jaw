@@ -24,6 +24,7 @@ import { isLifecycleSteerReason } from './spawn/kill-reason.js';
 import { stopCauseFromKillReason } from './spawn/stop-cause.js';
 import { detectSmokeResponse } from './smoke-detector.js';
 import { clearNativeStartFailure, recordNativeStartFailure } from './runtime/start-failure.js';
+import { stripSkillMentionBlock } from '../core/skill-mentions.js';
 
 type Result = Parameters<ExitHandlerParams['resolve']>[0];
 export type ClaudeExitBase = Omit<ExitHandlerParams, 'ctx' | 'code' | 'killReason' | 'wasKilled' | 'wasSteer' | 'smokeResult'
@@ -252,7 +253,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
             };
             try {
                 detach = input.ready(lease.child, cancel) || undefined;
-                if (base.mainManaged && !base.opts._skipInsert) insertMessage.run('user', base.prompt, 'claude', base.model, input.prepared.cwd, base.chatSessionId);
+                if (base.mainManaged && !base.opts._skipInsert) insertMessage.run('user', stripSkillMentionBlock(base.prompt), 'claude', base.model, input.prepared.cwd, base.chatSessionId);
                 if (input.liveScope) { beginLiveRun(input.liveScope, 'claude'); setLiveRunTraceId(input.liveScope, traceRunId); }
                 lease.child.stdout?.on('data', io); lease.child.stderr?.on('data', io);
                 ctx.stallWatchdog = attachWatchdog(lease.child, base.agentLabel, reason => { ctx.stallReason = reason; cancel(reason); }, input.watchdog);
