@@ -72,7 +72,7 @@ function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; c
     </li>;
 }
 
-export function CodeSessionList({ controller: c }: { controller: CodeControllerModel }) {
+export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSION_SHORTCUT }: { controller: CodeControllerModel; newSessionShortcut?: string | undefined }) {
     const [search, setSearch] = useState('');
     const [grouped, setGrouped] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -106,6 +106,13 @@ export function CodeSessionList({ controller: c }: { controller: CodeControllerM
     }, [newSession]);
     async function newInWorkspace(cwd: string) {
         c.newSession();
+        // Silently retargeting a draft that holds unsent text or an unreconciled
+        // send would move that content to another workspace; setSelection also
+        // early-returns while an operation is in flight. Say why instead.
+        if (c.hasUnsentDraft || c.pending) {
+            setError('Send or clear the current draft before choosing another workspace.');
+            return;
+        }
         setError(null);
         try { await c.setSelection({ cwd }); }
         catch (err) { setError(err instanceof Error ? err.message : String(err)); }
@@ -120,11 +127,11 @@ export function CodeSessionList({ controller: c }: { controller: CodeControllerM
     return <nav className="code-session-list" aria-label="Code sessions">
         <button type="button" className={`code-session-new-primary${c.selectedId === null ? ' active' : ''}`}
             aria-current={c.selectedId === null ? 'true' : undefined}
-            title={`Start a new session (${formatShortcut(NEW_SESSION_SHORTCUT)})`} onClick={c.newSession}>
+            title={`Start a new session (${formatShortcut(newSessionShortcut)})`} onClick={c.newSession}>
             <PlusGlyph />
             <span className="code-session-new-label">New session</span>
             {c.hasUnsentDraft && <span className="code-session-draft-badge">Draft</span>}
-            <kbd className="code-session-new-hint">{formatShortcut(NEW_SESSION_SHORTCUT)}</kbd>
+            <kbd className="code-session-new-hint">{formatShortcut(newSessionShortcut)}</kbd>
         </button>
         <div className="code-session-list-header"><span className="code-session-list-title">Sessions</span></div>
         <div className="code-session-view-toggle" aria-label="Session view">

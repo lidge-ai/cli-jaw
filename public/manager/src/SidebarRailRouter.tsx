@@ -176,6 +176,8 @@ type Props = {
     onViewModeChange: (mode: DashboardViewMode) => void;
     port: number;
     workingDir: string;
+    /** Resolved `newCodeSession` chord, shown as the sidebar button's hint. */
+    codeNewSessionShortcut?: string;
     query: string;
     onQueryChange: (value: string) => void;
     onSelectInstance: (instance: DashboardInstance) => void;
@@ -607,7 +609,7 @@ export function SidebarRailRouter(props: Props) {
                         {props.viewMode === 'code' && props.sidebarMode === 'instances' ? (
                             <WorkspaceSurface active>
                                 <Suspense fallback={<div style={{ padding: '24px', color: 'var(--text-dim)', fontSize: '13px' }}>Loading Code workspace...</div>}>
-                                    <CodeCanvas port={props.port} workingDir={codeWorkingDir} onWorkingDirChange={handleCodeWorkingDirChange} onOpenLocalFile={handleRightPreviewFile} />
+                                    <CodeCanvas port={props.port} workingDir={codeWorkingDir} onWorkingDirChange={handleCodeWorkingDirChange} onOpenLocalFile={handleRightPreviewFile} newSessionShortcut={props.codeNewSessionShortcut} />
                                 </Suspense>
                             </WorkspaceSurface>
                         ) : null}

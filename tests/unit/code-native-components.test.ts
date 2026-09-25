@@ -21,6 +21,7 @@ const { CodeTranscriptItem, CodeTranscript } = await import('../../public/manage
 const { CodeWorkbench } = await import('../../public/manager/src/code/CodeWorkbench');
 const { CodeDraftEmptyState } = await import('../../public/manager/src/code/CodeDraftEmptyState');
 const { recentCodeWorkspaces } = await import('../../public/manager/src/code/code-recent-workspaces');
+const { formatShortcut } = await import('../../public/manager/src/manager-shortcuts');
 const { useThrottledMarkdown } = await import('../../public/manager/src/code/use-throttled-markdown');
 after(() => {
     dom.window.close();
@@ -665,6 +666,8 @@ test('the new session entry is a primary button with a shortcut hint and a Draft
     assert.equal(entry.querySelector('.code-session-draft-badge'), null, 'no badge without an unsent draft');
     assert.doesNotMatch(h.container.textContent ?? '', /Preserved unsent draft/, 'the old draft row is gone');
     await click(entry); assert.equal(created, 1);
+    await h.render(createElement(CodeSessionList, { controller: c, newSessionShortcut: 'Meta+Shift+Q' }));
+    assert.equal(h.container.querySelector('.code-session-new-hint')?.textContent, formatShortcut('Meta+Shift+Q'), 'the hint shows the resolved keymap chord, not the default');
     await h.render(createElement(CodeSessionList, { controller: { ...c, hasUnsentDraft: true } }));
     assert.equal(h.container.querySelector('.code-session-draft-badge')?.textContent, 'Draft');
 });
@@ -700,6 +703,21 @@ test('workspace groups each offer a + that starts a draft with that cwd', bounde
     // Lifecycle grouping (the default) has no per-group workspace to preselect.
     await click(button(h.container, 'Group'));
     assert.equal(h.container.querySelector('.code-session-group-new'), null);
+});
+
+test('a workspace + does not retarget a draft that already holds unsent content', bounded, async t => {
+    const h = await surface(t); const selections: unknown[] = [];
+    const c = model({
+        sessions: [session({ cwd: '/work/alpha' })],
+        hasUnsentDraft: true,
+        async setSelection(patch) { selections.push(patch); },
+    });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    await click(button(h.container, 'Group'));
+    await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
+    assert.deepEqual(selections, [], 'a draft with unsent content keeps its workspace');
+    assert.match(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Send or clear the current draft/, 'the reason is surfaced instead of a silent no-op');
+    assert.ok(h.container.querySelector('.code-session-draft-badge'), 'the Draft badge explains which draft is blocked');
 });
 
 test('recent workspaces are unique directories ordered by last use, capped at five', () => {

@@ -52,7 +52,9 @@ export const DEFAULT_MANAGER_SHORTCUT_KEYMAP: DashboardShortcutKeymap = {
     toggleRightPanel: 'Meta+B',
     focusTerminal: 'Ctrl+`',
     newTerminalSession: 'Ctrl+Shift+`',
-    newCodeSession: 'Meta+Shift+N',
+    // Alt over Meta: Meta+Shift+N is Chrome's incognito chord, so a web-hosted
+    // dashboard would never see the keydown. Alt+Shift+N has no browser default.
+    newCodeSession: 'Alt+Shift+N',
     openDiff: 'Meta+Shift+D',
     openFolderTree: 'Meta+Shift+E',
     closeFocusedTab: 'Meta+W',
