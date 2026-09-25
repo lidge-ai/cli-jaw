@@ -223,19 +223,11 @@ export default function Browser({ port, client }: SettingsPageProps) {
                 <SettingsActions status={actionStatus}>
                     <button
                         type="button"
-                        className="settings-action settings-action-danger"
-                        disabled={actionPending}
-                        onClick={onReset}
+                        className="settings-action settings-action-save"
+                        disabled={status.running || actionPending}
+                        onClick={onStartVisible}
                     >
-                        Reset profile
-                    </button>
-                    <button
-                        type="button"
-                        className="settings-action"
-                        disabled={!status.running || actionPending}
-                        onClick={onStop}
-                    >
-                        Stop
+                        Start visible browser
                     </button>
                     <button
                         type="button"
@@ -247,11 +239,19 @@ export default function Browser({ port, client }: SettingsPageProps) {
                     </button>
                     <button
                         type="button"
-                        className="settings-action settings-action-save"
-                        disabled={status.running || actionPending}
-                        onClick={onStartVisible}
+                        className="settings-action"
+                        disabled={!status.running || actionPending}
+                        onClick={onStop}
                     >
-                        Start visible browser
+                        Stop
+                    </button>
+                    <button
+                        type="button"
+                        className="settings-action settings-action-danger"
+                        disabled={actionPending}
+                        onClick={onReset}
+                    >
+                        Reset profile
                     </button>
                 </SettingsActions>
                 {actionState.kind === 'error' && (

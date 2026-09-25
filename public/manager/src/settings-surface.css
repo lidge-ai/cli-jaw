@@ -62,12 +62,13 @@
 
 .settings-card-note { margin: 0; padding: 12px 16px; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
 .settings-card-note-error { color: var(--error-text, #c83232); }
+.settings-card-note-warn { color: var(--warning-text, #b7791f); }
 
-.settings-shell .settings-action { min-height: 32px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; }
-.settings-shell .settings-action:disabled { cursor: not-allowed; opacity: 0.5; }
-.settings-shell .settings-action:not(:disabled):hover { background: var(--settings-hover); }
-.settings-shell .settings-action-save:not(:disabled):hover { background: var(--text-primary); opacity: 0.88; }
-.settings-shell .settings-action-danger { color: var(--error-text, #c83232); }
+.settings-card-actions .settings-action { min-height: 32px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+.settings-card-actions .settings-action:disabled { cursor: not-allowed; opacity: 0.5; }
+.settings-card-actions .settings-action:not(:disabled):hover { background: var(--settings-hover); }
+.settings-card-actions .settings-action-save:not(:disabled):hover { background: var(--text-primary); opacity: 0.88; }
+.settings-card-actions .settings-action-danger { color: var(--error-text, #c83232); }
 
 @container settings (max-width: 719px) {
     .settings-kv-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
