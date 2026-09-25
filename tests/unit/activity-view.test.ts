@@ -754,3 +754,75 @@ test('T4: tall content offers Show all which lifts the cap and toggles back', ()
     view.render(model);
     assert.equal(row.querySelector<HTMLButtonElement>('.activity-block-toggle')!.hidden, false);
 });
+
+test('T7: an expanded row stays expanded when the lifted cap measures short, and only overflowing blocks are focusable', () => {
+    const { model, view } = mount();
+    const tall = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n');
+    send(model, { kind: 'tool', itemId: 'tall', name: 'bash', status: 'done',
+        input: '{"command":"seq 40"}', output: tall });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const body = row.querySelector<HTMLElement>('.activity-item-body')!;
+    const output = row.querySelector<HTMLElement>('[data-block="output"] pre')!;
+    const command = row.querySelector<HTMLElement>('[data-block="input"] pre')!;
+    // jsdom does not lay out, so drive the browser measurement path by hand: the
+    // capped output overflows while the short command block does not.
+    const setHeight = (scrollHeight: number, clientHeight: number) => {
+        Object.defineProperty(output, 'scrollHeight', { configurable: true, value: scrollHeight });
+        Object.defineProperty(output, 'clientHeight', { configurable: true, value: clientHeight });
+    };
+    setHeight(400, 200);
+    view.render(model);
+    const toggle = row.querySelector<HTMLButtonElement>('.activity-block-toggle')!;
+    assert.equal(toggle.hidden, false);
+    assert.equal(toggle.textContent, 'Show all');
+    assert.equal(output.tabIndex, 0, 'a block that scrolls is reachable by keyboard');
+    assert.equal(command.hasAttribute('tabindex'), false, 'a block that does not scroll stays out of the tab order');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'true');
+    // Expanding lifts the cap, so the flowing block measures as if it never overflowed.
+    setHeight(200, 200);
+    view.render(model);
+    assert.equal(body.dataset['expanded'], 'true', "the reader's Show all survives the next render");
+    assert.equal(toggle.hidden, false, 'the toggle stays available to collapse the row again');
+    assert.equal(toggle.textContent, 'Show less');
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(output.hasAttribute('tabindex'), false, 'an uncapped block no longer scrolls');
+    assert.equal(output.textContent, tall, 'the block text stays live across the render');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'false');
+    assert.equal(toggle.textContent, 'Show all');
+    view.dispose();
+});
+
+test('T8: a call that fails relabels its detail block from Detail to Error', () => {
+    const { model, view } = mount();
+    const detail = 'suite reported one failure';
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'done',
+        input: '{"command":"npm test"}', output: 'ok', detail });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('[data-block="detail"] .activity-block-label')!.textContent, 'Detail');
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'error',
+        input: '{"command":"npm test"}', output: 'ok', detail });
+    view.render(model);
+    assert.equal(row.querySelector('.activity-row-status')!.textContent, 'failed');
+    assert.equal(row.querySelector('[data-block="detail"] .activity-block-label')!.textContent, 'Error');
+    assert.equal(row.querySelector('[data-block="detail"] pre')!.textContent, detail);
+    assert.equal(row.querySelector('[data-block="input"] .activity-block-label')!.textContent, 'Command');
+    view.dispose();
+});
+
+test('T9: an input cut before any recognised field labels the row with the tool name', () => {
+    const { model, view } = mount();
+    const cut = '{"unrecognised":"a value retention cut before the closing quote';
+    send(model, { kind: 'tool', itemId: 'cut', name: 'bash', status: 'done', input: cut, output: 'ok' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const label = row.querySelector('.activity-row-label')!.textContent!;
+    assert.equal(label, 'Ran bash');
+    assert.doesNotMatch(label, /\{/);
+    assert.equal(row.querySelector('[data-block="input"] pre')!.textContent, cut,
+        'the body still shows exactly what the call sent');
+    view.dispose();
+});

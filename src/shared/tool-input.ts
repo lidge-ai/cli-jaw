@@ -12,12 +12,16 @@ export type ToolInputField = 'command' | 'path' | 'query' | 'url';
 export const TOOL_INPUT_KEYS: Record<ToolInputField, readonly string[]> = {
     command: ['command', 'cmd'],
     path: ['file_path', 'path', 'file'],
-    query: ['pattern', 'query'],
     url: ['url'],
+    query: ['pattern', 'query'],
 };
 export const TOOL_DESCRIPTION_KEYS = ['description'] as const;
 
-/** One canonical precedence shared by every surface summarising a tool call. */
+/**
+ * One canonical precedence shared by every surface summarising a tool call. The
+ * declaration order is the precedence (a URL outranks a query, the file family
+ * outranks both), so entries must not be reordered casually.
+ */
 export const TOOL_INPUT_KEY_ORDER = Object.values(TOOL_INPUT_KEYS).flat();
 
 const KEY_FAMILY: Record<string, ToolInputField> = {};

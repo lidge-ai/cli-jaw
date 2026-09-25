@@ -18,18 +18,26 @@ function isTallContent(value: string): boolean {
     return value.length > 1400 || value.split('\n').length > 14;
 }
 
+/** One flash per copy button: a second click restarts it instead of being cut short. */
+const copyFlash = new WeakMap<HTMLButtonElement, number>();
+
 function flashCopied(btn: HTMLButtonElement, doc: Document): void {
     const icon = btn.querySelector<HTMLElement>('[data-icon]');
     if (!icon) return;
+    const pending = copyFlash.get(btn);
+    if (pending !== undefined) doc.defaultView?.clearTimeout(pending);
     icon.dataset['icon'] = 'checkSimple'; hydrateIcons(btn); btn.classList.add('copied');
-    doc.defaultView?.setTimeout(() => { icon.dataset['icon'] = 'copy'; hydrateIcons(btn); btn.classList.remove('copied'); }, 800);
+    const timer = doc.defaultView?.setTimeout(() => { icon.dataset['icon'] = 'copy'; hydrateIcons(btn); btn.classList.remove('copied'); }, 800);
+    if (timer !== undefined) copyFlash.set(btn, timer);
 }
 
 interface Block { key: string; label: string; content: string; copy: boolean }
 
-/** Rebuild only when the block set changes; text stays live between rebuilds. */
+/** Rebuild when the block set or a label changes; text stays live between rebuilds. */
 function syncBody(body: HTMLElement, blocks: readonly Block[], waiting: boolean): void {
-    const signature = `${waiting ? 'wait|' : ''}${blocks.map(block => block.key).join('|')}`;
+    // Labels follow the entry (the detail block becomes `Error` on failure), so they
+    // belong in the signature: a key-only signature left `Detail` on a failed row.
+    const signature = `${waiting ? 'wait|' : ''}${blocks.map(block => `${block.key}:${block.label}`).join('|')}`;
     if (body.dataset['sig'] !== signature) {
         body.dataset['sig'] = signature;
         for (const child of [...body.children]) child.remove();
@@ -55,7 +63,7 @@ function syncBody(body: HTMLElement, blocks: readonly Block[], waiting: boolean)
                 head.append(copy);
             }
             const pre = el(doc, 'pre', 'activity-item-text activity-block-text');
-            pre.tabIndex = 0; pre.setAttribute('aria-label', block.label);
+            pre.setAttribute('aria-label', block.label);
             section.append(head, pre);
             body.append(section);
         }
@@ -80,13 +88,22 @@ function syncBody(body: HTMLElement, blocks: readonly Block[], waiting: boolean)
     blocks.forEach((block, index) => text(pres[index]!, block.content));
     // Measure real overflow when layout exists (browser); jsdom reports 0
     // everywhere and falls back to the character estimate.
-    const measured = pres.some(pre => pre.scrollHeight > pre.clientHeight + 2);
-    const tall = measured || (pres.every(pre => pre.scrollHeight === 0)
-        && blocks.some(block => isTallContent(block.content)));
+    const unmeasured = pres.every(pre => pre.scrollHeight === 0);
+    const overflowing = pres.map((pre, index) => unmeasured
+        ? isTallContent(blocks[index]!.content)
+        : pre.scrollHeight > pre.clientHeight + 2);
+    // Only a block that actually scrolls belongs in the tab order.
+    pres.forEach((pre, index) => {
+        if (overflowing[index]) pre.tabIndex = 0;
+        else pre.removeAttribute('tabindex');
+    });
+    // The reader's choice outranks the measurement: an expanded body has the cap
+    // lifted, so it measures as short and would otherwise collapse itself on the
+    // next render, taking the toggle away with it.
+    const expanded = body.dataset['expanded'] === 'true';
+    const tall = expanded || overflowing.some(Boolean);
     const toggle = body.querySelector<HTMLElement>('.activity-block-toggle')!;
     toggle.hidden = !tall;
-    if (!tall && body.dataset['expanded'] === 'true') body.dataset['expanded'] = 'false';
-    const expanded = body.dataset['expanded'] === 'true';
     text(toggle, expanded ? 'Show less' : 'Show all');
     toggle.setAttribute('aria-expanded', String(expanded));
 }
@@ -145,10 +162,13 @@ export function updateActivityRow(row: HTMLDetailsElement, entry: ActivityEntry)
         const verb = entry.status === 'done' ? past : entry.status === 'running' ? active : entry.status === 'error' ? 'Failed' : 'Stopped';
         const parsed = parseToolInput(entry.input);
         // Never label a row with a raw {"command": ...} object: decode the
-        // recognised argument, else fall back to the tool's own name.
+        // recognised argument, else fall back to the tool's own name. Retention can
+        // cut the input before any recognised field, and that prefix is still an
+        // envelope, so the tool name is the honest label there too.
+        const raw = entry.input?.trim() ?? '';
         const target = parsed.value !== null ? firstInputLine(parsed.value)
-            : parsed.object ? entry.name
-            : firstInputLine(entry.input ?? '') || entry.name;
+            : (parsed.object || raw.startsWith('{')) ? entry.name
+            : firstInputLine(raw) || entry.name;
         description = parsed.description ? firstInputLine(parsed.description) : '';
         label = `${verb} ${target}`;
         status = entry.status === 'error' ? 'failed' : entry.status === 'done' ? '' : entry.status;

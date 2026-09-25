@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    firstInputLine, firstToolField, parseToolArguments, parseToolInput, prettyToolInput,
+    firstInputLine, firstToolField, parseToolArguments, parseToolInput, prettyToolInput, TOOL_INPUT_KEY_ORDER,
 } from '../../src/shared/tool-input.ts';
 
 test('JSON tool input decodes the recognised argument and description', () => {
@@ -21,6 +21,17 @@ test('path, query and url families resolve in priority order', () => {
     const both = parseToolInput('{"url":"https://x.dev","cmd":"ls -la"}');
     assert.equal(both.field, 'command');
     assert.equal(both.value, 'ls -la');
+});
+
+test('url outranks query and pattern in the shared precedence order', () => {
+    assert.deepEqual(TOOL_INPUT_KEY_ORDER,
+        ['command', 'cmd', 'file_path', 'path', 'file', 'url', 'pattern', 'query']);
+    const both = parseToolInput('{"url":"https://x.dev","query":"needle","pattern":"nee.*dle"}');
+    assert.equal(both.field, 'url');
+    assert.equal(both.key, 'url');
+    assert.equal(both.value, 'https://x.dev');
+    const cut = '{"zzz":1,"url":"https://x.dev","pattern":"nee';
+    assert.equal(parseToolInput(cut).field, 'url');
 });
 
 test('non-JSON and unrecognised JSON stay out of the decoded value', () => {
