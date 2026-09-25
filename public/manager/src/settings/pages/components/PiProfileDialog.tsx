@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { SelectField, TextField } from '../../fields';
+import { SettingsActions, SettingsNote } from '../page-shell';
 import type { SettingsClient } from '../../types';
 import type { PiProfileMode, PiSettingsView } from './pi-profile';
 
@@ -121,7 +122,7 @@ export function PiProfileDialog({ client, pi, provider, model, onClose, onRegist
                     <h3 id="pi-profile-title">Pi Settings</h3>
                     <button type="button" className="settings-action settings-action-discard" onClick={onClose}>Close</button>
                 </header>
-                <div className="settings-page-form">
+                <div className="settings-section-body">
                     <SelectField
                         id="pi-profile-mode"
                         label="Mode"
@@ -133,11 +134,13 @@ export function PiProfileDialog({ client, pi, provider, model, onClose, onRegist
                     <TextField id="pi-profile-endpoint" label="Endpoint" value={endpoint} onChange={setEndpoint} placeholder={defaultEndpoint(mode)} />
                     <TextField id="pi-profile-model" label="Model" value={modelId} onChange={setModelId} placeholder="grok-composer-2.5-fast" />
                     <TextField id="pi-profile-key" label="API Key" value={apiKey} onChange={setApiKey} placeholder={current?.apiKeySet ? `set (${current.apiKeyLast4 || '****'})` : 'empty for local proxy'} />
-                    <p className="settings-empty">Default: grok-composer-2.5-fast. Bare grok-composer-2.5 currently has no verified team access.</p>
-                    {error ? <p className="settings-field-error" role="alert">{error}</p> : null}
-                    <button type="button" className="settings-action settings-action-save" disabled={busy} onClick={() => void register()}>
-                        {busy ? 'Registering...' : 'Register'}
-                    </button>
+                    <SettingsNote>Default: grok-composer-2.5-fast. Bare grok-composer-2.5 currently has no verified team access.</SettingsNote>
+                    {error ? <SettingsNote tone="error" role="alert">{error}</SettingsNote> : null}
+                    <SettingsActions>
+                        <button type="button" className="settings-action settings-action-save" disabled={busy} onClick={() => void register()}>
+                            {busy ? 'Registering...' : 'Register'}
+                        </button>
+                    </SettingsActions>
                 </div>
             </div>
         </div>

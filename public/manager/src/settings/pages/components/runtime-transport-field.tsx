@@ -41,7 +41,7 @@ export function RuntimeTransportField({ cli, original, dirty, disabled = false, 
     if (key === null) return null;
 
     return (
-        <div>
+        <>
             <SelectField
                 id={`percli-${cli}-transport`}
                 label="Runtime transport"
@@ -63,6 +63,6 @@ export function RuntimeTransportField({ cli, original, dirty, disabled = false, 
                         : 'Native requires Auto (YOLO) permissions; no native worker assignments.'}
                 </p>
             ) : null}
-        </div>
+        </>
     );
 }

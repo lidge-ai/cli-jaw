@@ -6,6 +6,9 @@ import type { SettingsPageProps, SettingsClient, DirtyEntry } from '../types';
 import { describeError } from '../components/error-normalize';
 import { ChipListField } from '../fields';
 import {
+    SettingsActions,
+    SettingsKeyValue,
+    SettingsNote,
     SettingsSection,
     PageError,
     PageLoading,
@@ -237,7 +240,7 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                 hint="Per-CLI model and runtime defaults. Runtime transport applies to the next run; display and permissions stay separate."
             >
                 {cliKeys.length === 0 ? (
-                    <p className="settings-empty">No CLIs registered for this instance.</p>
+                    <SettingsNote>No CLIs registered for this instance.</SettingsNote>
                 ) : (
                     cliKeys.map((cli) => (
                         <PerCliRow
@@ -292,46 +295,32 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                 hint="Per-session overrides applied on top of per-CLI defaults."
             >
                 {overrideRows.length === 0 ? (
-                    <p className="settings-empty">No active overrides.</p>
+                    <SettingsNote>No active overrides.</SettingsNote>
                 ) : (
-                    <table className="settings-overrides-table">
-                        <thead>
-                            <tr>
-                                <th scope="col">CLI</th>
-                                <th scope="col">Model</th>
-                                <th scope="col">Effort</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {overrideRows.map(([cli, cfg]) => (
-                                <tr key={cli}>
-                                    <td>{cli}</td>
-                                    <td>
-                                        <code>{cfg?.model || '—'}</code>
-                                    </td>
-                                    <td>
-                                        <code>{cfg?.effort || '—'}</code>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <SettingsKeyValue
+                        items={overrideRows.map(([cli, cfg]) => ({
+                            label: cli,
+                            value: `${cfg?.model || '—'} / ${cfg?.effort || '—'}`,
+                            mono: true,
+                        }))}
+                    />
                 )}
-                <div className="settings-overrides-actions">
+                <SettingsActions
+                    status={resetError ? (
+                        <span className="settings-field-error" role="alert">
+                            {resetError}
+                        </span>
+                    ) : null}
+                >
                     <button
                         type="button"
-                        className="settings-action settings-action-discard"
+                        className="settings-action settings-action-danger"
                         onClick={() => void onResetOverrides()}
                         disabled={saving || resetting || overrideRows.length === 0}
                     >
                         {resetting ? 'Resetting…' : 'Reset overrides'}
                     </button>
-                    {resetError ? (
-                        <span className="settings-field-error" role="alert">
-                            {resetError}
-                        </span>
-                    ) : null}
-                </div>
+                </SettingsActions>
             </SettingsSection>
         </form>
     );

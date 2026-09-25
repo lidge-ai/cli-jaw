@@ -1,4 +1,5 @@
 import { SelectField, TextField } from '../../../fields';
+import { SettingsActions, StatusBadge } from '../../page-shell';
 import { metaFor, optionList, selectableRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
 import {
     isStaticEmployee,
@@ -30,12 +31,13 @@ export function RuntimeEmployeeRow({
     const retired = isRetiredCliSelection(employee.cli);
     const cliChoices = selectableRuntimeOptions(Array.from(new Set([...cliOptions, employee.cli, 'claude'])).filter(Boolean));
 
+    const employeeName = employee.name || `Employee ${index + 1}`;
     return (
-        <fieldset className="settings-runtime-employee-row">
-            <legend>
-                {employee.name || `Employee ${index + 1}`}
-                {locked ? <span>static</span> : null}
-            </legend>
+        <div className="settings-runtime-employee-row" role="group" aria-label={employeeName}>
+            <p className="settings-runtime-employee-head">
+                <span className="settings-runtime-employee-name">{employeeName}</span>
+                {locked ? <StatusBadge tone="neutral">static</StatusBadge> : null}
+            </p>
             <div className="settings-runtime-employee-grid">
                 <TextField
                     id={`runtime-employee-${employee.id}-name`}
@@ -74,18 +76,19 @@ export function RuntimeEmployeeRow({
                     onChange={(next) => onChange({ role: next })}
                 />
             </div>
-            <div className="settings-runtime-employee-footer">
-                <span>{employee.source}{employee.status ? ` / ${employee.status}` : ''}</span>
+            <SettingsActions
+                status={<span>{employee.source}{employee.status ? ` / ${employee.status}` : ''}</span>}
+            >
                 <button
                     type="button"
-                    className="settings-action settings-action-discard"
+                    className="settings-action settings-action-danger"
                     disabled={locked}
                     onClick={onRemove}
-                    aria-label={`Remove employee ${employee.name || index + 1}`}
+                    aria-label={`Remove employee ${employeeName}`}
                 >
                     Remove
                 </button>
-            </div>
-        </fieldset>
+            </SettingsActions>
+        </div>
     );
 }

@@ -48,8 +48,7 @@ export function RuntimeHeader({
             title="Agent runtime"
             hint="Active CLI, model, effort, and workspace used by this instance."
         >
-            <div className="settings-agent-runtime-grid">
-                <SelectField
+            <SelectField
                     id="agent-cli"
                     label="Active CLI"
                     value={cli}
@@ -95,7 +94,6 @@ export function RuntimeHeader({
                     placeholder="/path/to/project"
                     onChange={onWorkingDirChange}
                 />
-            </div>
         </SettingsSection>
     );
 }

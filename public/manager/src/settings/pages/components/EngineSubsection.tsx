@@ -14,12 +14,12 @@ type Props = {
 
 export function EngineSubsection({ title, hint, children }: Props) {
     return (
-        <fieldset className="settings-engine-subsection">
-            <legend className="settings-engine-subsection-legend">{title}</legend>
+        <div className="settings-engine-subsection" role="group" aria-label={title}>
+            <p className="settings-engine-subsection-head">{title}</p>
             {hint ? (
                 <p className="settings-engine-subsection-hint">{hint}</p>
             ) : null}
             <div className="settings-engine-subsection-body">{children}</div>
-        </fieldset>
+        </div>
     );
 }

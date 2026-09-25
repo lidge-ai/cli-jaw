@@ -1,4 +1,4 @@
-import { SettingsSection } from '../../page-shell';
+import { SettingsActions, SettingsNote, SettingsSection, SettingsToolbar, StatusBadge } from '../../page-shell';
 import { RuntimeEmployeeRow } from './RuntimeEmployeeRow';
 import type { CliMeta } from './agent-meta';
 import {
@@ -43,40 +43,40 @@ export function AgentEmployeesSection({
             title="Employees"
             hint="Runtime dispatch roster. Static employees keep their locked identity; database employees can be edited."
         >
-            <div className="settings-runtime-employee-summary">
-                <span>+{summary.added}</span>
-                <span>~{summary.updated}</span>
-                <span>-{summary.removed}</span>
-                {hasErrors ? <strong>Fix invalid rows before saving.</strong> : null}
-            </div>
-            {loading ? <p className="settings-agent-note">Loading employees...</p> : null}
-            {error ? <p className="settings-field-error" role="alert">{error}</p> : null}
+            <SettingsToolbar>
+                <span className="settings-runtime-employee-summary">
+                    <span>+{summary.added}</span>
+                    <span>~{summary.updated}</span>
+                    <span>-{summary.removed}</span>
+                </span>
+                {hasErrors ? <StatusBadge tone="error">Fix invalid rows before saving.</StatusBadge> : null}
+            </SettingsToolbar>
+            {loading ? <SettingsNote>Loading employees...</SettingsNote> : null}
+            {error ? <SettingsNote tone="error" role="alert">{error}</SettingsNote> : null}
             {roster.length === 0 ? (
-                <p className="settings-empty">No runtime employees configured.</p>
+                <SettingsNote>No runtime employees configured.</SettingsNote>
             ) : (
-                <div className="settings-runtime-employee-list">
-                    {roster.map((employee, idx) => (
-                        <RuntimeEmployeeRow
-                            key={employee.id}
-                            employee={employee}
-                            index={idx}
-                            cliOptions={cliOptions}
-                            cliMeta={cliMeta ?? null}
-                            onChange={(patch) => updateRow(idx, patch)}
-                            onRemove={() => removeRow(idx)}
-                        />
-                    ))}
-                </div>
+                roster.map((employee, idx) => (
+                    <RuntimeEmployeeRow
+                        key={employee.id}
+                        employee={employee}
+                        index={idx}
+                        cliOptions={cliOptions}
+                        cliMeta={cliMeta ?? null}
+                        onChange={(patch) => updateRow(idx, patch)}
+                        onRemove={() => removeRow(idx)}
+                    />
+                ))
             )}
-            <div className="settings-employee-footer-bar">
+            <SettingsActions>
                 <button
                     type="button"
-                    className="settings-action settings-action-discard"
+                    className="settings-action"
                     onClick={() => onRosterChange([...roster, makeDefaultRuntimeEmployee(cliOptions, cliMeta)])}
                 >
                     + Add employee
                 </button>
-            </div>
+            </SettingsActions>
         </SettingsSection>
     );
 }
