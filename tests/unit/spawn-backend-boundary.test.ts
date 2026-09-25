@@ -30,7 +30,9 @@ test('backend bodies live in their modules, not in spawn.ts', () => {
 
 // Type-only imports are erased at compile time; every other reference to ../spawn
 // (static, multi-line, export-from, dynamic import() or require()) loads it at runtime.
-const TYPE_ONLY_SPAWN_IMPORT = /\bimport\s+type\s[^;]*?from\s*['"]\.\.\/spawn(?:\.js|\.ts)?['"]\s*;?/gs;
+// Anchored to a statement start and never crossing another `import`, so an unterminated
+// (ASI) type import cannot swallow the runtime import that follows it.
+const TYPE_ONLY_SPAWN_IMPORT = /^[ \t]*import\s+type\s(?:(?!\bimport\b)[^;])*?from\s*['"]\.\.\/spawn(?:\.js|\.ts)?['"]\s*;?/gms;
 const SPAWN_SPECIFIER = /['"]\.\.\/spawn(?:\.js|\.ts)?['"]/g;
 
 function runtimeSpawnReferences(src: string): string[] {
@@ -44,6 +46,8 @@ test('runtime spawn.ts reference matcher catches every import form', () => {
         "export { spawnAgent } from '../spawn.js';",
         "const m = await import('../spawn.js');",
         "const m = require('../spawn');",
+        "import type { X } from './other.js'\nimport { spawnAgent } from '../spawn.js'",
+        "import { type SpawnOpts } from '../spawn.js';",
     ]) assert.equal(runtimeSpawnReferences(form).length, 1, form);
     for (const form of [
         "import type { SpawnOpts } from '../spawn.js';",
