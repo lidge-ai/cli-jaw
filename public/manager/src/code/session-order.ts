@@ -4,13 +4,12 @@ import type { CodeSessionInfo } from '../../../../src/code-mode/wire';
  * How the session list is ordered and grouped, kept apart from rendering so the
  * rules can be stated and tested on their own.
  *
- * The server returns sessions by `last_used_at DESC`, which means answering a
- * prompt in the third session moves it to the top while the reader is looking
- * at it. Order here is anchored to creation instead: a row holds its place
- * until something actually changes about it, so the list moves when a session
- * is created or archived and not merely because it is busy. Which session is
- * running is carried by the row's own status, which is where a changing fact
- * belongs.
+ * The server pages sessions by `created_at DESC` — the stable key that keeps a
+ * paged read complete while `last_used_at` moves under it. Order here is
+ * anchored to that same creation order: a row holds its place until something
+ * actually changes about it, so the list moves when a session is created or
+ * archived and not merely because it is busy. Which session is running is
+ * carried by the row's own status, which is where a changing fact belongs.
  */
 export type CodeSessionSection = 'active' | 'archived';
 

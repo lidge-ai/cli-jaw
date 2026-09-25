@@ -897,3 +897,78 @@ test('missing sessions and invalid prompts do not allocate durable work', t => {
     expectError(() => admit(store, ' '), 'invalid_prompt', 400);
     assert.equal(store.read('session-a')?.sequence, 1);
 });
+
+// --- #781: paged reads follow a stable creation order ---
+// last_used_at moves forward on every write, so OFFSET pages over that key
+// skipped a session that was renamed between pages. The cursor stream walks
+// (created_at, session_id) — an immutable position — so a row matching the
+// filter when the stream started is seen exactly once; rows created or newly
+// matching ahead of the cursor belong to a later from-scratch read.
+function cursorOf(page: CodeSessionInfo[]) {
+    const last = page.at(-1)!;
+    return { createdAt: last.createdAt, sessionId: last.sessionId };
+}
+const sessionIds = (page: CodeSessionInfo[]) => page.map(session => session.sessionId);
+
+test('cursor pages cover the filtered stream once each while writes move rows between reads', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    let now = 0;
+    const store = new CodeStore(db, { now: () => ++now });
+    const ids = ['s1', 's2', 's3', 's4', 's5'];
+    for (const sessionId of ids) store.create({ ...creation, sessionId });
+
+    const first = store.list({ limit: 2 });
+    assert.deepEqual(sessionIds(first), ['s5', 's4']);
+    // Rename, a completed turn, an archive and a create all move last_used_at
+    // or the filter between pages; none may move this stream's membership.
+    store.patchSession('s1', { expectedRevision: 0, title: 'Renamed' });
+    const admitted = store.admitTurn({ sessionId: 's2', clientTurnKey: 'turn-key', text: 'hello' });
+    store.settleTurn(owner(admitted.session), { status: 'completed' });
+    store.patchSession('s3', { expectedRevision: 0, archived: true });
+    store.create({ ...creation, sessionId: 's6' });
+    const second = store.list({ limit: 2, cursor: cursorOf(first) });
+    assert.deepEqual(sessionIds(second), ['s3', 's2']);
+    const third = store.list({ limit: 2, cursor: cursorOf(second) });
+    assert.deepEqual(sessionIds(third), ['s1']);
+    const seen = [...first, ...second, ...third].map(session => session.sessionId);
+    assert.equal(seen.length, new Set(seen).size, 'a stable stream never repeats a row');
+    assert.deepEqual(new Set(seen), new Set(ids));
+    // s6 sorts ahead of the cursor: it belongs to a fresh read, not this stream.
+    assert.deepEqual(sessionIds(store.list({ limit: 10 })), ['s6', 's5', 's4', 's3', 's2', 's1']);
+});
+
+test('cursor streams stay inside the archived and cwd filters and creation ties order by id', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    const store = new CodeStore(db, { now: () => 1000 });
+    for (const sessionId of ['b2', 'a1', 'd4', 'c3']) store.create({ ...creation, sessionId });
+    // Equal creation times: the session id tie-break makes the order total.
+    const first = store.list({ limit: 2 });
+    assert.deepEqual(sessionIds(first), ['a1', 'b2']);
+    store.patchSession('c3', { expectedRevision: 0, archived: true });
+    const rest = store.list({ limit: 2, cursor: cursorOf(first) });
+    assert.deepEqual(sessionIds(rest), ['c3', 'd4']);
+    // The same stream under archived=false drops the row archived mid-read;
+    // it has left the filter rather than being lost by the pagination.
+    assert.deepEqual(sessionIds(store.list({ archived: false, limit: 2, cursor: cursorOf(first) })), ['d4']);
+    assert.deepEqual(sessionIds(store.list({ archived: true })), ['c3']);
+    assert.deepEqual(sessionIds(store.list({ cwd: '/workspace/a' })), ['a1', 'b2', 'c3', 'd4']);
+    assert.deepEqual(store.list({ cwd: '/another/workspace' }), []);
+    expectError(() => store.list({ cursor: { createdAt: -1, sessionId: 'x' } }), 'invalid_cursor', 400);
+    expectError(() => store.list({ cursor: { createdAt: 1, sessionId: '' } }), 'invalid_cursor', 400);
+});
+
+test('session list index is upgraded once and left alone when it already matches', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    new CodeStore(db);
+    db.exec('DROP INDEX idx_code_sessions_list; CREATE INDEX idx_code_sessions_list ON code_sessions(archived_at, last_used_at)');
+    const indexColumns = () => (db.prepare("PRAGMA index_info('idx_code_sessions_list')").all() as { name: string }[])
+        .map(column => column.name);
+    new CodeStore(db);
+    assert.deepEqual(indexColumns(), ['archived_at', 'created_at', 'session_id']);
+    const before = db.pragma('schema_version', { simple: true });
+    new CodeStore(db);
+    assert.equal(db.pragma('schema_version', { simple: true }), before, 'a matching index is not dropped and rebuilt');
+});

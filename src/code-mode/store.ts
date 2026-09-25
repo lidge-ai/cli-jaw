@@ -3,8 +3,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Database as SqliteDatabase } from 'better-sqlite3';
 import type {
     CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeItem, CodeItemUpdate,
-    CodePatchSessionRequest, CodePermissionRequest, CodePromptReceipt, CodePromptRequest, CodeSessionError,
-    CodeSessionInfo, CodeSessionStatus, CodeSnapshot, CodeWireEvent,
+    CodePatchSessionRequest, CodePermissionRequest, CodePromptReceipt, CodePromptRequest, CodeSessionCursor,
+    CodeSessionError, CodeSessionInfo, CodeSessionStatus, CodeSnapshot, CodeWireEvent,
 } from './wire.js';
 
 export const CODE_EVENT_PAGE_MAX = 500;
@@ -42,6 +42,8 @@ function initialTitle(text: string): string {
 
 // Capabilities and the captured policy are stored alongside the durable session,
 // so metadata reads never require a provider import or a live runtime.
+const SESSION_LIST_INDEX_COLUMNS = 'archived_at,created_at,session_id';
+
 export const CREATE_CODE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS code_sessions (
     session_id TEXT PRIMARY KEY, provider TEXT NOT NULL, cwd TEXT NOT NULL,
@@ -68,7 +70,6 @@ CREATE TABLE IF NOT EXISTS code_items (
     item_json TEXT NOT NULL, PRIMARY KEY(session_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_code_items_order ON code_items(session_id, first_sequence);
-CREATE INDEX IF NOT EXISTS idx_code_sessions_list ON code_sessions(archived_at, last_used_at);
 `;
 
 export type CodeNativePolicy = Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>;
@@ -105,7 +106,8 @@ export interface CodeSessionListOptions {
     cwd?: string;
     archived?: boolean;
     limit?: number;
-    offset?: number;
+    /** Keyset cursor: resume strictly after this row in the stable creation order. */
+    cursor?: CodeSessionCursor;
 }
 
 export class CodeStoreError extends Error {
@@ -263,7 +265,19 @@ export class CodeStore {
             }
         }
         this.database.exec(CREATE_CODE_SCHEMA_SQL);
+        this.ensureSessionListIndex();
         this.ensureBudgetColumns();
+    }
+
+    /** Rebuild the list index only when it does not already match the page key. */
+    private ensureSessionListIndex(): void {
+        const columns = (this.database.prepare("PRAGMA index_info('idx_code_sessions_list')").all() as { name: string }[])
+            .map(column => column.name).join(',');
+        if (columns === SESSION_LIST_INDEX_COLUMNS) return;
+        this.database.transaction(() => {
+            this.database.exec('DROP INDEX IF EXISTS idx_code_sessions_list');
+            this.database.exec(`CREATE INDEX idx_code_sessions_list ON code_sessions(${SESSION_LIST_INDEX_COLUMNS})`);
+        })();
     }
 
     private ensureBudgetColumns(): void {
@@ -313,16 +327,32 @@ export class CodeStore {
         return record ? toCodeSessionInfo(record) : null;
     }
 
+    /**
+     * Pages follow a stable creation order, newest first, ties broken by id.
+     *
+     * `last_used_at` cannot order a paginated list: every write moves the row
+     * forward, so an OFFSET or a cursor on that key silently skips the sessions
+     * it passed. `created_at` is immutable, so a cursor on (created_at,
+     * session_id) walks a fixed sequence — no row already inside the filter is
+     * skipped or repeated. Rows created or newly matching a filter ahead of the
+     * cursor belong to a later from-scratch read, never to this stream.
+     */
     list(options: CodeSessionListOptions = {}): CodeSessionInfo[] {
         const limit = pageLimit(options.limit, CODE_SNAPSHOT_ITEM_MAX);
-        const offset = options.offset ?? 0;
-        if (!Number.isSafeInteger(offset) || offset < 0) throw new CodeStoreError('invalid_offset', 'Offset must be a nonnegative integer', 400);
+        const cursor = options.cursor;
+        if (cursor !== undefined && (!Number.isSafeInteger(cursor.createdAt) || cursor.createdAt < 0
+            || typeof cursor.sessionId !== 'string' || !cursor.sessionId || cursor.sessionId.length > 240)) {
+            throw new CodeStoreError('invalid_cursor', 'Cursor must carry a creation time and session id', 400);
+        }
         const rows = this.database.prepare(`SELECT ${SESSION_COLUMNS} FROM code_sessions
             WHERE (? IS NULL OR cwd = ?) AND (? IS NULL OR (archived_at IS NOT NULL) = ?)
-            ORDER BY last_used_at DESC, session_id ASC LIMIT ? OFFSET ?`)
+            AND (? IS NULL OR created_at < ? OR (created_at = ? AND session_id > ?))
+            ORDER BY created_at DESC, session_id ASC LIMIT ?`)
             .all(options.cwd ?? null, options.cwd ?? null,
                 options.archived === undefined ? null : Number(options.archived),
-                options.archived === undefined ? null : Number(options.archived), limit, offset) as SessionRow[];
+                options.archived === undefined ? null : Number(options.archived),
+                cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null,
+                cursor?.sessionId ?? null, limit) as SessionRow[];
         return rows.map(row => toCodeSessionInfo(rowToRecord(row)));
     }
 

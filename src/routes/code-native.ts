@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { realpathSync, statSync } from 'node:fs';
 import type { CodeSessionManager } from '../code-mode/manager.js';
 import { CodeStoreError } from '../code-mode/store.js';
-import type { CodeCreateSessionRequest, CodePatchSessionRequest, CodePermissionMode, CodeProviderId } from '../code-mode/wire.js';
+import type { CodeCreateSessionRequest, CodePatchSessionRequest, CodePermissionMode, CodeProviderId, CodeSessionCursor } from '../code-mode/wire.js';
 import { asyncHandler } from '../http/async-handler.js';
 import { fail } from '../http/response.js';
 import { httpCode, httpStatus } from './_http-error.js';
@@ -58,6 +58,16 @@ function workspaceFilter(value: unknown): string {
 function permission(value: unknown): CodePermissionMode {
     if (!PERMISSION_MODES.includes(value as CodePermissionMode)) return invalid('invalid_permission_mode');
     return value as CodePermissionMode;
+}
+
+/** The page cursor is an opaque JSON pair minted by a previous list response. */
+function sessionCursor(value: unknown): CodeSessionCursor {
+    let parsed: unknown;
+    try { parsed = JSON.parse(string(value, 'cursor', 1024)); }
+    catch { return invalid('invalid_cursor'); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return invalid('invalid_cursor');
+    const cursor = parsed as Record<string, unknown>;
+    return { createdAt: integer(cursor['createdAt'], 'cursor'), sessionId: string(cursor['sessionId'], 'cursor', 240) };
 }
 
 function createInput(value: unknown): CodeCreateSessionRequest {
@@ -123,11 +133,16 @@ export function registerNativeCodeRoutes(
         if (scope === 'cwd' && directory === undefined) return invalid('absolute_cwd_required');
         const archived = req.query['archived'];
         if (archived !== undefined && archived !== 'true' && archived !== 'false') return invalid('invalid_archived');
+        if (req.query['offset'] !== undefined) return invalid('offset_unsupported');
         const limit = Math.min(queryInteger(req.query['limit'], 'limit', 100, 1), 1000);
-        const offset = queryInteger(req.query['offset'], 'offset', 0);
-        const sessions = getService().list({ limit, offset, ...(directory === undefined ? {} : { cwd: directory }),
+        const cursor = req.query['cursor'] === undefined ? undefined : sessionCursor(req.query['cursor']);
+        const sessions = getService().list({ limit, ...(cursor === undefined ? {} : { cursor }),
+            ...(directory === undefined ? {} : { cwd: directory }),
             ...(archived === undefined ? {} : { archived: archived === 'true' }) });
-        res.json({ ok: true, sessions, limit, offset, hasMore: sessions.length === limit });
+        const last = sessions.at(-1);
+        const hasMore = sessions.length === limit;
+        res.json({ ok: true, sessions, limit, hasMore,
+            nextCursor: hasMore && last ? JSON.stringify({ createdAt: last.createdAt, sessionId: last.sessionId }) : null });
     }));
     router.get('/sessions/:id', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
