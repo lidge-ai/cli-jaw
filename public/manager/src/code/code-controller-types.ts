@@ -16,6 +16,8 @@ export interface CodeControllerModel {
     items: CodeItem[];
     permissions: CodePermissionRequest[];
     input: string;
+    /** The fresh (un-sent) draft holds content or an unreconciled attempt. */
+    hasUnsentDraft: boolean;
     selection: CodeCreateSessionRequest;
     gitInfo: CodeGitInfo | null;
     loading: boolean;

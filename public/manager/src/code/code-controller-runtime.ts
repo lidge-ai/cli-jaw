@@ -304,6 +304,7 @@ export class CodeController {
                 return row ? publish(row, detail) : row;
             }).filter((row): row is CodeSessionInfo => !!row),
             selectedId: id, session, items: withPendingUserItem(draft, detail?.items ?? []),
+            hasUnsentDraft: !!this.book.fresh.input.trim() || this.book.fresh.createUnknown || !!this.book.fresh.retry,
             permissions: detail?.permissions ?? [],
             input: draft.input, selection: session ? sessionSelection(session) : draft.selection,
             gitInfo: this.gitInfo, loading: this.indexLoading || !!detail?.hydrating || (!!id && !detail?.hydrated && !detail?.error),

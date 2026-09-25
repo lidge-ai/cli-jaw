@@ -1,8 +1,17 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { CodeSessionInfo } from '../../../../src/code-mode/wire';
 import type { CodeControllerModel } from './code-controller-types';
 import { CODE_RUNTIME_LABELS, CODE_SESSION_LABELS, codeCanResume, codeSessionBusy } from './code-types';
 import { codeSessionAttention, codeSessionAttentionLabel, groupCodeSessions } from './session-order';
+import { DEFAULT_MANAGER_SHORTCUT_KEYMAP, formatShortcut } from '../manager-shortcuts';
+
+const NEW_SESSION_SHORTCUT = DEFAULT_MANAGER_SHORTCUT_KEYMAP.newCodeSession;
+
+function PlusGlyph() {
+    return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+        <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>;
+}
 
 function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; controller: CodeControllerModel }) {
     const [renaming, setRenaming] = useState(false);
@@ -77,12 +86,30 @@ export function CodeSessionList({ controller: c }: { controller: CodeControllerM
     const groups = grouped
         ? [...visible.reduce((map, s) => {
             const rows = map.get(s.cwd) ?? []; rows.push(s); map.set(s.cwd, rows); return map;
-        }, new Map<string, CodeSessionInfo[]>())].map(([cwd, sessions]) => ({ title: cwd, key: cwd, sessions }))
+        }, new Map<string, CodeSessionInfo[]>())].map(([cwd, sessions]) => ({ title: cwd, key: cwd, cwd, sessions }))
         : groupCodeSessions(visible).map(group => ({
             key: group.section,
             title: group.section === 'archived' ? 'Archived' : '',
+            cwd: null,
             sessions: group.sessions,
         }));
+    // The chord resolves through the manager shortcut system (rebindable in
+    // Settings); the runner re-broadcasts it here so Code mode can be absent
+    // without the event reaching a dead handler.
+    const newSession = c.newSession;
+    useEffect(() => {
+        function onShortcutAction(event: Event) {
+            if ((event as CustomEvent<string>).detail === 'newCodeSession') newSession();
+        }
+        document.addEventListener('jaw:shortcut-action', onShortcutAction);
+        return () => document.removeEventListener('jaw:shortcut-action', onShortcutAction);
+    }, [newSession]);
+    async function newInWorkspace(cwd: string) {
+        c.newSession();
+        setError(null);
+        try { await c.setSelection({ cwd }); }
+        catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    }
     async function loadMore() {
         if (pagingRef.current) return;
         pagingRef.current = true; setPaging(true); setError(null);
@@ -91,9 +118,15 @@ export function CodeSessionList({ controller: c }: { controller: CodeControllerM
         finally { pagingRef.current = false; setPaging(false); }
     }
     return <nav className="code-session-list" aria-label="Code sessions">
-        <div className="code-session-list-header"><span className="code-session-list-title">Sessions</span>
-            <button type="button" className="code-session-new-btn" onClick={c.newSession} aria-label="New Code session">+</button>
-        </div>
+        <button type="button" className={`code-session-new-primary${c.selectedId === null ? ' active' : ''}`}
+            aria-current={c.selectedId === null ? 'true' : undefined}
+            title={`Start a new session (${formatShortcut(NEW_SESSION_SHORTCUT)})`} onClick={c.newSession}>
+            <PlusGlyph />
+            <span className="code-session-new-label">New session</span>
+            {c.hasUnsentDraft && <span className="code-session-draft-badge">Draft</span>}
+            <kbd className="code-session-new-hint">{formatShortcut(NEW_SESSION_SHORTCUT)}</kbd>
+        </button>
+        <div className="code-session-list-header"><span className="code-session-list-title">Sessions</span></div>
         <div className="code-session-view-toggle" aria-label="Session view">
             <button type="button" aria-pressed={c.filter.scope === 'all'} className={`code-session-view-btn${c.filter.scope === 'all' ? ' active' : ''}`}
                 onClick={() => c.setFilter({ ...c.filter, scope: 'all' })}>All</button>
@@ -105,14 +138,17 @@ export function CodeSessionList({ controller: c }: { controller: CodeControllerM
             onChange={event => c.setFilter({ ...c.filter, archived: event.target.checked })} />Archived</label>
         <input className="code-session-search" type="search" aria-label="Search loaded sessions" placeholder="Search loaded sessions…"
             value={search} onChange={event => setSearch(event.target.value)} />
-        <button type="button" className={`code-session-item${c.selectedId === null ? ' active' : ''}`} aria-current={c.selectedId === null ? 'true' : undefined}
-            onClick={c.newSession}><span className="code-session-cwd">New session draft</span><span className="code-session-meta">Preserved unsent draft</span></button>
         {c.loading && <div className="code-session-list-loading" role="status">Loading sessions…</div>}
         {groups.map(group => <section className="code-session-group" key={group.key}>
-            {group.title && <h3 className="code-session-group-title" title={group.title}>{group.title}</h3>}
+            {group.title && <h3 className="code-session-group-title" title={group.title}>
+                <span>{group.title}</span>
+                {group.cwd !== null && <button type="button" className="code-session-group-new"
+                    aria-label={`New session in ${group.cwd}`} title={`New session in ${group.cwd}`}
+                    onClick={() => void newInWorkspace(group.cwd!)}>+</button>}
+            </h3>}
             <ul className="code-session-list-items">{group.sessions.map(s => <SessionRow key={s.sessionId} session={s} controller={c} />)}</ul>
         </section>)}
-        {!c.loading && !visible.length && <p className="code-session-list-empty">{search ? 'No loaded sessions match. Clear search or load more.' : 'No sessions here. Start with the new session draft.'}</p>}
+        {!c.loading && !visible.length && <p className="code-session-list-empty">{search ? 'No loaded sessions match. Clear search or load more.' : 'No sessions here. Start a new session above.'}</p>}
         {c.hasMoreSessions && <button type="button" className="code-inline-action" disabled={paging} onClick={() => void loadMore()}>{paging ? 'Loading…' : 'Load more sessions'}</button>}
         <button type="button" className="code-inline-action" onClick={() => { setError(null); void c.refresh().catch(err => setError(err instanceof Error ? err.message : String(err))); }}>Refresh sessions</button>
         {error && <div className="code-session-list-error" role="alert">{error}</div>}

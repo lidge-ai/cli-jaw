@@ -47,7 +47,7 @@ function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
     return { catalog: { defaultProvider: 'codex-app', providers: ['codex-app', 'claude', 'cursor', 'grok'].map(id => ({
         id: id as CodeSessionInfo['provider'], label: id, available: true, reason: null, models: ['native-model', 'another-native-model'], defaultModel: 'native-model',
         defaultEffort: null, capabilities: s.capabilities, modelSource: 'native' as const,
-    })) }, sessions: [s], session: s, selectedId: s.sessionId, items: [], permissions: [], input: 'draft text',
+    })) }, sessions: [s], session: s, selectedId: s.sessionId, items: [], permissions: [], input: 'draft text', hasUnsentDraft: false,
     selection: { provider: s.provider, cwd: s.cwd, model: s.model, effort: null, permissionMode: s.permissionMode },
     gitInfo: null, loading: false, pending: false, busy: false, synced: true, error: null, transport: 'connected', workspacePicking: false,
     operation: { kind: 'idle', error: null }, retryText: null, canRetrySameSend: false, permissionOperations: {},
@@ -651,6 +651,55 @@ test('states the reader must act on stay on screen instead of becoming a toast',
     assert.ok(h.container.querySelector('[aria-label="Original prompt"]'));
     await h.render(createElement(CodeWorkbench, { controller: model({ transport: 'disconnected' }), endpointKey: '43225' }));
     assert.match(h.container.textContent ?? '', /Live updates disconnected/);
+});
+
+test('the new session entry is a primary button with a shortcut hint and a Draft badge', bounded, async t => {
+    const h = await surface(t); let created = 0;
+    const c = model({ newSession() { created++; } });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const entry = h.container.querySelector<HTMLButtonElement>('.code-session-new-primary');
+    assert.ok(entry, 'the primary new-session button exists');
+    assert.match(entry.textContent ?? '', /New session/);
+    assert.ok(entry.querySelector('svg'), 'the entry carries a plus glyph');
+    assert.ok(entry.querySelector('.code-session-new-hint')?.textContent?.trim(), 'the shortcut chord is shown as a hint');
+    assert.equal(entry.querySelector('.code-session-draft-badge'), null, 'no badge without an unsent draft');
+    assert.doesNotMatch(h.container.textContent ?? '', /Preserved unsent draft/, 'the old draft row is gone');
+    await click(entry); assert.equal(created, 1);
+    await h.render(createElement(CodeSessionList, { controller: { ...c, hasUnsentDraft: true } }));
+    assert.equal(h.container.querySelector('.code-session-draft-badge')?.textContent, 'Draft');
+});
+
+test('the manager newCodeSession shortcut action opens a fresh draft while the list is mounted', bounded, async t => {
+    const h = await surface(t); let created = 0;
+    await h.render(createElement(CodeSessionList, { controller: model({ newSession() { created++; } }) }));
+    await act(async () => {
+        document.dispatchEvent(new dom.window.CustomEvent('jaw:shortcut-action', { detail: 'newCodeSession' }));
+    });
+    assert.equal(created, 1);
+    await act(async () => {
+        document.dispatchEvent(new dom.window.CustomEvent('jaw:shortcut-action', { detail: 'terminalClear' }));
+    });
+    assert.equal(created, 1, 'unrelated shortcut actions do not start a draft');
+});
+
+test('workspace groups each offer a + that starts a draft with that cwd', bounded, async t => {
+    const h = await surface(t); const selections: unknown[] = []; let created = 0;
+    const c = model({
+        sessions: [session({ cwd: '/work/alpha' }), session({ sessionId: 's-b', cwd: '/work/beta', title: 'Beta' })],
+        newSession() { created++; },
+        async setSelection(patch) { selections.push(patch); },
+    });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    await click(button(h.container, 'Group'));
+    const headers = [...h.container.querySelectorAll('.code-session-group-title')];
+    assert.equal(headers.length, 2, 'each workspace is its own group');
+    const beta = headers.find(node => node.textContent?.includes('/work/beta')); assert.ok(beta);
+    await click(button(beta, 'New session in /work/beta'));
+    assert.equal(created, 1);
+    assert.deepEqual(selections, [{ cwd: '/work/beta' }], 'the group workspace preselects the draft cwd');
+    // Lifecycle grouping (the default) has no per-group workspace to preselect.
+    await click(button(h.container, 'Group'));
+    assert.equal(h.container.querySelector('.code-session-group-new'), null);
 });
 
 test('recent workspaces are unique directories ordered by last use, capped at five', () => {

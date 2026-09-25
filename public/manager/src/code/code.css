@@ -66,14 +66,53 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
-.code-session-new-btn {
-    width: 20px; height: 20px;
-    border: none; border-radius: 4px;
+/* The new-session entry point is the one control every visit to this list
+   starts from, so it gets a full-width primary button rather than a row in
+   the list it creates. */
+.code-session-new-primary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
     background: var(--accent-soft);
     color: var(--accent);
-    font-size: 14px; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
     min-height: auto;
+}
+.code-session-new-primary:hover { border-color: var(--accent); }
+.code-session-new-primary.active { border-color: var(--accent); }
+.code-session-new-label { flex: 0 0 auto; }
+.code-session-new-hint {
+    margin-left: auto;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-base);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.code-session-draft-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--status-warn) 16%, var(--bg-base));
+    color: var(--status-warn);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
 }
 .code-session-view-toggle {
     display: grid;
@@ -171,8 +210,29 @@
     white-space: nowrap;
 }
 .code-session-group-title span {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--text-secondary);
+}
+.code-session-group-new {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    min-height: auto;
+}
+.code-session-group-new:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
 }
 .code-session-list-empty, .code-session-list-loading {
     font-size: 11px; color: var(--text-dim); padding: 12px 4px;
@@ -711,7 +771,6 @@
 .code-session-actions > div, .code-session-rename { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
 .code-session-rename input { min-width: 0; width: 100%; padding: 5px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-base); color: var(--text-primary); font: inherit; }
 .code-session-archive-filter { display: flex; align-items: center; gap: 5px; margin: 4px 8px 8px; color: var(--text-secondary); font-size: 11px; }
-.code-session-new-btn { min-width: 24px; min-height: 24px; }
 .code-session-search { box-sizing: border-box; }
 .code-session-status-failed { color: var(--status-error); }
 .code-session-status-stopping { color: var(--status-warn); }
