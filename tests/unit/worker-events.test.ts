@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { publish, subscribe, type BusEvent } from '../../src/core/event-bus.ts';
 import {
@@ -42,7 +42,7 @@ function makeEventsFetch(latest: Record<string, unknown> | null) {
     return { calls, fetchImpl };
 }
 
-function freshBridge(latest: Record<string, unknown> | null) {
+function freshBridge(latest: Record<string, unknown> | null, opts: { reconnectBaseMs?: number; reconnectMaxMs?: number } = {}) {
     stopWorkerEventBridge();
     FakeEventSource.instances = [];
     const { calls, fetchImpl } = makeEventsFetch(latest);
@@ -50,6 +50,7 @@ function freshBridge(latest: Record<string, unknown> | null) {
         fetchImpl: fetchImpl as never,
         EventSourceImpl: FakeEventSource as never,
         debounceMs: 1,
+        ...opts,
     });
     return { calls };
 }
@@ -140,4 +141,72 @@ test('stopWorkerEventBridge closes every stream and clears state', async () => {
     stopWorkerEventBridge();
     assert.ok(FakeEventSource.instances.every(i => i.closed));
     assert.equal(getCachedLatestMessage(3461), undefined);
+});
+
+// #791: a terminal transient failure (eventsource@3 goes CLOSED on any non-2xx,
+// e.g. the /api/events capacity 503) used to leave a stable-online worker
+// unwatched forever — no diff would ever arrive to re-trigger connect().
+test('terminal disconnect on a stable-online worker schedules exactly one bounded-backoff reconnect', async (context: TestContext) => {
+    context.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    context.after(() => { stopWorkerEventBridge(); context.mock.timers.reset(); });
+    freshBridge(null, { reconnectBaseMs: 100, reconnectMaxMs: 400 });
+    diff({ port: 3471, change: 'appeared', next: { status: 'online', version: '2.2.0' } });
+    assert.equal(FakeEventSource.instances.length, 1);
+
+    const es1 = FakeEventSource.instances[0]!;
+    es1.readyState = 2; // terminal CLOSED — no internal retry coming
+    es1.onerror?.({ code: 503 });
+    assert.equal(es1.closed, true);
+
+    context.mock.timers.tick(99);
+    assert.equal(FakeEventSource.instances.length, 1, 'no reconnect before the backoff elapses');
+    context.mock.timers.tick(1);
+    assert.equal(FakeEventSource.instances.length, 2, 'latest snapshot is online → one reconnect');
+
+    context.mock.timers.tick(10_000);
+    assert.equal(FakeEventSource.instances.length, 2, 'healthy replacement — no retry loop');
+
+    // A further terminal failure reschedules with a grown (but capped) delay.
+    const es2 = FakeEventSource.instances[1]!;
+    es2.readyState = 2;
+    es2.onerror?.({ code: 503 });
+    context.mock.timers.tick(199);
+    assert.equal(FakeEventSource.instances.length, 2, 'backoff doubled: 200ms not 100ms');
+    context.mock.timers.tick(1);
+    assert.equal(FakeEventSource.instances.length, 3);
+});
+
+test('a pending reconnect is cancelled when the worker flaps offline or disappears', async (context: TestContext) => {
+    context.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    context.after(() => { stopWorkerEventBridge(); context.mock.timers.reset(); });
+    freshBridge(null, { reconnectBaseMs: 100, reconnectMaxMs: 400 });
+    diff({ port: 3472, change: 'appeared', next: { status: 'online', version: '2.2.0' } });
+    diff({ port: 3473, change: 'appeared', next: { status: 'online', version: '2.2.0' } });
+    for (const es of FakeEventSource.instances) {
+        es.readyState = 2;
+        es.onerror?.({ code: 503 });
+    }
+    diff({ port: 3472, change: 'status', prev: { status: 'online', version: '2.2.0' }, next: { status: 'offline', version: '2.2.0' } });
+    diff({ port: 3473, change: 'disappeared', prev: { status: 'online', version: '2.2.0' } });
+    context.mock.timers.tick(10_000);
+    assert.equal(FakeEventSource.instances.length, 2, 'snapshot offline/gone before the delay → no reconnect');
+});
+
+test('a stale reconnect timer is generation-fenced and cannot replace a newer connection', async (context: TestContext) => {
+    context.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    context.after(() => { stopWorkerEventBridge(); context.mock.timers.reset(); });
+    freshBridge(null, { reconnectBaseMs: 100, reconnectMaxMs: 400 });
+    diff({ port: 3474, change: 'appeared', next: { status: 'online', version: '2.2.0' } });
+    const es1 = FakeEventSource.instances[0]!;
+    es1.readyState = 2;
+    es1.onerror?.({ code: 503 }); // retry armed on generation 1
+
+    // A successor connection is established before the stale timer fires.
+    diff({ port: 3474, change: 'appeared', next: { status: 'online', version: '2.2.0' } });
+    assert.equal(FakeEventSource.instances.length, 2);
+    const es2 = FakeEventSource.instances[1]!;
+
+    context.mock.timers.tick(10_000);
+    assert.equal(FakeEventSource.instances.length, 2, 'stale timer fired but created nothing');
+    assert.equal(es2.closed, false, 'successor connection untouched');
 });
