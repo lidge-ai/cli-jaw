@@ -1,0 +1,121 @@
+/**
+ * Embedded browser fit-to-width zoom contract.
+ *
+ * Locks in:
+ * - computeFitZoom shrinks overflowing documents to fit the panel viewport
+ * - resize refits reuse the stored required width (grow back toward 1)
+ * - zoom clamps to [0.5, 1] and tolerates sub-pixel measurement slack
+ * - the IPC layer wires fitToWidth / zoomMode and the main side measures via
+ *   the read-only Page.getLayoutMetrics probe (no Page.enable, no Runtime)
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { computeFitZoom, FIT_ZOOM_MIN, FIT_ZOOM_MAX } from '../../electron/src/main/lib/browser/fit-zoom.ts';
+
+const root = process.cwd();
+const ipcSource = readFileSync(join(root, 'electron/src/main/lib/browser/ipc.ts'), 'utf-8');
+const cdpSource = readFileSync(join(root, 'electron/src/main/lib/browser/cdp.ts'), 'utf-8');
+const panelSource = readFileSync(join(root, 'public/manager/src/browser-panel/BrowserPanel.tsx'), 'utf-8');
+const bridgeSource = readFileSync(join(root, 'public/manager/src/panels/desktop-bridge.ts'), 'utf-8');
+
+function almost(actual: number, expected: number, epsilon = 0.005): void {
+    assert.ok(Math.abs(actual - expected) <= epsilon, `expected ~${expected}, got ${actual}`);
+}
+
+test('an overflowing document shrinks to the panel width', () => {
+    // Naver-style page: 1080 CSS px content in a 700 px panel at zoom 1.
+    const decision = computeFitZoom({
+        viewportCssWidth: 700,
+        contentCssWidth: 1080,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    almost(decision.zoom, 700 / 1080);
+    assert.equal(decision.requiredWidth, 1080);
+});
+
+test('a page that fits keeps its zoom and clears nothing', () => {
+    const decision = computeFitZoom({
+        viewportCssWidth: 700,
+        contentCssWidth: 700,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    assert.equal(decision.zoom, 1);
+    assert.equal(decision.requiredWidth, null);
+});
+
+test('resize refit uses the stored required width while shrunk', () => {
+    // Panel at 700 physical px, page shrunk to ~0.65: the layout viewport is
+    // ~1080 CSS px and content (1080) no longer overflows, so only the stored
+    // required width can drive a refit.
+    const decision = computeFitZoom({
+        viewportCssWidth: 1080,
+        contentCssWidth: 1080,
+        currentZoom: 0.648,
+        requiredWidth: 1080,
+    });
+    almost(decision.zoom, (1080 * 0.648) / 1080);
+    assert.equal(decision.requiredWidth, 1080);
+});
+
+test('widening past the required width restores zoom 1 and clears the fit', () => {
+    // Panel widened to 1200 physical px: viewport is 1200/0.648 CSS px wide.
+    const decision = computeFitZoom({
+        viewportCssWidth: 1200 / 0.648,
+        contentCssWidth: 1080,
+        currentZoom: 0.648,
+        requiredWidth: 1080,
+    });
+    assert.equal(decision.zoom, FIT_ZOOM_MAX);
+    assert.equal(decision.requiredWidth, null);
+});
+
+test('extreme overflow clamps at the minimum zoom', () => {
+    const decision = computeFitZoom({
+        viewportCssWidth: 300,
+        contentCssWidth: 2400,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    assert.equal(decision.zoom, FIT_ZOOM_MIN);
+    assert.equal(decision.requiredWidth, 2400);
+});
+
+test('sub-pixel measurement slack does not count as overflow', () => {
+    const decision = computeFitZoom({
+        viewportCssWidth: 700,
+        contentCssWidth: 700.5,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    assert.equal(decision.zoom, 1);
+    assert.equal(decision.requiredWidth, null);
+});
+
+test('fit-to-width uses the read-only Page.getLayoutMetrics probe only', () => {
+    assert.ok(cdpSource.includes("'Page.getLayoutMetrics'"), 'metrics come from Page.getLayoutMetrics');
+    assert.ok(!cdpSource.includes("'Page.enable'"), 'Page domain is never subscribed');
+    assert.ok(!/\.executeJavaScript\s*\(/.test(cdpSource), 'no page script execution');
+    assert.ok(!/\.executeJavaScript\s*\(/.test(ipcSource), 'ipc has no page script execution');
+});
+
+test('ipc wires auto/manual zoom modes and the fitToWidth command', () => {
+    assert.ok(ipcSource.includes("zoomMode: 'auto' | 'manual'"), 'tab registration tracks the zoom mode');
+    assert.ok(ipcSource.includes("case 'fitToWidth'"), 'fitToWidth control command exists');
+    assert.ok(ipcSource.includes("entry.zoomMode = 'manual'"), 'zoom menu switches the tab to manual');
+    assert.ok(ipcSource.includes("entry.zoomMode = 'auto'"), 'zoom reset returns the tab to auto');
+    assert.ok(ipcSource.includes("'did-navigate'"), 'new documents reset the auto fit');
+    assert.ok(ipcSource.includes("'did-finish-load'"), 'load completion triggers a fit measure');
+    assert.ok(ipcSource.includes('computeFitZoom('), 'ipc delegates the decision to computeFitZoom');
+});
+
+test('renderer requests a refit on panel resize', () => {
+    assert.ok(panelSource.includes('ResizeObserver'), 'panel observes the viewport box');
+    assert.ok(panelSource.includes("kind: 'fitToWidth'"), 'renderer sends the fitToWidth command');
+    assert.ok(bridgeSource.includes("kind: 'fitToWidth'"), 'bridge command union includes fitToWidth');
+    assert.ok(bridgeSource.includes("zoomMode?: 'auto' | 'manual'"), 'bridge state exposes zoomMode');
+});

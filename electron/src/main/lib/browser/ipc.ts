@@ -1,6 +1,7 @@
 import { ipcMain, webContents as webContentsRegistry, type BrowserWindow, type WebContents } from 'electron';
 import { isAllowedSender } from '../ipc-origin-guard.js';
-import { detachCdp, domSnapshot, isInspecting, performAct, startInspect, stopInspect, type ActPayload, type PickedElement } from './cdp.js';
+import { detachCdp, domSnapshot, isInspecting, pageLayoutMetrics, performAct, startInspect, stopInspect, type ActPayload, type PickedElement } from './cdp.js';
+import { computeFitZoom, FIT_ZOOM_EPSILON } from './fit-zoom.js';
 
 /**
  * Embedded browser webview IPC (030 v1).
@@ -26,12 +27,23 @@ type RegisteredBrowserTab = {
     /** Compatibility state: Manager Browser targets allow actions by default. */
     actionsEnabled: boolean;
     favicons: string[];
+    /**
+     * 'auto': fit-to-width may manage zoomFactor (pages wider than the panel
+     * get shrunk to fit). 'manual': the user's zoom menu choice wins until
+     * zoomReset returns the tab to 'auto'.
+     */
+    zoomMode: 'auto' | 'manual';
+    /** CSS px content width that overflowed this document; resize refit basis. */
+    fitRequiredWidth: number | null;
 };
 
 const ownedWebContentsIds = new Set<number>();
 const devToolsListenerIds = new Set<number>();
 const faviconListenerIds = new Set<number>();
+const fitToWidthListenerIds = new Set<number>();
+const fitToWidthTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const tabsById = new Map<string, RegisteredBrowserTab>();
+const FIT_TO_WIDTH_DEBOUNCE_MS = 200;
 const MAX_ACT_COORD = 100_000;
 const MAX_ACT_TEXT = 2_000;
 const MAX_SCROLL_DELTA = 5_000;
@@ -57,6 +69,12 @@ export function markOwnedEmbeddedBrowserWebContents(contents: WebContents): void
         ownedWebContentsIds.delete(contents.id);
         devToolsListenerIds.delete(contents.id);
         faviconListenerIds.delete(contents.id);
+        fitToWidthListenerIds.delete(contents.id);
+        const pendingFit = fitToWidthTimers.get(contents.id);
+        if (pendingFit) {
+            clearTimeout(pendingFit);
+            fitToWidthTimers.delete(contents.id);
+        }
         detachCdp(contents);
         for (const [tabId, entry] of tabsById) {
             if (entry.webContentsId === contents.id) tabsById.delete(tabId);
@@ -193,6 +211,7 @@ function tabState(entry: RegisteredBrowserTab, contents: WebContents) {
         actionsEnabled: entry.actionsEnabled,
         inspecting: isInspecting(contents),
         zoomFactor: contents.getZoomFactor(),
+        zoomMode: entry.zoomMode,
     };
 }
 
@@ -238,6 +257,59 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         });
     }
 
+    /**
+     * Fit-to-width: measure the guest document via a read-only
+     * Page.getLayoutMetrics probe and shrink zoomFactor until the content
+     * width fits the panel. Skipped entirely once the user picks a zoom level
+     * from the zoom menu (zoomMode 'manual'); zoomReset re-arms auto fitting.
+     */
+    async function applyFitToWidth(entry: RegisteredBrowserTab, contents: WebContents): Promise<void> {
+        if (entry.zoomMode !== 'auto' || contents.isDestroyed()) return;
+        const metrics = await pageLayoutMetrics(contents);
+        if (!metrics || contents.isDestroyed()) return;
+        const decision = computeFitZoom({
+            viewportCssWidth: metrics.viewportCssWidth,
+            contentCssWidth: metrics.contentCssWidth,
+            currentZoom: contents.getZoomFactor(),
+            requiredWidth: entry.fitRequiredWidth,
+        });
+        entry.fitRequiredWidth = decision.requiredWidth;
+        if (Math.abs(decision.zoom - contents.getZoomFactor()) > FIT_ZOOM_EPSILON) {
+            contents.setZoomFactor(decision.zoom);
+            emitState(entry, contents);
+        }
+    }
+
+    function scheduleFitMeasure(tabId: string, contents: WebContents): void {
+        const pending = fitToWidthTimers.get(contents.id);
+        if (pending) clearTimeout(pending);
+        fitToWidthTimers.set(contents.id, setTimeout(() => {
+            fitToWidthTimers.delete(contents.id);
+            const resolved = resolveRegisteredGuest(tabId);
+            if (!resolved || resolved.contents !== contents) return;
+            void applyFitToWidth(resolved.entry, resolved.contents);
+        }, FIT_TO_WIDTH_DEBOUNCE_MS));
+    }
+
+    function attachFitToWidthListeners(entry: RegisteredBrowserTab, contents: WebContents): void {
+        if (fitToWidthListenerIds.has(contents.id)) return;
+        fitToWidthListenerIds.add(contents.id);
+        contents.on('did-navigate', () => {
+            const live = tabsById.get(entry.tabId);
+            if (!live || live.webContentsId !== contents.id) return;
+            live.fitRequiredWidth = null;
+            // A new document gets an un-zoomed layout pass; did-finish-load
+            // re-fits it if its content still overflows the panel.
+            if (live.zoomMode === 'auto' && contents.getZoomFactor() !== 1) {
+                contents.setZoomFactor(1);
+                emitState(live, contents);
+            }
+        });
+        const refit = () => scheduleFitMeasure(entry.tabId, contents);
+        contents.on('did-finish-load', refit);
+        contents.on('did-stop-loading', refit);
+    }
+
     ipcMain.handle('browser:register-webview', (event, input: { tabId?: unknown; webContentsId?: unknown }) => {
         if (!isManagerSender(event)) return { ok: false, error: 'unauthorized' };
         const tabId = typeof input?.tabId === 'string' ? input.tabId.trim() : '';
@@ -253,10 +325,13 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
             sharedWithAgent: prior?.sharedWithAgent ?? true,
             actionsEnabled: true,
             favicons: prior?.webContentsId === webContentsId ? prior.favicons : [],
+            zoomMode: prior?.zoomMode ?? 'auto',
+            fitRequiredWidth: prior?.webContentsId === webContentsId ? prior.fitRequiredWidth : null,
         };
         tabsById.set(tabId, entry);
         attachDevToolsListeners(entry, contents);
         attachFaviconListener(entry, contents);
+        attachFitToWidthListeners(entry, contents);
         return { ok: true, state: tabState(entry, contents) };
     });
 
@@ -275,7 +350,7 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         return { ok: true };
     });
 
-    ipcMain.handle('browser:control-webview', (event, command: { kind?: unknown; tabId?: unknown; url?: unknown; ignoreCache?: unknown }) => {
+    ipcMain.handle('browser:control-webview', async (event, command: { kind?: unknown; tabId?: unknown; url?: unknown; ignoreCache?: unknown }) => {
         if (!isManagerSender(event)) return { ok: false, error: 'unauthorized' };
         const resolved = resolveRegisteredGuest(typeof command?.tabId === 'string' ? command.tabId : '');
         if (!resolved) return { ok: false, error: 'unknown or stale browser tab' };
@@ -303,13 +378,21 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
                 contents.stop();
                 break;
             case 'zoomIn':
+                // Explicit zoom wins over auto fit-to-width until Reset.
+                entry.zoomMode = 'manual';
                 contents.setZoomFactor(clampZoom(contents.getZoomFactor() + 0.1));
                 break;
             case 'zoomOut':
+                entry.zoomMode = 'manual';
                 contents.setZoomFactor(clampZoom(contents.getZoomFactor() - 0.1));
                 break;
             case 'zoomReset':
-                contents.setZoomFactor(1);
+                entry.zoomMode = 'auto';
+                await applyFitToWidth(entry, contents);
+                break;
+            case 'fitToWidth':
+                // Panel resize refit: no-op while the tab is in manual zoom.
+                await applyFitToWidth(entry, contents);
                 break;
             default:
                 return { ok: false, error: 'unknown command' };

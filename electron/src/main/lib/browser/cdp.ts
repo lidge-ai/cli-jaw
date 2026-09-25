@@ -297,6 +297,67 @@ export async function domSnapshot(contents: WebContents, maxNodes = 120): Promis
     return out;
 }
 
+// --- fit-to-width: read-only layout metrics probe ---
+
+export type PageLayoutMetrics = {
+    /** cssLayoutViewport.clientWidth — viewport width in CSS px at current zoom. */
+    viewportCssWidth: number;
+    /** cssContentSize.width — full document scroll width in CSS px. */
+    contentCssWidth: number;
+};
+
+/**
+ * One-off `Page.getLayoutMetrics` read for fit-to-width zoom. Like
+ * `assertPointInViewport` this never enables the Page domain — it is a single
+ * read-only command, no subscription, no script execution.
+ *
+ * When an adapter session already owns the debugger (inspect/act/snapshot in
+ * use), the probe rides that session. Otherwise it attaches transiently and
+ * detaches afterwards so idle tabs never keep a debugger attached.
+ */
+export async function pageLayoutMetrics(contents: WebContents): Promise<PageLayoutMetrics | null> {
+    const read = async (): Promise<PageLayoutMetrics | null> => {
+        const metrics = await send<{
+            cssLayoutViewport?: { clientWidth?: number };
+            layoutViewport?: { clientWidth?: number };
+            cssVisualViewport?: { clientWidth?: number };
+            cssContentSize?: { width?: number };
+            contentSize?: { width?: number };
+        }>(contents, 'Page.getLayoutMetrics');
+        const viewportCssWidth = metrics.cssLayoutViewport?.clientWidth
+            ?? metrics.layoutViewport?.clientWidth
+            ?? metrics.cssVisualViewport?.clientWidth;
+        const contentCssWidth = metrics.cssContentSize?.width ?? metrics.contentSize?.width;
+        if (typeof viewportCssWidth !== 'number' || typeof contentCssWidth !== 'number') return null;
+        if (viewportCssWidth <= 0 || contentCssWidth <= 0) return null;
+        return { viewportCssWidth, contentCssWidth };
+    };
+
+    if (sessions.get(contents.id) || sessionInit.get(contents.id)) {
+        try {
+            await ensureSession(contents);
+            return await read();
+        } catch {
+            return null;
+        }
+    }
+
+    let attached = false;
+    try {
+        contents.debugger.attach(CDP_VERSION);
+        attached = true;
+        return await read();
+    } catch {
+        return null;
+    } finally {
+        // Leave the debugger attached if an adapter session started using it
+        // while the probe ran — its lifecycle now owns the attachment.
+        if (attached && !sessions.has(contents.id) && contents.debugger.isAttached()) {
+            try { contents.debugger.detach(); } catch { /* ignore */ }
+        }
+    }
+}
+
 // --- v4 interactive actions (Input domain) ---
 
 export type ActPayload =

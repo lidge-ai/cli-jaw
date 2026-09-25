@@ -193,6 +193,8 @@ export type BrowserWebviewTabState = {
     error?: string;
     favicons?: string[];
     zoomFactor?: number;
+    /** 'auto': fit-to-width manages zoomFactor; 'manual': user zoom wins. */
+    zoomMode?: 'auto' | 'manual';
 };
 
 /** v5: element resolved from the native inspect pick (CDP DOM/AX domains). */
@@ -230,7 +232,8 @@ export type BrowserWebviewCommand =
     | { kind: 'stop'; tabId: string }
     | { kind: 'zoomIn'; tabId: string }
     | { kind: 'zoomOut'; tabId: string }
-    | { kind: 'zoomReset'; tabId: string };
+    | { kind: 'zoomReset'; tabId: string }
+    | { kind: 'fitToWidth'; tabId: string };
 
 export type BrowserWebviewNativeAction =
     | { kind: 'openExternal'; tabId: string }

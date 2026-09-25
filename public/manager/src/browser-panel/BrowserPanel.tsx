@@ -387,6 +387,8 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const panelInstanceId = useRef<symbol>(Symbol('browser-panel'));
     /** regId -> guest webContentsId for this panel's live registrations. */
     const registeredWebContentsIds = useRef<Map<string, number>>(new Map());
+    /** Stable viewport box the active webview fills (survives tab switches). */
+    const webviewStackRef = useRef<HTMLDivElement | null>(null);
 
     const registerWebviewTarget = useCallback((tabId: string, webview: ElectronWebviewElement) => {
         const browserBridge = getDesktop()?.browser;
@@ -437,6 +439,30 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
             if (Object.keys(patch).length > 0) updateTab(pageTabId, patch);
         });
     }, [updateTab]);
+
+    // Fit-to-width: ask the guest to re-fit its zoom whenever the panel box
+    // resizes (drawer drag, sidebar toggle, window resize). The initial
+    // observe() fire also covers first layout; the guest no-ops while the
+    // user holds a manual zoom from the zoom menu.
+    useEffect(() => {
+        const browserBridge = getDesktop()?.browser;
+        const host = webviewStackRef.current;
+        if (!canUseElectronWebview || !host || typeof browserBridge?.controlWebview !== 'function') return undefined;
+        const controlWebview = browserBridge.controlWebview;
+        let timer = 0;
+        const requestFit = () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
+                void controlWebview({ kind: 'fitToWidth', tabId: registrationIdFor(activeTabIdRef.current) });
+            }, 200);
+        };
+        const observer = new ResizeObserver(requestFit);
+        observer.observe(host);
+        return () => {
+            window.clearTimeout(timer);
+            observer.disconnect();
+        };
+    }, [canUseElectronWebview, registrationIdFor]);
 
     // v5: native inspect returns the REAL element (selector/role/name/bounds).
     // When it fires for this panel's active tab, pin the element and open the
@@ -1124,7 +1150,7 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
                                     )}
                                     <div className="browser-more-zoom" role="group" aria-label="Page zoom" onClick={event => event.stopPropagation()}>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomOut')}>Zoom out</button>
-                                        <span className="browser-more-zoom-label">{Math.round((activeTab.zoomFactor ?? 1) * 100)}%</span>
+                                        <span className="browser-more-zoom-label">{Math.round((activeTab.zoomFactor ?? 1) * 100)}%{activeBridgeState?.zoomMode === 'auto' && (activeTab.zoomFactor ?? 1) < 1 ? ' fit' : ''}</span>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomIn')}>Zoom in</button>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomReset')}>Reset</button>
                                     </div>
@@ -1143,7 +1169,7 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
                 </div>
             )}
             {canUseElectronWebview ? (
-                <div className="browser-webview-stack">
+                <div className="browser-webview-stack" ref={webviewStackRef}>
                     <div key={activeTab.id} className="browser-webview-host is-active">
                         {historyEntries.length > 0 && addressState.focused && addressState.draft.trim() === '' && (
                             <div className="browser-history-empty" aria-label="Recent visits">
