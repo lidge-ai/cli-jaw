@@ -507,17 +507,23 @@ function ensureDashboardConnectorAnchor(fileContent: string, rendered: string): 
  * Stock session-poll blocks a correction is allowed to replace.
  *
  * Append-only was not enough. The block states how a turn must call Agent/Bash,
- * and the shipped wording contradicted the native runtime: it said to call them
- * WITHOUT run_in_background, while the runtime refuses an Agent/Task call that
- * does not say `false` and ends the whole turn when a task is backgrounded.
+ * and twice the shipped wording contradicted the native runtime: first it said to
+ * call them WITHOUT run_in_background while the hook refused anything but `false`;
+ * then it demanded `false` after background tasks were disabled at the source and
+ * the field no longer existed in the Agent schema. The runtime now refuses only a
+ * present, non-false flag and still ends the turn when a task is backgrounded.
  * Every install already carrying that block would have kept it forever, because
  * the anchor was only ever added when missing. Replacement stays limited to
  * blocks this project shipped; anything else is user-authored and preserved.
  */
-const KNOWN_SESSION_POLL_ANCHOR_HASHES = new Set<string>([
+export const KNOWN_SESSION_POLL_ANCHOR_HASHES = new Set<string>([
     // Shipped through v2.17.53 — "Call Agent/Bash WITHOUT run_in_background",
     // which produced denied Agent calls and turn-killing background Bash.
     'c15c336d5ca8c566e207fb46ceb6f82b',
+    // Shipped until the foreground hook accepted an omitted flag — "Omitting the
+    // option is NOT the same as foreground", which the model could not satisfy once
+    // CLAUDE_CODE_DISABLE_BACKGROUND_TASKS removed the field from the Agent schema.
+    'b1169a69917f314d92cc8f93e3b65ec9',
 ]);
 
 function migrateSessionPollAnchor(fileContent: string, rendered: string): string | null {
