@@ -25,6 +25,10 @@ import {
     PageLoading,
     PageOffline,
     usePageSnapshot,
+    SettingsActions,
+    SettingsKeyValue,
+    SettingsNote,
+    StatusBadge,
 } from './page-shell';
 import { expandPatch } from './path-utils';
 import type { MessengerChannel } from './components/ChannelEnablementControl';
@@ -314,24 +318,35 @@ export default function ChannelsSlack({ port, client, dirty, registerSave, manag
         >
             <fieldset disabled={resetting || setupOpen} className="settings-slack-fields">
             <SettingsSection
-                title="Channels"
-                hint="Choose which channels receive inbound chat. Outbound send can still work on any configured channel."
+                title="Status"
+                hint="Live transport state for this channel."
             >
-                <ChannelEnablementControl
-                    pageChannel="slack"
-                    snapshot={state.kind === 'ready' ? state.data : {}}
-                    enabledChannels={enabledChannels}
-                    homeChannel={homeChannel}
-                    setEnabledChannels={setEnabledChannels}
-                    setHomeChannel={setHomeChannel}
-                    dirty={dirty}
-                    idPrefix="sl-channel"
+                <SettingsKeyValue
+                    items={[
+                        {
+                            label: 'Slack',
+                            value: enabled ? (
+                                <StatusBadge tone="ok">Enabled</StatusBadge>
+                            ) : (
+                                <StatusBadge tone="neutral">Disabled</StatusBadge>
+                            ),
+                        },
+                        ...(outboundOnly
+                            ? [{
+                                label: 'Mode',
+                                value: <StatusBadge tone="warn">Outbound only</StatusBadge>,
+                            }]
+                            : []),
+                        ...(environmentManaged
+                            ? [{ label: 'Managed by', value: environmentVariables.join(', '), mono: true }]
+                            : []),
+                    ]}
                 />
                 <TransportStatusChips key={healthRevision} client={client} channel="slack" />
             </SettingsSection>
 
             <SettingsSection
-                title="Slack"
+                title="Credentials"
                 hint={slackHint}
             >
                 <ToggleField
@@ -425,11 +440,22 @@ export default function ChannelsSlack({ port, client, dirty, registerSave, manag
                     onChange={next => { setAttachPort(next); setEntry('slack.attachPort', {
                         value: next.trim(), original: original.attachPort ?? '', valid: true,
                     }); }} />
-                <button type="button" disabled={environmentManaged || resetting || setupOpen}
-                    data-onboard-channel="slack" onClick={openSetup}>{t('onboarding.open')}</button>
-                <button type="button" disabled={environmentManaged || resetting || setupOpen}
-                    onClick={() => void resetConnection()}>{t('settings.slack.resetConnection')}</button>
-                {actionError && <p role="alert">{actionError}</p>}
+            </SettingsSection>
+
+            <SettingsSection
+                title="Routing"
+                hint="Choose which channels receive inbound chat and how replies are delivered. Outbound send can still work on any configured channel."
+            >
+                <ChannelEnablementControl
+                    pageChannel="slack"
+                    snapshot={state.kind === 'ready' ? state.data : {}}
+                    enabledChannels={enabledChannels}
+                    homeChannel={homeChannel}
+                    setEnabledChannels={setEnabledChannels}
+                    setHomeChannel={setHomeChannel}
+                    dirty={dirty}
+                    idPrefix="sl-channel"
+                />
                 <ToggleField
                     id="sl-mentionOnly"
                     label="Mention only"
@@ -497,6 +523,22 @@ export default function ChannelsSlack({ port, client, dirty, registerSave, manag
                 />
             </SettingsSection>
             </fieldset>
+            <SettingsSection
+                title="Actions"
+                hint="Guided setup validates credentials with the issuer before saving."
+            >
+                <SettingsActions>
+                    <button type="button" className="settings-action settings-action-danger"
+                        disabled={environmentManaged || resetting || setupOpen}
+                        onClick={() => void resetConnection()}>{t('settings.slack.resetConnection')}</button>
+                    <button type="button" className="settings-action"
+                        disabled={environmentManaged || resetting || setupOpen}
+                        data-onboard-channel="slack" onClick={openSetup}>{t('onboarding.open')}</button>
+                </SettingsActions>
+                {actionError && (
+                    <SettingsNote tone="error" role="alert">{actionError}</SettingsNote>
+                )}
+            </SettingsSection>
             {setupOpen && <SlackSetup key={port} client={client} t={t}
                 initialDraft={{ botToken, appToken }} returnFocus={setupTriggerRef.current} onBeforeSave={captureSetupSave} onClose={closeSetup} />}
         </form>

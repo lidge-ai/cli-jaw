@@ -68,7 +68,10 @@
 .settings-card-actions .settings-action:disabled { cursor: not-allowed; opacity: 0.5; }
 .settings-card-actions .settings-action:not(:disabled):hover { background: var(--settings-hover); }
 .settings-card-actions .settings-action-save:not(:disabled):hover { background: var(--text-primary); opacity: 0.88; }
-.settings-card-actions .settings-action-danger { color: var(--error-text, #c83232); }
+.settings-shell .settings-action-danger { color: var(--error-text, #c83232); }
+.settings-card-actions-buttons > .settings-field-hint { flex-basis: 100%; text-align: right; }
+
+.settings-card-scroll { overflow-x: auto; padding: 0 16px 12px; }
 
 @container settings (max-width: 719px) {
     .settings-kv-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsClient } from '../../types';
+import { StatusBadge } from '../page-shell';
 
 export type MessengerChannel = 'telegram' | 'discord' | 'slack';
 
@@ -110,25 +111,28 @@ export function TransportStatusChips({ client, channel }: Props) {
     const showHint = Boolean(status?.configured && status.sendCapable && !status.activeInbound);
 
     return (
-        <div className="settings-transport-status" role="status" aria-live="polite">
-            {error ? <p className="settings-field-hint">{error}</p> : null}
+        <div className="settings-transport-status settings-card-toolbar" role="status" aria-live="polite">
+            {error ? <span className="settings-field-hint">{error}</span> : null}
             {status ? (
                 <>
-                    <div className="settings-transport-chips">
-                        {transportChipLabels(status).map(label => (
-                            <span key={label} className="settings-health-pill is-ok">{label}</span>
-                        ))}
-                    </div>
+                    {transportChipLabels(status).map(label => (
+                        <StatusBadge
+                            key={label}
+                            tone={label === 'Not configured' ? 'neutral' : 'ok'}
+                        >
+                            {label}
+                        </StatusBadge>
+                    ))}
                     {showHint ? (
-                        <p className="settings-field-hint">
+                        <span className="settings-field-hint">
                             This transport is not receiving inbound messages, but send-only delivery remains available.
-                        </p>
+                        </span>
                     ) : null}
                 </>
             ) : null}
             <button
                 type="button"
-                className="settings-action settings-action-discard"
+                className="settings-action"
                 onClick={() => void refresh()}
             >
                 Refresh transport status
