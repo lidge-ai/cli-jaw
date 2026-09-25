@@ -93,7 +93,7 @@
 <p class="lead">CLI-JAW is available as a native Electron desktop application. Packaged builds include a Node.js 22 sidecar so the app can run the dashboard server and install a terminal <code>jaw</code> command without requiring a global npm install.</p>
 
 <h2>Installation</h2>
-<p>Download the desktop artifact from the release or manual desktop-release workflow. macOS builds ship as DMG/ZIP, Windows builds ship as NSIS/ZIP, and Linux builds ship as AppImage.</p>
+<p>Download the desktop artifact from <a href="https://github.com/lidge-jun/cli-jaw/releases/latest" target="_blank">GitHub Releases</a>, the manual desktop-release workflow, or the landing page <a href="https://lidge-jun.github.io/cli-jaw/#download" target="_blank">download section</a>. Each release ships three artifacts: macOS Apple Silicon (<code>.dmg</code>), Windows x64 Setup (<code>.exe</code>), and Linux x64 (<code>.AppImage</code>).</p>
 <pre><code># Build from source:
 npm run electron:dist:mac</code></pre>
 
@@ -148,7 +148,7 @@ npm run electron:dist:mac</code></pre>
 </table>
 
 <h2>macOS Permissions</h2>
-<p>The Electron app may prompt for macOS automation access. Grant it in System Preferences > Privacy & Security > Automation. The app's quit flow is visible and handles cleanup gracefully. Current release artifacts are unsigned and un-notarized, so macOS may require right-click → Open on first launch.</p>
+<p>The Electron app may prompt for macOS automation access. Grant it in System Preferences > Privacy & Security > Automation. The app's quit flow is visible and handles cleanup gracefully. macOS builds are Developer ID signed, Apple-notarized and stapled, and update in-app. Windows artifacts are unsigned, so SmartScreen may warn: choose More info → Run anyway. The Linux AppImage may need <code>chmod +x</code> before it runs.</p>
 
 <h2>Terminal Command Install</h2>
 <p>On first launch and from the tray menu, packaged apps can install a terminal <code>jaw</code> command that points at the bundled sidecar shim. macOS installs under <code>/usr/local/bin</code> with an admin prompt when needed. Linux uses <code>~/.local/bin</code>. Windows PATH registration is handled by the NSIS installer script.</p>

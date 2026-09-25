@@ -69,7 +69,7 @@
 <p class="lead">CLI-JAW는 Electron 데스크톱 애플리케이션으로도 사용할 수 있습니다. 패키지 빌드는 Node.js 22 sidecar를 포함하므로 전역 npm install 없이도 대시보드 서버를 실행하고 터미널 <code>jaw</code> 명령을 설치할 수 있습니다.</p>
 
 <h2>설치</h2>
-<p>릴리스 또는 수동 desktop-release workflow에서 데스크톱 아티팩트를 다운로드하세요. macOS는 DMG/ZIP, Windows는 NSIS installer/ZIP, Linux는 AppImage로 배포됩니다.</p>
+<p><a href="https://github.com/lidge-jun/cli-jaw/releases/latest" target="_blank">GitHub Releases</a>, 수동 desktop-release workflow, 또는 랜딩 페이지 <a href="https://lidge-jun.github.io/cli-jaw/#download" target="_blank">다운로드 섹션</a>에서 데스크톱 아티팩트를 다운로드하세요. 각 릴리스는 macOS Apple Silicon(<code>.dmg</code>), Windows x64 Setup(<code>.exe</code>), Linux x64(<code>.AppImage</code>) 세 가지 아티팩트를 제공합니다.</p>
 <pre><code># Build from source:
 npm run electron:dist:mac</code></pre>
 
@@ -124,7 +124,7 @@ npm run electron:dist:mac</code></pre>
 </table>
 
 <h2>macOS 권한</h2>
-<p>Electron 앱이 macOS 자동화 접근 권한을 요청할 수 있습니다. 시스템 환경설정 > 개인 정보 보호 및 보안 > 자동화에서 권한을 허용하세요. 앱의 종료 과정은 시각적으로 표시되며 정리 작업을 안정적으로 처리합니다. 현재 릴리스 아티팩트는 unsigned/un-notarized이므로 macOS 첫 실행 시 우클릭 → 열기가 필요할 수 있습니다.</p>
+<p>Electron 앱이 macOS 자동화 접근 권한을 요청할 수 있습니다. 시스템 환경설정 > 개인 정보 보호 및 보안 > 자동화에서 권한을 허용하세요. 앱의 종료 과정은 시각적으로 표시되며 정리 작업을 안정적으로 처리합니다. macOS 빌드는 Developer ID로 서명하고 Apple 공증(notarization)과 stapling을 거치며 앱 내에서 업데이트됩니다. Windows 아티팩트는 unsigned이므로 SmartScreen이 경고할 수 있습니다: More info → Run anyway를 선택하세요. Linux AppImage는 실행 전에 <code>chmod +x</code>가 필요할 수 있습니다.</p>
 
 <h2>터미널 명령 설치</h2>
 <p>패키지 앱은 첫 실행 시 또는 tray menu에서 bundled sidecar shim을 가리키는 터미널 <code>jaw</code> 명령을 설치할 수 있습니다. macOS는 필요 시 admin prompt와 함께 <code>/usr/local/bin</code>에 설치하고, Linux는 <code>~/.local/bin</code>을 사용합니다. Windows PATH 등록은 NSIS installer script가 처리합니다.</p>
