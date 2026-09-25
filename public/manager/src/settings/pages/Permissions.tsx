@@ -15,8 +15,15 @@ import {
     usePageSnapshot,
 } from './page-shell';
 import { InlineWarn } from './components/InlineWarn';
+import { isPermissionToken as isStorePermissionToken, isPermissionsPolicy } from '../../../../../src/shared/permissions';
 
 export type PermissionMode = 'auto' | 'safe' | 'custom';
+
+/** Editing state for the stored value. 'invalid' is the recoverable case: the
+ *  stored value matched no public shape, so no policy option is pre-selected
+ *  and the saved readout keeps reporting 'Unrecognized' until the user picks
+ *  one — never rendered as Auto (#788). */
+export type PermissionEditMode = PermissionMode | 'invalid';
 
 type PermissionsSnapshot = {
     permissions?: 'auto' | string[] | unknown;
@@ -26,8 +33,7 @@ type PermissionsSnapshot = {
 // Permission tokens accepted by the runtime. We don't enforce a closed set —
 // MCP namespaces (`mcp.*`) and tool-specific tokens grow over time — but we
 // do validate the *shape* so a stray space, control char, or empty chip can't
-// slip through.
-const TOKEN_RE = /^[a-zA-Z0-9._:*-]+$/;
+// slip through. The literal contract lives in src/shared/permissions.
 
 const DEFAULT_AUTO_TOKENS: ReadonlyArray<string> = [
     'bash',
@@ -43,7 +49,10 @@ export function configuredPolicyLabel(value: unknown): string {
     if (value === 'auto') return 'Auto (YOLO)';
     if (value === 'safe') return 'Safe';
     if (value === null || value === undefined) return 'Not provided';
-    if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+    // Count only what the shared validator would store: a token list containing
+    // an unwritable entry is not a policy, and labeling it 'Custom' is how an
+    // unrecognized value hid inside the readout while the editors disagreed (#788).
+    if (Array.isArray(value) && isPermissionsPolicy(value)) {
         return `Custom (${value.length} ${value.length === 1 ? 'entry' : 'entries'})`;
     }
     return 'Unrecognized';
@@ -76,11 +85,19 @@ export function parsePermissionsValue(
 }
 
 export function isPermissionToken(token: string): boolean {
-    if (typeof token !== 'string') return false;
-    if (token.length === 0 || token.length > 64) return false;
     // Strict shape on the literal — no trim. A token containing whitespace,
     // newline, quote, or control char must fail outright.
-    return TOKEN_RE.test(token);
+    return isStorePermissionToken(token);
+}
+
+/** The editing mode a stored value opens in. Anything the shared validator
+ *  would not store lands in 'invalid', so the editors show a recoverable state
+ *  instead of silently selecting Auto (#788). */
+export function permissionsEditMode(value: unknown): PermissionEditMode {
+    if (!isPermissionsPolicy(value)) return 'invalid';
+    if (value === 'auto') return 'auto';
+    if (value === 'safe') return 'safe';
+    return 'custom';
 }
 
 /**
@@ -115,7 +132,7 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
         client,
         '/api/settings',
     );
-    const [mode, setMode] = useState<PermissionMode>('auto');
+    const [mode, setMode] = useState<PermissionEditMode>('auto');
     const [tokens, setTokens] = useState<string[]>([]);
 
     const original = useMemo(
@@ -125,17 +142,15 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
 
     useEffect(() => {
         if (state.kind !== 'ready') return;
+        // A Safe instance must read as Safe. Showing it as Auto (YOLO) hides the policy the
+        // user is about to change and reports 'auto' as the original, so a round trip
+        // through Custom and back writes a widened policy the user never chose. Anything
+        // the shared stored-shape validator would not have written opens as 'invalid' —
+        // recoverable, not Auto (#788).
+        const editMode = permissionsEditMode(state.data.permissions);
         const parsed = parsePermissionsValue(state.data.permissions);
-        if (parsed.mode === 'custom') {
-            setMode('custom');
-            setTokens(parsed.tokens);
-        } else {
-            // A Safe instance must read as Safe. Showing it as Auto (YOLO) hides the policy the
-            // user is about to change and reports 'auto' as the original, so a round trip
-            // through Custom and back writes a widened policy the user never chose.
-            setMode(parsed.mode === 'safe' ? 'safe' : 'auto');
-            setTokens([]);
-        }
+        setMode(editMode);
+        setTokens(editMode === 'custom' && parsed.mode === 'custom' ? parsed.tokens : []);
     }, [state]);
 
     useEffect(() => {
@@ -149,12 +164,17 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
         [dirty],
     );
 
-    const originalSerialized = useMemo<'auto' | 'safe' | string[]>(() => {
+    const storedPermissions = state.kind === 'ready' ? state.data.permissions : undefined;
+
+    const originalSerialized = useMemo<unknown>(() => {
         if (!original) return 'auto';
         if (original.mode === 'custom') return original.tokens;
         if (original.mode === 'safe') return 'safe';
+        // Keep the actual stored value as the dirty-entry original: reporting 'auto'
+        // here is what let an Unrecognized policy read as Auto (#788).
+        if (original.mode === 'unknown') return storedPermissions;
         return 'auto';
-    }, [original]);
+    }, [original, storedPermissions]);
 
     const handleModeChange = useCallback(
         (next: string) => {
@@ -218,14 +238,10 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
             ? (updated as { data: PermissionsSnapshot }).data
             : updated) as PermissionsSnapshot;
         dirty.clear();
+        const editMode = permissionsEditMode(fresh.permissions);
         const parsed = parsePermissionsValue(fresh.permissions);
-        if (parsed.mode === 'custom') {
-            setMode('custom');
-            setTokens(parsed.tokens);
-        } else {
-            setMode(parsed.mode === 'safe' ? 'safe' : 'auto');
-            setTokens([]);
-        }
+        setMode(editMode);
+        setTokens(editMode === 'custom' && parsed.mode === 'custom' ? parsed.tokens : []);
         setData(fresh);
         await refresh();
     }, [client, dirty, refresh, setData]);
@@ -258,7 +274,14 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
                     value={mode}
                     options={MODE_OPTIONS}
                     onChange={handleModeChange}
+                    missingValueLabel={mode === 'invalid' ? 'Unrecognized saved policy' : undefined}
                 />
+                {mode === 'invalid' && (
+                    <InlineWarn role="alert">
+                        The saved permissions value is not a recognized policy.
+                        Pick a policy above to replace it.
+                    </InlineWarn>
+                )}
                 {mode === 'custom' && (
                     <>
                         <ChipListField
@@ -298,7 +321,7 @@ export default function Permissions({ port, client, dirty, registerSave }: Setti
                     <span>{activeSummary}</span>
                 </p>
                 {original?.mode === 'unknown' ? (
-                    <p className="settings-section-hint">Use Agent to change this configured policy.</p>
+                    <p className="settings-section-hint">Unrecognized value: choose a policy above (or in Agent) to replace it.</p>
                 ) : null}
             </SettingsSection>
         </form>

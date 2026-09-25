@@ -5,6 +5,7 @@ import { mergeAckSettings } from '../messaging/ack-reaction.js';
 import { mergeSlackAutoJoin } from '../slack/auto-join.js';
 import { isRuntimeTransport, isSwitchableNativeCli } from '../agent/runtime/selection.js';
 import { isPresentationMode } from '../shared/presentation.js';
+import { isPermissionsPolicy } from '../shared/permissions.js';
 
 export type SettingsInputSource = 'boot' | 'watch' | 'api';
 export type SettingsPersistenceShape = 'absent' | 'present';
@@ -116,6 +117,15 @@ export function sanitizeSettingsInput(
             invalidPaths.push('multiSession.channels');
         }
         value["multiSession"] = block;
+    }
+
+    // `permissions` has a public shape — 'auto' | 'safe' | token[] — shared with the
+    // native ACP consumer, which fails closed (invalid_native_permissions) on anything
+    // else. Without this guard an authenticated patch like {permissions:{}} reached disk
+    // and each surface read the same stored bytes differently (#788).
+    if (Object.hasOwn(input, 'permissions') && !isPermissionsPolicy(input['permissions'])) {
+        delete value['permissions'];
+        invalidPaths.push('permissions');
     }
 
     return {

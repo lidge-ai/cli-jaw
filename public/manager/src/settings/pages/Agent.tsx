@@ -10,7 +10,7 @@ import {
     PageOffline,
     usePageSnapshot,
 } from './page-shell';
-import { parsePermissionsValue } from './Permissions';
+import { parsePermissionsValue, permissionsEditMode } from './Permissions';
 import { RuntimeHeader } from './components/agent/RuntimeHeader';
 import { PermissionQuickSection } from './components/agent/PermissionQuickSection';
 import { FlushAgentSection } from './components/agent/FlushAgentSection';
@@ -124,7 +124,10 @@ type RuntimeDraft = {
     model: string;
     effort: string;
     workingDir: string;
-    permissions: 'auto' | 'safe' | string[];
+    // 'auto' | 'safe' | string[] when the stored policy is a known shape; the raw
+    // stored value otherwise, so the editor can render it as invalid rather than
+    // silently selecting Auto (#788).
+    permissions: unknown;
 };
 
 export default function Agent({ port, client, dirty, registerSave }: SettingsPageProps) {
@@ -277,6 +280,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
         const cliKeys = Object.keys(state.data.perCli || {});
         const cli = state.data.cli || cliKeys[0] || '';
         const permissions = parsePermissionsValue(state.data.permissions);
+        const permissionsMode = permissionsEditMode(state.data.permissions);
         const meta = metaFor(cli, cliMeta);
         setDraft({
             cli,
@@ -286,8 +290,12 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             workingDir: state.data.workingDir || '',
             // Preserve 'safe' rather than collapsing it: an untouched Safe instance must not
             // become Auto (YOLO) as a side effect of saving something unrelated on this page.
-            permissions: permissions.mode === 'custom' ? permissions.tokens
-                : permissions.mode === 'safe' ? 'safe' : 'auto',
+            // An unrecognized stored value stays in the draft as-is so the editor can show
+            // a recoverable invalid state instead of silently selecting Auto (#788).
+            permissions: permissionsMode === 'invalid' ? state.data.permissions
+                : permissions.mode === 'custom' ? permissions.tokens
+                : permissions.mode === 'safe' ? 'safe'
+                : 'auto',
         });
     }, [cliMeta, state]);
 
@@ -570,7 +578,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
                     setEntry('permissions', {
                         value: next,
                         original: settingsData.permissions ?? 'auto',
-                        valid: next === 'auto' || next.length > 0,
+                        valid: next === 'auto' || next === 'safe' || next.length > 0,
                     });
                 }}
             />

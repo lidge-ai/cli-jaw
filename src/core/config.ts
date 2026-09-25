@@ -1456,6 +1456,17 @@ export function loadSettings() {
         if (sourceVersion >= 2 && !(isCliEngine(raw["cli"]) || isRetiredCliSelection(raw["cli"]))) {
             throw new Error(`invalid_settings_cli:${String(raw["cli"])}`);
         }
+        // `permissions` carries the same public contract ('auto' | 'safe' | token[])
+        // in every schema version, so a malformed value in a v2+ document means the
+        // file is not what it claims — close it the same way `cli` above does, rather
+        // than letting the merge quietly supply the 'auto' default (#788). A v1
+        // document predates versioning: repair to the fail-closed 'safe' it would
+        // have meant then, never widening to 'auto', and let the migration write it.
+        if (sanitized.invalidPaths.includes('permissions')) {
+            if (sourceVersion >= 2) throw new Error('invalid_settings_permissions');
+            console.warn('[jaw:settings] repaired unrecognized legacy permissions value to safe');
+            raw['permissions'] = 'safe';
+        }
         // A document claiming the current schema must actually carry what this schema
         // writes. Checked before the merge, because after it the absence is gone.
         if (sourceVersion >= 3) assertCurrentSchemaSessionShape(raw);
@@ -1600,6 +1611,8 @@ export function loadSettings() {
         // previous schema meant (110 §4c). The ENOENT branch above is genuinely new and
         // keeps the new defaults.
         next.multiSession = { ...next.multiSession, ...LEGACY_MULTI_SESSION_BASELINE };
+        // A file whose permissions we refused must not come back as Auto (YOLO).
+        if (err?.message === 'invalid_settings_permissions') next.permissions = 'safe';
         applyEnvOverrides(next);
         commitCandidate({ value: next, shape: 'absent' });
 
