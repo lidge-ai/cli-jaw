@@ -317,6 +317,7 @@
   "cli.showMore": "More ▸",
   "cli.authRequired": "Install / auth required",
   "cli.notAuthenticated": "Auth required — run command below",
+  "cli.undetectedGroup": "Undetected CLIs ({count})",
   "drag.drop": "Drop files here",
   "status.responding": "Responding",
   "aria.cmdList": "Command list",
