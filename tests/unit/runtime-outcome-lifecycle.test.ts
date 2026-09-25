@@ -201,13 +201,17 @@ test('wasSteer commits MESSAGE salvage before real exit barrier despite observer
         assert.equal(settled, false);
         const salvage = getSteerSalvageAfter(f.sessionId, watermark);
         assert.equal(salvage, '⏹️ [interrupted]\n\nFRESH-PARTIAL');
-        assert.equal(f.rows().at(-1)?.trace_run_id, null);
+        // The salvage row owns the run so the web can mount its Activity view
+        // instead of the legacy tool chip.
+        assert.equal(f.rows().at(-1)?.trace_run_id, f.ctx.traceRunId);
         assert.equal(f.ctx.fullText, 'PROVISIONAL-FULL');
         assert.equal(f.result()?.runtimeOutcome?.status, 'stopped');
         assert.equal(f.result()?.runtimeOutcome?.finalText, null);
         assert.equal(f.result()?.runtimeOutcome?.partialText, 'FRESH-PARTIAL');
         assert.equal(f.result()?.text, '');
-        assert.equal(traceFailures, 1);
+        // finalizeTraceRun plus the salvage link both hit the failing journal; neither
+        // blocks the salvage row.
+        assert.equal(traceFailures, 2);
         assert.equal(f.ends.length, 1);
         const done = events.filter(event => event.type === 'agent_done');
         assert.equal(done.length, 1);
@@ -218,6 +222,41 @@ test('wasSteer commits MESSAGE salvage before real exit barrier despite observer
         assert.ok(!prompt.includes('FOREIGN') && !prompt.includes('OLD'));
     } finally { settleExit(f.scopeKey); await barrier; }
     assert.equal(settled, true);
+});
+
+test('steer salvage links its row to a recorded trace run', async () => {
+    const f = fixture({ status: 'stopped', finalText: null, partialText: 'LINKED-PARTIAL' });
+    f.params.wasSteer = true;
+    f.params.wasKilled = true;
+    const runId = traceStore.startTraceRun({ cli: 'codex-app', model: 'fixture', sessionId: f.sessionId, scopeKey: f.scopeKey });
+    f.ctx.traceRunId = runId;
+    await capture(() => handleAgentExit(f.params));
+    const row = db.prepare('SELECT id, trace_run_id FROM messages WHERE session_id = ? AND role = ? ORDER BY id DESC LIMIT 1')
+        .get(f.sessionId, 'assistant') as { id: number; trace_run_id: string | null };
+    assert.equal(row.trace_run_id, runId);
+    const run = db.prepare('SELECT message_id FROM trace_runs WHERE id = ?').get(runId) as { message_id: number | null };
+    assert.equal(run.message_id, row.id);
+});
+
+test('steer salvage without a run id stores no pointer and does not throw', async () => {
+    const f = fixture({ status: 'stopped', finalText: null, partialText: 'NO-RUN-PARTIAL' });
+    f.params.wasSteer = true;
+    f.params.wasKilled = true;
+    delete f.ctx.traceRunId;
+    await capture(() => handleAgentExit(f.params));
+    assert.deepEqual(f.rows().map(row => row.trace_run_id), [null]);
+    assert.equal(f.rows()[0]?.content, '⏹️ [interrupted]\n\nNO-RUN-PARTIAL');
+});
+
+test('when a steered run also has a final answer, only the final row owns the run', async () => {
+    const f = fixture({ status: 'done', finalText: 'FINAL', partialText: 'PART' });
+    f.params.wasSteer = true;
+    f.params.wasKilled = true;
+    await capture(() => handleAgentExit(f.params));
+    const owners = f.rows().filter(row => row.trace_run_id === f.ctx.traceRunId);
+    assert.equal(owners.length, 1);
+    assert.equal(owners[0]?.content.startsWith('⏹️ [interrupted]'), false);
+    assert.equal(f.rows().find(row => row.content.startsWith('⏹️ [interrupted]'))?.trace_run_id, null);
 });
 
 test('native final survives failed trace link/finalization and a throwing observer', async () => {
