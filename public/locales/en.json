@@ -321,6 +321,7 @@
   "drag.drop": "Drop files here",
   "status.responding": "Responding",
   "aria.cmdList": "Command list",
+  "aria.skillMentionList": "Skill list",
   "btn.attach": "Attach file",
   "input.placeholder": "Type a message...",
   "queue.pendingTitle": "Pending",

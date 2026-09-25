@@ -310,6 +310,7 @@
   "drag.drop": "ここにファイルをドロップ",
   "status.responding": "応答中",
   "aria.cmdList": "コマンド一覧",
+  "aria.skillMentionList": "スキル一覧",
   "btn.attach": "ファイルを添付",
   "input.placeholder": "メッセージを入力...",
   "queue.pendingTitle": "待機中",

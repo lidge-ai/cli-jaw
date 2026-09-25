@@ -10,6 +10,7 @@ import {
 } from '../../../src/cli/tui/overlay.js';
 import { getPlainCommandDraft, getTrailingTextSegment } from '../../../src/cli/tui/composer.js';
 import { findAtMentionMatch, listRepoFiles } from '../../../src/cli/tui/file-mention.js';
+import { findSkillMentionMatch, listSkillMentionItems } from '../../../src/cli/tui/skill-mention.js';
 import { clipTextToCols } from '../../../src/cli/tui/renderers.js';
 import { tuiWrite } from './tui-io.js';
 import { resolveShellLayout, setupScrollRegion, ensureSpaceBelow } from '../../../src/cli/tui/shell.js';
@@ -324,9 +325,12 @@ export async function redrawInputWithAutocomplete(ctx: TuiContext): Promise<void
         });
     } else {
         const trailing = getTrailingTextSegment(ctx.store.composer);
-        const mention = findAtMentionMatch(trailing.text, ctx.store.composer.cursor);
-        if (mention && ctx.store.composer.segments.length === 1) {
-            const items = listRepoFiles(ctx.chatCwd, mention.query);
+        const single = ctx.store.composer.segments.length === 1;
+        // `@$jaw` matches both grammars; the older `@file` popup keeps priority.
+        const mention = single ? findAtMentionMatch(trailing.text, ctx.store.composer.cursor) : null;
+        const skillMention = single && !mention ? findSkillMentionMatch(trailing.text, ctx.store.composer.cursor) : null;
+        if (mention || skillMention) {
+            const items = mention ? listRepoFiles(ctx.chatCwd, mention.query) : listSkillMentionItems(skillMention!.query);
             const headerRows = 1;
             const maxItemRows = Math.max(0, getMaxPopupRows() - headerRows);
             const visibleRows = Math.min(ac.maxRowsArgument, items.length, maxItemRows);
@@ -334,7 +338,7 @@ export async function redrawInputWithAutocomplete(ctx: TuiContext): Promise<void
                 ? {
                     open: true,
                     stage: 'argument',
-                    contextHeader: '@ files',
+                    contextHeader: mention ? '@ files' : '$ skills',
                     items,
                     selected: Math.min(ac.selected, items.length - 1),
                     visibleRows,

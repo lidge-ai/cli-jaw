@@ -4,6 +4,7 @@ import { addMessage, addSystemMsg } from '../ui.js';
 import { getPreferredLocale } from '../locale.js';
 import { t } from './i18n.js';
 import * as slashCmd from './slash-commands.js';
+import * as skillMention from './skill-mentions.js';
 import { api, apiJson, apiFire, getAuthToken, API_BASE } from '../api.js';
 import { escapeHtml, cancelPostRender } from '../render.js';
 import { getVirtualScroll } from '../virtual-scroll.js';
@@ -282,6 +283,7 @@ export async function sendMessage(source: SendSource = 'enter'): Promise<void> {
 
     // Double-submit guard: if a previous send is still in flight, drop this call.
     if (__chatSending) return;
+    skillMention.close();
 
     if (!text && !state.attachedFiles.length) return;
     clearUnreadResponses();

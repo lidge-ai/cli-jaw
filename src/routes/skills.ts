@@ -7,6 +7,8 @@ import { assertSkillId } from '../security/path-guards.js';
 import { resolveSkillId } from '../../lib/mcp/skills-aliases.js';
 import { SKILLS_DIR, SKILLS_REF_DIR } from '../core/config.js';
 import { getMergedSkills, regenerateB } from '../prompt/builder.js';
+import { getSkillCommandsCache } from '../core/skill-cache.js';
+import { skillMentionKey } from '../shared/skill-mention.js';
 
 import type { Request } from 'express';
 
@@ -15,10 +17,15 @@ export type WebCommandCtxFactory = (req: Request) => { resetSkills: (mode: 'hard
 export function registerSkillRoutes(app: Express, requireAuth: AuthMiddleware, makeWebCommandCtx: WebCommandCtxFactory): void {
     app.get('/api/skills', (req, res) => {
         const lang = (String(req.query["locale"] || 'ko')).toLowerCase();
+        // `mention` is the word the `$` popup inserts. It comes from the same cache the
+        // server resolves mentions against (src/core/skill-mentions.ts), not from the
+        // localized display name, so an inserted mention always resolves.
+        const mentions = new Map(getSkillCommandsCache().map(entry => [entry.id, skillMentionKey(entry)]));
         const skills = getMergedSkills().map(s => ({
             ...s,
             name: (s as Record<string, unknown>)[`name_${lang}`] as string || s.name,
             description: (s as Record<string, unknown>)[`desc_${lang}`] as string || s.description,
+            ...(mentions.has(s.id) ? { mention: mentions.get(s.id) } : {}),
         }));
         res.json(skills);
     });

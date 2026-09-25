@@ -69,7 +69,8 @@ cli-jaw/
 │   │   ├── launchd-plist.ts  ← launchd plist 생성 helper
 │   │   ├── tcc.ts            ← macOS TCC / screen-recording 권한 점검
 │   │   ├── settings-merge.ts ← perCli/activeOverrides/pi deep merge
-│   │   └── skill-cache.ts    ← 활성 스킬 슬래시 커맨드 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache)
+│   │   ├── skill-cache.ts    ← 활성 스킬 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache) — `$` 멘션과 `/skill:<id>` 별칭이 공용
+│   │   └── skill-mentions.ts ← `$skill` 인라인 멘션 → SKILL.md를 boss 프롬프트에 주입 (argv CLI는 경로 stub, 5개·200k 예산)
 │   ├── code-mode/            ← native Code sessions, independent of Jaw orchestration
 │   │   ├── host.ts ← per-backend lazy composition and storage
 │   │   ├── manager.ts ← session index, admission and resource capacity
@@ -274,7 +275,7 @@ cli-jaw/
 │   │   ├── handlers-completions.ts ← `/model` `/cli` `/skill` `/employee` `/browser` `/fallback` `/flush` 인자 자동완성 헬퍼
 │   │   ├── handlers-workflows.ts ← `/plan` PABCD P 안내 + `/interview` `/deliberate` `/planaudit` prompt handlers + `/review` project-dir workflow + `/goal` gated stub + `/goal run` preflight gate + `/gd` force-done alias
 │   │   ├── handlers-search.ts ← `/search` search-skill routing handler + steer prompt submit/remote-safe result split
-│   │   ├── handlers-skill-invoke.ts ← `/skill:<id>` handler — SKILL.md 전문을 steerPrompt로 주입, submitMessage 라우팅
+│   │   ├── handlers-skill-invoke.ts ← `/skill:<id>` 숨김 호환 별칭 handler — SKILL.md 전문을 steerPrompt로 주입, submitMessage 라우팅
 │   │   ├── handlers-project.ts ← `/project` 커맨드 핸들러 (projectDirs 관리) ✨
 │   │   ├── api-auth.ts       ← CLI→server Bearer token bootstrap (`getCliAuthToken`, `authHeaders`, `cliFetch`)
 │   │   ├── claude-models.ts  ← Claude 정규 모델셋 (CLAUDE_CANONICAL_MODELS, CLAUDE_LEGACY_VALUE_MAP) + migration/validation helpers
@@ -307,6 +308,7 @@ cli-jaw/
 │   │       ├── renderers.ts  ← visualWidth (CJK/emoji cell width) + clipTextToCols/wrapTextToCols ANSI-safe terminal width helpers + cursorScreenPos
 │   │       ├── mode.ts       ← TUI mode state (simple/fullscreen) ✨
 │   │       ├── file-mention.ts ← file mention autocomplete helper ✨
+│   │       ├── skill-mention.ts ← `$` skill mention autocomplete helper ✨
 │   │       ├── editor.ts     ← external editor launch helper ✨
 │   │       ├── text-buffer.ts ← TextBuffer class (cursor/insert/delete/selection) ✨
 │   │       ├── theme.ts      ← TUI color theme definitions ✨
@@ -514,6 +516,7 @@ cli-jaw/
 │   │   ├── activity-replay.ts ← bounded live/replay coordination without I/O
 │   │   ├── activity-read.ts ← fixed-through history and exact saved-answer readers
 │   │   ├── runtime-request-notice.ts ← versioned metadata-only request wake-up contract
+│   │   ├── skill-mention.ts ← `$skill` mention grammar, ranking and mention word shared by server, TUI and web
 │   │   ├── shell-command-display.ts ← shell command display sanitization helper
 │   │   ├── structured-fence.ts ← structured renderer fence scanner/parser helper
 │   │   ├── tool-log-sanitize.ts ← tool log sanitization helpers

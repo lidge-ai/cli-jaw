@@ -310,6 +310,7 @@
   "drag.drop": "将文件拖到这里",
   "status.responding": "正在回复",
   "aria.cmdList": "命令列表",
+  "aria.skillMentionList": "技能列表",
   "btn.attach": "附加文件",
   "input.placeholder": "输入消息...",
   "queue.pendingTitle": "待处理",

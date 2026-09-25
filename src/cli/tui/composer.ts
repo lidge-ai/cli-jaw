@@ -229,14 +229,14 @@ export function redoComposer(state: ComposerState): void {
     flushEditBuffer(state);
 }
 
-/** Replace the active `@`-mention token with `@path ` at the cursor. */
-export function insertAtMention(state: ComposerState, replaceStart: number, relPath: string): void {
+/** Replace the active mention token with `<sigil><value> ` at the cursor (`@path`, `$skill-id`). */
+export function insertAtMention(state: ComposerState, replaceStart: number, relPath: string, sigil = '@'): void {
     loadEditBuffer(state);
     const text = state.editBuffer.text();
     const cursor = state.editBuffer.cursor();
     const before = text.slice(0, replaceStart);
     const after = text.slice(cursor);
-    const inserted = `@${relPath} `;
+    const inserted = `${sigil}${relPath} `;
     state.editBuffer.setText(before + inserted + after, before.length + inserted.length);
     flushEditBuffer(state);
 }
