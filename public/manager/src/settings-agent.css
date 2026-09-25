@@ -161,7 +161,8 @@
     margin-bottom: 0;
 }
 
-.settings-shell .settings-percli-row > .settings-field-error {
+.settings-shell .settings-percli-row > .settings-field-error,
+.settings-shell .settings-percli-grid > .settings-field-error {
     display: block;
     margin: 0;
     padding: 0 16px 10px;
