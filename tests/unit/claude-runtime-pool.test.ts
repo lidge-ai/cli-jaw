@@ -6,6 +6,7 @@ import type { RuntimePoolAccess } from '../../src/agent/runtime-pool-contract.js
 import type { ClaudeSessionOptions, ClaudeSdkSession } from '../../src/agent/runtime/claude-sdk-session.js';
 import type { ClaudeAcquireOptions } from '../../src/agent/claude-runtime-pool.js';
 import { runNativeRuntime } from '../../src/agent/native-runtime-run.js';
+import { CLAUDE_AGENT_SDK_PINNED_VERSION } from '../../src/agent/runtime/claude-sdk-version.ts';
 mock.module('../../src/trace/store.js', { namedExports: { appendTraceEvent: () => null } });
 let sdkFactory: NonNullable<ClaudeSessionOptions['queryFactory']>;
 mock.module('../../src/agent/runtime/claude-sdk-loader.js', { namedExports: { loadClaudeSdk: async () => ({ query: sdkFactory }) } });
@@ -212,7 +213,7 @@ test('SDK ambient defaults appearing after lazy import do not replace the query'
     let creates = 0;
     const base = options({ createSession: async () => { creates++; return fakeSession().session; } });
     const first = await acquire(access, base); first.release();
-    const importedEnv = { ...base.prepared.env, NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261',
+    const importedEnv = { ...base.prepared.env, NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: CLAUDE_AGENT_SDK_PINNED_VERSION,
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
     const second = await acquire(access, { ...base, prepared: { ...base.prepared, env: importedEnv } });
     assert.equal(second.reused, true); assert.equal(creates, 1); second.release();
@@ -416,7 +417,7 @@ test('prepared snapshot is captured before await and canonical cwd/env order reu
     const f = fakeSession(), started = deferred(), finish = deferred(); let captured!: ClaudeSessionOptions;
     const base = options({ createSession: async input => { captured = input; started.resolve(); await finish.promise; return f.session; } });
     const expected = { ...base.prepared, cwd: realpathSync(base.prepared.cwd), env: { ...base.prepared.env,
-        NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: '0.3.261',
+        NoDefaultCurrentDirectoryInExePath: '1', CLAUDE_AGENT_SDK_VERSION: CLAUDE_AGENT_SDK_PINNED_VERSION,
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } };
     const pending = acquire(access, base); await started.promise;
     base.prepared.model = 'mutated'; base.prepared.env.PRIVATE_KEY = 'mutated'; base.binding = binding('mutated');

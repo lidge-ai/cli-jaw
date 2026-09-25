@@ -8,6 +8,7 @@ import { createClaudeSdkSession, type ClaudeSdkSession, type ClaudeSessionOption
 import { buildClaudeSdkOptions, type PreparedClaudeOptions } from './runtime/claude-sdk-options.js';
 import { recordRuntimeEvent, type RuntimeEventContext } from './runtime/events.js';
 import type { RuntimeEventBody } from '../shared/runtime-contract.js';
+import { CLAUDE_AGENT_SDK_PINNED_VERSION } from './runtime/claude-sdk-version.js';
 
 type Binding = Pick<ClaudeSessionOptions, 'getTurnContext' | 'onMetadata' | 'record'>;
 export interface ClaudeAcquireOptions {
@@ -280,7 +281,7 @@ function snapshot(input: ClaudeAcquireOptions): ClaudeAcquireOptions {
     // them before the first snapshot so that lazy loading cannot change its key.
     // Explicit values remain part of the profile and can still retire a query.
     if (prepared.env['NoDefaultCurrentDirectoryInExePath'] === undefined) prepared.env['NoDefaultCurrentDirectoryInExePath'] = '1';
-    if (prepared.env['CLAUDE_AGENT_SDK_VERSION'] === undefined) prepared.env['CLAUDE_AGENT_SDK_VERSION'] = '0.3.261';
+    if (prepared.env['CLAUDE_AGENT_SDK_VERSION'] === undefined) prepared.env['CLAUDE_AGENT_SDK_VERSION'] = CLAUDE_AGENT_SDK_PINNED_VERSION;
     // A backgrounded task has no result this runtime can correlate, so observing
     // one ends the whole turn (claude_background_tasks_unsupported in
     // claude-sdk-session.ts). The PreToolUse hook only refuses an EXPLICIT
