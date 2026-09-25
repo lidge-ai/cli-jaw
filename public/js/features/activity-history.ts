@@ -19,7 +19,7 @@ interface Callbacks {
 }
 type Host = {
     message: HTMLElement; runId: string; cacheScope: string; controller: AbortController;
-    box: HTMLElement; status: HTMLElement; retry: HTMLButtonElement;
+    box: HTMLElement; status: HTMLElement; live: HTMLElement; retry: HTMLButtonElement;
     pending: boolean; loaded: boolean; promise: Promise<void> | null; resolve: (() => void) | null;
 };
 const SELECTOR = '.msg-agent[data-trace-run-id]';
@@ -77,6 +77,7 @@ function present(host: Host): void {
         }
     } else if (host.status.parentElement !== host.box) host.box.append(host.status, host.retry);
     host.status.hidden = !host.status.textContent;
+    if (host.live.textContent !== host.status.textContent) host.live.textContent = host.status.textContent;
     host.box.hidden = !!disclosure || (!host.status.textContent && host.retry.hidden);
 }
 function cancel(host: Host, remove: boolean): void {
@@ -88,7 +89,7 @@ function cancel(host: Host, remove: boolean): void {
         present(host);
     }
     if (queued.delete(host.message)) finishPromise(host);
-    if (remove) { hosts.delete(host.message); host.status.remove(); host.retry.remove(); host.box.remove(); }
+    if (remove) { hosts.delete(host.message); host.status.remove(); host.retry.remove(); host.live.remove(); host.box.remove(); }
 }
 function prune(): void {
     for (const host of hosts.values()) if (!host.message.isConnected) cancel(host, true);
@@ -109,18 +110,20 @@ function entry(message: HTMLElement, runId: string): Host | null {
         }
         return null;
     }
-    message.querySelectorAll('.activity-read-control, .activity-read-status, .activity-read-retry')
+    message.querySelectorAll('.activity-read-control, .activity-read-status, .activity-read-live, .activity-read-retry')
         .forEach(node => node.remove());
     const box = document.createElement('details'); box.className = 'activity-read-control';
     const summary = document.createElement('summary'); summary.className = 'activity-read-summary';
     summary.textContent = 'Activity status';
     const status = document.createElement('p'); status.className = 'activity-read-status';
-    status.setAttribute('role', 'status'); status.hidden = true;
+    status.hidden = true;
+    const live = document.createElement('p'); live.className = 'activity-read-live';
+    live.setAttribute('role', 'status');
     const retry = document.createElement('button'); retry.className = 'activity-read-retry';
     retry.type = 'button'; retry.textContent = 'Load activity';
-    box.append(summary, status, retry); message.querySelector('.agent-body')?.prepend(box);
+    box.append(summary, status, retry); message.querySelector('.agent-body')?.prepend(live, box);
     const host: Host = { message, runId, cacheScope: getMessageScope(), controller: new AbortController(),
-        box, status, retry, pending: false, loaded: false, promise: null, resolve: null };
+        box, status, live, retry, pending: false, loaded: false, promise: null, resolve: null };
     retry.onclick = () => { void hydrateActivityHost(message, runId, true); };
     hosts.set(message, host); if (mode()) traceAllowed(message, false);
     return host;

@@ -133,6 +133,9 @@ test('read status folds into the expanded Activity area or a collapsed details r
     const retry=disclosure.querySelector<HTMLButtonElement>('.activity-read-retry')!;
     assert.equal(retry.hidden,false);assert.equal(retry.textContent,'Refresh activity');
     assert.equal(host.querySelector<HTMLElement>('.activity-read-control')!.hidden,true);
+    const live=host.querySelector<HTMLElement>('.activity-read-live')!;
+    assert.equal(live.getAttribute('role'),'status');assert.equal(live.closest('details'),null);
+    assert.match(live.textContent!,/Some recorded activity is unavailable/);
 
     const emptyRun='tr_empty0123456789012';
     serve=async url=>response(page(Number(url.searchParams.get('after')??0),[],{runId:emptyRun,through:0,nextAfter:0}));
