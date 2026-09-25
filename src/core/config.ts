@@ -1471,16 +1471,17 @@ export function applyNativeTransportDefaultMigration(s: Record<string, any>): Se
  * activeOverrides and employee models are left alone.
  */
 export function applyClaudeDefaultModelMigration(
-    s: Record<string, any>, supportsTarget: boolean | null,
+    s: Record<string, unknown>, supportsTarget: boolean | null,
 ): SettingsDefaultMigrationResult {
     if (hasNamedMigrationStamp(s['claudeDefaultModelMigration'], CLAUDE_DEFAULT_MODEL_MIGRATION_ID)) return { didChange: false };
     if (supportsTarget !== true) return { didChange: false };
-    if (!isPlainRecord(s['perCli'])) s['perCli'] = {};
-    const block = isPlainRecord(s['perCli']['claude']) ? s['perCli']['claude'] : {};
+    const perCli: Record<string, unknown> = isPlainRecord(s['perCli']) ? s['perCli'] : {};
+    s['perCli'] = perCli;
+    const block = isPlainRecord(perCli['claude']) ? perCli['claude'] : {};
     const current = typeof block['model'] === 'string' ? block['model'] : '';
     const target = getDefaultClaudeModel();
     if (current === PREVIOUS_DEFAULT_CLAUDE_MODEL) {
-        s['perCli']['claude'] = { ...block, model: target };
+        perCli['claude'] = { ...block, model: target };
         s['claudeDefaultModelMigration'] = { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'applied', from: current, to: target };
     } else if (current === target) {
         s['claudeDefaultModelMigration'] = { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'already-at-target', from: target, to: target };
