@@ -38,33 +38,38 @@ parent/child declaration order. Runtime finality, interrupted MESSAGE/exit-settl
 and print/native session buckets remain under their existing owners. See
 [runtime integration](runtime-integration.md) for limits and decision delivery.
 
-| File | Line count | Role |
-| --- | ---: | --- |
-| `src/agent/spawn.ts` | 2476L | spawn/ACP/Pi RPC/stream/DB/broadcast + queue drain 핵심 |
-| `src/agent/lifecycle-handler.ts` | 1072L | child lifecycle, fallback, retry, queue resume, goal continuation |
-| `src/agent/args.ts` | 465L | CLI별 신규/재개 인자 생성 |
-| `src/agent/pi-runtime.ts` | 460L | Pi profile normalization, isolated `PI_CODING_AGENT_DIR` config generation, model discovery, JSONL RPC parser/spawner |
-| `src/agent/kiro-runtime.ts` | 386L | kiro-code plain-text stdout parser (tool lines, assistant blocks, parallel tool merge, tail-buffer flush) |
-| `src/agent/kiro-auth.ts` | 230L | Kiro CLI data path resolution, session ID extraction from v2 sqlite store, conversation listing |
-| `src/agent/kiro-models.ts` | 98L | `kiro-cli chat --list-models --format json` dynamic model inventory |
-| `src/agent/codex-app-client.ts` | 274L | Codex App stdio server client (JSON-RPC thread/turn) |
-| `src/agent/codex-app-events.ts` | 291L | Codex App turn/tool/message/reasoning event adapter |
-| `src/agent/cursor-runtime.ts` | 242L | Cursor installed model inventory + model/effort → full model-id resolver |
-| `src/agent/memory-flush-controller.ts` | 185L | memory flush lock + post-response trigger |
-| `src/agent/opencode-diagnostics.ts` | 156L | OpenCode binary/permission 점검 + raw event 버퍼 |
-| `src/agent/grok-trace-backfill.ts` | 167L | Grok streaming-json tool_calls/tool_result backfill from trace archive |
-| `src/agent/spawn-env.ts` | 148L | AGY plain-text `NO_COLOR=1`, OpenCode/Gemini 전용 env/permission 보정 |
-| `src/agent/agy-capabilities.ts` | 126L | AGY `--help`/`--version` capability probe + cached optional flag support map |
-| `src/agent/smoke-detector.ts` | 148L | smoke response 감지 + auto-continue 판단 |
-| `src/agent/watchdog.ts` | 113L | idle/progress watchdog; progress extends deadline within 4h hard cap |
-| `src/agent/resume-classifier.ts` | 81L | CLI별 stale session regex |
-| `src/agent/alert-escalation.ts` | 86L | alert escalation event helper |
-| `src/agent/session-persistence.ts` | 78L | main session persistence gate |
-| `src/agent/live-run-state.ts` | 108L | active run snapshot / hydrate helper |
-| `src/agent/error-classifier.ts` | 52L | stderr/result 기반 에러 분류 helper |
-| `src/agent/tool-timeout.ts` | 33L | tool inactivity timeout helper |
-| `src/agent/agy-runtime.ts` | 175L | AGY timeout stdout/close-text 판별 + 최종 planner 기준 timeout suffix 정규화 + session id 추출 + intermediate planner(`my_tool_call_analysis:`) 최종답 차단 (#251) |
-| `src/agent/cli-helpers.ts` | 9L | Claude-like CLI 판별 helper |
+| File | Role |
+| --- | --- |
+| `src/agent/spawn.ts` | spawn entry, standard CLI (stream/DB/broadcast) path, backend dispatch + queue drain 핵심 |
+| `src/agent/spawn/backend-native-acp.ts` | Cursor/Grok native ACP main backend, dispatched from `spawnAgent` |
+| `src/agent/spawn/backend-copilot.ts` | Copilot ACP backend |
+| `src/agent/spawn/backend-pi.ts` | Pi RPC backend |
+| `src/agent/spawn/backend-codex-app.ts` | Codex AppServer backend |
+| `src/agent/spawn/backend-context.ts` | `SpawnBackendLocals` (values captured at dispatch) and `SpawnBackendHost` (spawn.ts module state/helpers) |
+| `src/agent/lifecycle-handler.ts` | child lifecycle, fallback, retry, queue resume, goal continuation |
+| `src/agent/args.ts` | CLI별 신규/재개 인자 생성 |
+| `src/agent/pi-runtime.ts` | Pi profile normalization, isolated `PI_CODING_AGENT_DIR` config generation, model discovery, JSONL RPC parser/spawner |
+| `src/agent/kiro-runtime.ts` | kiro-code plain-text stdout parser (tool lines, assistant blocks, parallel tool merge, tail-buffer flush) |
+| `src/agent/kiro-auth.ts` | Kiro CLI data path resolution, session ID extraction from v2 sqlite store, conversation listing |
+| `src/agent/kiro-models.ts` | `kiro-cli chat --list-models --format json` dynamic model inventory |
+| `src/agent/codex-app-client.ts` | Codex App stdio server client (JSON-RPC thread/turn) |
+| `src/agent/codex-app-events.ts` | Codex App turn/tool/message/reasoning event adapter |
+| `src/agent/cursor-runtime.ts` | Cursor installed model inventory + model/effort → full model-id resolver |
+| `src/agent/memory-flush-controller.ts` | memory flush lock + post-response trigger |
+| `src/agent/opencode-diagnostics.ts` | OpenCode binary/permission 점검 + raw event 버퍼 |
+| `src/agent/grok-trace-backfill.ts` | Grok streaming-json tool_calls/tool_result backfill from trace archive |
+| `src/agent/spawn-env.ts` | AGY plain-text `NO_COLOR=1`, OpenCode/Gemini 전용 env/permission 보정 |
+| `src/agent/agy-capabilities.ts` | AGY `--help`/`--version` capability probe + cached optional flag support map |
+| `src/agent/smoke-detector.ts` | smoke response 감지 + auto-continue 판단 |
+| `src/agent/watchdog.ts` | idle/progress watchdog; progress extends deadline within 4h hard cap |
+| `src/agent/resume-classifier.ts` | CLI별 stale session regex |
+| `src/agent/alert-escalation.ts` | alert escalation event helper |
+| `src/agent/session-persistence.ts` | main session persistence gate |
+| `src/agent/live-run-state.ts` | active run snapshot / hydrate helper |
+| `src/agent/error-classifier.ts` | stderr/result 기반 에러 분류 helper |
+| `src/agent/tool-timeout.ts` | tool inactivity timeout helper |
+| `src/agent/agy-runtime.ts` | AGY timeout stdout/close-text 판별 + 최종 planner 기준 timeout suffix 정규화 + session id 추출 + intermediate planner(`my_tool_call_analysis:`) 최종답 차단 (#251) |
+| `src/agent/cli-helpers.ts` | Claude-like CLI 판별 helper |
 
 ### src/agent/spawn/ — Extracted Submodules
 

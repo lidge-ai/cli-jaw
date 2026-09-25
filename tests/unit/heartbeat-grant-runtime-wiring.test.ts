@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
+import { readSpawnAgentSource, readSpawnFile } from '../helpers/spawn-source.mts';
 
 const root = join(import.meta.dirname, '../..');
-const spawn = fs.readFileSync(join(root, 'src/agent/spawn.ts'), 'utf8');
+const spawn = readSpawnAgentSource();
 const pi = fs.readFileSync(join(root, 'src/agent/pi-runtime.ts'), 'utf8');
 const heartbeat = fs.readFileSync(join(root, 'src/memory/heartbeat.ts'), 'utf8');
 const distribute = fs.readFileSync(join(root, 'src/orchestrator/distribute.ts'), 'utf8');
@@ -32,7 +33,9 @@ test('HGR-002 native pools cannot reuse a process carrying a scheduled grant', (
 
 test('HGR-003 Pi launches from the captured env instead of process-global env', () => {
     assert.ok(pi.includes('const inherited = { ...(options.env ?? process.env) }'));
-    assert.ok(spawn.includes('piSettings: pi,\n            env: spawnEnv,'));
+    // The main acquirePiRuntime call lives in the Pi backend module, one indent level
+    // shallower than it was inside spawnAgent.
+    assert.ok(readSpawnFile('backend-pi.ts').includes('piSettings: pi,\n        env: spawnEnv,'));
     assert.ok((spawn.match(/env: spawnEnv/g) ?? []).length >= 2,
         'both employee spawnPiRpc and main acquirePiRuntime receive the captured env');
 });

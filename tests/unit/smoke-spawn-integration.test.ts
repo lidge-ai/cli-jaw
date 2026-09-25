@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,7 +13,7 @@ function readSrc(rel: string): string {
 }
 
 test('spawn.ts imports smoke-detector helpers', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     const lifecycleSrc = readSrc('../../src/agent/lifecycle-handler.ts');
     assert.ok(src.includes("from './smoke-detector.js'"));
     assert.ok(src.includes('detectSmokeResponse'));
@@ -21,7 +22,7 @@ test('spawn.ts imports smoke-detector helpers', () => {
 });
 
 test('smoke detection runs before exit handler delegation in both spawn paths', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     const stdExit = src.slice(src.indexOf("child.on('close'"));
     const acpExit = src.slice(src.indexOf("acp.on('exit'"));
 

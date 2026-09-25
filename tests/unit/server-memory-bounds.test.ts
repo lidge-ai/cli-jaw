@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 import {
     appendBoundedFullText,
     FULLTEXT_MAX_CHARS,
@@ -83,10 +84,9 @@ test('D3: liveOutputText is bounded too, since it is promoted into fullText at c
         'the liveOutputText branch must route through the same bound as fullText',
     );
 
-    const spawnSource = await helpers.readFile(
-        new URL('../../src/agent/spawn.ts', import.meta.url),
-        'utf8',
-    );
+    // The Pi streaming path lives in src/agent/spawn/backend-pi.ts; read spawnAgent's
+    // whole source (spawn.ts plus its backend modules).
+    const spawnSource = readSpawnAgentSource();
     assert.ok(
         spawnSource.includes('appendBoundedFullText(ctx.liveOutputText'),
         'the pi streaming path must bound liveOutputText as well',
@@ -95,7 +95,8 @@ test('D3: liveOutputText is bounded too, since it is promoted into fullText at c
 
 test('D2: a duplicate-registration kill records a reason and escalates', async () => {
     const { readFile } = await import('node:fs/promises');
-    const source = await readFile(new URL('../../src/agent/spawn.ts', import.meta.url), 'utf8');
+    // The dup kill is in spawn.ts; the backend exit handlers moved to spawn/backend-*.ts.
+    const source = readSpawnAgentSource();
 
     // Without a recorded reason the stale exit handler misreads an intentional
     // kill as a genuine agent error and deletes the replacement's map entry.

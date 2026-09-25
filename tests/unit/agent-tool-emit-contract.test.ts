@@ -6,13 +6,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 function src(path: string): string {
     return readFileSync(join(process.cwd(), path), 'utf8');
 }
 
 test('spawn.ts has zero direct agent_tool broadcasts — all route through emitAgentTool', () => {
-    const spawn = src('src/agent/spawn.ts');
+    const spawn = readSpawnAgentSource();
     assert.equal(spawn.includes("broadcast('agent_tool'"), false,
         'direct agent_tool broadcast in spawn.ts bypasses startedAt/updateWorkerTools');
     assert.ok(spawn.includes('emitAgentTool(ctx, agentLabel,'), 'helper path must be in use');
@@ -24,7 +25,7 @@ test('emitAgentTool stamps the payload with the run start', () => {
 });
 
 test('every spawn context literal seeds runStartedAt', () => {
-    const spawn = src('src/agent/spawn.ts');
+    const spawn = readSpawnAgentSource();
     const literals = spawn.match(/const ctx: (?:Copilot)?SpawnContext = \{/g) || [];
     const seeds = spawn.match(/runStartedAt: Date\.now\(\),/g) || [];
     assert.ok(literals.length >= 4, `expected >=4 spawn ctx literals, saw ${literals.length}`);

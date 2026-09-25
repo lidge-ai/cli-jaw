@@ -6,6 +6,7 @@ import os from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSource } from './source-normalize.js';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -16,13 +17,13 @@ function readSrc(rel: string): string {
 // ─── Source-level structural checks ─────────────────────
 
 test('TMPISO-001: cleanupEmployeeTmpDir function exists in spawn.ts', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     assert.ok(src.includes('function cleanupEmployeeTmpDir('));
     assert.ok(src.includes('fs.rmSync(cwd'));
 });
 
 test('TMPISO-002: isolation block creates temp dir with all instruction files', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     assert.ok(src.includes("jaw-emp-"));
     assert.ok(src.includes('empPromptWithWorkspace'));
     assert.ok(src.includes("'AGENTS.md'"));
@@ -34,7 +35,7 @@ test('TMPISO-002: isolation block creates temp dir with all instruction files', 
 });
 
 test('TMPISO-003: spawnCwd is used (not settings.workingDir) for AcpClient', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     // AcpClient should use spawnCwd
     assert.ok(src.includes('workDir: spawnCwd'));
     // There should be no AcpClient constructed with workDir: settings.workingDir
@@ -43,7 +44,7 @@ test('TMPISO-003: spawnCwd is used (not settings.workingDir) for AcpClient', () 
 });
 
 test('TMPISO-004: acp.createSession uses spawnCwd (both occurrences)', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     const matches = src.match(/acp\.createSession\(spawnCwd,\s*getEmployeeMcpServers\(\)\)/g);
     assert.ok(matches, 'should have acp.createSession(spawnCwd, getEmployeeMcpServers()) calls');
     assert.equal(matches.length, 2, 'exactly 2 acp.createSession(spawnCwd, getEmployeeMcpServers()) calls');
@@ -52,7 +53,7 @@ test('TMPISO-004: acp.createSession uses spawnCwd (both occurrences)', () => {
 });
 
 test('TMPISO-005: child_process spawn uses spawnCwd', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     // Find the spawn() call options — should use spawnCwd for cwd.
     // Note: spawn takes launchCommand/launchArgs, which on Windows come from the
     // shell-free shim resolver (#367).
@@ -61,7 +62,7 @@ test('TMPISO-005: child_process spawn uses spawnCwd', () => {
 });
 
 test('TMPISO-006: cleanup in all exit/error handlers', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     // Count all cleanupEmployeeTmpDir calls (should be at least 5: early return, acp error, acp exit, child error, child close)
     const cleanupCalls = src.match(/cleanupEmployeeTmpDir\(/g);
     assert.ok(cleanupCalls, 'should have cleanup calls');
@@ -69,13 +70,13 @@ test('TMPISO-006: cleanup in all exit/error handlers', () => {
 });
 
 test('TMPISO-007: cleanup is no-op when cwd === workingDir (main agent)', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     // The guard: if (cwd !== workingDir)
     assert.ok(src.includes('if (cwd !== workingDir)'));
 });
 
 test('TMPISO-007b: optional workspace symlink is non-fatal and keeps tmp cwd isolation', () => {
-    const src = readSrc('../../src/agent/spawn.ts');
+    const src = readSpawnAgentSource({ normalized: true });
     assert.ok(src.includes("fs.symlinkSync(settings.workingDir, join(tmpDir, 'workspace'), 'dir')"));
     assert.ok(src.includes('Non-fatal: the absolute Project root in Workspace Context remains authoritative.'));
     assert.ok(src.includes('spawnCwd = tmpDir'), 'employee cwd isolation must remain in place');
