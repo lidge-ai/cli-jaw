@@ -11,8 +11,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsPageProps } from '../types';
 import { SettingsRequestError } from '../settings-client';
-import { PageError, PageLoading, SettingsSection } from './page-shell';
-import { InlineWarn } from './components/InlineWarn';
+import {
+    PageError,
+    PageLoading,
+    SettingsActions,
+    SettingsKeyValue,
+    SettingsNote,
+    SettingsSection,
+    StatusBadge,
+} from './page-shell';
 
 export type BrowserStatus = {
     running: boolean;
@@ -185,43 +192,42 @@ export default function Browser({ port, client }: SettingsPageProps) {
     const { status, activeTab } = pollState;
     const actionPending = actionState.kind === 'pending';
 
+    const actionStatus =
+        actionState.kind === 'pending' ? (
+            <span role="status">{actionState.label}…</span>
+        ) : actionState.kind === 'success' ? (
+            <span role="status">{actionState.message}</span>
+        ) : null;
+
     return (
         <form className="settings-page-form" onSubmit={(event) => event.preventDefault()}>
             <SettingsSection
                 title="Status"
                 hint={`Polled every ${POLL_INTERVAL_MS / 1000}s while this page is open.`}
             >
-                <dl className="settings-readonly-grid">
-                    <dt>Running</dt>
-                    <dd>{status.running ? '✅ yes' : '❌ no'}</dd>
-                    <dt>Tabs</dt>
-                    <dd>{status.tabs}</dd>
-                    <dt>CDP URL</dt>
-                    <dd>
-                        <code>{status.cdpUrl || '—'}</code>
-                    </dd>
-                    <dt>Instance port</dt>
-                    <dd>
-                        <code>{port}</code>
-                    </dd>
-                </dl>
-
-                <div className="browser-actions">
+                <SettingsKeyValue
+                    items={[
+                        {
+                            label: 'Running',
+                            value: status.running ? (
+                                <StatusBadge tone="ok">Running</StatusBadge>
+                            ) : (
+                                <StatusBadge tone="neutral">Stopped</StatusBadge>
+                            ),
+                        },
+                        { label: 'Tabs', value: status.tabs },
+                        { label: 'CDP URL', value: status.cdpUrl || '—', mono: true },
+                        { label: 'Instance port', value: port, mono: true },
+                    ]}
+                />
+                <SettingsActions status={actionStatus}>
                     <button
                         type="button"
-                        className="settings-action settings-action-save"
-                        disabled={status.running || actionPending}
-                        onClick={onStartVisible}
+                        className="settings-action settings-action-danger"
+                        disabled={actionPending}
+                        onClick={onReset}
                     >
-                        Start visible browser
-                    </button>
-                    <button
-                        type="button"
-                        className="settings-action"
-                        disabled={status.running || actionPending}
-                        onClick={onStartAgent}
-                    >
-                        Start agent browser
+                        Reset profile
                     </button>
                     <button
                         type="button"
@@ -233,26 +239,23 @@ export default function Browser({ port, client }: SettingsPageProps) {
                     </button>
                     <button
                         type="button"
-                        className="settings-action settings-action-discard"
-                        disabled={actionPending}
-                        onClick={onReset}
+                        className="settings-action"
+                        disabled={status.running || actionPending}
+                        onClick={onStartAgent}
                     >
-                        Reset profile
+                        Start agent browser
                     </button>
-                </div>
-
-                {actionState.kind === 'pending' && (
-                    <p className="settings-section-hint" role="status">
-                        {actionState.label}…
-                    </p>
-                )}
-                {actionState.kind === 'success' && (
-                    <p className="settings-section-hint" role="status">
-                        ✅ {actionState.message}
-                    </p>
-                )}
+                    <button
+                        type="button"
+                        className="settings-action settings-action-save"
+                        disabled={status.running || actionPending}
+                        onClick={onStartVisible}
+                    >
+                        Start visible browser
+                    </button>
+                </SettingsActions>
                 {actionState.kind === 'error' && (
-                    <InlineWarn role="alert">{actionState.message}</InlineWarn>
+                    <SettingsNote tone="error" role="alert">{actionState.message}</SettingsNote>
                 )}
             </SettingsSection>
 
@@ -261,24 +264,19 @@ export default function Browser({ port, client }: SettingsPageProps) {
                 hint="Tab the agent currently targets. Empty when the browser is stopped."
             >
                 {!status.running ? (
-                    <p className="settings-section-hint">Browser is not running.</p>
+                    <SettingsNote>Browser is not running.</SettingsNote>
                 ) : activeTab && activeTab.ok && activeTab.tab ? (
-                    <dl className="settings-readonly-grid">
-                        <dt>URL</dt>
-                        <dd>
-                            <code>{activeTab.tab.url || '—'}</code>
-                        </dd>
-                        <dt>Title</dt>
-                        <dd>{activeTab.tab.title || '—'}</dd>
-                        <dt>Target ID</dt>
-                        <dd>
-                            <code>{activeTab.tab.targetId || '—'}</code>
-                        </dd>
-                    </dl>
+                    <SettingsKeyValue
+                        items={[
+                            { label: 'URL', value: activeTab.tab.url || '—', mono: true },
+                            { label: 'Title', value: activeTab.tab.title || '—' },
+                            { label: 'Target ID', value: activeTab.tab.targetId || '—', mono: true },
+                        ]}
+                    />
                 ) : (
-                    <p className="settings-section-hint">
+                    <SettingsNote>
                         No verified active tab{activeTab?.reason ? ` (${activeTab.reason})` : ''}.
-                    </p>
+                    </SettingsNote>
                 )}
             </SettingsSection>
         </form>

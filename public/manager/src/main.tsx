@@ -31,6 +31,7 @@ import './workers/worker-runs.css';
 import './settings-shell.css';
 import './settings-controls.css';
 import './settings-agent.css';
+import './settings-surface.css';
 import './settings-embedding.css';
 import './jaw-ceo/jaw-ceo.css';
 import './jaw-ceo/jaw-ceo-console.css';
