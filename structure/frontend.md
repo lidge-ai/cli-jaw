@@ -240,7 +240,8 @@ public/
 | `features/settings-types.ts` | — | shared settings interfaces |
 | `features/sidebar.ts` | — | responsive collapse/expand, narrow overlay behavior |
 | `features/skills.ts` | — | skill load/filter/toggle |
-| `features/slash-commands.ts` | — | web slash command dropdown + workflow metadata chips |
+| `features/slash-commands.ts` | — | web slash command dropdown + workflow metadata chips (commands only; skills are not listed) |
+| `features/skill-mentions.ts` | — | web `$` inline skill popup — lists active skills from `/api/skills` and inserts the server-computed `mention` word |
 | `features/theme.ts` | — | dark/light theme toggle, hljs theme swap, Mermaid/iframe refresh |
 | `features/tool-ui.ts` | — | legacy finalized tool group + live activity helper |
 | `features/trace-drawer.ts` | — | trace drawer open/close/render controls |

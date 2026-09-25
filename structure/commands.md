@@ -62,7 +62,7 @@ effort, fast, context, tools, redraw, retry, export, resume, hotkeys
 - `workflow`: `plan`, `interview`, `deliberate`, `planaudit`, `review`, `jaw-search`, `jaw-goal`, `goalplan`, `gd`, `team`
 - `model`: `model`, `cli`, `fallback`, `forward`, `thought`, `flush`, `effort`, `fast`
 - `tools`: `skill`, `employee`, `mcp`, `jaw-memory`, `jaw-browser`, `prompt`, `ide`, `orchestrate`, `project`, `task`, `tools`
-- `skills`: dynamic — all active skills exposed as `/skill:<id>` (cli/web only, hidden on telegram/discord)
+- `skills`: not a slash category. Active skills are picked inline with `$<skill>` — typing `$` in the web or TUI composer lists them — and the server expands each mention into the prompt (`src/core/skill-mentions.ts`). `/skill:<id>` still executes as a hidden compatibility alias and is not listed.
 - `cli`: `settings`, `version`, `quit`, `file`, `redraw`, `hotkeys`
 
 `/settings` is CLI-only. In fullscreen `jaw chat`, selecting it opens the
