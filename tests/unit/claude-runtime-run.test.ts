@@ -66,7 +66,7 @@ mock.module('../../src/agent/runtime/projection.js', { namedExports: { RuntimePr
     close() { ordered.push('end'); }
 } } });
 mock.module('../../src/agent/runtime/events.js', { namedExports: { recordRuntimeEvent: () => null } });
-const { startClaudeNativeRun } = await import('../../src/agent/claude-runtime-run.ts');
+const { startClaudeNativeRun, claudeFailureDiagnostic } = await import('../../src/agent/claude-runtime-run.ts');
 
 const outcome: RuntimeTurnOutcome = { status: 'done', finalText: 'answer', partialText: 'partial' };
 function fixture(worker = false) {
@@ -385,6 +385,37 @@ test('admitted background-task failure supplies the foreground-only runtime diag
     const result = await f.start().promise;
     assert.equal(result.code, 1);
     assert.deepEqual(result.runtimeOutcome, failed);
+});
+
+test('failure diagnostic names the guard instead of blaming model or login', () => {
+    const owner = claudeFailureDiagnostic('claude_owner_stale');
+    assert.match(owner, /session was reset or a setting that changes how it runs/);
+    assert.doesNotMatch(owner, /login/);
+    assert.equal(claudeFailureDiagnostic('claude_eof'),
+        'Claude native runtime failed (claude_eof). Check the selected model, permissions and existing CLI login.');
+    assert.equal(claudeFailureDiagnostic(null),
+        'Claude native runtime failed. Check the selected model, permissions and existing CLI login.');
+    assert.equal(claudeFailureDiagnostic('claude_background_tasks_unsupported'),
+        'Claude native supports foreground tasks only. Set run_in_background:false.');
+});
+
+test('a superseded run reports the settings/reset cause and logs its guard code once', async t => {
+    const f = fixture();
+    const failed: RuntimeTurnOutcome = { status: 'error', finalText: null, partialText: '' };
+    f.setSend(async () => {
+        f.session.lastError = 'claude_owner_stale';
+        return failed;
+    });
+    const warn = t.mock.method(console, 'warn', () => {});
+    const lifecycle = exit;
+    exit = async params => {
+        assert.equal(params.ctx.runtimeDiagnostic, claudeFailureDiagnostic('claude_owner_stale'));
+        await lifecycle(params);
+    };
+    const result = await f.start().promise;
+    assert.equal(result.code, 1);
+    const codeLines = warn.mock.calls.filter(call => String(call.arguments[0]).includes('turn failed code=claude_owner_stale'));
+    assert.equal(codeLines.length, 1);
 });
 
 test('worker send failure permits directory cleanup only after successful awaited retirement', async () => {

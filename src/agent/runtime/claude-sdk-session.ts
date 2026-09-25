@@ -287,9 +287,10 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
                 }
                 if (!childParent && typeof resultId === 'string' && this.terminalIds.has(resultId)) continue;
                 const turn = this.turn;
-                if (turn && (!this.current(turn.context) || (!childParent && !this.correlated(raw, turn)))) {
-                    this.fail('claude_owner_or_correlation_stale'); break;
-                }
+                // Two different guards: jaw superseded this run (owner) vs the SDK
+                // answered a message this turn never sent (correlation).
+                if (turn && !this.current(turn.context)) { this.fail('claude_owner_stale'); break; }
+                if (turn && !childParent && !this.correlated(raw, turn)) { this.fail('claude_correlation_stale'); break; }
                 if (turn) {
                     const childOwned = this.children.accept(raw);
                     if (this.closing || this.turn !== turn) continue;
