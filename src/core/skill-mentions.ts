@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 import { SKILLS_DIR } from './config.js';
 import { getSkillCommandsCache, type SkillCommandEntry } from './skill-cache.js';
-import { extractSkillMentionIds } from '../shared/skill-mention.js';
+import { extractSkillMentionIds, skillMentionKey } from '../shared/skill-mention.js';
 
 /** SKILL.md bodies run to 66 KB; five of them is already a very large turn. */
 export const MAX_INLINE_SKILLS = 5;
@@ -25,15 +25,25 @@ export interface SkillMentionOptions {
     skillsDir?: string | undefined;
 }
 
-/** Exact active ids only. Legacy bare ids (`video`, `memory`) collide with shell variables. */
+/** Active skills only, by exact id or exact mention word (the skill name, e.g.
+ * `jaw-browser` for the `browser` compat directory). An id wins over another skill's
+ * name. Unknown words (`$HOME`, `$video` with no such skill) resolve to nothing. */
 export function resolveSkillMentions(
     text: string,
     skills: readonly SkillCommandEntry[] = getSkillCommandsCache(),
 ): SkillCommandEntry[] {
-    const byId = new Map(skills.map(skill => [skill.id.toLowerCase(), skill]));
-    return extractSkillMentionIds(text).flatMap(id => {
-        const skill = byId.get(id);
-        return skill ? [skill] : [];
+    const byWord = new Map<string, SkillCommandEntry>();
+    for (const skill of skills) byWord.set(skill.id.toLowerCase(), skill);
+    for (const skill of skills) {
+        const key = skillMentionKey(skill).toLowerCase();
+        if (!byWord.has(key)) byWord.set(key, skill);
+    }
+    const seen = new Set<string>();
+    return extractSkillMentionIds(text).flatMap(word => {
+        const skill = byWord.get(word);
+        if (!skill || seen.has(skill.id)) return [];
+        seen.add(skill.id);
+        return [skill];
     });
 }
 
@@ -58,7 +68,7 @@ export function buildSkillMentionBlock(
         const reason = inline ? 'over the inline skill budget for one message' : 'this CLI takes its prompt on the command line';
         return [
             '<skill>',
-            `<name>${skill.id}</name>`,
+            `<name>${skillMentionKey(skill)}</name>`,
             `<path>${path}</path>`,
             fits ? body : `[Not inlined: ${reason}. Read the file at <path> before acting.]`,
             '</skill>',

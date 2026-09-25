@@ -5,7 +5,7 @@ import '../setup/isolated-home.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { extractSkillMentionIds, findSkillMentionToken, rankSkillMentions } from '../../src/shared/skill-mention.ts';
+import { extractSkillMentionIds, findSkillMentionToken, rankSkillMentions, skillMentionKey } from '../../src/shared/skill-mention.ts';
 import {
     buildSkillMentionBlock, resolveSkillMentions, withSkillMentions, MAX_INLINE_SKILLS, MAX_INLINE_SKILL_CHARS,
 } from '../../src/core/skill-mentions.ts';
@@ -137,4 +137,21 @@ test('SM-011: `/` lists commands only while /skill:<id> keeps executing', () => 
     assert.equal(getCommandCatalog().some(cmd => cmd.name.startsWith('skill:')), false);
     const parsed = parseCommand('/skill:inline-test-skill go');
     assert.equal(parsed?.type, 'skill');
+});
+
+test('SM-012: a legacy-id skill is mentioned by its canonical name and still resolves by id', () => {
+    // A compat link makes the directory id `browser` for the skill named `jaw-browser`.
+    const legacy: SkillCommandEntry = { id: 'browser', name: 'jaw-browser', description: 'Chrome', content: 'LEGACY-BODY' };
+    const spaced: SkillCommandEntry = { id: 'jaw-pdf', name: '"jaw-pdf" PDF tools', description: 'PDF', content: 'PDF-BODY' };
+    assert.equal(skillMentionKey(legacy), 'jaw-browser');
+    assert.equal(skillMentionKey(spaced), 'jaw-pdf');
+    assert.deepEqual(resolveSkillMentions('$jaw-browser and $browser', [legacy]).map(s => s.id), ['browser']);
+    assert.deepEqual(resolveSkillMentions('$jaw-pdf', [spaced]).map(s => s.id), ['jaw-pdf']);
+    assert.deepEqual(rankSkillMentions([skill('jaw-b-other'), legacy], 'jaw-br').map(s => s.id), ['browser']);
+    const block = buildSkillMentionBlock([legacy], { skillsDir: '/skills' });
+    assert.ok(block.includes('<name>jaw-browser</name>'));
+    assert.ok(block.includes(`<path>${join('/skills', 'browser', 'SKILL.md')}</path>`));
+    // An id wins over another skill's name that happens to spell the same word.
+    const owner: SkillCommandEntry = { id: 'jaw-browser', name: 'jaw-browser', description: '', content: 'OWNER' };
+    assert.deepEqual(resolveSkillMentions('$jaw-browser', [legacy, owner]).map(s => s.content), ['OWNER']);
 });

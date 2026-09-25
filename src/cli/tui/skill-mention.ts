@@ -5,7 +5,7 @@
  */
 import type { OverlayItem } from '../types.js';
 import { getSkillCommandsCache } from '../../core/skill-cache.js';
-import { findSkillMentionToken, rankSkillMentions, type RankableSkill } from '../../shared/skill-mention.js';
+import { findSkillMentionToken, rankSkillMentions, skillMentionKey, type RankableSkill } from '../../shared/skill-mention.js';
 
 export interface SkillMentionMatch {
     query: string;
@@ -24,10 +24,8 @@ export function listSkillMentionItems(
     query: string,
     skills: readonly RankableSkill[] = getSkillCommandsCache(),
 ): OverlayItem[] {
-    return rankSkillMentions(skills, query).map(skill => ({
-        name: skill.id,
-        desc: skill.description || '',
-        insertText: `$${skill.id}`,
-        kind: 'skill-mention',
-    }));
+    return rankSkillMentions(skills, query).map(skill => {
+        const key = skillMentionKey(skill);
+        return { name: key, desc: skill.description || '', insertText: `$${key}`, kind: 'skill-mention' };
+    });
 }

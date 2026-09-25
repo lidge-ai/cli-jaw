@@ -59,3 +59,9 @@ test('insertAtMention defaults to the @ sigil for file mentions', () => {
     insertAtMention(state, 4, 'src/cli/chat.ts');
     assert.equal(flattenComposerForSubmit(state), 'see @src/cli/chat.ts ');
 });
+
+test('listSkillMentionItems offers the canonical name for a legacy-id skill', () => {
+    const items = listSkillMentionItems('jaw-br', [{ id: 'browser', name: 'jaw-browser', description: 'Chrome' }]);
+    assert.equal(items[0]?.name, 'jaw-browser');
+    assert.equal(items[0]?.insertText, '$jaw-browser');
+});

@@ -6,9 +6,11 @@ import { state } from '../state.js';
 import { fetchWithLocale } from './i18n.js';
 import { escapeHtml } from '../render.js';
 import { isDropdownOpen as isSlashDropdownOpen } from './slash-commands.js';
-import { findSkillMentionToken, rankSkillMentions, type SkillMentionToken } from '../../../src/shared/skill-mention.js';
+import { findSkillMentionToken, rankSkillMentions, skillMentionKey, type SkillMentionToken } from '../../../src/shared/skill-mention.js';
 
-interface MentionSkill { id: string; name?: string | undefined; description?: string | undefined; enabled?: boolean | undefined }
+interface ApiSkill { id: string; mention?: string | undefined; description?: string | undefined; enabled?: boolean | undefined }
+/** `name` carries the server-computed mention word so skillMentionKey() returns it. */
+interface MentionSkill { id: string; name: string; description?: string | undefined }
 
 let filtered: MentionSkill[] = [];
 let selectedIdx = 0;
@@ -22,7 +24,9 @@ const dropdown = (): HTMLElement | null => document.getElementById('skillMention
 const input = (): HTMLTextAreaElement | null => document.getElementById('chatInput') as HTMLTextAreaElement | null;
 
 function activeSkills(): MentionSkill[] {
-    return (state.allSkills as MentionSkill[]).filter(skill => skill && skill.enabled && typeof skill.id === 'string');
+    return (state.allSkills as ApiSkill[])
+        .filter(skill => skill && skill.enabled && typeof skill.id === 'string')
+        .map(skill => ({ id: skill.id, name: skill.mention || skill.id, description: skill.description }));
 }
 
 /** The skills panel owns `state.allSkills`; load it once if that panel never opened. */
@@ -53,8 +57,8 @@ function render(): void {
     hideFadingSlashList();
     el.innerHTML = filtered.map((skill, i) => `<div class="cmd-item${i === selectedIdx ? ' selected' : ''}"
             role="option" id="skill-mention-item-${i}" aria-selected="${i === selectedIdx}" data-index="${i}">
-            <span class="cmd-name">$${escapeHtml(skill.id)}</span>
-            <span class="cmd-desc">${escapeHtml(skill.description || skill.name || '')}</span>
+            <span class="cmd-name">$${escapeHtml(skillMentionKey(skill))}</span>
+            <span class="cmd-desc">${escapeHtml(skill.description || '')}</span>
         </div>`).join('');
     el.style.display = 'block';
     requestAnimationFrame(() => el.classList.add('visible'));
@@ -104,7 +108,7 @@ function applySelection(): void {
     close();
     if (!skill || !inp || !at) return;
     const caret = inp.selectionStart ?? inp.value.length;
-    const inserted = `$${skill.id} `;
+    const inserted = `$${skillMentionKey(skill)} `;
     inp.value = inp.value.slice(0, at.start) + inserted + inp.value.slice(caret);
     const pos = at.start + inserted.length;
     inp.focus();
