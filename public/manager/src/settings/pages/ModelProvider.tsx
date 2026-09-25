@@ -1,10 +1,10 @@
-// Phase 2 — Model & Provider page: per-CLI rows + codex extras +
-// fallback chip list + active-overrides table with reset button.
+// Phase 2 — Model & Provider page: per-CLI rows + fallback chip list +
+// active-overrides table with reset button.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SettingsPageProps, SettingsClient, DirtyEntry } from '../types';
 import { describeError } from '../components/error-normalize';
-import { ChipListField, NumberField } from '../fields';
+import { ChipListField } from '../fields';
 import {
     SettingsSection,
     PageError,
@@ -79,7 +79,6 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
     const [perCliDraft, setPerCliDraft] = useState<Record<string, PerCliEntry>>({});
     const [piDraft, setPiDraft] = useState<PiSettingsView | undefined>(undefined);
     const [fallback, setFallback] = useState<string[]>([]);
-    const [codexCtx, setCodexCtx] = useState<{ contextWindowSize?: number; contextWindowCompactLimit?: number }>({});
     const [resetting, setResetting] = useState(false);
     const [resetError, setResetError] = useState<string | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -126,15 +125,6 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
         setPerCliDraft(nextPerCli);
         setPiDraft(state.data.pi);
         setFallback([...(state.data.fallbackOrder || [])]);
-        const codex = nextPerCli['codex'] || {};
-        const nextCodexCtx: typeof codexCtx = {};
-        if (typeof codex.contextWindowSize === 'number') {
-            nextCodexCtx.contextWindowSize = codex.contextWindowSize;
-        }
-        if (typeof codex.contextWindowCompactLimit === 'number') {
-            nextCodexCtx.contextWindowCompactLimit = codex.contextWindowCompactLimit;
-        }
-        setCodexCtx(nextCodexCtx);
     }, [state, dirty]);
 
     const onPiRegistered = useCallback((next: PiRegistration) => {
@@ -228,7 +218,6 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
     const data = state.data;
     const perCliOriginal = data.perCli || {};
     const cliKeys = orderModelCliKeys(Object.keys(perCliOriginal));
-    const codexOriginal = perCliOriginal['codex'] || {};
     const overrides = data.activeOverrides || {};
     const overrideRows = Object.entries(overrides);
 
@@ -269,58 +258,6 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                     ))
                 )}
             </SettingsSection>
-
-            {perCliOriginal['codex'] ? (
-                <SettingsSection
-                    title="Codex context window"
-                    hint="Codex-only sliders. Other CLIs ignore these values."
-                >
-                    <NumberField
-                        id="model-codex-ctx"
-                        label="Context window size"
-                        disabled={saving || resetting}
-                        value={
-                            codexCtx.contextWindowSize
-                            ?? (typeof codexOriginal.contextWindowSize === 'number'
-                                ? codexOriginal.contextWindowSize
-                                : 1_000_000)
-                        }
-                        min={0}
-                        step={10_000}
-                        onChange={(next) => {
-                            if (!canEdit()) return;
-                            setCodexCtx({ ...codexCtx, contextWindowSize: next });
-                            setEntry('perCli.codex.contextWindowSize', {
-                                value: next,
-                                original: codexOriginal.contextWindowSize ?? 1_000_000,
-                                valid: Number.isFinite(next) && next >= 0,
-                            });
-                        }}
-                    />
-                    <NumberField
-                        id="model-codex-compact"
-                        label="Compact limit"
-                        disabled={saving || resetting}
-                        value={
-                            codexCtx.contextWindowCompactLimit
-                            ?? (typeof codexOriginal.contextWindowCompactLimit === 'number'
-                                ? codexOriginal.contextWindowCompactLimit
-                                : 900_000)
-                        }
-                        min={0}
-                        step={10_000}
-                        onChange={(next) => {
-                            if (!canEdit()) return;
-                            setCodexCtx({ ...codexCtx, contextWindowCompactLimit: next });
-                            setEntry('perCli.codex.contextWindowCompactLimit', {
-                                value: next,
-                                original: codexOriginal.contextWindowCompactLimit ?? 900_000,
-                                valid: Number.isFinite(next) && next >= 0,
-                            });
-                        }}
-                    />
-                </SettingsSection>
-            ) : null}
 
             <SettingsSection
                 title="Fallback order"

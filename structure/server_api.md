@@ -179,7 +179,7 @@ Cursor/Grok activation and Activity controls are separate from this API foundati
 | Chat Sessions | `GET /api/chat-sessions` `POST /api/chat-sessions` `POST /api/chat-sessions/:id/switch` `DELETE /api/chat-sessions/:id` |
 | Instance Lock | `GET /api/instance/lock` `POST /api/instance/lock` `DELETE /api/instance/lock` |
 | Search | `GET /api/search` |
-| Settings/Prompt | `GET/PUT /api/settings` `POST /api/settings/slack/reset` `POST /api/settings/runtime-default-migration` `POST /api/settings/multi-session-default-migration` `POST /api/project/pick` `GET /api/project/git-summary` `GET /api/codex-context` `GET/PUT /api/prompt` `GET /api/prompt-templates` `PUT /api/prompt-templates/:id` `GET/PUT /api/heartbeat-md` |
+| Settings/Prompt | `GET/PUT /api/settings` `POST /api/settings/slack/reset` `POST /api/settings/runtime-default-migration` `POST /api/settings/multi-session-default-migration` `POST /api/project/pick` `GET /api/project/git-summary` `GET/PUT /api/prompt` `GET /api/prompt-templates` `PUT /api/prompt-templates/:id` `GET/PUT /api/heartbeat-md` |
 | MCP/CLI/Quota | `GET/PUT /api/mcp` `POST /api/mcp/sync` `POST /api/mcp/install` `POST /api/mcp/reset` `GET /api/mcp/registry` `GET /api/cli-registry` `GET /api/cli-status` `GET /api/quota` `POST /api/copilot/refresh` `POST /api/pi/profiles/register` `GET /api/pi/models` |
 | Runtime Context | `GET /api/runtime-context` `POST /api/runtime-context` `DELETE /api/runtime-context/:id` `DELETE /api/runtime-context` |
 | Native Runtime Decisions | `GET /api/runtime/requests` `POST /api/runtime/requests/:id` |
@@ -209,7 +209,7 @@ All trace routes set `Cache-Control: no-store` before auth/parsing. Activity dis
 | Dashboard Schedule | `GET /api/dashboard/schedule/work` `POST /api/dashboard/schedule/work` `PATCH /api/dashboard/schedule/work/:id` `DELETE /api/dashboard/schedule/work/:id` `POST /api/dashboard/schedule/work/:id/dispatch` |
 | i18n | `GET /api/i18n/languages` `GET /api/i18n/:lang` |
 
-> AST 추출기가 현재 인식하는 범위는 총 245개 route handler다. 이 추출 범위의 API 엔드포인트는 244개이고 `/` 엔트리는 1개다. 전체 API 총수는 아니다. `registerNativeCodeRoutes()` 내부의 `router.*`와 `app.use(prefix, router)` 연결은 아직 집계하지 못한다. 별도로 동작하는 native Code 핸들러 11개는 아래 [Native Code API](#native-code-api) 표에 명시하며, 이전 경로의 410 응답 핸들러도 추출 집계에서 빠져 있다. Browser API 43개는 `src/routes/browser.ts`, Jaw CEO 20개는 `src/routes/jaw-ceo.ts`에서 등록된다.
+> AST 추출기가 현재 인식하는 범위는 총 244개 route handler다. 이 추출 범위의 API 엔드포인트는 243개이고 `/` 엔트리는 1개다. 전체 API 총수는 아니다. `registerNativeCodeRoutes()` 내부의 `router.*`와 `app.use(prefix, router)` 연결은 아직 집계하지 못한다. 별도로 동작하는 native Code 핸들러 11개는 아래 [Native Code API](#native-code-api) 표에 명시하며, 이전 경로의 410 응답 핸들러도 추출 집계에서 빠져 있다. Browser API 43개는 `src/routes/browser.ts`, Jaw CEO 20개는 `src/routes/jaw-ceo.ts`에서 등록된다.
 
 `PUT /api/heartbeat`의 job은 `mentionWatch: { channel: "slack", userId: "U...", channelIds: ["C..."], maxHits?, since?, userIds?, conditions? }`를 선택적으로 받는다. `userIds`와 `conditions`는 생략하거나 빈 배열이면 오늘과 같이 `userId` 멘션만 본다. `conditions`의 `match`는 `mention` 또는 `talk`(말한 사람이 subject일 때만)이고 inbound `mentionOnly`와는 다른 게이트다. `channelIds`는 비어 있지 않아야 하고 저장 시 `slack.channelIds` allowlist의 부분집합이어야 하며, 실행 tick 직전 현재 allowlist와 다시 교집합한다. job id가 같은 기존 값에 대해 필드가 없으면 상속하고, `null`이면 삭제하며, 잘못된 값은 `400 invalid heartbeat mention watch`다. 파일 로드 정규화에서 잘못된 `mentionWatch`는 해당 job을 `enabled: false`로 내린다. 기본 운영값은 비활성이고, 설정된 watch는 별도 daemon이 아니라 기존 `runHeartbeatJob`에서 실행된다.
 

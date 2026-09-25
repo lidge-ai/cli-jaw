@@ -36,8 +36,6 @@ export type PerCliEntry = {
     model?: string;
     effort?: string;
     fastMode?: boolean;
-    contextWindowSize?: number;
-    contextWindowCompactLimit?: number;
     [key: string]: unknown;
 };
 
