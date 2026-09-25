@@ -4,12 +4,14 @@ import electronUpdater from 'electron-updater';
 import { fileURLToPath, URL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
+import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { readIsolatedQaPolicy, isolatedQaEnvironment } from '../../../src/shared/isolated-qa.js';
 import { applyIsolatedQaPaths } from './lib/qa-session.js';
 import { findJawBinary, spawnJawDashboard, gracefulShutdown } from './lib/jaw-spawn.js';
 import { promptInstallCli } from './lib/install-cli.js';
+import { applyDockIcon } from './lib/dock-icon.js';
 import {
   createTray, isKeepRunning, destroyTray,
   updateServerStatus, notifyServerCrash, setTrayBadge,
@@ -259,6 +261,9 @@ let appUpdaterController: AppUpdaterController | null = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const APP_ICON_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'icon.png')
+  : join(__dirname, '..', '..', 'build', 'icon.png');
 const PRELOAD_PATH = join(__dirname, '..', 'preload', 'index.js');
 const DESKTOP_USER_AGENT_TOKEN = 'cli-jaw-desktop';
 const EMBEDDED_BROWSER_PARTITION = 'persist:cli-jaw-browser';
@@ -329,6 +334,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    applyDockIcon({ platform: process.platform, dock: app.dock, exists: existsSync }, APP_ICON_PATH);
     configureEmbeddedBrowserSession();
     initializeAppUpdater();
     await bootstrapOnce();
@@ -1425,9 +1431,7 @@ async function createWindow(): Promise<void> {
     minHeight: MIN_VISIBLE_WINDOW_HEIGHT,
     show: true,
     ...chrome,
-    icon: app.isPackaged
-      ? join(process.resourcesPath, 'icon.png')
-      : join(__dirname, '..', '..', 'build', 'icon.png'),
+    icon: APP_ICON_PATH,
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
