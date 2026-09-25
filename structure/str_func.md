@@ -597,11 +597,11 @@ cli-jaw/
 ├── electron/                 ← Electron tray background app (40 TS/TSX files, 6046L) ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
-│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1550L)
+│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1554L)
 │       ├── main/lib/qa-session.ts ← isolated QA profile paths before lock and sessions (12L)
 │       ├── main/lib/tray-menu-model.ts ← pure menu bar instance list model: parse, order, labels, stale marking (85L)
 │       ├── main/lib/tray-instances.ts ← menu bar instance poller for /api/dashboard/instances (87L)
-│       ├── main/lib/         ← 22 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 250L, tray-instances, tray-menu-model, qa-session, install-cli, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
+│       ├── main/lib/         ← 23 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 250L, tray-instances, tray-menu-model, qa-session, install-cli, dock-icon, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
 │       └── preload/          ← preload scripts (index 126L + metrics 68L)
 ├── bin/
 │   ├── cli-jaw.ts            ← 29개 root dynamic import branch + grouped user-facing 서브커맨드 라우팅 + --home flag (359L)
