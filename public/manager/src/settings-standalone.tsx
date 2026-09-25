@@ -9,6 +9,7 @@ import './manager-dashboard-settings.css';
 import './settings-shell.css';
 import './settings-controls.css';
 import './settings-agent.css';
+import './settings-surface.css';
 import './settings-embedding.css';
 
 const proxyMatch = location.pathname.match(/^\/i\/(\d+)\//);

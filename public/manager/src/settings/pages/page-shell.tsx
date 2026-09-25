@@ -155,3 +155,69 @@ export function SaveBar({ saving, isDirty, error, onDiscard }: SaveBarProps) {
         </div>
     );
 }
+
+// ─── Card-body primitives ────────────────────────────────────────────
+// Children of `SettingsSection` render as divided rows inside one card.
+// These primitives share that row rhythm so pages never hand-roll grids,
+// emoji status, or free-floating button strips.
+
+export type StatusTone = 'ok' | 'warn' | 'error' | 'neutral';
+
+export function StatusBadge({ tone, children }: { tone: StatusTone; children: ReactNode }) {
+    return (
+        <span className={`settings-status settings-status-${tone}`}>
+            <span className="settings-status-dot" aria-hidden="true" />
+            {children}
+        </span>
+    );
+}
+
+export type KeyValueItem = { label: string; value: ReactNode; mono?: boolean };
+
+export function SettingsKeyValue({ items }: { items: ReadonlyArray<KeyValueItem> }) {
+    return (
+        <dl className="settings-kv">
+            {items.map((item, index) => (
+                <div className="settings-kv-row" key={index}>
+                    <dt>{item.label}</dt>
+                    <dd className={item.mono ? 'settings-kv-mono' : undefined}>{item.value}</dd>
+                </div>
+            ))}
+        </dl>
+    );
+}
+
+export function SettingsActions({
+    children,
+    status,
+}: {
+    children: ReactNode;
+    status?: ReactNode;
+}) {
+    return (
+        <div className="settings-card-actions">
+            {status ? <div className="settings-card-actions-status">{status}</div> : null}
+            <div className="settings-card-actions-buttons">{children}</div>
+        </div>
+    );
+}
+
+export function SettingsToolbar({ children }: { children: ReactNode }) {
+    return <div className="settings-card-toolbar">{children}</div>;
+}
+
+export function SettingsNote({
+    children,
+    tone = 'muted',
+    role,
+}: {
+    children: ReactNode;
+    tone?: 'muted' | 'warn' | 'error';
+    role?: 'status' | 'alert';
+}) {
+    return (
+        <p className={`settings-card-note settings-card-note-${tone}`} role={role}>
+            {children}
+        </p>
+    );
+}

@@ -1,0 +1,77 @@
+/* Card-body primitives shared by every settings page (see page-shell.tsx).
+ * Each primitive is a full-width divided row inside `.settings-section-body`
+ * so it inherits the card border, radius and row separators. */
+
+.settings-shell .settings-section-body > :is(.settings-kv, .settings-card-actions, .settings-card-toolbar, .settings-card-note) {
+    border-top: 1px solid var(--settings-border);
+}
+.settings-shell .settings-section-body > :is(.settings-kv, .settings-card-actions, .settings-card-toolbar, .settings-card-note):first-child {
+    border-top: 0;
+}
+
+.settings-kv { margin: 0; display: flex; flex-direction: column; }
+.settings-kv-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
+    align-items: baseline;
+    column-gap: 24px;
+    padding: 12px 16px;
+    font-size: 14px;
+}
+.settings-kv-row + .settings-kv-row { border-top: 1px solid var(--settings-border); }
+.settings-kv-row dt { font-weight: 500; color: var(--text-primary); }
+.settings-kv-row dd { margin: 0; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; text-align: right; }
+.settings-kv-mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; }
+
+.settings-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+    background: var(--settings-hover);
+    color: var(--text-secondary);
+}
+.settings-status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.settings-status-ok { color: var(--success-text, #1f9d55); background: color-mix(in srgb, var(--success-text, #1f9d55) 12%, transparent); }
+.settings-status-warn { color: var(--warning-text, #b7791f); background: color-mix(in srgb, var(--warning-text, #b7791f) 12%, transparent); }
+.settings-status-error { color: var(--error-text, #c83232); background: color-mix(in srgb, var(--error-text, #c83232) 12%, transparent); }
+
+.settings-card-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 12px 16px;
+}
+.settings-card-actions-status { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--text-secondary); }
+.settings-card-actions-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+
+.settings-card-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.settings-card-note { margin: 0; padding: 12px 16px; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
+.settings-card-note-error { color: var(--error-text, #c83232); }
+.settings-card-note-warn { color: var(--warning-text, #b7791f); }
+
+.settings-card-actions .settings-action { min-height: 32px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+.settings-card-actions .settings-action:disabled { cursor: not-allowed; opacity: 0.5; }
+.settings-card-actions .settings-action:not(:disabled):hover { background: var(--settings-hover); }
+.settings-card-actions .settings-action-save:not(:disabled):hover { background: var(--text-primary); opacity: 0.88; }
+.settings-card-actions .settings-action-danger { color: var(--error-text, #c83232); }
+
+@container settings (max-width: 719px) {
+    .settings-kv-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+    .settings-kv-row dd { text-align: left; }
+    .settings-card-actions-buttons { margin-left: 0; }
+}
