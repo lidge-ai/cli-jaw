@@ -111,6 +111,20 @@ export function isCliStatusUsable(info: CliStatusInfo, quota: QuotaEntry | null 
     return info.authenticated !== false && quota?.authenticated !== false;
 }
 
+/**
+ * "Any usable CLI" rule the sidebar banner shares with the partition: true
+ * while at least one row reads usable under {@link isCliStatusUsable}. An
+ * alarm gated on this cannot false-fire through the stale re-check window or
+ * the initial probe pass — those rows count as usable, not as evidence of
+ * absence (#277).
+ */
+export function hasUsableCliStatus(entries: Iterable<readonly [string, CliStatusInfo]>, quota: Record<string, QuotaEntry> | null | undefined): boolean {
+    for (const [name, info] of entries) {
+        if (isCliStatusUsable(info, quota?.[name])) return true;
+    }
+    return false;
+}
+
 export type CliProbeAvailabilityPresentation = {
     kind: 'checking' | 'unknown' | 'failing' | 'none';
     message: string | null;

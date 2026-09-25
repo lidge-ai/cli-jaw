@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isCliStatusUsable, type CliStatusInfo, type QuotaEntry } from '../../public/js/features/settings-types.ts';
+import { hasUsableCliStatus, isCliStatusUsable, type CliStatusInfo, type QuotaEntry } from '../../public/js/features/settings-types.ts';
 
 function row(overrides: Partial<CliStatusInfo> = {}): CliStatusInfo {
     return {
@@ -64,5 +64,37 @@ test('isCliStatusUsable keeps indeterminate probe states on top', () => {
         const info = row({ probeState, probeError: probeState === 'checking' ? undefined : 'boom' });
         assert.equal(isCliStatusUsable(info, undefined), true, probeState);
         assert.equal(isCliStatusUsable(info, quota({ authenticated: false })), true, probeState);
+    }
+});
+
+test('hasUsableCliStatus suppresses the banner while a stale row was working', () => {
+    const entries: Array<[string, CliStatusInfo]> = [
+        ['claude', row({ probeState: 'stale' })],
+        ['kiro', row({ available: false, authenticated: null })],
+    ];
+    assert.equal(hasUsableCliStatus(entries, undefined), true);
+    // Same stale row kept alive by quota-only auth evidence.
+    assert.equal(
+        hasUsableCliStatus([['claude', row({ probeState: 'stale', authenticated: null })]], { claude: quota() }),
+        true,
+    );
+});
+
+test('hasUsableCliStatus fires the banner only when every row is concretely unusable', () => {
+    const entries: Array<[string, CliStatusInfo]> = [
+        ['claude', row({ authenticated: false })],
+        ['kiro', row({ available: false, authenticated: null })],
+        ['codex', row({ capabilityReady: false })],
+    ];
+    assert.equal(hasUsableCliStatus(entries, undefined), false);
+    assert.equal(hasUsableCliStatus([], undefined), false);
+});
+
+test('hasUsableCliStatus suppresses the banner during indeterminate probe states', () => {
+    for (const probeState of ['checking', 'unknown', 'failing'] as const) {
+        const entries: Array<[string, CliStatusInfo]> = [
+            ['claude', row({ probeState, probeError: probeState === 'checking' ? undefined : 'boom' })],
+        ];
+        assert.equal(hasUsableCliStatus(entries, undefined), true, probeState);
     }
 });
