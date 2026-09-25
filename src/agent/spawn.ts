@@ -55,6 +55,7 @@ import { sanitizeWorkerProgressTools } from '../orchestrator/worker-progress.js'
 import { handleAgentExit, setSpawnAgent, setMainMetaHandler } from './lifecycle-handler.js';
 import { buildServicePath } from '../core/runtime-path.js';
 import { formatCliUnavailableMessage, detectCliBinary } from '../core/cli-detect.js';
+import { claudeModelGateMessage } from '../cli/claude-default-model-boot.js';
 import { LOCAL_SESSION_SCOPE_ACTIVATION, resolveExecutionBinding } from '../orchestrator/scope.js';
 import { stripInterviewTracker } from '../orchestrator/sanitize.js';
 import { beginLiveRun, appendLiveRunText, setLiveRunTraceId, clearLiveRun, replaceLiveRunTools, appendLiveRunTool } from './live-run-state.js';
@@ -1642,6 +1643,22 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         if (mainManaged) clearLiveRun(liveScope);
         broadcast('agent_done', { ...runPin, text: `❌ ${msg}`, error: true, origin, ...empTag }, isEmployee ? 'internal' : 'public');
         resolve!({ text: '', code: 127 });
+        if (mainManaged) {
+            releaseMainRun(scopeKey, null, ownerGeneration);
+            void processQueue(scopeKey);
+        }
+        cleanupEmployeeTmpDir(spawnCwd, settings["workingDir"], agentLabel);
+        return { child: null, promise: resultPromise };
+    }
+
+    // ─── Claude model preflight: a model the installed CLI is known not to accept fails
+    // here, for print and native, fresh and resume, instead of as a raw API 400. ───
+    const claudeModelRefusal = cli === 'claude' ? claudeModelGateMessage(detected.path, runtimeModel) : null;
+    if (claudeModelRefusal) {
+        console.error(`[jaw:${agentLabel}] ${claudeModelRefusal}`);
+        if (mainManaged) clearLiveRun(liveScope);
+        broadcast('agent_done', { ...runPin, text: `❌ ${claudeModelRefusal}`, error: true, origin, ...empTag }, isEmployee ? 'internal' : 'public');
+        resolve!({ text: '', code: 1 });
         if (mainManaged) {
             releaseMainRun(scopeKey, null, ownerGeneration);
             void processQueue(scopeKey);

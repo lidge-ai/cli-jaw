@@ -1,6 +1,7 @@
 import { createClaudeSdkSession, type ClaudeSdkSession } from '../../agent/runtime/claude-sdk-session.js';
 import type { PreparedClaudeOptions } from '../../agent/runtime/claude-sdk-options.js';
 import type { CodeProvider } from '../provider.js';
+import { claudeModelGateMessage } from '../../cli/claude-default-model-boot.js';
 import { admitCodeOpen, captureCodeContext, CODE_PROMPT_TIMEOUT_MS, type CodeProviderDependencies } from './acp.js';
 
 function claudeEffort(value: string | null): PreparedClaudeOptions['effort'] {
@@ -16,6 +17,8 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
         async open(options) {
             admitCodeOpen(options, dependencies);
             if (options.permissionMode === 'read-only') throw new Error('code_provider_policy_unsupported');
+            const modelRefusal = claudeModelGateMessage(dependencies.binary(), options.model);
+            if (modelRefusal) throw new Error(modelRefusal);
             const opening = captureCodeContext(options);
             const effort = claudeEffort(options.effort);
             let creationFinished = false;
