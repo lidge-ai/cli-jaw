@@ -899,14 +899,36 @@ test('cleanup timeout retains capacity and prevents overlapping reopen until phy
     const cancelling = f.manager.cancel(row.sessionId, { turnId: receipt.turnId, epoch: 1 });
     await handle.closeCalled.promise;
     t.mock.timers.tick(4000);
-    await cancelling;
+    const cancelled = await cancelling;
     assert.equal(handle.alive, true);
+    // The turn view stays `idle` while unproven native residue carries its own readout.
+    assert.equal(cancelled.status, 'idle');
+    assert.equal(cancelled.error, null);
+    assert.equal(cancelled.turnId, null);
+    assert.equal(cancelled.cleanupPending, true);
+    assert.equal(f.manager.snapshot(row.sessionId).session.cleanupPending, true);
+    assert.equal(f.manager.list().find(entry => entry.sessionId === row.sessionId)?.cleanupPending, true);
     assert.throws(() => f.manager.prompt(other.sessionId, prompt), errorCode('session_capacity'));
     assert.throws(() => f.manager.prompt(row.sessionId, { ...prompt, clientTurnKey: 'no-overlap' }), errorCode('cleanup_pending'));
     assert.equal(f.store.readTurn(row.sessionId, 'no-overlap'), null);
     gate.resolve();
     await handle.closedEvent.promise;
     assert.equal(handle.closes, 1);
+    // The first read to observe physical close clears the readout and frees the held capacity.
+    const released = f.manager.snapshot(row.sessionId).session;
+    assert.equal(released.cleanupPending, false);
+    assert.equal(released.contextUsage, undefined, 'the clearing snapshot carries no usage from the closed runtime');
+    assert.equal(f.manager.list().find(entry => entry.sessionId === row.sessionId)?.cleanupPending, false);
+    const admitted = f.manager.prompt(other.sessionId, prompt);
+    const options = await f.providers.claude.opened();
+    const next = f.providers.claude.handles[0]!;
+    await next.sent.promise;
+    // A Stop whose native close is proven keeps the ordinary idle-only readout.
+    const stopped = await f.manager.cancel(other.sessionId, { turnId: admitted.receipt.turnId, epoch: 1 });
+    assert.equal(stopped.status, 'idle');
+    assert.equal(stopped.cleanupPending, false);
+    assert.equal(f.manager.snapshot(other.sessionId).session.cleanupPending, false);
+    assert.equal(f.events.filter(event => event.item?.kind === 'turn_cancelled').length, 2);
 });
 
 for (const reconcileAt of ['snapshot', 'same-session', 'other-session'] as const) {
@@ -929,6 +951,8 @@ for (const reconcileAt of ['snapshot', 'same-session', 'other-session'] as const
         const failed = f.manager.snapshot(row.sessionId);
         assert.equal(failed.session.status, 'failed');
         assert.equal(failed.session.error?.code, 'native_failed');
+        // A failed settlement carries the same cleanup-pending readout while residue is undrained.
+        assert.equal(failed.session.cleanupPending, true);
         assert.equal(handle.closed, false);
         assert.equal(handle.alive, false);
         assert.throws(() => f.manager.prompt(row.sessionId, { ...prompt, clientTurnKey: 'late-retry' }), errorCode('session_closing'));
@@ -939,7 +963,9 @@ for (const reconcileAt of ['snapshot', 'same-session', 'other-session'] as const
         // No callback and no timer: the next existing read/admission observes the native receipt.
         handle.closed = true;
         if (reconcileAt === 'snapshot') {
-            assert.deepEqual(f.manager.snapshot(row.sessionId), failed);
+            // Only the read-time readout flips: the stored failure frame itself is untouched.
+            assert.deepEqual(f.manager.snapshot(row.sessionId),
+                { ...failed, session: { ...failed.session, cleanupPending: false } });
             assert.equal(f.events.length, eventCount);
         }
         const target = reconcileAt === 'other-session' ? other : row;
@@ -951,7 +977,8 @@ for (const reconcileAt of ['snapshot', 'same-session', 'other-session'] as const
         await next.sent.promise;
         assert.equal(options.nativeCursor, reconcileAt === 'other-session' ? null : 'private-native-cursor');
         assert.equal(handle.closes, 1, 'the rejected native close is never retried or relabelled');
-        if (reconcileAt === 'other-session') assert.deepEqual(f.manager.snapshot(row.sessionId), failed);
+        if (reconcileAt === 'other-session') assert.deepEqual(f.manager.snapshot(row.sessionId),
+            { ...failed, session: { ...failed.session, cleanupPending: false } });
         next.outcome.resolve(done);
         await f.terminal(target.sessionId, reconcileAt === 'other-session' ? 1 : 3);
     });
@@ -998,6 +1025,7 @@ test('open rejection plus failed cleanup retains its preregistered resource unti
     assert.equal(f.store.readRecord(row.sessionId)?.nativeStarted, false);
     const failed = f.manager.snapshot(row.sessionId);
     assert.equal(failed.session.status, 'failed');
+    assert.equal(failed.session.cleanupPending, true);
     const duplicate = f.manager.prompt(row.sessionId, prompt);
     assert.equal(duplicate.receipt.turnId, admitted.receipt.turnId);
     assert.equal(duplicate.receipt.status, 'failed');
@@ -1007,7 +1035,9 @@ test('open rejection plus failed cleanup retains its preregistered resource unti
     resource.closed = true;
     f.manager.prompt(other.sessionId, prompt);
     await f.providers.claude.opened();
-    assert.deepEqual(f.manager.snapshot(row.sessionId), failed);
+    // Observing physical close clears only the read-time readout, never the stored frame.
+    assert.deepEqual(f.manager.snapshot(row.sessionId),
+        { ...failed, session: { ...failed.session, cleanupPending: false } });
     assert.equal(resource.closes, 1);
     assert.equal(provider.calls.length, 1);
 });

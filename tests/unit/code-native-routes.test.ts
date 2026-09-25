@@ -205,6 +205,22 @@ test('prompt responses distinguish committed new admission from an existing rece
     });
 });
 
+test('cleanup-pending readout crosses list, snapshot and cancel responses unchanged', async () => {
+    await server(async (url, f) => {
+        const pending = { ...f.session, cleanupPending: true };
+        f.service.list = () => [pending];
+        f.service.snapshot = () => ({ session: pending, items: [], sequence: 7, pendingPermissions: [], truncated: false });
+        f.service.cancel = async () => pending;
+        const listed = await (await request(`${url}/sessions`)).json();
+        assert.equal(listed.sessions[0].cleanupPending, true);
+        const snapshot = await (await request(`${url}/sessions/session-one`)).json();
+        assert.equal(snapshot.session.cleanupPending, true);
+        const cancelled = await (await request(`${url}/sessions/session-one/cancel`, 'POST', { turnId: 'turn-one', epoch: 4 })).json();
+        assert.equal(cancelled.session.status, 'idle');
+        assert.equal(cancelled.session.cleanupPending, true);
+    });
+});
+
 test('cancel and permission answers keep captured owner and opaque choice unchanged', async () => {
     await server(async (url, f) => {
         assert.equal((await request(`${url}/sessions/session-one/cancel`, 'POST', { turnId: 'turn-one' })).status, 400);
