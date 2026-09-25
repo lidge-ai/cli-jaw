@@ -556,3 +556,29 @@ test('a main run stores what the user wrote, not the appended inline-skill block
     assert.equal(userRows.length, 1);
     assert.equal(userRows[0]?.[1], typed);
 });
+
+test('the stored user row drops every inline-skill shape and keeps everything else', async () => {
+    const skills = [
+        { id: 'jaw-browser', name: 'jaw-browser', description: 'Chrome', content: '# Browser skill body' },
+        { id: 'jaw-search', name: 'jaw-search', description: 'Search', content: '# Search skill body' },
+    ];
+    const cases: Array<{ sent: string; stored: string }> = [];
+    const two = 'use $jaw-browser and $jaw-search';
+    cases.push({ sent: withSkillMentions(two, two, { skills, cli: 'claude' }), stored: two });
+    const stub = 'stub $jaw-browser';
+    cases.push({ sent: withSkillMentions(stub, stub, { skills, cli: 'cursor' }), stored: stub });
+    const tail = '\n(need history? follow-up line)';
+    cases.push({ sent: withSkillMentions('mid $jaw-search', 'mid $jaw-search', { skills, cli: 'claude' }) + tail,
+        stored: 'mid $jaw-search' + tail });
+    const typedHeader = 'note\n\n[Inline Skills — typed by hand]\nno skill blocks follow';
+    cases.push({ sent: typedHeader, stored: typedHeader });
+    for (const { sent, stored } of cases) {
+        const f = fixture();
+        f.options.exit.prompt = sent;
+        insertedRows.length = 0;
+        await f.start().promise;
+        const userRows = insertedRows.filter(args => args[0] === 'user');
+        assert.equal(userRows.length, 1);
+        assert.equal(userRows[0]?.[1], stored, JSON.stringify(stored));
+    }
+});
