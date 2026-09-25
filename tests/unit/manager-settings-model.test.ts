@@ -62,19 +62,6 @@ test('Per-CLI edits expand to a single perCli node with multiple children', () =
     });
 });
 
-test('Codex-only context-window edits are emitted only when set', () => {
-    const store = createDirtyStore();
-    store.set('perCli.codex.contextWindowSize', {
-        value: 1_200_000,
-        original: 1_000_000,
-        valid: true,
-    });
-    const patch = expandPatch(store.saveBundle());
-    assert.deepEqual(patch, {
-        perCli: { codex: { contextWindowSize: 1_200_000 } },
-    });
-});
-
 // ─── Reset overrides ─────────────────────────────────────────────────
 
 test('buildResetOverridesPatch covers every CLI from overrides + perCli', () => {

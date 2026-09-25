@@ -128,7 +128,6 @@ const REQUIRED_GUARDED: [string, string][] = [
     ['settings.ts', '/api/quota'],
     ['settings.ts', '/api/cli-registry'],
     ['settings.ts', '/api/cli-status'],
-    ['settings.ts', '/api/codex-context'],
     // messages.ts is not scanned for omissions (another lane owns the file), but
     // the routes #449 closed there must stay closed.
     ['messages.ts', '/api/messages'],

@@ -3,7 +3,6 @@ import {
     loadUnifiedMcp, syncToAll,
     ensureWorkingDirSkillsLinks, initMcpConfig,
 } from '../../lib/mcp-sync.js';
-import { syncCodexContextWindow } from './codex-config.js';
 import {
     settings, persistAndCommit, snapshotSettingsState, migrateSettings, normalizeProjectDirs,
     DEFAULT_SETTINGS,
@@ -364,15 +363,6 @@ async function applyRuntimeSettingsPatchSerialised(
             : prevCandidate.shape;
         persistAndCommit({ value: migrated, shape: nextShape }, opts.writeSettings);
         candidateCommitted = true;
-
-        if (patch["perCli"]?.codex && 'contextWindow' in patch["perCli"].codex) {
-            const codexCfg = settings["perCli"]?.codex || {};
-            syncCodexContextWindow({
-                enabled: !!codexCfg.contextWindow,
-                contextWindow: codexCfg.contextWindowSize || 1000000,
-                compactLimit: codexCfg.contextCompactLimit || 900000,
-            });
-        }
 
         if (!preserveRuntimeState) opts.resetFallbackState?.();
 

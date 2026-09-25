@@ -179,7 +179,7 @@ Cursor/Grok activation and Activity controls are separate from this API foundati
 | Chat Sessions | `GET /api/chat-sessions` `POST /api/chat-sessions` `POST /api/chat-sessions/:id/switch` `DELETE /api/chat-sessions/:id` |
 | Instance Lock | `GET /api/instance/lock` `POST /api/instance/lock` `DELETE /api/instance/lock` |
 | Search | `GET /api/search` |
-| Settings/Prompt | `GET/PUT /api/settings` `POST /api/settings/slack/reset` `POST /api/settings/runtime-default-migration` `POST /api/settings/multi-session-default-migration` `POST /api/project/pick` `GET /api/project/git-summary` `GET /api/codex-context` `GET/PUT /api/prompt` `GET /api/prompt-templates` `PUT /api/prompt-templates/:id` `GET/PUT /api/heartbeat-md` |
+| Settings/Prompt | `GET/PUT /api/settings` `POST /api/settings/slack/reset` `POST /api/settings/runtime-default-migration` `POST /api/settings/multi-session-default-migration` `POST /api/project/pick` `GET /api/project/git-summary` `GET/PUT /api/prompt` `GET /api/prompt-templates` `PUT /api/prompt-templates/:id` `GET/PUT /api/heartbeat-md` |
 | MCP/CLI/Quota | `GET/PUT /api/mcp` `POST /api/mcp/sync` `POST /api/mcp/install` `POST /api/mcp/reset` `GET /api/mcp/registry` `GET /api/cli-registry` `GET /api/cli-status` `GET /api/quota` `POST /api/copilot/refresh` `POST /api/pi/profiles/register` `GET /api/pi/models` |
 | Runtime Context | `GET /api/runtime-context` `POST /api/runtime-context` `DELETE /api/runtime-context/:id` `DELETE /api/runtime-context` |
 | Native Runtime Decisions | `GET /api/runtime/requests` `POST /api/runtime/requests/:id` |

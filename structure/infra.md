@@ -910,7 +910,7 @@ M4-A2a adds opaque `issueApprovalCallback` / `resolveApprovalCallback` on the in
 | Module | 역할 |
 | --- | --- |
 | `config.ts` | 경로/설정/CLI 탐지 + `JAW_HOME`/`settings.json`/`skills_ref`/`messaging`/`network` defaults |
-| `codex-config.ts` | Codex `config.toml` context window sync |
+| `codex-config.ts` | Codex `config.toml` read-only diagnostics (root `openai_base_url`) |
 | `instance.ts` | launchd/systemd용 instance ID + node/jaw binary resolution |
 | `runtime-path.ts` | 서비스/launchd 환경에서 PATH 정규화 (`~/.local/bin`, `~/.claude/local/bin`, nvm/fnm/asdf/bun/homebrew 포함) |
 | `main-session.ts` | active_cli/session_id/model/working_dir/effort sync + reset helpers |
@@ -1074,13 +1074,13 @@ CLI → 서버 API 호출 시 인증 토큰을 관리하는 경량 헬퍼. 포�
 
 ---
 
-## src/core/codex-config.ts — Codex config.toml Context Window Sync (78L)
+## src/core/codex-config.ts — Codex config.toml Read-only Diagnostics (26L)
 
-`~/.codex/config.toml`에 `model_context_window`와 `model_auto_compact_token_limit` 키를 주입/제거한다. 1M Context 토글 변경 시 호출된다.
+`~/.codex/config.toml`을 읽기만 한다. 이 파일은 cli-jaw 밖의 Codex CLI/앱과 공유되므로 cli-jaw는 쓰지 않는다. context window/auto-compact 기준값은 Codex 자체 기본값을 따른다(#815에서 동작하지 않던 설정 페이지 슬라이더와 config.toml 동기화 제거).
 
 | Function | 역할 |
 | --- | --- |
-| `syncCodexContextWindow(cfg)` | enabled=true → upsert, enabled=false → remove |
+| `readCodexRootOpenAiBaseUrl(content?)` | TOML 테이블 밖 root `openai_base_url`만 읽음 |
 
 ---
 

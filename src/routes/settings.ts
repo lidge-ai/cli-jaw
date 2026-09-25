@@ -20,7 +20,6 @@ import {
     wikiRouteManagedPatchPaths,
 } from '../core/config.js';
 import { sanitizeSettingsInput } from '../core/settings-merge.js';
-import { readCodexContextWindow } from '../core/codex-config.js';
 import { regenerateB, getGeneratedPromptProof, A2_PATH, HEARTBEAT_PATH } from '../prompt/builder.js';
 import { clearTemplateCache, getTemplateDir } from '../prompt/template-loader.js';
 import {
@@ -520,10 +519,6 @@ export function registerSettingsRoutes(
     app.get('/api/project/git-summary', requireAuth, asyncHandler(async (_req, res) => {
         res.json(await getProjectGitSummary(settings["projectDirs"]));
     }));
-
-    app.get('/api/codex-context', requireAuth, (_, res) => {
-        res.json(readCodexContextWindow());
-    });
 
     app.get('/api/prompt', requireAuth, (req, res) => {
         const a2 = fs.existsSync(A2_PATH) ? fs.readFileSync(A2_PATH, 'utf8') : '';
