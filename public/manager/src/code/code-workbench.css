@@ -145,7 +145,12 @@
 .code-tool-summary:hover .code-tool-chevron,
 .code-tool-summary:focus-visible .code-tool-chevron { opacity: 1; }
 .code-tool-card[open] > .code-tool-summary .code-tool-chevron { transform: rotate(90deg); opacity: 1; }
+.code-tool-summary-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .code-tool-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; line-height: 1.15; }
+.code-tool-desc {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-dim); font-weight: 400; font-size: 11px;
+}
 /* A call in flight reads as in-flight. The verb already says so; this keeps the
    row alive while it streams, and stopping is what marks completion -- no chip
    that says "Done" on every successful row. */
@@ -200,11 +205,41 @@
     border-radius: 4px;
     padding: 6px 8px;
     overflow-x: auto;
-    max-height: 200px;
+    max-height: min(18rem, 50dvh);
     overflow-y: auto;
     white-space: pre-wrap;
     margin: 4px 0;
+    user-select: text;
 }
+.code-tool-body > .code-tool-text { margin: 4px 10px 0; }
+.code-tool-body[data-expanded="true"] .code-tool-text,
+.code-tool-body[data-expanded="true"] .code-tool-output,
+.code-tool-body[data-expanded="true"] .code-tool-json,
+.code-tool-body[data-expanded="true"] .code-tool-args,
+.code-tool-body[data-expanded="true"] .code-tool-error { max-height: none; }
+.code-tool-section-head { display: flex; align-items: center; gap: 6px; }
+.code-tool-section-head .code-tool-section-label { flex: 1; min-width: 0; }
+.code-tool-copy {
+    flex-shrink: 0; padding: 0 6px; border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm); background: var(--bg-panel);
+    color: var(--text-secondary); font: inherit; font-size: 10px; line-height: 16px;
+    cursor: pointer;
+}
+.code-tool-copy:hover { background: var(--bg-raised); color: var(--text-primary); }
+.code-tool-copy.copied {
+    color: var(--status-success);
+    border-color: color-mix(in srgb, var(--status-success) 40%, var(--border-subtle));
+}
+.code-tool-copy:focus-visible, .code-tool-toggle:focus-visible {
+    outline: 2px solid var(--ring); outline-offset: 2px;
+}
+.code-tool-waiting { margin: 4px 10px 0; color: var(--text-dim); font-size: 11px; }
+.code-tool-toggle {
+    align-self: flex-start; margin: 2px 10px 0; padding: 0; border: 0;
+    background: none; color: var(--accent); font: inherit; font-size: 11px;
+    text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.code-tool-toggle:hover { background: none; }
 .code-tool-section {
     margin: 8px 10px 0;
 }

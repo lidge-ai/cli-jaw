@@ -369,6 +369,41 @@ test('a running tool call reads in the present tense without a duplicate status 
     assert.match(h.container.textContent ?? '', /Failed/, 'failure still gets a word');
 });
 
+test('a tool card shows the decoded call, its description and a waiting line', bounded, async t => {
+    const h = await surface(t);
+    const heredoc = "ssh host 'cat > file <<EOF\nalpha\nbeta\nEOF'";
+    const running = item({ kind: 'tool_call', status: 'running',
+        tool: { name: 'bash', input: JSON.stringify({ command: heredoc, description: 'Deploy the config' }) } });
+    await h.render(createElement(CodeTranscriptItem, { item: running, provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.match(h.container.textContent ?? '', /Running ssh host/, 'the label is the decoded first line');
+    assert.equal(h.container.querySelector('.code-tool-desc')?.textContent, 'Deploy the config');
+    // The Input block is the command with real newlines, never the JSON envelope.
+    const args = h.container.querySelector<HTMLElement>('pre.code-tool-args');
+    assert.equal(args?.textContent, heredoc);
+    assert.ok(button(h.container, 'Copy input'), 'the command offers a copy button');
+    // A call in flight with nothing back yet reads as waiting, not a blank box.
+    assert.match(h.container.textContent ?? '', /Waiting for output…/);
+    assert.equal(h.container.querySelector('pre.code-tool-output'), null);
+});
+
+test('a settled card pretty-prints non-command input and uncaps tall bodies on demand', bounded, async t => {
+    const h = await surface(t);
+    const done = item({ kind: 'tool_call', status: 'done',
+        tool: { name: 'rg', input: JSON.stringify({ pattern: 'needle', path: '/work/repo' }), output: 'x\n'.repeat(40) } });
+    await h.render(createElement(CodeTranscriptItem, { item: done, provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.equal(h.container.querySelector('pre.code-tool-args')?.textContent,
+        JSON.stringify({ pattern: 'needle', path: '/work/repo' }, null, 2));
+    assert.equal(h.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'false');
+    await click(button(h.container, 'Show all'));
+    assert.equal(h.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'true');
+    assert.ok(button(h.container, 'Show less'));
+    // Short content earns no toggle at all.
+    const short = item({ kind: 'tool_call', status: 'done', tool: { name: 'read', input: '{"path":"/a.ts"}', output: 'small' } });
+    await h.render(createElement(CodeTranscriptItem, { item: short, provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.equal([...h.container.querySelectorAll('button')].some(node => node.textContent === 'Show all'), false);
+    assert.doesNotMatch(h.container.textContent ?? '', /Waiting for output/);
+});
+
 test('throttled text flushes empty, whitespace and final replacements immediately across identities', bounded, async t => {
     const h = await surface(t);
     function Probe({ text, final, identity }: { text: string; final: boolean; identity: string }) {

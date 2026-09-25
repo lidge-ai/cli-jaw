@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CodeItem } from '../../src/code-mode/wire.ts';
-import { noteworthyStatus, shortenPath, summariseToolInput, toolSummary } from '../../public/manager/src/code/tool-summary.ts';
+import { noteworthyStatus, shortenPath, summariseToolInput, toolInputDescription, toolInputDisplay, toolSummary } from '../../public/manager/src/code/tool-summary.ts';
 import { pendingUserItem, withPendingUserItem, PENDING_USER_ITEM_ID } from '../../public/manager/src/code/pending-user-item.ts';
 import { createCodeDraft } from '../../public/manager/src/code/code-controller-drafts.ts';
 
@@ -62,6 +62,27 @@ test('summaries stay one short line whatever the argument shape is', () => {
     assert.equal(shortenPath('/work/repo/src/deep/file.ts', CWD), 'src/deep/file.ts');
     assert.equal(shortenPath('/elsewhere/short.ts', CWD), '/elsewhere/short.ts');
     assert.equal(shortenPath(`/elsewhere/${'d'.repeat(80)}/x/y.ts`, CWD), '…/x/y.ts');
+});
+
+test('the description argument becomes muted secondary text, collapsed to one line', () => {
+    assert.equal(toolInputDescription(JSON.stringify({ command: 'npm test', description: 'Run unit tests' })), 'Run unit tests');
+    assert.equal(toolInputDescription(JSON.stringify({ command: 'npm test' })), '');
+    assert.equal(toolInputDescription(JSON.stringify({ description: 'line one\nline two' })), 'line one');
+    assert.equal(toolInputDescription('not json'), '');
+    assert.equal(toolInputDescription(undefined), '');
+});
+
+test('the expanded input block decodes commands and pretty-prints the rest', () => {
+    const heredoc = "ssh host 'cat > file <<EOF\nalpha\nbeta\nEOF'";
+    const command = toolInputDisplay(JSON.stringify({ command: heredoc, description: 'x' }));
+    assert.equal(command?.content, heredoc, 'the body keeps the command\'s real newlines');
+    assert.equal(command?.command, true);
+    const other = toolInputDisplay(JSON.stringify({ pattern: 'needle', path: '/work/repo' }));
+    assert.equal(other?.content, JSON.stringify({ pattern: 'needle', path: '/work/repo' }, null, 2));
+    assert.equal(other?.command, false);
+    // A non-JSON argument (e.g. a bare file_change path) renders as sent.
+    assert.equal(toolInputDisplay('/work/repo/a/b.ts')?.content, '/work/repo/a/b.ts');
+    assert.equal(toolInputDisplay(undefined), null);
 });
 
 test('only actionable states are worth a badge', () => {
