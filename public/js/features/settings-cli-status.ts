@@ -5,7 +5,7 @@ import { t } from './i18n.js';
 import { state } from '../state.js';
 import { ICONS } from '../icons.js';
 import { providerIcon, providerLabel } from '../provider-icons.js';
-import { describeCliProbe, describeNativeStartFailure, resolveQuotaWindowDisplay, type CliStatusInfo, type QuotaEntry } from './settings-types.js';
+import { describeCliProbe, describeNativeStartFailure, hasUsableCliStatus, isCliStatusUsable, resolveQuotaWindowDisplay, type CliStatusInfo, type QuotaEntry } from './settings-types.js';
 import {
     buildAccountParts,
     normalizeQuotaWindowLabel,
@@ -34,6 +34,7 @@ let cliStatusLoadInFlight: Promise<void> | null = null;
 let cliStatusRefreshFeedbackTimer: number | null = null;
 
 const CLI_STATUS_COLLAPSED_KEY = 'cliStatusCollapsed';
+const CLI_STATUS_UNDETECTED_EXPANDED_KEY = 'cliStatusUndetectedExpanded';
 
 export function isEmbeddedPreviewFrame(): boolean {
     try {
@@ -50,6 +51,16 @@ function readCliStatusCollapsed(): boolean {
 
 function saveCliStatusCollapsed(collapsed: boolean): void {
     try { localStorage.setItem(CLI_STATUS_COLLAPSED_KEY, collapsed ? 'true' : 'false'); }
+    catch { /* ignore */ }
+}
+
+function readCliStatusUndetectedExpanded(): boolean {
+    try { return localStorage.getItem(CLI_STATUS_UNDETECTED_EXPANDED_KEY) === 'true'; }
+    catch { return false; }
+}
+
+function saveCliStatusUndetectedExpanded(expanded: boolean): void {
+    try { localStorage.setItem(CLI_STATUS_UNDETECTED_EXPANDED_KEY, expanded ? 'true' : 'false'); }
     catch { /* ignore */ }
 }
 
@@ -295,7 +306,8 @@ function renderCliStatus(data: { cliStatus: Record<string, CliStatusInfo> | null
         copilot: { install: 'npm i -g copilot', auth: t('cli.copilot.authHint') },
     };
 
-    let html = '';
+    const usableCards: string[] = [];
+    const undetectedCards: string[] = [];
 
     if (!cliStatus || typeof cliStatus !== 'object') {
         if (el) el.innerHTML = '<div style="color:var(--text-dim);font-size:11px">Failed to load CLI status</div>';
@@ -431,7 +443,7 @@ function renderCliStatus(data: { cliStatus: Record<string, CliStatusInfo> | null
             ? `<div role="alert" style="font-size:10px;color:var(--warning);margin:2px 0 0 16px">${escapeHtml(startFailure.message)}</div>`
             : '';
 
-        html += `
+        const cardHtml = `
             <div class="settings-group" style="margin-bottom:6px;padding:8px 10px">
                 <div class="cli-status-row" style="display:flex;align-items:center">
                     <span class="cli-dot ${dotClass}"></span>
@@ -445,29 +457,49 @@ function renderCliStatus(data: { cliStatus: Record<string, CliStatusInfo> | null
                 ${windowsHtml}
             </div>
         `;
+        (isCliStatusUsable(info, q) ? usableCards : undetectedCards).push(cardHtml);
+    }
+
+    let html = usableCards.join('');
+    if (undetectedCards.length) {
+        // Collapsed by default: CLIs needing install/auth stop crowding the
+        // working list, but stay one click away in the same order.
+        const undetectedExpanded = readCliStatusUndetectedExpanded();
+        html += `
+            <div class="cli-undetected-group">
+                <button type="button" id="cliUndetectedToggle" class="cli-status-header cli-undetected-toggle${undetectedExpanded ? ' expanded' : ''}"
+                    aria-expanded="${undetectedExpanded}" aria-controls="cliUndetectedList">
+                    ${escapeHtml(t('cli.undetectedGroup', { count: undetectedCards.length }))}
+                </button>
+                <div id="cliUndetectedList"${undetectedExpanded ? '' : ' style="display:none"'}>${undetectedCards.join('')}</div>
+            </div>
+        `;
     }
 
     if (el) el.innerHTML = html;
 
-    const allEntries = Object.entries(cliStatus);
-    // While probes are failing we cannot tell ready from unready, so the
-    // "no ready CLI" alarm would be exactly the false alarm #277 reports —
-    // the runtime worked the whole time.
-    const anyProbeUnavailable = allEntries.some(([, info]) => {
-        const state = describeCliProbe(info);
-        return state === 'probe-failing' || state === 'unknown';
-    });
-    const hasReadyCli = allEntries.some(([name, info]) => {
-        if (describeCliProbe(info) !== 'ready') return false;
-        const q = quota?.[name];
-        return !q || q.authenticated !== false;
-    });
-    if (!hasReadyCli && !anyProbeUnavailable && allEntries.length > 0 && el) {
+    const allEntries = Object.entries(cliStatus).filter(([name]) => !SIDEBAR_HIDDEN_CLIS.has(name));
+    // The alarm shares the partition's usable rule: a stale-but-preserved row
+    // or an unsettled probe is last-known-good, not evidence of absence —
+    // otherwise it false-alarms through every re-check window (#277).
+    if (allEntries.length > 0 && !hasUsableCliStatus(allEntries, quota) && el) {
         el.insertAdjacentHTML('afterbegin',
             `<div style="padding:8px 10px;margin-bottom:8px;background:var(--warning-dim);border:1px solid var(--warning);border-radius:6px;font-size:11px;color:var(--warning)">
                 ${ICONS.warning} ${t('cli.noReadyCli')}
             </div>`
         );
+    }
+
+    const undetectedToggle = document.getElementById('cliUndetectedToggle');
+    if (undetectedToggle) {
+        undetectedToggle.addEventListener('click', () => {
+            const expanded = undetectedToggle.getAttribute('aria-expanded') !== 'true';
+            undetectedToggle.setAttribute('aria-expanded', String(expanded));
+            undetectedToggle.classList.toggle('expanded', expanded);
+            const list = document.getElementById('cliUndetectedList');
+            if (list) list.style.display = expanded ? 'block' : 'none';
+            saveCliStatusUndetectedExpanded(expanded);
+        });
     }
 
     const kcBtn = document.getElementById('copilotKeychainBtn');

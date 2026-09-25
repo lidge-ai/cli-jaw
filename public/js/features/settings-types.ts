@@ -93,6 +93,44 @@ export function describeCliProbe(info: CliStatusInfo): 'checking' | 'unknown' | 
     return info.available === true && info.capabilityReady !== false ? 'ready' : 'unavailable';
 }
 
+/**
+ * Sidebar partition: a card stays in the top group only while current or
+ * preserved evidence says the CLI is usable — installed, capability-ready and
+ * authenticated. `unavailable`/`capability-failed` rows demote, and a `ready`
+ * or `stale` row demotes only on concrete evidence (missing binary/capability
+ * or `authenticated === false` from either the status probe or the quota
+ * reader). Indeterminate probe states (checking/unknown, or failing with no
+ * prior snapshot) are not proof of absence, and a stale row is last-known-good — a previously working
+ * CLI keeps its place until a fresh probe says otherwise.
+ */
+export function isCliStatusUsable(info: CliStatusInfo, quota: QuotaEntry | null | undefined): boolean {
+    const probe = describeCliProbe(info);
+    if (probe === 'checking' || probe === 'unknown') return true;
+    if (probe === 'probe-failing') {
+        // A failing probe overlays the last successful snapshot; its concrete
+        // install/auth facts still hold, only a cold (null) row is unknown.
+        if (info.available == null) return true;
+        return info.available === true && info.capabilityReady !== false && info.authenticated !== false;
+    }
+    if (probe === 'unavailable' || probe === 'capability-failed') return false;
+    if (info.available !== true || info.capabilityReady === false) return false;
+    return info.authenticated !== false && quota?.authenticated !== false;
+}
+
+/**
+ * "Any usable CLI" rule the sidebar banner shares with the partition: true
+ * while at least one row reads usable under {@link isCliStatusUsable}. An
+ * alarm gated on this cannot false-fire through the stale re-check window or
+ * the initial probe pass — those rows count as usable, not as evidence of
+ * absence (#277).
+ */
+export function hasUsableCliStatus(entries: Iterable<readonly [string, CliStatusInfo]>, quota: Record<string, QuotaEntry> | null | undefined): boolean {
+    for (const [name, info] of entries) {
+        if (isCliStatusUsable(info, quota?.[name])) return true;
+    }
+    return false;
+}
+
 export type CliProbeAvailabilityPresentation = {
     kind: 'checking' | 'unknown' | 'failing' | 'none';
     message: string | null;

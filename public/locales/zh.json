@@ -306,6 +306,7 @@
   "cli.showMore": "更多 ▸",
   "cli.authRequired": "需要安装/认证",
   "cli.notAuthenticated": "需要认证 — 请运行下面的命令",
+  "cli.undetectedGroup": "需要安装或登录 ({count})",
   "drag.drop": "将文件拖到这里",
   "status.responding": "正在回复",
   "aria.cmdList": "命令列表",
