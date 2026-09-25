@@ -89,6 +89,7 @@ export class CodeController {
     private gitError: string | null = null;
     private gitGeneration = 0;
     private pickerGeneration = 0;
+    private workspacePicking = false;
     private indexGeneration = 0;
     private catalogGeneration = 0;
     private lifetime = 0;
@@ -306,7 +307,7 @@ export class CodeController {
             permissions: detail?.permissions ?? [],
             input: draft.input, selection: session ? sessionSelection(session) : draft.selection,
             gitInfo: this.gitInfo, loading: this.indexLoading || !!detail?.hydrating || (!!id && !detail?.hydrated && !detail?.error),
-            pending, busy: codeSessionBusy(session), synced, transport: this.transport,
+            pending, busy: codeSessionBusy(session), synced, transport: this.transport, workspacePicking: this.workspacePicking,
             error: [operation.error ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
@@ -521,8 +522,10 @@ export class CodeController {
     }
     pickWorkspace = async (): Promise<void> => {
         const draft = this.book.fresh;
-        if (this.book.selectedId !== null || draft.operation.kind !== 'idle' || draft.createUnknown) return;
+        if (this.book.selectedId !== null || draft.operation.kind !== 'idle' || draft.createUnknown || this.workspacePicking) return;
         const navigation = this.book.navigation, selectionEdit = draft.selectionEdit, generation = ++this.pickerGeneration;
+        this.workspacePicking = true;
+        this.notify();
         try {
             const result = await this.client.pickWorkspace();
             if (!this.active || generation !== this.pickerGeneration || navigation !== this.book.navigation
@@ -534,6 +537,9 @@ export class CodeController {
         } catch (error) {
             if (this.active && generation === this.pickerGeneration && navigation === this.book.navigation
                 && selectionEdit === draft.selectionEdit && draft === this.book.fresh && draft.operation.kind === 'idle') { draft.operation.error = message(error); this.notify(); }
+        } finally {
+            this.workspacePicking = false;
+            this.notify();
         }
     };
     setSelection = async (patch: Partial<CodeCreateSessionRequest>): Promise<void> => {

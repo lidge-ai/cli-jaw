@@ -21,6 +21,7 @@ export interface CodeControllerModel {
     loading: boolean;
     pending: boolean;
     busy: boolean;
+    workspacePicking: boolean;
     synced: boolean;
     error: string | null;
     transport: CodeTransportState;

@@ -49,7 +49,7 @@ function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
         defaultEffort: null, capabilities: s.capabilities, modelSource: 'native' as const,
     })) }, sessions: [s], session: s, selectedId: s.sessionId, items: [], permissions: [], input: 'draft text',
     selection: { provider: s.provider, cwd: s.cwd, model: s.model, effort: null, permissionMode: s.permissionMode },
-    gitInfo: null, loading: false, pending: false, busy: false, synced: true, error: null, transport: 'connected',
+    gitInfo: null, loading: false, pending: false, busy: false, synced: true, error: null, transport: 'connected', workspacePicking: false,
     operation: { kind: 'idle', error: null }, retryText: null, canRetrySameSend: false, permissionOperations: {},
     hasMoreSessions: false, hasOlderHistory: false, filter: { scope: 'all', archived: false },
     creationUnknown: false, startAnotherSession() {}, newSession() {}, async selectSession() {}, setInput() {}, async setSelection() {}, async pickWorkspace() {},
@@ -667,7 +667,7 @@ test('recent workspaces are unique directories ordered by last use, capped at fi
 test('draft empty state offers workspace, recents and suggested prompts without sending', bounded, async t => {
     const h = await surface(t);
     const selections: unknown[] = [], inputs: string[] = []; let sends = 0, picks = 0;
-    const draft = model({ selectedId: null, session: null, items: [],
+    const draft = model({ selectedId: null, session: null, items: [], input: '',
         selection: { provider: 'codex-app', cwd: '/work/current', model: 'native-model', effort: null, permissionMode: 'ask' },
         sessions: [session({ cwd: '/work/current', lastUsedAt: 9 }), session({ cwd: '/work/recent', lastUsedAt: 8 }), session({ cwd: '/work/older', lastUsedAt: 1 })],
         async setSelection(patch) { selections.push(patch); },
@@ -689,11 +689,32 @@ test('draft empty state offers workspace, recents and suggested prompts without 
     assert.equal(sends, 0, 'a suggested prompt fills the composer draft, never sends');
     await click(button(empty, 'Choose Code workspace')); assert.equal(picks, 1);
     assert.equal(document.activeElement?.getAttribute('aria-label'), 'Code prompt', 'entering the draft lands focus in the composer');
+    // One folder dialog at a time: while the pick is in flight both the header
+    // and the empty-state picker read as busy, not just the one that was clicked.
+    await h.render(createElement(CodeWorkbench, { controller: { ...draft, workspacePicking: true }, endpointKey: '43225' }));
+    const pickers = [...h.container.querySelectorAll<HTMLButtonElement>('[aria-label="Choose Code workspace"]')];
+    assert.equal(pickers.length, 2);
+    for (const picker of pickers) assert.equal(picker.disabled, true);
+    // A prompt the composer already holds must not be silently overwritten by a chip.
+    await h.render(createElement(CodeWorkbench, { controller: { ...draft, input: 'Explain this codebase' }, endpointKey: '43225' }));
+    assert.equal(h.container.querySelector('.code-draft-prompt'), null);
+});
+
+test('recent list still fills five slots when the current workspace is among the most used', bounded, async t => {
+    const h = await surface(t);
+    const draft = model({ selectedId: null, session: null, items: [], input: '',
+        selection: { provider: 'codex-app', cwd: '/w/current', model: 'native-model', effort: null, permissionMode: 'ask' },
+        sessions: ['/w/current', '/w/2', '/w/3', '/w/4', '/w/5', '/w/6'].map((cwd, i) => session({ cwd, lastUsedAt: 10 - i })) });
+    await h.render(createElement(CodeWorkbench, { controller: draft, endpointKey: '43225' }));
+    // Excluding the current cwd must happen before the cap, or it eats a slot
+    // and the sixth workspace never surfaces.
+    assert.deepEqual([...h.container.querySelectorAll<HTMLButtonElement>('.code-draft-recent')].map(b => b.textContent),
+        ['/w/2', '/w/3', '/w/4', '/w/5', '/w/6']);
 });
 
 test('in-flight creation freezes the draft empty state instead of offering stale choices', bounded, async t => {
     const h = await surface(t);
-    const draft = model({ selectedId: null, session: null, items: [], pending: true,
+    const draft = model({ selectedId: null, session: null, items: [], pending: true, input: '',
         operation: { kind: 'creating', error: null }, sessions: [session({ cwd: '/work/recent' })] });
     await h.render(createElement(CodeWorkbench, { controller: draft, endpointKey: '43225' }));
     const empty = h.container.querySelector('.code-draft-empty'); assert.ok(empty);

@@ -1,18 +1,14 @@
-import { useState } from 'react';
 import type { CodeControllerModel } from './code-controller-types';
 import { CODE_RUNTIME_LABELS, CODE_SESSION_LABELS } from './code-types';
 
 export function CodeWorkspaceHeader({ controller: c }: { controller: CodeControllerModel }) {
-    const [picking, setPicking] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const cwd = c.session?.cwd ?? c.selection.cwd;
     const frozen = c.selectedId !== null || c.pending || c.creationUnknown || c.operation.kind !== 'idle';
-    async function pick() {
+    // Shared with CodeDraftEmptyState's picker so only one folder dialog can be open.
+    const picking = c.workspacePicking;
+    function pick() {
         if (frozen || picking) return;
-        setPicking(true); setError(null);
-        try { await c.pickWorkspace(); }
-        catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-        finally { setPicking(false); }
+        void c.pickWorkspace();
     }
     return <header className="code-workspace-header">
         <div className="code-session-header">
@@ -23,7 +19,7 @@ export function CodeWorkspaceHeader({ controller: c }: { controller: CodeControl
         <div className="code-workspace-primary">
             {frozen ? <span className="code-workspace-chip" title={cwd}>{cwd || 'Workspace not set'}</span>
                 : <button type="button" className="code-workspace-picker" aria-label="Choose Code workspace" disabled={picking}
-                    title={cwd || 'Choose a folder'} onClick={() => void pick()}>
+                    title={cwd || 'Choose a folder'} onClick={pick}>
                     <span className="code-workspace-picker-label">{picking ? 'Choosing folder…' : cwd || 'Choose workspace'}</span>
                 </button>}
             {c.gitInfo?.isRepo && <>
@@ -32,7 +28,6 @@ export function CodeWorkspaceHeader({ controller: c }: { controller: CodeControl
                     {c.gitInfo.status.dirty ? `${c.gitInfo.status.changed} changed · ${c.gitInfo.status.untracked} untracked` : 'clean'}
                 </span>}
             </>}
-            {error && <span className="code-action-error" role="alert">{error}</span>}
         </div>
     </header>;
 }
