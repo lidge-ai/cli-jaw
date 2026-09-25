@@ -14,6 +14,8 @@ const THRESHOLD = 1;
 const EST_HEIGHT = 80;
 const OVERSCAN = 5;
 const BOTTOM_THRESHOLD = 80;
+/** Quiet period after the last width change before a resize drag counts as done. */
+const RESIZE_SETTLE_MS = 160;
 
 export type RestoreReason =
     | 'pageshow'
@@ -44,6 +46,13 @@ type MeasurableVirtualElement = Pick<HTMLElement, 'getBoundingClientRect'>;
 interface ScrollAnchor {
     el: HTMLElement;
     top: number;
+}
+/** Where the reader was when a resize drag began. Captured once per drag so
+ *  per-frame corrections never inherit the previous frame's drift. */
+interface ResizePin {
+    follow: boolean;
+    anchor: { index: number; top: number } | null;
+    settleTimer: number;
 }
 
 function readMeasuredHeight(el: MeasurableVirtualElement): number {
@@ -84,6 +93,7 @@ export class VirtualScroll {
     private itemGap = 0;
     private restorePassTimers = new Set<number>();
     private shouldFollowAfterRestore: RestoreFollowPredicate = () => true;
+    private resizePin: ResizePin | null = null;
 
     onLazyRender: LazyRenderCallback | null = null;
     onPostRender: ((viewport: HTMLElement) => void) | null = null;
@@ -180,6 +190,56 @@ export class VirtualScroll {
         this.virtualizer.measure();
         remeasureMountedVirtualItems(this.items, this.mounted, this.virtualizer);
         this.renderItems();
+    }
+
+    /** Width-driven re-measure that keeps the reader's place for a whole drag.
+     *  Follow intent and the anchor are read once, at the first frame: later
+     *  frames see scroll events caused by the reflow itself, and TanStack's own
+     *  item measurements land a frame after ours, so re-reading either would
+     *  compound the drift this exists to remove. */
+    private invalidateLayoutPinned(): void {
+        if (!this.virtualizer) return;
+        let pin = this.resizePin;
+        if (!pin) {
+            const follow = this.shouldFollowAfterRestore();
+            pin = { follow, anchor: follow ? null : this.captureIndexAnchor(), settleTimer: 0 };
+            this.resizePin = pin;
+        }
+        window.clearTimeout(pin.settleTimer);
+        this.invalidateLayout();
+        this.applyResizePin(pin);
+        const settling = pin;
+        settling.settleTimer = window.setTimeout(() => {
+            requestAnimationFrame(() => {
+                if (this.resizePin !== settling) return;
+                this.resizePin = null;
+                if (this.virtualizer) this.applyResizePin(settling);
+            });
+        }, RESIZE_SETTLE_MS);
+    }
+
+    private applyResizePin(pin: ResizePin): void {
+        if (pin.follow) {
+            this.scrollToBottom();
+            return;
+        }
+        if (!pin.anchor) return;
+        const el = this.mounted.get(pin.anchor.index);
+        if (!el?.isConnected) return;
+        const delta = el.getBoundingClientRect().top - pin.anchor.top;
+        if (Number.isFinite(delta) && delta !== 0) this.container.scrollTop += delta;
+    }
+
+    private captureIndexAnchor(): ResizePin['anchor'] {
+        const el = this.firstVisibleMountedItem();
+        if (!el) return null;
+        const index = Number(el.dataset['vsIdx'] ?? '-1');
+        return index >= 0 ? { index, top: el.getBoundingClientRect().top } : null;
+    }
+
+    private clearResizePin(): void {
+        if (this.resizePin) window.clearTimeout(this.resizePin.settleTimer);
+        this.resizePin = null;
     }
 
     /** Bulk-load items. Call AFTER registering onLazyRender/onPostRender. */
@@ -483,11 +543,16 @@ export class VirtualScroll {
         // TanStack's ResizeObserver watches individual items, but not the
         // container width — a window resize doesn't trigger item RO callbacks
         // because items are position:absolute (width from left:0 + right:0).
+        // Re-measuring alone leaves scrollTop wherever the height deltas put it,
+        // so a drag (Manager sidebar, window edge) drifts a few px per frame
+        // until chat-scroll reads the gap as "user scrolled up" and stops
+        // following. Re-pin every pass: bottom while following, else the first
+        // visible row's on-screen top.
         let resizeRaf = 0;
         const scheduleInvalidateLayout = () => {
             cancelAnimationFrame(resizeRaf);
             resizeRaf = requestAnimationFrame(() => {
-                this.invalidateLayout();
+                this.invalidateLayoutPinned();
             });
         };
         const onResize = () => scheduleInvalidateLayout();
@@ -495,6 +560,7 @@ export class VirtualScroll {
         cleanupFns.push(() => {
             window.removeEventListener('resize', onResize);
             cancelAnimationFrame(resizeRaf);
+            this.clearResizePin();
         });
 
         if (typeof ResizeObserver !== 'undefined') {
