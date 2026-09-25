@@ -38,6 +38,9 @@
     --font-display: 'Chakra Petch', 'Outfit', 'Pretendard', 'Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
     --font-ui: var(--font-sans-system);
     --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+    /* Shared with the manager dashboard: top header rows on both surfaces
+       resolve to the same height so adjacent top bars line up. */
+    --workspace-topbar-height: 44px;
     --sidebar-left-w: 220px;
     --sidebar-right-w: 260px;
     --sidebar-collapsed-w: 48px;
@@ -133,6 +136,12 @@
     box-sizing: border-box;
 }
 
+/* Inside the Electron shell the top bar doubles as the macOS hiddenInset
+   titlebar strip and must match the manager's taller desktop value. */
+:root[data-cli-jaw-desktop="true"] {
+    --workspace-topbar-height: 52px;
+}
+
 body {
     font-family: var(--font-ui);
     background: var(--bg);
@@ -144,6 +153,19 @@ body {
         grid-template-columns 0.2s cubic-bezier(0.4, 0, 0.2, 1),
         background-color 200ms ease,
         color 200ms ease;
+}
+
+/* The app shell is exactly viewport-tall; the document must never scroll
+   (session-hub is the one view that legitimately pages the document). */
+body:not(.session-hub-mode) {
+    overflow: clip;
+}
+
+/* While a resize burst reflows the grid (manager sidebar drag resizes the
+   iframe, or a window edge drag), suppress scroll anchoring so no scrollable
+   subtree gets its scrollTop rewritten per frame. See features/resize-guard. */
+body.is-resizing * {
+    overflow-anchor: none;
 }
 
 :lang(zh),

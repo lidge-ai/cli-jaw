@@ -77,6 +77,7 @@ import { loadCliRegistry } from './constants.js';
 import { initAppName } from './features/appname.js';
 import { initAvatar } from './features/avatar.js';
 import { initSidebar, toggleLeft, toggleRight } from './features/sidebar.js';
+import { initResizeGuard } from './features/resize-guard.js';
 import { initTheme } from './features/theme.js';
 import { initPreviewShortcutBridge } from './features/preview-shortcut-bridge.js';
 import { ensurePreviewCapabilityListener, ensurePreviewInsertTextListener } from './preview-parent-origin.js';
@@ -462,6 +463,7 @@ async function bootstrap(): Promise<void> {
     if (isCliStatusExpanded()) loadCliStatus();
     // loadMessages() is handled by ws.js onopen (clear + reload)
     initSidebar();
+    initResizeGuard();
     loadEmployees();
     initHeartbeatBadge();
     void refreshMemorySidebar();

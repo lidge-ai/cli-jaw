@@ -85,7 +85,7 @@ test('manager server serves built dashboard HTML at /manager while preserving st
         'manager HTML must build a microphone Permissions-Policy for preview origins');
     assert.ok(server.includes("res.setHeader('Permissions-Policy', managerPermissionsPolicy)"),
         'manager HTML must delegate microphone permission to preview iframes before Chrome can show a prompt');
-    assert.ok(preview.includes('{ theme: props.theme }'),
+    assert.ok(preview.includes('{ theme: props.theme, desktop: isElectron() }'),
         'embedded manager preview must preserve dedicated preview-origin routing so iframe /api and /ws target the managed instance');
     assert.equal(preview.includes("transport: 'legacy-path'"), false,
         'embedded manager preview must not force the legacy /i path because it breaks root-relative instance API and websocket calls');
