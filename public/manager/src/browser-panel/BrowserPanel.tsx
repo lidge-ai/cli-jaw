@@ -383,6 +383,11 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const activeRegistrationId = registrationIdFor(activeTab.id);
     const activeBridgeState = bridgeStates[activeRegistrationId] ?? null;
     const nativeInspecting = activeBridgeState?.inspecting === true;
+    // Page coordinates from the guest (CDP box models) are CSS px; the panel
+    // overlays live in DIP, so bounds picked under a non-1 zoomFactor must be
+    // scaled before they are drawn.
+    const zoomFactorRef = useRef(1);
+    zoomFactorRef.current = activeBridgeState?.zoomFactor ?? activeTab.zoomFactor ?? 1;
 
     const panelInstanceId = useRef<symbol>(Symbol('browser-panel'));
     /** regId -> guest webContentsId for this panel's live registrations. */
@@ -483,7 +488,8 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
             if (tabId !== activeRegistrationId) return;
             setPickedElement({ ...element, pickedAt: Date.now(), pageUrl: activeTab.url, tabId: activeRegistrationId });
             if (element.bounds) {
-                setCommentAnchor({ x: element.bounds.x + Math.round(element.bounds.width / 2), y: element.bounds.y + Math.round(element.bounds.height / 2) });
+                const zoom = zoomFactorRef.current;
+                setCommentAnchor({ x: Math.round((element.bounds.x + element.bounds.width / 2) * zoom), y: Math.round((element.bounds.y + element.bounds.height / 2) * zoom) });
             }
             setCommentMode(true);
             const label = element.name || element.text || element.selector;

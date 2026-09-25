@@ -130,6 +130,14 @@ test('in-page navigation re-arms the auto fit', () => {
     assert.ok(inPage.includes('scheduleFitMeasure'), 'in-page navigation schedules a refit');
 });
 
+test('picked-element overlay converts page CSS px into DIP under zoom', () => {
+    assert.ok(panelSource.includes('zoomFactorRef'), 'panel tracks the live zoom factor');
+    assert.ok(
+        /element\.bounds\.(x|y) \+ element\.bounds\.(width|height) \/ 2\) \* zoom/.test(panelSource),
+        'picked bounds are scaled by the zoom factor before rendering',
+    );
+});
+
 test('renderer requests a refit on panel resize and on tab activation', () => {
     assert.ok(panelSource.includes('ResizeObserver'), 'panel observes the viewport box');
     assert.ok(panelSource.includes("kind: 'fitToWidth'"), 'renderer sends the fitToWidth command');
