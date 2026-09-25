@@ -147,14 +147,12 @@ export default function TelegramHub({ port, client, dirty, registerSave, manager
                                 <StatusBadge tone="neutral">Disabled</StatusBadge>
                             ),
                         },
-                        {
-                            label: 'Runtime',
-                            value: (
-                                <StatusBadge tone={runtimeTone}>
-                                    {runtime?.state ?? 'unknown'}
-                                </StatusBadge>
-                            ),
-                        },
+                        ...(runtime
+                            ? [{
+                                label: 'Runtime',
+                                value: <StatusBadge tone={runtimeTone}>{runtime.state}</StatusBadge>,
+                            }]
+                            : []),
                         ...(runtime?.chatId
                             ? [{ label: 'Bound chat', value: runtime.chatId, mono: true }]
                             : []),
@@ -196,7 +194,7 @@ export default function TelegramHub({ port, client, dirty, registerSave, manager
                 {config.routes.length === 0 ? (
                     <SettingsNote>No routes yet.</SettingsNote>
                 ) : (
-                    <div className="settings-card-toolbar">
+                    <div className="settings-card-scroll">
                         <table className="settings-overrides-table">
                             <thead><tr><th>Thread</th><th>Port</th><th>Label</th><th>Model</th><th>Prompt</th><th>On</th><th /></tr></thead>
                             <tbody>
