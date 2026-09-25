@@ -175,6 +175,13 @@ probe." 카탈로그 렌더 한 번이 프로세스를 띄우면 로그인 프�
 읽기 경로에 들어온다. 그래서 cursor/grok 스냅샷은 **명시적 프라임만** 채운다.
 `createCodeHost()`가 서비스 초기화 때 한 번 호출하고, 실패는 조용히 무시한다 —
 정적 목록이 그대로 남는다.
+## Claude 기본 모델과 설치 CLI 확인
+
+기본값은 `claude-opus-5-5`다. 이 id는 Claude Code 2.1.280 미만에서 API 400으로 거절되므로, 설치된 CLI 번들 카탈로그(`claude-model-discovery.ts`)가 판단 근거다. `claude-default-model-boot.ts`가 카탈로그로 지원 여부를 판정한다.
+
+- 부트 후 `server.ts`가 카탈로그를 한 번 읽고 `applyClaudeDefaultModelMigration()`을 돈다. `perCli.claude.model`이 정확히 예전 기본값 `claude-opus-4-8`인 홈만 옮기고, 다른 값·`activeOverrides`·직원 모델은 건드리지 않는다. 카탈로그를 못 읽거나 CLI가 5.5를 모르면 stamp를 남기지 않아서, CLI를 업데이트한 뒤 다음 부트에서 다시 시도한다.
+- `spawnAgent`(print·native)와 Code의 Claude `open()`은 캐시된 카탈로그가 모델을 거절할 때만 "Claude Code를 업데이트하라"는 문구로 바로 실패한다. 캐시가 비어 있으면 막지 않는다.
+
 ## 관련 문서
 
 - [runtime integration](runtime-integration.md) — transport 선택과 native adapter
