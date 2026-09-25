@@ -80,8 +80,8 @@ test('CM-009b: migrateLegacyClaudeValue upgrades dot-form to hyphen-form', () =>
 
 // ─── Helpers ─────────────────────────────────────────
 
-test('CM-011: getDefaultClaudeModel returns Opus 4.8 full ID', () => {
-    assert.equal(getDefaultClaudeModel(), 'claude-opus-4-8');
+test('CM-011: getDefaultClaudeModel returns Opus 5.5 full ID', () => {
+    assert.equal(getDefaultClaudeModel(), 'claude-opus-5-5');
 });
 
 test('CM-012: getDefaultClaudeChoices returns aliases + verified pinned full IDs', () => {

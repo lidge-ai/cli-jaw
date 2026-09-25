@@ -86,7 +86,15 @@ export function migrateLegacyClaudeValue(model: string): string {
 }
 
 export function getDefaultClaudeModel(): string {
-  return 'claude-opus-4-8';
+  return 'claude-opus-5-5';
+}
+
+/** The default this project shipped before `claude-opus-5-5`; only this exact value migrates. */
+export const PREVIOUS_DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8';
+
+/** Ids Claude Code rejects before 2.1.280; the installed bundle catalog is the capability proof. */
+export function claudeModelNeedsCatalogEntry(model: string): boolean {
+  return /^claude-opus-5-5(\[1m\])?$/.test(model);
 }
 
 export function getDefaultClaudeChoices(): string[] {

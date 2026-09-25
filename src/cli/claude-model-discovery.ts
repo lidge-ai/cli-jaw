@@ -12,7 +12,7 @@
  * Codex catalog already uses. This is a file read, so it does not violate the
  * "catalogs must never execute a CLI" rule in code-mode/providers/catalog.ts.
  */
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 
 export interface ClaudeBundleCatalog {
@@ -182,6 +182,17 @@ export async function resolveClaudeBundleCatalog(binaryPath: string): Promise<Cl
     if (!catalog) return null;
     cached = { key, catalog };
     return catalog;
+}
+
+/** Cached catalog for this exact binary (size+mtime), or null when not read yet. Never reads the bundle. */
+export function peekClaudeBundleCatalog(binaryPath: string): ClaudeBundleCatalog | null {
+    if (!binaryPath || !cached) return null;
+    try {
+        const info = statSync(binaryPath);
+        return cached.key === `${binaryPath}:${info.size}:${info.mtimeMs}` ? cached.catalog : null;
+    } catch {
+        return null;
+    }
 }
 
 /** @internal exported for unit tests */
