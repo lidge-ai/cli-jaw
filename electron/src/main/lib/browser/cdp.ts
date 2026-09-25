@@ -34,6 +34,7 @@ export type PickedElement = {
     role: string | null;
     name: string | null;
     text: string | null;
+    /** Viewport-relative CSS px (DOM.getBoxModel document bounds minus the visual viewport offset). */
     bounds: { x: number; y: number; width: number; height: number } | null;
 };
 
@@ -196,13 +197,34 @@ async function nodeAxInfo(contents: WebContents, backendNodeId: number): Promise
     }
 }
 
+/**
+ * Scroll position of the visual viewport inside the document, in CSS px.
+ * DOM.getBoxModel returns document-space bounds; subtracting this offset
+ * yields viewport-relative coordinates for overlays and input dispatch.
+ */
+async function visualViewportPageOffset(contents: WebContents): Promise<{ x: number; y: number }> {
+    try {
+        const metrics = await send<{
+            cssVisualViewport?: { pageX?: number; pageY?: number };
+            visualViewport?: { pageX?: number; pageY?: number };
+        }>(contents, 'Page.getLayoutMetrics');
+        return {
+            x: metrics.cssVisualViewport?.pageX ?? metrics.visualViewport?.pageX ?? 0,
+            y: metrics.cssVisualViewport?.pageY ?? metrics.visualViewport?.pageY ?? 0,
+        };
+    } catch {
+        return { x: 0, y: 0 };
+    }
+}
+
 async function resolvePickedElement(contents: WebContents, backendNodeId: number): Promise<PickedElement | null> {
     try {
         await send(contents, 'Accessibility.enable').catch(() => undefined);
         const { node } = await send<{ node: DomDescribeNode }>(contents, 'DOM.describeNode', { backendNodeId, depth: 0 });
-        const [bounds, ax] = await Promise.all([
+        const [bounds, ax, viewportOffset] = await Promise.all([
             backendNodeBounds(contents, backendNodeId),
             nodeAxInfo(contents, backendNodeId),
+            visualViewportPageOffset(contents),
         ]);
         // Text comes ONLY from the accessibility name. Raw outerHTML stripping
         // could leak hidden attributes / input values / script text from a
@@ -213,7 +235,14 @@ async function resolvePickedElement(contents: WebContents, backendNodeId: number
             role: ax.role,
             name: trimNodeText(ax.name),
             text: trimNodeText(ax.name),
-            bounds,
+            bounds: bounds
+                ? {
+                    x: bounds.x - Math.round(viewportOffset.x),
+                    y: bounds.y - Math.round(viewportOffset.y),
+                    width: bounds.width,
+                    height: bounds.height,
+                }
+                : null,
         };
     } catch {
         return null;

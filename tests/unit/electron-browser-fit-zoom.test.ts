@@ -136,6 +136,11 @@ test('picked-element overlay converts page CSS px into DIP under zoom', () => {
         /element\.bounds\.(x|y) \+ element\.bounds\.(width|height) \/ 2\) \* zoom/.test(panelSource),
         'picked bounds are scaled by the zoom factor before rendering',
     );
+    assert.ok(cdpSource.includes('visualViewportPageOffset'), 'main subtracts the visual viewport offset');
+    assert.ok(
+        /bounds\.x - Math\.round\(viewportOffset\.x\)/.test(cdpSource),
+        'getBoxModel document bounds become viewport-relative',
+    );
 });
 
 test('renderer requests a refit on panel resize and on tab activation', () => {
