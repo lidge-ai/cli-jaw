@@ -5,7 +5,7 @@ import { revokeSlackToolGrant } from '../slack/tool-context.js';
 import type { ChildProcess } from 'child_process';
 import { broadcast } from '../core/bus.js';
 import { settings, detectCli, resolveFlushEvery } from '../core/config.js';
-import { clearEmployeeSession, insertMessage, insertMessageWithTrace, insertMessageWithTraceRun, updateSession, clearSessionBucket, markAnchorConsumed, updateSessionBucketLastRun } from '../core/db.js';
+import { clearEmployeeSession, insertMessage, insertMessageWithTraceRun, updateSession, clearSessionBucket, markAnchorConsumed, updateSessionBucketLastRun } from '../core/db.js';
 import { getActiveChatSession } from '../core/chat-sessions.js';
 import { persistMainSession, type SessionOwnerToken } from './session-persistence.js';
 import { resolveSessionBucket } from './args.js';
@@ -509,11 +509,21 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         // The existing MAX(id) salvage query reads MESSAGE rows, not Activity.
         // Commit before asynchronous cleanup and the caller's settleExit barrier.
         const partialTools = sanitizeToolLogForDurableStorage(ctx.toolLog);
-        insertMessageWithTrace.run(
-            'assistant', '⏹️ [interrupted]\n\n' + nativeOutcome.partialText, cli, model,
+        // Carry the run id like the final-answer row does: without it the web cannot
+        // mount this reply's Activity view and falls back to the legacy tool chip.
+        // One row owns a run: when a final answer also exists, that row takes it below.
+        const salvageRunId = nativeOutcome.finalText === null ? nativeTraceRunId || null : null;
+        const salvageContent = '⏹️ [interrupted]\n\n' + nativeOutcome.partialText;
+        const info = insertMessageWithTraceRun.run(
+            'assistant', salvageContent, cli, model,
             ctx.traceLog.join('\n') || null, serializeSanitizedToolLog(partialTools),
-            settings['workingDir'] || null, chatSessionId,
+            settings['workingDir'] || null, salvageRunId, chatSessionId,
         );
+        const messageId = Number(info.lastInsertRowid);
+        if (salvageRunId && Number.isSafeInteger(messageId) && messageId > 0) {
+            try { linkTraceRunToMessage(salvageRunId, messageId); }
+            catch { console.warn('[runtime] steer salvage trace link failed'); }
+        }
     }
 
     // Post-flush reindex moved into memory-flush-controller's completion path

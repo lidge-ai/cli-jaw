@@ -11,7 +11,9 @@ test('lifecycle handler diagnoses incomplete structured fences before durable as
     assert.match(lifecycleSrc, /assistant output contains incomplete structured fence before durable insert/);
 
     const scanIdx = lifecycleSrc.indexOf('scanStructuredFence(finalContent)');
-    const insertIdx = lifecycleSrc.indexOf('insertMessageWithTraceRun.run');
+    // The durable FINAL-answer insert. The steer salvage insert that precedes it
+    // stores partial text, not a final answer, so the fence diagnostic does not apply.
+    const insertIdx = lifecycleSrc.search(/insertMessageWithTraceRun\.run\(\s*'assistant', finalContent/);
     const broadcastIdx = lifecycleSrc.indexOf("broadcast('agent_done'", insertIdx);
 
     assert.ok(scanIdx >= 0, 'scanStructuredFence(finalContent) must exist');
