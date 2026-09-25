@@ -180,7 +180,7 @@ public/
 | `js/ws.ts` | 877L | SSE/WS 공용 메시지 dispatcher + legacy WebSocket fallback. agent status, queue update, `agent_tool`→typed ProcessStep, agent output/done, orchestration state, interview panel, Telegram/Discord new message, reconnect snapshot, 10초 reload dedup, 8초 disconnect-toast grace, reconnect 후 bottom anchor reconciliation |
 | `js/streaming-render.ts` | — | 스트리밍 텍스트 렌더러 |
 | `js/virtual-scroll-bootstrap.ts` | — | virtual scroll 초기 hydrate/measure/bootstrap 오케스트레이터 |
-| `js/virtual-scroll.ts` | 596L | TanStack virtualizer 기반 DOM 풀링, mounted node 재사용, post-render hook 실행, Mermaid observer release, scroll anchor preservation |
+| `js/virtual-scroll.ts` | 596L | TanStack virtualizer 기반 DOM 풀링, mounted node 재사용, post-render hook 실행, Mermaid observer release, scroll anchor preservation, 폭 변경 드래그 중 드래그 시작 시점 기준 재고정(bottom-follow 또는 첫 visible row) |
 | `js/sanitizer.ts` | — | DOMPurify singleton + SVG/HTML attribute hook boundary |
 | `js/cjk-fix.ts` | — | CJK 줄바꿈/구두점 보정 |
 | `js/mermaid-loader.ts` | — | lazy Mermaid dynamic import |
