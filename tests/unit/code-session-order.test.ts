@@ -10,7 +10,7 @@ function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
         permissionMode: 'ask', status: 'idle', turnId: null, archivedAt: null, error: null,
         resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false, efforts: [], permissionModes: ['ask'] },
-        epoch: 1, sequence: 1, revision: 1, createdAt: 100, lastUsedAt: 100, ...patch,
+        epoch: 1, sequence: 1, revision: 1, createdAt: 100, lastUsedAt: 100, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch,
     };
 }
 
