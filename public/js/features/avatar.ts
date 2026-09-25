@@ -17,7 +17,9 @@ type AvatarState = {
 
 const AGENT_KEY = 'agentAvatar';
 const USER_KEY = 'userAvatar';
-const DEFAULT_AGENT = ICONS.shark;
+// Front-facing mascot mark (transparent PNG) — kept as markup so avatarMarkup can
+// render it exactly like the stored SVG/emoji defaults.
+const DEFAULT_AGENT = '<img class="avatar-mascot" src="/icons/mascot.png" alt="" aria-hidden="true">';
 const DEFAULT_USER = ICONS.user;
 
 const avatarState: Record<AvatarRole, AvatarState> = {
@@ -57,7 +59,7 @@ function avatarMarkup(role: AvatarRole): string {
     if (current.imageUrl) {
         return `<img class="avatar-image" src="${escapeHtml(current.imageUrl)}" alt="" loading="lazy" decoding="async">`;
     }
-    // Default icons are Lucide SVG strings — render as-is
+    // Default avatars are markup (Lucide SVG, emoji, or the mascot image) — render as-is
     return current.emoji;
 }
 

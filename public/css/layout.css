@@ -35,12 +35,24 @@
 }
 
 .logo {
+    display: inline-flex;
+    align-items: center;
     font-size: 26px;
     font-weight: 700;
     color: var(--accent);
     font-family: var(--font-display);
     letter-spacing: 1px;
     text-shadow: 0 0 20px color-mix(in oklch, var(--accent) 30%, transparent);
+}
+
+.logo-mark {
+    flex: 0 0 auto;
+    display: inline-block;
+    vertical-align: middle;
+    width: 28px;
+    height: 28px;
+    margin-right: 8px;
+    object-fit: contain;
 }
 
 .section-title {

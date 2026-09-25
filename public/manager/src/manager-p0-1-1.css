@@ -88,6 +88,13 @@
     min-width: 0;
 }
 
+.manager-brand-mark {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    align-self: center;
+}
+
 .manager-brand-wordmark {
     flex: 0 0 auto;
     letter-spacing: 0.02em;

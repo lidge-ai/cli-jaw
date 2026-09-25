@@ -1,7 +1,7 @@
 // ── CLI-JAW Service Worker ──
 // Three-tier fetch: navigate→network-first, hashed→cache-first, static→stale-while-revalidate
 
-const CACHE_NAME = 'clijaw-v3-dev-20260626';
+const CACHE_NAME = 'clijaw-v3-dev-20260925-mascot';
 const STATIC_ASSETS = [
     // Only pre-cache immutable/semi-static assets — NOT '/' (HTML is dynamic)
     '/css/variables.css',

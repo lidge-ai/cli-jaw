@@ -27,6 +27,7 @@ export function CommandBar(props: CommandBarProps) {
             )}
             title={(
                 <h1 className="manager-brand-heading" aria-label="CLI-JAW Dashboard">
+                    <img className="manager-brand-mark" src="/icons/mascot.png" alt="" width={20} height={20} aria-hidden="true" />
                     <span className="manager-brand-wordmark">CLI-JAW</span>
                     <span className="manager-brand-dash">DASH</span>
                 </h1>
