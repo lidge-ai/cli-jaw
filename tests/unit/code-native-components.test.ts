@@ -402,11 +402,73 @@ test('a settled card pretty-prints non-command input and uncaps tall bodies on d
     await click(button(h.container, 'Show all'));
     assert.equal(h.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'true');
     assert.ok(button(h.container, 'Show less'));
-    // Short content earns no toggle at all.
+    // Short content earns no toggle at all. A fresh root, because the state under
+    // test belongs to the instance: re-rendering the one above would carry the
+    // reader's choice forward and assert nothing about short content.
+    const fresh = await surface(t);
     const short = item({ kind: 'tool_call', status: 'done', tool: { name: 'read', input: '{"path":"/a.ts"}', output: 'small' } });
-    await h.render(createElement(CodeTranscriptItem, { item: short, provider: 'cursor', sessionKey: 's', expanded: true }));
-    assert.equal([...h.container.querySelectorAll('button')].some(node => node.textContent === 'Show all'), false);
-    assert.doesNotMatch(h.container.textContent ?? '', /Waiting for output/);
+    await fresh.render(createElement(CodeTranscriptItem, { item: short, provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.equal([...fresh.container.querySelectorAll('button')].some(node => node.textContent === 'Show all'), false);
+    // Compared as a boolean: node:test inspects a DOM node it is handed, and a
+    // jsdom node's message never comes back.
+    assert.ok(fresh.container.querySelector('.code-tool-toggle') === null, 'short content earns no toggle at all');
+    assert.equal(fresh.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'false');
+    assert.doesNotMatch(fresh.container.textContent ?? '', /Waiting for output/);
+});
+
+test('an open body that stops overflowing retracts its disclosure', bounded, async t => {
+    const h = await surface(t);
+    const render = (output: string) => h.render(createElement(CodeTranscriptItem, { item: item({ kind: 'tool_call', status: 'done',
+        tool: { name: 'rg', input: JSON.stringify({ pattern: 'needle' }), output } }), provider: 'cursor', sessionKey: 's', expanded: true }));
+    await render('x\n'.repeat(40));
+    await click(button(h.container, 'Show all'));
+    assert.equal(h.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'true');
+    // Same root, same instance, shorter content: an expansion granted for a tall
+    // body cannot survive the body it was granted for.
+    await render('small');
+    assert.equal(h.container.querySelector('pre.code-tool-output')?.textContent, 'small');
+    assert.equal(h.container.querySelector('.code-tool-body')?.getAttribute('data-expanded'), 'false');
+    assert.ok(h.container.querySelector('.code-tool-toggle') === null, 'a body that no longer overflows offers no toggle');
+});
+
+// jsdom lays nothing out, so the panes have to be told what a browser would
+// report. Here the detail paragraph is the body's only overflowing pane, and it
+// is short enough that the estimate standing in for layout calls it short: the
+// toggle can only appear by measuring the paragraph itself.
+function overflowingDetailPane(t: TestContext) {
+    const prototype = dom.window.HTMLElement.prototype;
+    const descriptors = new Map<string, PropertyDescriptor | undefined>();
+    for (const [key, overflowing] of Object.entries({ clientHeight: 120, scrollHeight: 300 })) {
+        descriptors.set(key, Object.getOwnPropertyDescriptor(prototype, key));
+        Object.defineProperty(prototype, key, { configurable: true,
+            get(this: HTMLElement) { return this.matches('p.code-tool-text') ? overflowing : 0; } });
+    }
+    t.after(() => {
+        for (const [key, descriptor] of descriptors) {
+            if (descriptor) Object.defineProperty(prototype, key, descriptor);
+            else Reflect.deleteProperty(prototype, key);
+        }
+    });
+}
+
+test('a capped pane that is not a pre is measured for overflow too', bounded, async t => {
+    const h = await surface(t); overflowingDetailPane(t);
+    await h.render(createElement(CodeTranscriptItem, { item: item({ kind: 'tool_call', status: 'done',
+        tool: { name: 'bash', input: JSON.stringify({ command: 'ls -la' }), detail: 'Listed the workspace root' } }),
+        provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.equal(h.container.querySelector('p.code-tool-text')?.textContent, 'Listed the workspace root');
+    assert.equal(button(h.container, 'Show all').textContent, 'Show all',
+        'the overflowing detail paragraph alone earns the toggle');
+});
+
+test('a detail-carrying call does not also claim to be waiting for output', bounded, async t => {
+    const h = await surface(t);
+    await h.render(createElement(CodeTranscriptItem, { item: item({ kind: 'tool_call', status: 'running',
+        tool: { name: 'bash', input: JSON.stringify({ command: 'npm test' }), detail: 'Runs the suite' } }),
+        provider: 'cursor', sessionKey: 's', expanded: true }));
+    assert.equal(h.container.querySelector('p.code-tool-text')?.textContent, 'Runs the suite');
+    assert.ok(h.container.querySelector('.code-tool-waiting') === null, 'a call with its detail shown is not also waiting for output');
+    assert.match(h.container.textContent ?? '', /Running npm test/);
 });
 
 test('throttled text flushes empty, whitespace and final replacements immediately across identities', bounded, async t => {

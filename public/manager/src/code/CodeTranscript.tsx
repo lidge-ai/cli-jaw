@@ -100,21 +100,31 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
         || (item.text !== undefined && isTallToolText(item.text));
     const [showAll, setShowAll] = useState(false);
     const bodyRef = useRef<HTMLDivElement | null>(null);
+    const [measuredTall, setMeasuredTall] = useState<boolean | null>(null);
+    // A measurement describes the body it was taken from, and the estimate is
+    // what moves when that body changes, so a number taken while the content was
+    // taller is dropped instead of deciding for the shorter content in its place.
+    useEffect(() => { setMeasuredTall(null); }, [toolBodyTall]);
     // The toggle measures real overflow once the body lays out (browser); where
     // layout cannot be measured (jsdom reports 0 everywhere) the character
-    // estimate stands in, the same rule the activity rows use. While expanded
-    // the cap is off, so measuring is skipped — the button must stay to toggle
-    // back — and closing the body resets the measure for the next open.
-    const [measuredTall, setMeasuredTall] = useState<boolean | null>(null);
+    // estimate stands in, the same rule the activity rows use. Every capped pane
+    // is measured, not only the <pre> ones: the call's own detail is a paragraph
+    // under the same cap. While expanded the cap is off, so measuring is skipped
+    // — the button must stay to toggle back — and closing the body resets the
+    // measure for the next open.
     useEffect(() => {
         if (!open || showAll) return;
-        const pres = bodyRef.current?.querySelectorAll('pre');
-        if (!pres || pres.length === 0) { setMeasuredTall(null); return; }
-        const list = [...pres];
-        const measured = list.some(pre => pre.scrollHeight > pre.clientHeight + 2);
-        setMeasuredTall(measured || (list.every(pre => pre.scrollHeight === 0) && toolBodyTall));
+        const panes = bodyRef.current?.querySelectorAll('pre, .code-tool-body > .code-tool-text');
+        if (!panes || panes.length === 0) { setMeasuredTall(null); return; }
+        const list = [...panes];
+        const measured = list.some(pane => pane.scrollHeight > pane.clientHeight + 2);
+        setMeasuredTall(measured || (list.every(pane => pane.scrollHeight === 0) && toolBodyTall));
     }, [open, showAll, toolBodyTall]);
     const toolBodyOverflowing = measuredTall ?? toolBodyTall;
+    // Content that no longer overflows has nothing left to disclose: leaving the
+    // disclosure set would hold a "Show less" button, and an uncapped body, over
+    // a call that already fits.
+    useEffect(() => { if (!toolBodyOverflowing) setShowAll(false); }, [toolBodyOverflowing]);
     const [copied, setCopied] = useState(false);
     const copiedTimerRef = useRef<number | null>(null);
     useEffect(() => () => { if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current); }, []);
@@ -152,7 +162,8 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
                     <pre className={block.className}>{block.content}</pre>
                 </section>)}
                 {item.text !== undefined && <pre className="code-tool-text">{item.text}</pre>}
-                {running && item.tool?.output === undefined && <p className="code-tool-waiting">Waiting for output…</p>}
+                {running && item.tool?.output === undefined && item.tool?.detail === undefined
+                    && <p className="code-tool-waiting">Waiting for output…</p>}
                 {toolBodyOverflowing && <button type="button" className="code-tool-toggle" aria-expanded={showAll}
                     onClick={() => setShowAll(value => !value)}>{showAll ? 'Show less' : 'Show all'}</button>}
             </div>}
