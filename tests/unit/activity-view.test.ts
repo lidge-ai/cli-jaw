@@ -665,11 +665,13 @@ test('T1: JSON tool input labels the decoded command, shows its description and 
     assert.equal(desc.hidden, false);
     assert.equal(desc.textContent, 'Install raw-rejecting pre-receive hook on clisu');
     const blocks = [...row.querySelectorAll<HTMLElement>('.activity-block')];
-    assert.deepEqual(blocks.map(node => node.dataset['block']), ['input', 'output']);
+    assert.deepEqual(blocks.map(node => node.dataset['block']), ['input', 'description', 'output']);
     assert.equal(blocks[0].querySelector('.activity-block-label')!.textContent, 'Command');
     assert.equal(blocks[0].querySelector('pre')!.textContent, command);
-    assert.equal(blocks[1].querySelector('.activity-block-label')!.textContent, 'Output');
-    assert.equal(blocks[1].querySelector('pre')!.textContent, 'hook installed');
+    assert.equal(blocks[1].querySelector('.activity-block-label')!.textContent, 'Description');
+    assert.equal(blocks[1].querySelector('pre')!.textContent, 'Install raw-rejecting pre-receive hook on clisu');
+    assert.equal(blocks[2].querySelector('.activity-block-label')!.textContent, 'Output');
+    assert.equal(blocks[2].querySelector('pre')!.textContent, 'hook installed');
     assert.ok(blocks[0].querySelector<HTMLButtonElement>('.activity-block-copy'));
     assert.equal(row.querySelector('.activity-waiting'), null);
 });
@@ -701,6 +703,35 @@ test('T3: a running row without output shows a waiting line, not an empty block'
     view.render(model);
     assert.equal(row.querySelector('.activity-waiting'), null);
     assert.equal(row.querySelectorAll('.activity-block').length, 2);
+});
+
+test('T5: extra command fields render as Parameters; a truncated JSON input still decodes', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'full', name: 'bash', status: 'done',
+        input: JSON.stringify({ command: 'npm test', timeout: 120000, cwd: '/work/app' }), output: 'ok' });
+    const cut = JSON.stringify({ command: 'ssh host \'cat > f <<EOF\nline one\nline two', description: 'x' }).slice(0, 60);
+    send(model, { kind: 'tool', itemId: 'cut', name: 'bash', status: 'done', input: cut, output: 'ok' });
+    view.render(model);
+    const [full, truncated] = rows(view.element);
+    const params = full.querySelector('[data-block="params"]')!;
+    assert.equal(params.querySelector('.activity-block-label')!.textContent, 'Parameters');
+    assert.equal(params.querySelector('pre')!.textContent, '{\n  "timeout": 120000,\n  "cwd": "/work/app"\n}');
+    const label = truncated.querySelector('.activity-row-label')!.textContent!;
+    assert.equal(label, 'Ran ssh host \'cat > f <<EOF');
+    assert.doesNotMatch(label, /\{/);
+    const commandBlock = truncated.querySelector('[data-block="input"] pre')!;
+    assert.equal(commandBlock.textContent, 'ssh host \'cat > f <<EOF\nline one\nline two');
+});
+
+test('T6: a multi-line description shows fully when expanded', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'd', name: 'bash', status: 'done',
+        input: JSON.stringify({ command: 'ls', description: 'First part of the reason\nand the second line of it' }), output: 'x' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('.activity-row-desc')!.textContent, 'First part of the reason');
+    assert.equal(row.querySelector('[data-block="description"] pre')!.textContent,
+        'First part of the reason\nand the second line of it');
 });
 
 test('T4: tall content offers Show all which lifts the cap and toggles back', () => {

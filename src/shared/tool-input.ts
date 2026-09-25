@@ -17,11 +17,20 @@ export const TOOL_INPUT_KEYS: Record<ToolInputField, readonly string[]> = {
 };
 export const TOOL_DESCRIPTION_KEYS = ['description'] as const;
 
+/** One canonical precedence shared by every surface summarising a tool call. */
+export const TOOL_INPUT_KEY_ORDER = Object.values(TOOL_INPUT_KEYS).flat();
+
+const KEY_FAMILY: Record<string, ToolInputField> = {};
+for (const [field, keys] of Object.entries(TOOL_INPUT_KEYS) as [ToolInputField, readonly string[]][])
+    for (const key of keys) KEY_FAMILY[key] = field;
+
 export interface ToolInputView {
     /** The parsed object when `input` was a JSON object, else null. */
     object: Record<string, unknown> | null;
     /** The decoded argument to display, real newlines preserved. */
     value: string | null;
+    /** The concrete input key that produced `value` (e.g. `file_path`). */
+    key: string | null;
     /** Which argument family produced `value`. */
     field: ToolInputField | null;
     /** The call's own description when the runtime sent one. */
@@ -49,13 +58,63 @@ export function firstToolField(object: Record<string, unknown>, keys: readonly s
 
 export function parseToolInput(input: string | undefined | null): ToolInputView {
     const object = parseToolArguments(input);
-    if (!object) return { object: null, value: null, field: null, description: null };
-    const description = firstToolField(object, TOOL_DESCRIPTION_KEYS);
-    for (const field of ['command', 'path', 'query', 'url'] as const) {
-        const value = firstToolField(object, TOOL_INPUT_KEYS[field]);
-        if (value !== null) return { object, value, field, description };
+    if (object) {
+        const description = firstToolField(object, TOOL_DESCRIPTION_KEYS);
+        for (const key of TOOL_INPUT_KEY_ORDER) {
+            const value = firstToolField(object, [key]);
+            if (value !== null) return { object, value, key, field: KEY_FAMILY[key]!, description };
+        }
+        return { object, value: null, key: null, field: null, description };
     }
-    return { object, value: null, field: null, description };
+    // Retention can cut a JSON input mid-string: JSON.parse fails but the
+    // recognised field is still recoverable, so the row never falls back to
+    // printing the raw {"command": envelope.
+    const raw = input?.trim() ?? '';
+    if (raw.startsWith('{')) {
+        const found = looseToolValue(raw, TOOL_INPUT_KEY_ORDER);
+        const description = looseToolValue(raw, TOOL_DESCRIPTION_KEYS)?.value ?? null;
+        if (found) return { object: null, value: found.value, key: found.key, field: KEY_FAMILY[found.key]!, description };
+        if (description) return { object: null, value: null, key: null, field: null, description };
+    }
+    return { object: null, value: null, key: null, field: null, description: null };
+}
+
+/** Decodes a JSON string fragment that may end mid-escape (retention cut). */
+function decodeJsonFragment(raw: string): string {
+    const simple: Record<string, string> = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f' };
+    let out = '';
+    for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i]!;
+        if (ch !== '\\') { out += ch; continue; }
+        const next = raw[i + 1];
+        if (next === undefined) break;
+        if (simple[next] !== undefined) { out += simple[next]!; i++; continue; }
+        if (next === 'u') {
+            const hex = raw.slice(i + 2, i + 6);
+            if (!/^[0-9a-fA-F]{4}$/.test(hex)) break;
+            out += String.fromCharCode(Number.parseInt(hex, 16)); i += 5; continue;
+        }
+        out += next; i++;
+    }
+    return out;
+}
+
+/** Pulls the first priority `"key": "value"` out of truncated/partial JSON. */
+function looseToolValue(input: string, keys: readonly string[]): { key: string; value: string } | null {
+    for (const key of keys) {
+        const match = new RegExp(`"${key}"\\s*:\\s*"`).exec(input);
+        if (!match) continue;
+        let raw = '';
+        for (let i = match.index + match[0].length; i < input.length; i++) {
+            const ch = input[i]!;
+            if (ch === '\\' && i + 1 < input.length) { raw += ch + input[++i]!; continue; }
+            if (ch === '"') break;
+            raw += ch;
+        }
+        const value = decodeJsonFragment(raw).trim();
+        if (value) return { key, value };
+    }
+    return null;
 }
 
 /** First non-empty line, whitespace-collapsed for a one-line label. */

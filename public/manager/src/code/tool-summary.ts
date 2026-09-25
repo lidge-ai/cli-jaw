@@ -1,5 +1,5 @@
 import type { CodeItem } from '../../../../src/code-mode/wire';
-import { firstToolField, parseToolArguments } from '../../../../src/shared/tool-input.js';
+import { firstToolField, parseToolArguments, TOOL_INPUT_KEY_ORDER } from '../../../../src/shared/tool-input.js';
 
 /**
  * One line that says what a tool call did, in the user's terms.
@@ -61,7 +61,7 @@ export function summariseToolInput(input: string | undefined, workingDir: string
     if (!raw) return '';
     const parsed = parseToolArguments(raw);
     if (parsed) {
-        for (const key of ['command', 'cmd', 'path', 'file_path', 'file', 'url', 'query', 'pattern']) {
+        for (const key of TOOL_INPUT_KEY_ORDER) {
             const value = firstToolField(parsed, [key]);
             if (value !== null) {
                 return key === 'path' || key === 'file' || key === 'file_path'

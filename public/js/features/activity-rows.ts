@@ -1,6 +1,6 @@
 import { activityEntryLabel, type ActivityEntry } from '../../../src/shared/activity-state.js';
 import { classifyActivityTool, isActivityFileEdit, type ActivityRenderGroup, type ActivityToolKind } from '../../../src/shared/activity-kind.js';
-import { firstInputLine, parseToolInput, prettyToolInput } from '../../../src/shared/tool-input.js';
+import { firstInputLine, parseToolInput, prettyToolInput, TOOL_DESCRIPTION_KEYS, TOOL_INPUT_KEYS } from '../../../src/shared/tool-input.js';
 import { copyText } from './copy-text.js';
 import { hydrateIcons, type IconName } from '../icons.js';
 const glyphs: Record<ActivityToolKind, IconName> = { command: 'terminal', file: 'file', search: 'search', mcp: 'plug', other: 'tool' };
@@ -76,8 +76,13 @@ function syncBody(body: HTMLElement, blocks: readonly Block[], waiting: boolean)
         hydrateIcons(body);
     }
     const sections = body.querySelectorAll<HTMLElement>('.activity-block');
-    blocks.forEach((block, index) => text(sections[index]!.querySelector('pre')!, block.content));
-    const tall = blocks.some(block => isTallContent(block.content));
+    const pres = blocks.map((_, index) => sections[index]!.querySelector('pre')!);
+    blocks.forEach((block, index) => text(pres[index]!, block.content));
+    // Measure real overflow when layout exists (browser); jsdom reports 0
+    // everywhere and falls back to the character estimate.
+    const measured = pres.some(pre => pre.scrollHeight > pre.clientHeight + 2);
+    const tall = measured || (pres.every(pre => pre.scrollHeight === 0)
+        && blocks.some(block => isTallContent(block.content)));
     const toggle = body.querySelector<HTMLElement>('.activity-block-toggle')!;
     toggle.hidden = !tall;
     if (!tall && body.dataset['expanded'] === 'true') body.dataset['expanded'] = 'false';
@@ -94,11 +99,20 @@ function toolBlocks(entry: Extract<ActivityEntry, { kind: 'tool' }>, kind: Activ
         blocks.push({
             key: 'input',
             label: command ? 'Command' : 'Input',
-            content: parsed.field === 'command' && parsed.value !== null
-                ? parsed.value
-                : parsed.object ? prettyToolInput(entry.input ?? '') : entry.input ?? '',
+            content: parsed.field === 'command' && parsed.value !== null ? parsed.value
+                : parsed.object ? prettyToolInput(entry.input ?? '') : parsed.value ?? entry.input ?? '',
             copy: true,
         });
+        // A command envelope can carry more than the command (timeout, cwd…):
+        // surface the remaining fields so nothing the call sent is hidden.
+        if (parsed.object && parsed.field === 'command') {
+            const hidden = new Set([...TOOL_INPUT_KEYS.command, ...TOOL_DESCRIPTION_KEYS]);
+            const rest = Object.fromEntries(Object.entries(parsed.object).filter(([key]) => !hidden.has(key)));
+            if (Object.keys(rest).length)
+                blocks.push({ key: 'params', label: 'Parameters', content: JSON.stringify(rest, null, 2), copy: false });
+        }
+        if (parsed.description)
+            blocks.push({ key: 'description', label: 'Description', content: parsed.description, copy: false });
     }
     if (entry.output) blocks.push({ key: 'output', label: 'Output', content: entry.output, copy: false });
     if (entry.detail) blocks.push({ key: 'detail', label: entry.status === 'error' ? 'Error' : 'Detail', content: entry.detail, copy: false });

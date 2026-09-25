@@ -49,3 +49,27 @@ test('prettyToolInput reprints JSON at two-space indent and leaves raw text alon
     assert.equal(prettyToolInput('{"command":"ls","n":1}'), '{\n  "command": "ls",\n  "n": 1\n}');
     assert.equal(prettyToolInput('echo hi'), 'echo hi');
 });
+
+test('truncated JSON still yields the decoded field, never the raw envelope', () => {
+    const full = JSON.stringify({ command: 'ssh host \'cat > f <<EOF\nline one\nline two', description: 'x' });
+    const cut = full.slice(0, 60); // ends mid-object after the command string
+    const parsed = parseToolInput(cut);
+    assert.equal(parsed.field, 'command');
+    assert.equal(parsed.value, 'ssh host \'cat > f <<EOF\nline one\nline two');
+    assert.equal(parsed.key, 'command');
+});
+
+test('truncation inside a string keeps escapes that completed before the cut', () => {
+    const cut = '{"command":"echo one\\ntwo\\u00e9\\u0';
+    assert.equal(parseToolInput(cut).value, 'echo one\ntwoé');
+    assert.equal(parseToolInput('{"command":"echo \\').value, 'echo');
+});
+
+test('priority order applies to recovered fields and descriptions', () => {
+    const parsed = parseToolInput('{"other":1,"file_path":"/a/b","x"');
+    assert.equal(parsed.field, 'path');
+    assert.equal(parsed.value, '/a/b');
+    const desc = parseToolInput('{"zzz":1,"description":"do the thing","command":"ls".slice(0,0)}');
+    assert.equal(desc.description, 'do the thing');
+    assert.equal(desc.field, 'command');
+});
