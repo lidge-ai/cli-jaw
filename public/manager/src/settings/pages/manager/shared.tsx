@@ -865,6 +865,7 @@ function DashboardShortcutInput(props: DashboardShortcutInputProps) {
             <input
                 id={`dashboard-shortcut-${props.action}`}
                 type="text"
+                className="dashboard-settings-shortcut-input"
                 value={props.value}
                 aria-label={`${props.label} shortcut`}
                 placeholder="Alt+I"
@@ -921,7 +922,7 @@ function TitleSupportSummary({ support, locale }: { support: DashboardActivityTi
     const total = support.ready + support.legacy + support.offline;
     const copy = COPY[locale].support;
     return (
-        <>
+        <div role="group" aria-label={copy.ariaLabel}>
             <SettingsKeyValue
                 items={[
                     { label: copy.ready, value: <StatusBadge tone="ok">{support.ready}</StatusBadge> },
@@ -930,7 +931,7 @@ function TitleSupportSummary({ support, locale }: { support: DashboardActivityTi
                 ]}
             />
             <SettingsNote>{total === 0 ? copy.empty : copy.restart}</SettingsNote>
-        </>
+        </div>
     );
 }
 

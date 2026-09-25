@@ -7,7 +7,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { icon } from '../../../../../js/icons';
-import { SettingsNote } from '../page-shell';
 
 type AvatarKind = 'agent' | 'user';
 
@@ -165,7 +164,7 @@ export function AvatarCard({ kind, port }: Props) {
                     ) : null}
                 </div>
                 {error ? (
-                    <SettingsNote tone="error" role="alert">{error}</SettingsNote>
+                    <p className="settings-field-error" role="alert">{error}</p>
                 ) : null}
             </div>
         </div>

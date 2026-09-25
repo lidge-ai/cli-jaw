@@ -143,7 +143,7 @@ export default function AdvancedExport({ port, client, triggerDownload }: Export
                                 </span>
                             ) : null}
                         </label>
-                        <SettingsActions status={importResult ?? undefined}>
+                        <SettingsActions status={importResult ? <span role="status">{importResult}</span> : undefined}>
                             <button
                                 type="button"
                                 className="settings-action settings-action-save"
