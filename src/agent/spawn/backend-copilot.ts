@@ -25,6 +25,7 @@ import os from 'os';
 import { join } from 'path';
 import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js';
 import type { CopilotSpawnContext, SpawnResult } from './types.js';
+import { stripSkillMentionBlock } from '../../core/skill-mentions.js';
 
 export function runCopilotBackend(backendLocals: SpawnBackendLocals, backendHost: SpawnBackendHost): SpawnResult {
     const { agentLabel, cfg, chatSessionId, cli, currentBucket, effectiveLiveScope, effort, empSid, empTag, forceNew, historyBlock, isEmployee, isResume, liveScope, mainManaged, mainRun, model, opts, origin, ownerGeneration, parentLiveScopeForChild, permissions, persistenceOwner, prompt, resolve, resultPromise, resumeKey, resumeSessionId, runPin, runtimeTransport, scopeKey, spawnCwd, spawnEnv, traceAudience } = backendLocals;
@@ -84,7 +85,7 @@ export function runCopilotBackend(backendLocals: SpawnBackendLocals, backendHost
     });
 
     if (mainManaged && !opts.internal && !opts._skipInsert) {
-        insertMessage.run('user', prompt, cli, model, settings["workingDir"] || null, chatSessionId);
+        insertMessage.run('user', stripSkillMentionBlock(prompt), cli, model, settings["workingDir"] || null, chatSessionId);
     }
     if (!opts.internal) broadcast('agent_status', { status: 'running', cli, agentId: agentLabel, ...empTag }, traceAudience);
 

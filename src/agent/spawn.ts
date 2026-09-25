@@ -1095,6 +1095,7 @@ export { buildMediaPrompt, buildMediaPromptMany };
 import { canGuardedAgyResume, resolveAgyNativeResume, shouldEmitHeartbeat, shouldResumeBucketSession } from './spawn/resume.js';
 export { canGuardedAgyResume, resolveAgyNativeResume, shouldEmitHeartbeat, shouldResumeBucketSession };
 import { createQueueController, FALLBACK_MAX_RETRIES } from './spawn/queue.js';
+import { stripSkillMentionBlock } from '../core/skill-mentions.js';
 export type { QueueController } from './spawn/queue.js';
 
 function cleanupEmployeeTmpDir(cwd: string, workingDir: string, label: string) {
@@ -1878,7 +1879,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     });
 
     if (mainManaged && !opts.internal && !opts._skipInsert) {
-        insertMessage.run('user', prompt, cli, runtimeModel, settings["workingDir"] || null, chatSessionId);
+        // The runtime gets the inline-skill block; the chat row keeps what was written.
+        insertMessage.run('user', stripSkillMentionBlock(prompt), cli, runtimeModel, settings["workingDir"] || null, chatSessionId);
     }
 
     if (cli === 'claude') {

@@ -27,6 +27,7 @@ import type { ChildProcess } from 'child_process';
 import crypto from 'node:crypto';
 import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js';
 import type { CopilotSpawnContext, SpawnResult } from './types.js';
+import { stripSkillMentionBlock } from '../../core/skill-mentions.js';
 
 export function runCodexAppBackend(backendLocals: SpawnBackendLocals, backendHost: SpawnBackendHost): SpawnResult {
     const { agentLabel, cfg, chatSessionId, cli, codexMultiplexMain, currentBucket, detected, effectiveLiveScope, effort, empSid, empTag, forceNew, historyBlock, isResume, liveScope, mainManaged, mainRun, model, opts, origin, ownerGeneration, parentLiveScopeForChild, persistenceOwner, prompt, resolve, resultPromise, resumeKey, resumeSessionId, runPin, runtimeTransport, scopeKey, slackToolGrant, spawnCwd, spawnEnv, sysPrompt, traceAudience } = backendLocals;
@@ -39,7 +40,7 @@ export function runCodexAppBackend(backendLocals: SpawnBackendLocals, backendHos
         }
     }
     if (mainManaged && !opts.internal && !opts._skipInsert) {
-        insertMessage.run('user', prompt, cli, model, settings["workingDir"] || null, chatSessionId);
+        insertMessage.run('user', stripSkillMentionBlock(prompt), cli, model, settings["workingDir"] || null, chatSessionId);
     }
     if (!opts.internal) broadcast('agent_status', { status: 'running', cli, agentId: agentLabel, ...empTag }, traceAudience);
 

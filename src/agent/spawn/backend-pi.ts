@@ -33,6 +33,7 @@ import type { ChildProcess } from 'child_process';
 import crypto from 'node:crypto';
 import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js';
 import type { SpawnPromiseResult, SpawnResult } from './types.js';
+import { stripSkillMentionBlock } from '../../core/skill-mentions.js';
 
 export function runPiBackend(backendLocals: SpawnBackendLocals, backendHost: SpawnBackendHost): SpawnResult {
     const { agentLabel, bucketSessionId, cfg, chatSessionId, cleanupPiEmployee, cli, currentBucket, effectiveLiveScope, effort, empSid, empTag, forceNew, historyBlock, isResume, liveScope, mainManaged, mainRun, opts, origin, ownerGeneration, parentLiveScopeForChild, persistenceOwner, prompt, resolve, resultPromise, resumeKey, runPin, runtimeModel, runtimeTransport, scopeKey, slackToolGrant, spawnCwd, spawnEnv, sysPrompt, traceAudience } = backendLocals;
@@ -243,7 +244,7 @@ export function runPiBackend(backendLocals: SpawnBackendLocals, backendHost: Spa
                 setLiveRunTraceId(liveScope, traceRunId);
             }
             if (mainManaged && !opts.internal && !opts._skipInsert) {
-                insertMessage.run('user', prompt, cli, runtimeModel, settings["workingDir"] || null, chatSessionId);
+                insertMessage.run('user', stripSkillMentionBlock(prompt), cli, runtimeModel, settings["workingDir"] || null, chatSessionId);
             }
             if (!opts.internal) broadcast('agent_status', { status: 'running', cli, agentId: agentLabel, provider: profile.id, ...empTag }, traceAudience);
         } catch (error) {
