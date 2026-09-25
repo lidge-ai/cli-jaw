@@ -7,7 +7,7 @@ Claude、Codex、Cursor、Grok、Copilot、OpenCode、Kiro、Antigravity 和 Pi 
 
 <p align="center">
   <a href="https://npmjs.com/package/cli-jaw"><img src="https://img.shields.io/npm/v/cli-jaw?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-jun/cli-jaw?label=release" alt="latest release"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-ai/cli-jaw?label=release" alt="latest release"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.4-339933?logo=node.js&logoColor=white" alt="Node.js 22.4+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
@@ -19,9 +19,9 @@ jaw dashboard
 ```
 
 <p align="center">
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
 </p>
 
 <table>
@@ -58,7 +58,7 @@ jaw dashboard
 </table>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <b>中文</b> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-jun.github.io/cli-jaw/"><b>官网</b></a> · <a href="https://lidge-jun.github.io/cli-jaw/dev/">文档</a>
+  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <b>中文</b> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-ai.github.io/cli-jaw/"><b>官网</b></a> · <a href="https://lidge-ai.github.io/cli-jaw/dev/">文档</a>
 </p>
 
 ---
@@ -95,13 +95,13 @@ jaw init                              # interactive setup later when you're read
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 -->
 
 **Windows 支持。** 推荐使用 WSL 路径，它是稳定的。原生 PowerShell 安装脚本也可以用，但仍处于 beta 阶段：
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 ```
 
 需要 Node.js 22.4+。
@@ -175,7 +175,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS 一键安装</b> — 没有 Node.js？用这个</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -194,7 +194,7 @@ wsl --install
 
 ```bash
 # 2. Install CLI-JAW + all dependencies
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -310,7 +310,7 @@ cli-jaw 实例和 AI runtime 进程。
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -321,7 +321,7 @@ bash "$COLLECTOR" --target wsl
 从 Windows PowerShell 进入受支持的 WSL 路径：
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 如果 collector 报告 WSL 内没有 `powershell.exe`，请在审计前从 Windows PowerShell 运行：
@@ -461,7 +461,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 | **C — Check** | 类型检查、文档更新、一致性检查 |
 | **D — Done** | 汇总所有变更，回到空闲状态 |
 
-状态在重启后保留。用 `jaw orchestrate` 或 `/pabcd` 开始，用 `/continue` 恢复，用 `/goal` 让长期目标保持存活。参见 [PABCD](https://lidge-jun.github.io/cli-jaw/dev/concepts/pabcd.html)。
+状态在重启后保留。用 `jaw orchestrate` 或 `/pabcd` 开始，用 `/continue` 恢复，用 `/goal` 让长期目标保持存活。参见 [PABCD](https://lidge-ai.github.io/cli-jaw/dev/concepts/pabcd.html)。
 
 ### 记忆、技能和 MCP
 
@@ -498,7 +498,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 
 ### 桌面应用
 
-Electron 应用会启动管理面板，随包提供内置的 Node.js sidecar，并常驻你的菜单栏。请从 [GitHub Releases](https://github.com/lidge-jun/cli-jaw/releases/latest) 下载：
+Electron 应用会启动管理面板，随包提供内置的 Node.js sidecar，并常驻你的菜单栏。请从 [GitHub Releases](https://github.com/lidge-ai/cli-jaw/releases/latest) 下载：
 
 - **macOS（Apple Silicon）** — 打开 DMG，把 CLI-JAW 拖入 Applications。构建产物经过 Developer ID 签名、公证和 stapling，并支持应用内更新。
 - **Windows（x64）** — 运行 Setup `.exe`。它没有签名，因此 SmartScreen 可能会要求你确认。
@@ -558,7 +558,7 @@ jaw memory search <query>
 jaw browser fetch "https://example.com" --json
 ```
 
-用 `jaw clone` 创建的每个实例都有自己的设置、记忆、数据库和 MCP 配置，管理面板可以看到全部。远程和无头主机：[structure/remote-headless.md](structure/remote-headless.md)。完整命令参考：[CLI docs](https://lidge-jun.github.io/cli-jaw/dev/reference/cli.html)。
+用 `jaw clone` 创建的每个实例都有自己的设置、记忆、数据库和 MCP 配置，管理面板可以看到全部。远程和无头主机：[structure/remote-headless.md](structure/remote-headless.md)。完整命令参考：[CLI docs](https://lidge-ai.github.io/cli-jaw/dev/reference/cli.html)。
 
 ---
 
@@ -566,8 +566,8 @@ jaw browser fetch "https://example.com" --json
 
 | 主题 | 位置 |
 |---|---|
-| 官网和快速上手 | [lidge-jun.github.io/cli-jaw](https://lidge-jun.github.io/cli-jaw/) |
-| 指南、概念、参考 | [Developer docs](https://lidge-jun.github.io/cli-jaw/dev/) |
+| 官网和快速上手 | [lidge-ai.github.io/cli-jaw](https://lidge-ai.github.io/cli-jaw/) |
+| 指南、概念、参考 | [Developer docs](https://lidge-ai.github.io/cli-jaw/dev/) |
 | 架构 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [structure/](structure/) |
 | Slack 工具和本地 API | [docs/slack-tools.md](docs/slack-tools.md) |
 | Runtime 集成（含已退役 runtime） | [structure/runtime-integration.md](structure/runtime-integration.md) |
@@ -605,7 +605,7 @@ npm run electron:dev   # desktop app with hot reload
 
 ## 参与贡献
 
-公开代码和产品文档保存在这里。私有规划和历史只保存在独立的同级克隆 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) 中；请通过 [issue](https://github.com/lidge-jun/cli-jaw/issues) 申请访问权限。不要在本检出中创建私有记录，包括 `devlog`、`_plan`、`_fin` 或 `.jwc` 别名，也不要在公开文档或源码中包含私有记录路径。上传变更前，请先完成[本地 pre-push 设置和检查](CONTRIBUTING.md#local-private-path-check)。
+公开代码和产品文档保存在这里。私有规划和历史只保存在独立的同级克隆 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) 中；请通过 [issue](https://github.com/lidge-ai/cli-jaw/issues) 申请访问权限。不要在本检出中创建私有记录，包括 `devlog`、`_plan`、`_fin` 或 `.jwc` 别名，也不要在公开文档或源码中包含私有记录路径。上传变更前，请先完成[本地 pre-push 设置和检查](CONTRIBUTING.md#local-private-path-check)。
 
 1. 从 `dev` Fork 并创建分支
 2. `npm run build && npm run build:frontend && npm test`

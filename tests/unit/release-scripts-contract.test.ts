@@ -609,13 +609,13 @@ test('release branch policy is reflected in CI workflows, release script, instal
     assert.ok(readmes.includes('/cli-jaw/main/scripts/install.sh'), 'README install URLs should use main');
     assert.ok(readmes.includes('/cli-jaw/main/scripts/install-wsl.sh'), 'README WSL install URLs should use main');
     assert.ok(readmes.includes('/cli-jaw/main/scripts/collect-fresh-install-evidence.sh'), 'README evidence URLs should use main');
-    assert.ok(!readmes.includes('raw.githubusercontent.com/lidge-jun/cli-jaw/master/scripts/'), 'README files must not point installers at master');
+    assert.ok(!readmes.includes('raw.githubusercontent.com/lidge-ai/cli-jaw/master/scripts/'), 'README files must not point installers at master');
     assert.ok(readmes.includes('branch from `dev`') || readmes.includes('`dev`에서 Fork') || readmes.includes('`dev` から Fork') || readmes.includes('从 `dev` Fork'),
         'contributor guidance should direct branches from dev');
 
     assert.ok(docs.includes('/cli-jaw/main/scripts/install.sh'), 'landing page install URL should use main');
     assert.ok(docs.includes('/cli-jaw/main/scripts/install-wsl.sh'), 'Windows docs install URL should use main');
-    assert.ok(!docs.includes('raw.githubusercontent.com/lidge-jun/cli-jaw/master/scripts/install'), 'static docs must not point installers at master');
+    assert.ok(!docs.includes('raw.githubusercontent.com/lidge-ai/cli-jaw/master/scripts/install'), 'static docs must not point installers at master');
 });
 
 test('electron-builder scripts stay free of POSIX command substitution', () => {

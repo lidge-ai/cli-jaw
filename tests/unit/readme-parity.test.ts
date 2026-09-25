@@ -18,7 +18,7 @@ const imagePaths = (src: string) => [...src.matchAll(/<img[^>]+src="([^"]+)"|!\[
     .filter(path => !/^https?:\/\/img\.shields\.io\//.test(path))
     .sort();
 
-const RELEASES_LATEST = 'https://github.com/lidge-jun/cli-jaw/releases/latest';
+const RELEASES_LATEST = 'https://github.com/lidge-ai/cli-jaw/releases/latest';
 
 for (const file of FILES) {
     test(`RP-001 ${file}: banner, download badges and two-line install`, () => {

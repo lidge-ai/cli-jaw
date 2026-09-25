@@ -63,6 +63,6 @@ test('electron external open policy keeps app origins internal and opens safe we
     assert.equal(isAppInternalNavigation('http://127.0.0.1:24602/', options), true);
     assert.equal(externalOpenUrlForNavigation('http://127.0.0.1:24576/manager', options), null);
     assert.equal(externalOpenUrlForNavigation('http://127.0.0.1:24602/', options), null);
-    assert.equal(externalOpenUrlForNavigation('https://github.com/lidge-jun/cli-jaw', options), 'https://github.com/lidge-jun/cli-jaw');
+    assert.equal(externalOpenUrlForNavigation('https://github.com/lidge-ai/cli-jaw', options), 'https://github.com/lidge-ai/cli-jaw');
     assert.equal(externalOpenUrlForNavigation('http://127.0.0.1:3000/', options), 'http://127.0.0.1:3000/');
 });

@@ -25,7 +25,7 @@
   blocked-postinstall scenario deliberately.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 #>
 [CmdletBinding()]
 param(

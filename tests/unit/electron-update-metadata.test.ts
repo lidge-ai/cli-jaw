@@ -37,7 +37,7 @@ function fixture(t: test.TestContext, version = '2.17.55') {
     sha512: digest,
   }));
   const appUpdatePath = join(appResources, 'app-update.yml');
-  writeFileSync(appUpdatePath, stringify({ provider: 'github', owner: 'lidge-jun', repo: 'cli-jaw' }));
+  writeFileSync(appUpdatePath, stringify({ provider: 'github', owner: 'lidge-ai', repo: 'cli-jaw' }));
   return { root, dist, packagePath, metadataPath, appUpdatePath, zipPath, dmgPath };
 }
 

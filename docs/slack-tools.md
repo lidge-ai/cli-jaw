@@ -114,8 +114,8 @@ not repair a Jaw authorization failure.
 
 ## Authorization and deployment boundary
 
-This ships under an explicitly accepted deployment model, recorded in [issue #646](https://github.com/lidge-jun/cli-jaw/issues/646)
-and tracked with the rest of the Slack integration in [issue #645](https://github.com/lidge-jun/cli-jaw/issues/645).
+This ships under an explicitly accepted deployment model, recorded in [issue #646](https://github.com/lidge-ai/cli-jaw/issues/646)
+and tracked with the rest of the Slack integration in [issue #645](https://github.com/lidge-ai/cli-jaw/issues/645).
 The repository owner accepted the residual limitations below for a self-hosted, single-operator
 install. Anyone running cli-jaw where the OS account is shared with untrusted parties, or where
 remote users must not reach bot authority, must not enable these tools until the isolation work

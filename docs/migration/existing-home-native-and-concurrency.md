@@ -2,7 +2,7 @@
 
 Existing `settings.json` homes stay on print transport and `multiSession.maxConcurrent: 2` because load pins those old defaults. The next settings load will migrate them.
 
-Tracked in [#761](https://github.com/lidge-jun/cli-jaw/issues/761).
+Tracked in [#761](https://github.com/lidge-ai/cli-jaw/issues/761).
 
 | Surface | After the next load |
 | --- | --- |

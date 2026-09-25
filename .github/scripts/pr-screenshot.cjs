@@ -334,7 +334,7 @@ function buildFailureSummary({
     "  linked by commit SHA so the link keeps pointing at the same bytes:",
     "",
     "  ```text",
-    `  https://raw.githubusercontent.com/lidge-jun/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png`,
+    `  https://raw.githubusercontent.com/lidge-ai/cli-jaw/<sha>/<pr-or-date-slug>/<name>.png`,
     "  ```",
     "",
     "Never commit screenshot files to the PR branch itself.",

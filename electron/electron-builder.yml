@@ -81,5 +81,5 @@ linux:
   category: Development
 publish:
   provider: github
-  owner: lidge-jun
+  owner: lidge-ai
   repo: cli-jaw

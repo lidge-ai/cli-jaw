@@ -54,7 +54,7 @@ test('GHS-002: starRepo calls gh starred API with hidden Windows console', () =>
 
     assert.deepEqual(result, { ok: true });
     assert.equal(seenCommand, 'gh');
-    assert.deepEqual(seenArgs, ['api', '-X', 'PUT', '/user/starred/lidge-jun/cli-jaw']);
+    assert.deepEqual(seenArgs, ['api', '-X', 'PUT', '/user/starred/lidge-ai/cli-jaw']);
     assert.equal(seenOptions?.windowsHide, true);
 });
 

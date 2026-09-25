@@ -234,19 +234,19 @@ test('browser network JSON candidates reuse public endpoint readers for known AP
 
     const github = fromNetworkCandidate({
         ...fetched(JSON.stringify({
-            full_name: 'lidge-jun/cli-jaw',
+            full_name: 'lidge-ai/cli-jaw',
             description: 'CLI Jaw',
             default_branch: 'dev',
             stargazers_count: 10,
             forks_count: 2,
             open_issues_count: 1,
-            html_url: 'https://github.com/lidge-jun/cli-jaw',
+            html_url: 'https://github.com/lidge-ai/cli-jaw',
         })),
-        finalUrl: 'https://api.github.com/repos/lidge-jun/cli-jaw',
+        finalUrl: 'https://api.github.com/repos/lidge-ai/cli-jaw',
         evidence: ['browser-network-json'],
     });
     assert.equal(github.label, 'github-repo-api');
-    assert.match(github.text, /Repository: lidge-jun\/cli-jaw/);
+    assert.match(github.text, /Repository: lidge-ai\/cli-jaw/);
 });
 
 test('ordinary browser network JSON candidates keep generic network API behavior', () => {

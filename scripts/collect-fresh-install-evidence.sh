@@ -9,7 +9,7 @@ OUT_DIR=""
 INSTALL_SCRIPT="${CLI_JAW_INSTALL_SCRIPT:-}"
 VERIFIER_SCRIPT="${CLI_JAW_VERIFIER_SCRIPT:-}"
 INSTALL_REF="${CLI_JAW_INSTALL_REF:-main}"
-RAW_BASE="${CLI_JAW_RAW_BASE:-https://raw.githubusercontent.com/lidge-jun/cli-jaw/${INSTALL_REF}}"
+RAW_BASE="${CLI_JAW_RAW_BASE:-https://raw.githubusercontent.com/lidge-ai/cli-jaw/${INSTALL_REF}}"
 FAILURES=0
 
 usage() {
@@ -69,7 +69,7 @@ while [ "$#" -gt 0 ]; do
     --install-ref)
       [ "$#" -ge 2 ] || { echo "Missing value for --install-ref" >&2; exit 2; }
       INSTALL_REF="$2"
-      RAW_BASE="https://raw.githubusercontent.com/lidge-jun/cli-jaw/${INSTALL_REF}"
+      RAW_BASE="https://raw.githubusercontent.com/lidge-ai/cli-jaw/${INSTALL_REF}"
       shift 2
       ;;
     --raw-base)

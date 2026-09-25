@@ -7,7 +7,7 @@ Claude, Codex, Cursor, Grok, Copilot, OpenCode, Kiro, Antigravity, Pi — 팀처
 
 <p align="center">
   <a href="https://npmjs.com/package/cli-jaw"><img src="https://img.shields.io/npm/v/cli-jaw?color=cb3837&label=npm&logo=npm" alt="npm 버전"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-jun/cli-jaw?label=release" alt="최신 릴리스"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-ai/cli-jaw?label=release" alt="최신 릴리스"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.4-339933?logo=node.js&logoColor=white" alt="Node.js 22.4+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT 라이선스"></a>
 </p>
@@ -19,9 +19,9 @@ jaw dashboard
 ```
 
 <p align="center">
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
-  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
+  <a href="https://github.com/lidge-ai/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
 </p>
 
 <table>
@@ -58,7 +58,7 @@ WYSIWYG 편집, 수식, Mermaid 다이어그램을 갖춘 내장 Markdown 워크
 </table>
 
 <p align="center">
-  <a href="README.md">English</a> · <b>한국어</b> · <a href="README.zh-CN.md">中文</a> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-jun.github.io/cli-jaw/"><b>Website</b></a> · <a href="https://lidge-jun.github.io/cli-jaw/dev/">Docs</a>
+  <a href="README.md">English</a> · <b>한국어</b> · <a href="README.zh-CN.md">中文</a> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-ai.github.io/cli-jaw/"><b>Website</b></a> · <a href="https://lidge-ai.github.io/cli-jaw/dev/">Docs</a>
 </p>
 
 ---
@@ -95,13 +95,13 @@ jaw init                              # 준비되면 대화형 설정
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 -->
 
 **Windows 지원.** 안정적으로 쓰려면 WSL 경로를 권장합니다. 네이티브 PowerShell 설치 스크립트도 있지만 아직 beta 단계입니다:
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
 ```
 
 Node.js 22.4+ 가 필요합니다.
@@ -165,7 +165,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS 원클릭</b> — Node.js가 없다면 이걸로</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -184,7 +184,7 @@ wsl --install
 
 ```bash
 # 2. CLI-JAW + 전체 의존성 설치
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -286,7 +286,7 @@ foreach ($path in @($outLog, $errLog)) {
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -297,7 +297,7 @@ bash "$COLLECTOR" --target wsl
 Windows PowerShell에서는 지원되는 WSL 경로로 들어가세요:
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 collector가 WSL 안에서 `powershell.exe`를 쓸 수 없다고 하면, 감사 전에 Windows PowerShell에서 이것을 실행하세요:
@@ -437,7 +437,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 | **C — Check** | 타입 검사, 문서 업데이트, 일관성 검사 |
 | **D — Done** | 모든 변경 요약을 남기고 idle로 복귀 |
 
-상태는 재시작해도 유지됩니다. `jaw orchestrate` 또는 `/pabcd`로 시작하고, `/continue`로 이어가며, 긴 목표는 `/goal`로 살려 두세요. 자세한 내용: [PABCD](https://lidge-jun.github.io/cli-jaw/dev/concepts/pabcd.html).
+상태는 재시작해도 유지됩니다. `jaw orchestrate` 또는 `/pabcd`로 시작하고, `/continue`로 이어가며, 긴 목표는 `/goal`로 살려 두세요. 자세한 내용: [PABCD](https://lidge-ai.github.io/cli-jaw/dev/concepts/pabcd.html).
 
 ### 메모리, 스킬, MCP
 
@@ -474,7 +474,7 @@ Chrome을 DevTools Protocol로 제어하고, `jaw browser vision-click "Login bu
 
 ### 데스크톱 앱
 
-Electron 앱은 매니저 대시보드를 띄우고, 번들된 Node.js sidecar를 함께 제공하며, 메뉴 막대에 상주합니다. [GitHub Releases](https://github.com/lidge-jun/cli-jaw/releases/latest)에서 받으세요:
+Electron 앱은 매니저 대시보드를 띄우고, 번들된 Node.js sidecar를 함께 제공하며, 메뉴 막대에 상주합니다. [GitHub Releases](https://github.com/lidge-ai/cli-jaw/releases/latest)에서 받으세요:
 
 - **macOS (Apple Silicon)** — DMG를 열고 CLI-JAW를 Applications로 끌어다 놓습니다. 빌드는 Developer ID로 서명하고 공증·stapling을 마치며, 앱 안에서 업데이트됩니다.
 - **Windows (x64)** — Setup `.exe`를 실행합니다. 서명이 없어 SmartScreen이 확인을 요구할 수 있습니다.
@@ -534,7 +534,7 @@ jaw memory search <query>
 jaw browser fetch "https://example.com" --json
 ```
 
-`jaw clone`으로 만든 인스턴스는 설정, 메모리, 데이터베이스, MCP 설정을 각자 가지며, 매니저 대시보드에서 전부 볼 수 있습니다. 원격·헤드리스 호스트: [structure/remote-headless.md](structure/remote-headless.md). 전체 명령 레퍼런스: [CLI 문서](https://lidge-jun.github.io/cli-jaw/dev/reference/cli.html).
+`jaw clone`으로 만든 인스턴스는 설정, 메모리, 데이터베이스, MCP 설정을 각자 가지며, 매니저 대시보드에서 전부 볼 수 있습니다. 원격·헤드리스 호스트: [structure/remote-headless.md](structure/remote-headless.md). 전체 명령 레퍼런스: [CLI 문서](https://lidge-ai.github.io/cli-jaw/dev/reference/cli.html).
 
 ---
 
@@ -542,8 +542,8 @@ jaw browser fetch "https://example.com" --json
 
 | 주제 | 위치 |
 |---|---|
-| 웹사이트와 퀵스타트 | [lidge-jun.github.io/cli-jaw](https://lidge-jun.github.io/cli-jaw/) |
-| 가이드, 개념, 레퍼런스 | [개발자 문서](https://lidge-jun.github.io/cli-jaw/dev/) |
+| 웹사이트와 퀵스타트 | [lidge-ai.github.io/cli-jaw](https://lidge-ai.github.io/cli-jaw/) |
+| 가이드, 개념, 레퍼런스 | [개발자 문서](https://lidge-ai.github.io/cli-jaw/dev/) |
 | 아키텍처 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [structure/](structure/) |
 | Slack 도구와 로컬 API | [docs/slack-tools.md](docs/slack-tools.md) |
 | 런타임 통합(은퇴한 런타임 포함) | [structure/runtime-integration.md](structure/runtime-integration.md) |
@@ -581,7 +581,7 @@ npm run electron:dev   # desktop app with hot reload
 
 ## 기여하기
 
-공개 코드와 제품 문서는 이 저장소에 있습니다. 비공개 계획과 이력은 별도 sibling clone인 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal)에만 두며, 접근 권한은 [이슈](https://github.com/lidge-jun/cli-jaw/issues)로 요청하세요. 이 체크아웃에는 `devlog`, `_plan`, `_fin`, `.jwc` 별칭을 포함한 비공개 기록을 만들지 말고, 공개 문서·소스에 비공개 기록 경로를 넣지 마세요. 변경을 올리기 전에 [로컬 pre-push 설정과 검사](CONTRIBUTING.md#local-private-path-check)를 따르세요.
+공개 코드와 제품 문서는 이 저장소에 있습니다. 비공개 계획과 이력은 별도 sibling clone인 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal)에만 두며, 접근 권한은 [이슈](https://github.com/lidge-ai/cli-jaw/issues)로 요청하세요. 이 체크아웃에는 `devlog`, `_plan`, `_fin`, `.jwc` 별칭을 포함한 비공개 기록을 만들지 말고, 공개 문서·소스에 비공개 기록 경로를 넣지 마세요. 변경을 올리기 전에 [로컬 pre-push 설정과 검사](CONTRIBUTING.md#local-private-path-check)를 따르세요.
 
 1. `dev`에서 Fork하고 브랜치를 만듭니다
 2. `npm run build && npm run build:frontend && npm test`

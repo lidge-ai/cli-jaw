@@ -7,7 +7,7 @@ import { resolveHomePath } from '../src/core/path-expand.js';
 import { isAgentDriven } from './agent-driven.js';
 import { interactiveConfirm } from './interactive-confirm.js';
 
-const REPO = 'lidge-jun/cli-jaw';
+const REPO = 'lidge-ai/cli-jaw';
 
 interface StarPromptState {
     prompted_at: string;

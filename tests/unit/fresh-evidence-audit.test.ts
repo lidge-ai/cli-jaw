@@ -38,7 +38,7 @@ function baseSummary(target: 'macos' | 'wsl', collectorHash: string, installerHa
     const installerSource = target === 'wsl' ? 'scripts/install-wsl.sh' : 'scripts/install.sh';
     return `
 2026-05-20T00:00:00Z target=${target}
-2026-05-20T00:00:00Z raw_base=https://raw.githubusercontent.com/lidge-jun/cli-jaw/master
+2026-05-20T00:00:00Z raw_base=https://raw.githubusercontent.com/lidge-ai/cli-jaw/master
 2026-05-20T00:00:00Z install_script=
 2026-05-20T00:00:00Z verifier_script=
 2026-05-20T00:00:00Z skip_install=0
