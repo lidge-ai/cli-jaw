@@ -3,7 +3,7 @@ import { getDesktop, isElectron } from '../panels/desktop-bridge';
 import type { BrowserPickedElement, BrowserWebviewCommand, BrowserWebviewNativeAction, BrowserWebviewScreenshot, BrowserWebviewTabState } from '../panels/desktop-bridge';
 import { DEFAULT_BROWSER_URL, isRestrictedBrowserHost, normalizeBrowserTarget } from './browser-url';
 import { BrowserAddressBar } from './browser-address-bar';
-import { createAddressBarState, displayedAddress, reduceAddressBar, type AddressBarAction, type AddressBarState } from './browser-address-state';
+import { createAddressBarState, displayedAddress, reduceAddressBar, shouldShowRecentVisits, type AddressBarAction, type AddressBarState } from './browser-address-state';
 import { pickFaviconUrl, faviconInitial } from './browser-favicon';
 import { loadBrowserHistory, saveBrowserHistory, upsertBrowserHistory, type BrowserHistoryEntry } from './browser-history-store';
 import './browser-panel.css';
@@ -1186,7 +1186,7 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
             {canUseElectronWebview ? (
                 <div className="browser-webview-stack" ref={webviewStackRef}>
                     <div key={activeTab.id} className="browser-webview-host is-active">
-                        {historyEntries.length > 0 && addressState.focused && addressState.draft.trim() === '' && (
+                        {historyEntries.length > 0 && shouldShowRecentVisits(addressState) && (
                             <div className="browser-history-empty" aria-label="Recent visits">
                                 {historyEntries.map(entry => (
                                     <button

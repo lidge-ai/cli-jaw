@@ -20,6 +20,11 @@ export const FIT_ZOOM_MAX = 1;
 // Sub-pixel layout slack: scrollWidth can exceed the viewport by a fraction
 // without producing a scrollbar.
 export const FIT_OVERFLOW_EPSILON_PX = 1;
+// Relative overflow floor. A wide viewport can report a few px — or ~1% of its
+// own width — more content than viewport purely from fractional layout, and
+// shrinking for that alone pins a zoom the user cannot see the point of. Only
+// overflow beyond this share of the viewport counts as a page that is too wide.
+export const FIT_OVERFLOW_RATIO = 0.02;
 export const FIT_ZOOM_EPSILON = 0.004;
 
 export type FitZoomInput = {
@@ -53,8 +58,9 @@ function clampZoom(zoom: number, minZoom: number): number {
 export function computeFitZoom(input: FitZoomInput): FitZoomDecision {
     const minZoom = input.minZoom ?? FIT_ZOOM_MIN;
     const physicalWidth = input.viewportCssWidth * input.currentZoom;
+    const overflowPx = input.contentCssWidth - input.viewportCssWidth;
 
-    if (input.contentCssWidth > input.viewportCssWidth + FIT_OVERFLOW_EPSILON_PX) {
+    if (overflowPx > Math.max(FIT_OVERFLOW_EPSILON_PX, input.viewportCssWidth * FIT_OVERFLOW_RATIO)) {
         // Overflow: the document is wider than the layout viewport. For a
         // min-width-bound page the content width is zoom-invariant, so the
         // measured width doubles as the required width for resize refits.

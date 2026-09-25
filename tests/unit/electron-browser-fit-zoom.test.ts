@@ -96,6 +96,28 @@ test('sub-pixel measurement slack does not count as overflow', () => {
     assert.equal(decision.requiredWidth, null);
 });
 
+test('a 12px overflow on a 1200px viewport is layout slack and stays at 100%', () => {
+    const decision = computeFitZoom({
+        viewportCssWidth: 1200,
+        contentCssWidth: 1212,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    assert.equal(decision.zoom, FIT_ZOOM_MAX);
+    assert.equal(decision.requiredWidth, null, 'slack leaves no stored required width');
+});
+
+test('overflow beyond the relative floor still shrinks', () => {
+    const decision = computeFitZoom({
+        viewportCssWidth: 1200,
+        contentCssWidth: 1600,
+        currentZoom: 1,
+        requiredWidth: null,
+    });
+    almost(decision.zoom, 1200 / 1600);
+    assert.equal(decision.requiredWidth, 1600);
+});
+
 test('fit-to-width uses the read-only Page.getLayoutMetrics probe only', () => {
     assert.ok(cdpSource.includes("'Page.getLayoutMetrics'"), 'metrics come from Page.getLayoutMetrics');
     assert.ok(!cdpSource.includes("'Page.enable'"), 'Page domain is never subscribed');
@@ -124,10 +146,31 @@ test('async fit applies only to the document it measured', () => {
     assert.ok(ipcSource.includes('getURL() !== measuredUrl'), 'a navigation during the probe cancels the apply');
 });
 
+test('a zoom choice or tab replacement during the probe wins over the pending fit', () => {
+    const afterProbe = ipcSource.split('await pageLayoutMetrics(contents)')[1] ?? '';
+    const beforeDecision = afterProbe.split('computeFitZoom(')[0] ?? '';
+    assert.ok(
+        beforeDecision.includes("entry.zoomMode !== 'auto'"),
+        'a manual zoom picked while the probe was in flight is not overwritten',
+    );
+    assert.ok(
+        beforeDecision.includes('tabsById.get(entry.tabId) !== entry'),
+        'a tab whose registration was replaced is not refit',
+    );
+});
+
 test('in-page navigation re-arms the auto fit', () => {
     assert.ok(ipcSource.includes("'did-navigate-in-page'"), 'same-document navigations reset the auto fit too');
     const inPage = ipcSource.split("'did-navigate-in-page'")[1]?.split('});')[0] ?? '';
     assert.ok(inPage.includes('scheduleFitMeasure'), 'in-page navigation schedules a refit');
+});
+
+test('in-page navigation keeps the current zoom while a real navigation resets it', () => {
+    const inPage = ipcSource.split("'did-navigate-in-page'")[1]?.split('});')[0] ?? '';
+    assert.ok(inPage.includes('forgetFitWidth()'), 'in-page navigation drops the stale fit width');
+    assert.ok(!inPage.includes('setZoomFactor(1)'), 'in-page navigation leaves the zoom the user is looking at');
+    const didNavigateReset = ipcSource.split('const resetAutoZoom = ()')[1]?.split('};')[0] ?? '';
+    assert.ok(didNavigateReset.includes('setZoomFactor(1)'), 'a real navigation still resets the zoom for its new document');
 });
 
 test('picked-element overlay converts page CSS px into DIP under zoom', () => {
@@ -140,6 +183,10 @@ test('picked-element overlay converts page CSS px into DIP under zoom', () => {
     assert.ok(
         /bounds\.x - Math\.round\(viewportOffset\.x\)/.test(cdpSource),
         'getBoxModel document bounds become viewport-relative',
+    );
+    assert.ok(
+        /metrics\.cssVisualViewport\?\.pageX \?\? metrics\.layoutViewport\?\.pageX \?\? metrics\.visualViewport\?\.pageX/.test(cdpSource),
+        'the offset falls back through layoutViewport before the legacy visualViewport shape',
     );
 });
 

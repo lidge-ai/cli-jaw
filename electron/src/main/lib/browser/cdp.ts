@@ -206,11 +206,12 @@ async function visualViewportPageOffset(contents: WebContents): Promise<{ x: num
     try {
         const metrics = await send<{
             cssVisualViewport?: { pageX?: number; pageY?: number };
+            layoutViewport?: { pageX?: number; pageY?: number };
             visualViewport?: { pageX?: number; pageY?: number };
         }>(contents, 'Page.getLayoutMetrics');
         return {
-            x: metrics.cssVisualViewport?.pageX ?? metrics.visualViewport?.pageX ?? 0,
-            y: metrics.cssVisualViewport?.pageY ?? metrics.visualViewport?.pageY ?? 0,
+            x: metrics.cssVisualViewport?.pageX ?? metrics.layoutViewport?.pageX ?? metrics.visualViewport?.pageX ?? 0,
+            y: metrics.cssVisualViewport?.pageY ?? metrics.layoutViewport?.pageY ?? metrics.visualViewport?.pageY ?? 0,
         };
     } catch {
         return { x: 0, y: 0 };

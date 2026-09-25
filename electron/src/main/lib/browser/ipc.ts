@@ -270,6 +270,10 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         const measuredUrl = contents.getURL();
         const metrics = await pageLayoutMetrics(contents);
         if (!metrics || contents.isDestroyed() || contents.getURL() !== measuredUrl) return;
+        // The probe also gives the user time to pick a zoom level from the
+        // menu, or to replace this tab's registration. Either one outranks the
+        // fit, so re-check both before writing a zoom factor back.
+        if (entry.zoomMode !== 'auto' || tabsById.get(entry.tabId) !== entry || entry.webContentsId !== contents.id) return;
         const decision = computeFitZoom({
             viewportCssWidth: metrics.viewportCssWidth,
             contentCssWidth: metrics.contentCssWidth,
@@ -297,10 +301,15 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
     function attachFitToWidthListeners(entry: RegisteredBrowserTab, contents: WebContents): void {
         if (fitToWidthListenerIds.has(contents.id)) return;
         fitToWidthListenerIds.add(contents.id);
-        const resetAutoZoom = () => {
+        const forgetFitWidth = (): RegisteredBrowserTab | null => {
             const live = tabsById.get(entry.tabId);
-            if (!live || live.webContentsId !== contents.id) return;
+            if (!live || live.webContentsId !== contents.id) return null;
             live.fitRequiredWidth = null;
+            return live;
+        };
+        const resetAutoZoom = () => {
+            const live = forgetFitWidth();
+            if (!live) return;
             // A new document gets an un-zoomed layout pass; the load-end
             // events re-fit it if its content still overflows the panel.
             if (live.zoomMode === 'auto' && contents.getZoomFactor() !== 1) {
@@ -309,11 +318,12 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
             }
         };
         contents.on('did-navigate', resetAutoZoom);
-        // In-page navigations (hash links, SPA route changes) swap the
-        // document without a full did-navigate; apply the same reset and
-        // re-measure since did-finish-load does not fire for them.
+        // In-page navigations (hash links, SPA route changes) keep the current
+        // document and the zoom the user is looking at — only the stale fit
+        // width is dropped — and re-measure since did-finish-load does not
+        // fire for them.
         contents.on('did-navigate-in-page', () => {
-            resetAutoZoom();
+            forgetFitWidth();
             scheduleFitMeasure(entry.tabId, contents);
         });
         const refit = () => scheduleFitMeasure(entry.tabId, contents);
