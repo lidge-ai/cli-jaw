@@ -42,6 +42,7 @@ export interface CodeSessionClient {
     sendPrompt(id: string, input: CodePromptRequest): Promise<CodePromptReceipt>;
     cancelPrompt(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo>;
     attachSession(id: string): Promise<CodeSessionInfo>;
+    visitSession(id: string): Promise<CodeSessionInfo>;
     answerPermission(id: string, input: CodePermissionAnswer): Promise<void>;
     getGitInfo(cwd: string, signal?: AbortSignal): Promise<CodeGitInfo>;
     pickWorkspace(): Promise<{ ok: boolean; path?: string; cancelled?: boolean }>;
@@ -108,6 +109,7 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         sendPrompt: (id, input) => request('POST', `${sessionPath(id)}/prompt`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),
         attachSession: id => sessionRequest('POST', `${sessionPath(id)}/attach`, {}),
+        visitSession: id => sessionRequest('POST', `${sessionPath(id)}/visit`, {}),
         async answerPermission(id, input) { await request('POST', `/permissions/${encodeURIComponent(id)}`, input); },
         getGitInfo: (cwd, signal) => request('GET', `/git-info?cwd=${encodeURIComponent(cwd)}`, undefined, signal),
         pickWorkspace: () => request('POST', '/workspace/pick'),
