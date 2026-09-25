@@ -142,7 +142,8 @@ test('tool fields and latest action render literal XSS text without HTML or mark
     assert.match(group.firstElementChild!.getAttribute('aria-label')!, /1 step/);
     assert.ok(group.firstElementChild!.textContent!.includes(attack));
     assert.equal(view.element.querySelector('img, script, strong'), null);
-    assert.equal(rows(view.element)[0].querySelector('pre')?.textContent, [attack, attack, attack].join('\n'));
+    const pres = [...rows(view.element)[0].querySelectorAll('.activity-item-body pre')].map(node => node.textContent);
+    assert.deepEqual(pres, [attack, attack, attack]);
 });
 
 for (const ending of ['done', 'error'] as const) {
@@ -390,16 +391,25 @@ test('pending native toggles survive immediate recycle and preview eviction does
     assert.equal(returned.querySelector('pre')!.textContent, 'returned snapshot');
 });
 
-test('view text clipping notice lives in the disclosure body and survives a collapsed group', () => {
+test('retention-omission notice lives in the disclosure body and survives a collapsed group', () => {
     const { model, view, group } = mount();
-    tool(model, 'long', '가'.repeat(3500));
-    assert.equal(model.omitted.textChars, 0);
+    tool(model, 'long', '가'.repeat(5000));
+    assert.ok(model.omitted.textChars > 0);
     view.render(model);
     assert.equal(group.open, false);
     const notice = view.element.querySelector<HTMLElement>('.activity-omitted')!;
     assert.equal(notice.hidden, false);
     assert.equal(notice.closest('details'), group);
     assert.match(notice.textContent!, /omitted/);
+});
+
+test('fully retained text is shown without the omission notice', () => {
+    const { model, view } = mount();
+    tool(model, 'long', '가'.repeat(3500));
+    assert.equal(model.omitted.textChars, 0);
+    view.render(model);
+    assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, true);
+    assert.equal(rows(view.element)[0].querySelector('pre')!.textContent, '가'.repeat(3500));
 });
 
 test('choice saturation preserves all 128 prior choices, refuses new opens and recovers after closing', async () => {
@@ -461,8 +471,7 @@ test('notices and Trace belong to the disclosure body; answer remains independen
     assert.equal(omitted.closest('details'), group);
     assert.match(omitted.textContent!, /omitted/i);
     assert.match(view.element.textContent!, /live Requests/);
-    assert.match(rows(view.element)[0].querySelector('pre')!.textContent!, /Preview limited/);
-    assert.ok(rows(view.element)[0].querySelector('pre')!.textContent!.length < 3200);
+    assert.equal(rows(view.element)[0].querySelector('pre')!.textContent, '가'.repeat(4000));
     const trace = button(view.element, 'Open in Trace');
     assert.equal(trace.closest('summary'), null);
     assert.equal(trace.closest('details'), group);
@@ -573,8 +582,8 @@ test('reasoning/message split groups, use icons and retain literal bounded previ
     assert.equal(view.element.querySelectorAll('.activity-row-reasoning').length, 1); assert.equal(view.element.querySelectorAll('.activity-row-message').length, 1);
     assert.equal(view.element.querySelector('script'), null); assert.equal(view.element.querySelectorAll('.activity-row-icon svg').length, 7);
     const pre = rows(view.element).at(-1)!.querySelector('pre')!;
-    assert.equal(pre.textContent, 'x'.repeat(3000) + '\n[Preview limited; some text is omitted]');
-    assert.equal(pre.tabIndex, 0); assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, false);
+    assert.equal(pre.textContent, 'x'.repeat(3500));
+    assert.equal(pre.tabIndex, 0); assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, true);
 });
 
 // The turn carries no leading margin so its summary row lines up with the 24px avatar.
@@ -637,5 +646,183 @@ test('the activity turn carries no leading margin and leads the visible body con
             `.${className} can render above the turn with neither a box nor a bottom margin, `
             + "so the turn's removed leading margin would close a real gap");
     }
+    view.dispose();
+});
+
+test('T1: JSON tool input labels the decoded command, shows its description and a structured body', () => {
+    const { model, view } = mount();
+    const command = 'ssh clisu-oracle \'cat > ~/git/hooks/pre-receive <<EOF\n#!/bin/bash\nreject\nEOF\'';
+    send(model, { kind: 'tool', itemId: 'ssh', name: 'bash', status: 'done',
+        input: JSON.stringify({ command, description: 'Install raw-rejecting pre-receive hook on clisu' }),
+        output: 'hook installed' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const summary = row.querySelector('summary')!;
+    assert.equal(summary.querySelector('.activity-row-label')!.textContent,
+        `Ran ${'ssh clisu-oracle \'cat > ~/git/hooks/pre-receive <<EOF'}`);
+    assert.doesNotMatch(summary.textContent!, /\{"command":/);
+    const desc = summary.querySelector<HTMLElement>('.activity-row-desc')!;
+    assert.equal(desc.hidden, false);
+    assert.equal(desc.textContent, 'Install raw-rejecting pre-receive hook on clisu');
+    const blocks = [...row.querySelectorAll<HTMLElement>('.activity-block')];
+    assert.deepEqual(blocks.map(node => node.dataset['block']), ['input', 'description', 'output']);
+    assert.equal(blocks[0].querySelector('.activity-block-label')!.textContent, 'Command');
+    assert.equal(blocks[0].querySelector('pre')!.textContent, command);
+    assert.equal(blocks[1].querySelector('.activity-block-label')!.textContent, 'Description');
+    assert.equal(blocks[1].querySelector('pre')!.textContent, 'Install raw-rejecting pre-receive hook on clisu');
+    assert.equal(blocks[2].querySelector('.activity-block-label')!.textContent, 'Output');
+    assert.equal(blocks[2].querySelector('pre')!.textContent, 'hook installed');
+    assert.ok(blocks[0].querySelector<HTMLButtonElement>('.activity-block-copy'));
+    assert.equal(row.querySelector('.activity-waiting'), null);
+});
+
+test('T2: non-command JSON input renders as pretty-printed Input, unrecognised objects label the tool name', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'mcp', name: 'svc__lookup', status: 'done',
+        input: '{"region":"us","limit":3}', output: 'ok' });
+    send(model, { kind: 'tool', itemId: 'grep', name: 'grep', status: 'done',
+        input: '{"pattern":"needle"}', output: 'hit' });
+    view.render(model);
+    const [mcp, grep] = rows(view.element);
+    assert.equal(mcp.querySelector('.activity-block-label')!.textContent, 'Input');
+    assert.equal(mcp.querySelector('.activity-block pre')!.textContent, '{\n  "region": "us",\n  "limit": 3\n}');
+    assert.equal(mcp.querySelector('.activity-row-label')!.textContent, 'Called svc__lookup');
+    assert.equal(grep.querySelector('.activity-row-label')!.textContent, 'Searched needle');
+});
+
+test('T3: a running row without output shows a waiting line, not an empty block', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'running',
+        input: '{"command":"npm test"}' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('.activity-waiting')!.textContent, 'Waiting for output…');
+    assert.equal(row.querySelectorAll('.activity-block').length, 1);
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'running',
+        input: '{"command":"npm test"}', output: 'partial line' });
+    view.render(model);
+    assert.equal(row.querySelector('.activity-waiting'), null);
+    assert.equal(row.querySelectorAll('.activity-block').length, 2);
+});
+
+test('T5: extra command fields render as Parameters; a truncated JSON input still decodes', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'full', name: 'bash', status: 'done',
+        input: JSON.stringify({ command: 'npm test', timeout: 120000, cwd: '/work/app' }), output: 'ok' });
+    const cut = JSON.stringify({ command: 'ssh host \'cat > f <<EOF\nline one\nline two', description: 'x' }).slice(0, 60);
+    send(model, { kind: 'tool', itemId: 'cut', name: 'bash', status: 'done', input: cut, output: 'ok' });
+    view.render(model);
+    const [full, truncated] = rows(view.element);
+    const params = full.querySelector('[data-block="params"]')!;
+    assert.equal(params.querySelector('.activity-block-label')!.textContent, 'Parameters');
+    assert.equal(params.querySelector('pre')!.textContent, '{\n  "timeout": 120000,\n  "cwd": "/work/app"\n}');
+    const label = truncated.querySelector('.activity-row-label')!.textContent!;
+    assert.equal(label, 'Ran ssh host \'cat > f <<EOF');
+    assert.doesNotMatch(label, /\{/);
+    const commandBlock = truncated.querySelector('[data-block="input"] pre')!;
+    assert.equal(commandBlock.textContent, 'ssh host \'cat > f <<EOF\nline one\nline two');
+});
+
+test('T6: a multi-line description shows fully when expanded', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'd', name: 'bash', status: 'done',
+        input: JSON.stringify({ command: 'ls', description: 'First part of the reason\nand the second line of it' }), output: 'x' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('.activity-row-desc')!.textContent, 'First part of the reason');
+    assert.equal(row.querySelector('[data-block="description"] pre')!.textContent,
+        'First part of the reason\nand the second line of it');
+});
+
+test('T4: tall content offers Show all which lifts the cap and toggles back', () => {
+    const { model, view } = mount();
+    const tall = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n');
+    send(model, { kind: 'tool', itemId: 'tall', name: 'bash', status: 'done',
+        input: '{"command":"seq 40"}', output: tall });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const body = row.querySelector<HTMLElement>('.activity-item-body')!;
+    const toggle = row.querySelector<HTMLButtonElement>('.activity-block-toggle')!;
+    assert.equal(toggle.hidden, false);
+    assert.equal(toggle.textContent, 'Show all');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'true');
+    assert.equal(toggle.textContent, 'Show less');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'false');
+    assert.equal(toggle.textContent, 'Show all');
+    view.render(model);
+    assert.equal(row.querySelector<HTMLButtonElement>('.activity-block-toggle')!.hidden, false);
+});
+
+test('T7: an expanded row stays expanded when the lifted cap measures short, and only overflowing blocks are focusable', () => {
+    const { model, view } = mount();
+    const tall = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n');
+    send(model, { kind: 'tool', itemId: 'tall', name: 'bash', status: 'done',
+        input: '{"command":"seq 40"}', output: tall });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const body = row.querySelector<HTMLElement>('.activity-item-body')!;
+    const output = row.querySelector<HTMLElement>('[data-block="output"] pre')!;
+    const command = row.querySelector<HTMLElement>('[data-block="input"] pre')!;
+    // jsdom does not lay out, so drive the browser measurement path by hand: the
+    // capped output overflows while the short command block does not.
+    const setHeight = (scrollHeight: number, clientHeight: number) => {
+        Object.defineProperty(output, 'scrollHeight', { configurable: true, value: scrollHeight });
+        Object.defineProperty(output, 'clientHeight', { configurable: true, value: clientHeight });
+    };
+    setHeight(400, 200);
+    view.render(model);
+    const toggle = row.querySelector<HTMLButtonElement>('.activity-block-toggle')!;
+    assert.equal(toggle.hidden, false);
+    assert.equal(toggle.textContent, 'Show all');
+    assert.equal(output.tabIndex, 0, 'a block that scrolls is reachable by keyboard');
+    assert.equal(command.hasAttribute('tabindex'), false, 'a block that does not scroll stays out of the tab order');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'true');
+    // Expanding lifts the cap, so the flowing block measures as if it never overflowed.
+    setHeight(200, 200);
+    view.render(model);
+    assert.equal(body.dataset['expanded'], 'true', "the reader's Show all survives the next render");
+    assert.equal(toggle.hidden, false, 'the toggle stays available to collapse the row again');
+    assert.equal(toggle.textContent, 'Show less');
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(output.hasAttribute('tabindex'), false, 'an uncapped block no longer scrolls');
+    assert.equal(output.textContent, tall, 'the block text stays live across the render');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'false');
+    assert.equal(toggle.textContent, 'Show all');
+    view.dispose();
+});
+
+test('T8: a call that fails relabels its detail block from Detail to Error', () => {
+    const { model, view } = mount();
+    const detail = 'suite reported one failure';
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'done',
+        input: '{"command":"npm test"}', output: 'ok', detail });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('[data-block="detail"] .activity-block-label')!.textContent, 'Detail');
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'error',
+        input: '{"command":"npm test"}', output: 'ok', detail });
+    view.render(model);
+    assert.equal(row.querySelector('.activity-row-status')!.textContent, 'failed');
+    assert.equal(row.querySelector('[data-block="detail"] .activity-block-label')!.textContent, 'Error');
+    assert.equal(row.querySelector('[data-block="detail"] pre')!.textContent, detail);
+    assert.equal(row.querySelector('[data-block="input"] .activity-block-label')!.textContent, 'Command');
+    view.dispose();
+});
+
+test('T9: an input cut before any recognised field labels the row with the tool name', () => {
+    const { model, view } = mount();
+    const cut = '{"unrecognised":"a value retention cut before the closing quote';
+    send(model, { kind: 'tool', itemId: 'cut', name: 'bash', status: 'done', input: cut, output: 'ok' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const label = row.querySelector('.activity-row-label')!.textContent!;
+    assert.equal(label, 'Ran bash');
+    assert.doesNotMatch(label, /\{/);
+    assert.equal(row.querySelector('[data-block="input"] pre')!.textContent, cut,
+        'the body still shows exactly what the call sent');
     view.dispose();
 });

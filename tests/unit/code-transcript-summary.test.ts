@@ -23,6 +23,7 @@ test('a tool call reads as an action, not a function signature', () => {
         ['bash', JSON.stringify({ command: 'npm test -- --watch' }), 'Bash npm test -- --watch'],
         ['rg', JSON.stringify({ pattern: 'composer' }), 'Search composer'],
         ['browser_open', JSON.stringify({ url: 'https://example.com' }), 'Open https://example.com'],
+        ['browser_open', JSON.stringify({ url: 'https://example.com', query: 'composer' }), 'Open https://example.com'],
     ];
     for (const [name, input, expected] of cases) {
         assert.equal(toolSummary(item({ tool: { name, input } }), CWD), expected);

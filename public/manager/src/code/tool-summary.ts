@@ -1,4 +1,5 @@
 import type { CodeItem } from '../../../../src/code-mode/wire';
+import { firstToolField, parseToolArguments, TOOL_INPUT_KEY_ORDER } from '../../../../src/shared/tool-input.js';
 
 /**
  * One line that says what a tool call did, in the user's terms.
@@ -58,18 +59,16 @@ export function summariseToolInput(input: string | undefined, workingDir: string
     if (!input) return '';
     const raw = input.trim();
     if (!raw) return '';
-    if (raw.startsWith('{')) {
-        try {
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            for (const key of ['command', 'cmd', 'path', 'file_path', 'file', 'url', 'query', 'pattern']) {
-                const value = parsed[key];
-                if (typeof value === 'string' && value.trim()) {
-                    return key === 'path' || key === 'file' || key === 'file_path'
-                        ? shortenPath(value, workingDir) : firstLine(value);
-                }
+    const parsed = parseToolArguments(raw);
+    if (parsed) {
+        for (const key of TOOL_INPUT_KEY_ORDER) {
+            const value = firstToolField(parsed, [key]);
+            if (value !== null) {
+                return key === 'path' || key === 'file' || key === 'file_path'
+                    ? shortenPath(value, workingDir) : firstLine(value);
             }
-            return '';
-        } catch { /* not JSON after all; fall through to the raw text */ }
+        }
+        return '';
     }
     return raw.includes('/') && !raw.includes(' ') ? shortenPath(raw, workingDir) : firstLine(raw);
 }
