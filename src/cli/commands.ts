@@ -2,7 +2,6 @@
 // Handlers extracted to commands-handlers.js for 500-line compliance.
 
 import { t } from '../core/i18n.js';
-import { getSkillCommandsCache } from '../core/skill-cache.js';
 import { resolveSkillId } from '../../lib/mcp/skills-aliases.js';
 import {
     unknownCommand, unsupportedCommand, normalizeResult,
@@ -355,6 +354,8 @@ export function parseCommand(text: string): ParsedSlashCommand {
     const parts = tokenizeArgs(body);
     const name = (parts.shift() || '').toLowerCase();
     if (name.startsWith('skill:')) {
+        // Hidden compatibility alias: skills are picked with `$skill-id` now and
+        // `/` lists only slash commands, but `/skill:<id>` keeps executing.
         // `/skill:browser` still reaches `jaw-browser` for one major version.
         const skillId = resolveSkillId(name.slice(6));
         if (!skillId) return { type: 'unknown', name, args: parts, rawText: text };
@@ -454,21 +455,9 @@ export function getCompletionItems(partial: string, iface: string = 'cli', local
             workflow: cmd.workflow,
         }));
 
-    let skillItems: CompletionSource[] = [];
-    if (iface === 'cli' || iface === 'web') {
-        try {
-            skillItems = getSkillCommandsCache().map(sc => ({
-                name: `skill:${sc.id}`,
-                desc: sc.description,
-                args: '[args...]',
-                category: 'skills',
-            }));
-        } catch { /* skill cache not ready */ }
-    }
-
-    const allItems = [...builtinItems, ...skillItems];
-
-    return allItems
+    // Active skills are not slash commands: they are picked with `$skill-id`
+    // (src/shared/skill-mention.ts), so `/` completions list commands only.
+    return builtinItems
         .map(item => ({ item, score: scoreCompletionSource(item.name, item.desc, query) }))
         .filter(({ score }) => !query || score >= 0)
         .sort((a, b) => {

@@ -1,8 +1,9 @@
 // ─── Command Contract: Capability Catalog ────────────
 // Phase 9.5 → Phase 00: /model, /cli Telegram full 승격
+// Active skills are not slash commands: they are picked with `$skill-id`
+// (src/shared/skill-mention.ts). `/skill:<id>` still executes as a hidden alias.
 
 import { COMMANDS } from '../cli/commands.js';
-import { getSkillCommandsCache } from '../core/skill-cache.js';
 
 export const CAPABILITY = {
     full: 'full',         // 실행 가능
@@ -47,25 +48,5 @@ export function getCommandCatalog() {
         },
     }));
 
-    let skillCmds: typeof base = [];
-    try {
-        skillCmds = getSkillCommandsCache().map(sc => ({
-            name: `skill:${sc.id}`,
-            desc: sc.description,
-            args: '[args...]',
-            category: 'skills',
-            interfaces: ['cli', 'web'] as readonly string[],
-            handler: (async () => ({ ok: true })) as any,
-            capability: {
-                cli: CAPABILITY.full,
-                web: CAPABILITY.full,
-                telegram: CAPABILITY.hidden,
-                discord: CAPABILITY.hidden,
-                slack: CAPABILITY.hidden,
-                cmdline: CAPABILITY.hidden,
-            },
-        }));
-    } catch { /* skill cache not ready */ }
-
-    return [...base, ...skillCmds];
+    return base;
 }
