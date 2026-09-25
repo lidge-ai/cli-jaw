@@ -265,8 +265,11 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
      */
     async function applyFitToWidth(entry: RegisteredBrowserTab, contents: WebContents): Promise<void> {
         if (entry.zoomMode !== 'auto' || contents.isDestroyed()) return;
+        // The probe is async: a navigation can land between measure and
+        // apply, so only write the zoom back to the document it was read from.
+        const measuredUrl = contents.getURL();
         const metrics = await pageLayoutMetrics(contents);
-        if (!metrics || contents.isDestroyed()) return;
+        if (!metrics || contents.isDestroyed() || contents.getURL() !== measuredUrl) return;
         const decision = computeFitZoom({
             viewportCssWidth: metrics.viewportCssWidth,
             contentCssWidth: metrics.contentCssWidth,
@@ -294,16 +297,24 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
     function attachFitToWidthListeners(entry: RegisteredBrowserTab, contents: WebContents): void {
         if (fitToWidthListenerIds.has(contents.id)) return;
         fitToWidthListenerIds.add(contents.id);
-        contents.on('did-navigate', () => {
+        const resetAutoZoom = () => {
             const live = tabsById.get(entry.tabId);
             if (!live || live.webContentsId !== contents.id) return;
             live.fitRequiredWidth = null;
-            // A new document gets an un-zoomed layout pass; did-finish-load
-            // re-fits it if its content still overflows the panel.
+            // A new document gets an un-zoomed layout pass; the load-end
+            // events re-fit it if its content still overflows the panel.
             if (live.zoomMode === 'auto' && contents.getZoomFactor() !== 1) {
                 contents.setZoomFactor(1);
                 emitState(live, contents);
             }
+        };
+        contents.on('did-navigate', resetAutoZoom);
+        // In-page navigations (hash links, SPA route changes) swap the
+        // document without a full did-navigate; apply the same reset and
+        // re-measure since did-finish-load does not fire for them.
+        contents.on('did-navigate-in-page', () => {
+            resetAutoZoom();
+            scheduleFitMeasure(entry.tabId, contents);
         });
         const refit = () => scheduleFitMeasure(entry.tabId, contents);
         contents.on('did-finish-load', refit);
@@ -387,7 +398,11 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
                 contents.setZoomFactor(clampZoom(contents.getZoomFactor() - 0.1));
                 break;
             case 'zoomReset':
+                // Back to 100% first so Reset restores a readable page even
+                // when nothing overflows; a still-wide page re-shrinks below.
                 entry.zoomMode = 'auto';
+                entry.fitRequiredWidth = null;
+                contents.setZoomFactor(1);
                 await applyFitToWidth(entry, contents);
                 break;
             case 'fitToWidth':

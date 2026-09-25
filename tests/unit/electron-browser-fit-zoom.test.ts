@@ -113,9 +113,30 @@ test('ipc wires auto/manual zoom modes and the fitToWidth command', () => {
     assert.ok(ipcSource.includes('computeFitZoom('), 'ipc delegates the decision to computeFitZoom');
 });
 
-test('renderer requests a refit on panel resize', () => {
+test('zoomReset restores zoom 1 and clears the stored width before refit', () => {
+    const zoomResetCase = ipcSource.split("case 'zoomReset'")[1]?.split('break;')[0] ?? '';
+    assert.ok(zoomResetCase.includes('setZoomFactor(1)'), 'Reset puts the page back at 100%');
+    assert.ok(zoomResetCase.includes('fitRequiredWidth = null'), 'Reset forgets the previous overflow');
+    assert.ok(zoomResetCase.includes('applyFitToWidth'), 'Reset re-fits a still-overflowing page');
+});
+
+test('async fit applies only to the document it measured', () => {
+    assert.ok(ipcSource.includes('getURL() !== measuredUrl'), 'a navigation during the probe cancels the apply');
+});
+
+test('in-page navigation re-arms the auto fit', () => {
+    assert.ok(ipcSource.includes("'did-navigate-in-page'"), 'same-document navigations reset the auto fit too');
+    const inPage = ipcSource.split("'did-navigate-in-page'")[1]?.split('});')[0] ?? '';
+    assert.ok(inPage.includes('scheduleFitMeasure'), 'in-page navigation schedules a refit');
+});
+
+test('renderer requests a refit on panel resize and on tab activation', () => {
     assert.ok(panelSource.includes('ResizeObserver'), 'panel observes the viewport box');
     assert.ok(panelSource.includes("kind: 'fitToWidth'"), 'renderer sends the fitToWidth command');
+    assert.ok(
+        (panelSource.match(/kind: 'fitToWidth'/g) ?? []).length >= 2,
+        'refit is also sent when a hidden tab becomes active again',
+    );
     assert.ok(bridgeSource.includes("kind: 'fitToWidth'"), 'bridge command union includes fitToWidth');
     assert.ok(bridgeSource.includes("zoomMode?: 'auto' | 'manual'"), 'bridge state exposes zoomMode');
 });

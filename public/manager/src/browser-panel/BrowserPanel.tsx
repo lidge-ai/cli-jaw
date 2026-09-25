@@ -464,6 +464,15 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
         };
     }, [canUseElectronWebview, registrationIdFor]);
 
+    // A hidden tab keeps whatever zoom it had when the panel resized; the
+    // observer above only covers the active tab and does not refire for an
+    // unchanged box, so re-fit once when a tab comes back to the front.
+    useEffect(() => {
+        const browserBridge = getDesktop()?.browser;
+        if (!canUseElectronWebview || !activeRegistrationId || typeof browserBridge?.controlWebview !== 'function') return;
+        void browserBridge.controlWebview({ kind: 'fitToWidth', tabId: activeRegistrationId });
+    }, [activeRegistrationId, canUseElectronWebview]);
+
     // v5: native inspect returns the REAL element (selector/role/name/bounds).
     // When it fires for this panel's active tab, pin the element and open the
     // composer anchored to the element's box center.
