@@ -111,6 +111,12 @@ export function runManagerShortcut(action: DashboardShortcutAction, deps: Manage
         document.dispatchEvent(new CustomEvent('jaw:shortcut-action', { detail: action }));
         return;
     }
+    if (action === 'newCodeSession') {
+        // The Code session list owns the draft; it listens for this and ignores
+        // the event while Code mode is not mounted.
+        document.dispatchEvent(new CustomEvent('jaw:shortcut-action', { detail: action }));
+        return;
+    }
     if (action === 'terminalNewTab') {
         const el = document.activeElement;
         if (el?.closest('.terminal-panel, .xterm')) {

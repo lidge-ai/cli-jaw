@@ -9,9 +9,11 @@ type CodeCanvasProps = {
     workingDir: string;
     onWorkingDirChange?: (path: string | null) => void;
     onOpenLocalFile?: (path: string) => void;
+    /** Resolved `newCodeSession` chord, shown as the button's shortcut hint. */
+    newSessionShortcut?: string | undefined;
 };
 
-export function CodeCanvas({ port, workingDir, onWorkingDirChange, onOpenLocalFile }: CodeCanvasProps) {
+export function CodeCanvas({ port, workingDir, onWorkingDirChange, onOpenLocalFile, newSessionShortcut }: CodeCanvasProps) {
     const controller = useCodeController({ port, workingDir });
     const [sidebarHost, setSidebarHost] = useState<HTMLElement | null>(null);
     const previousWorkspace = useRef({ port, id: controller.selectedId, cwd: controller.selection.cwd });
@@ -26,7 +28,7 @@ export function CodeCanvas({ port, workingDir, onWorkingDirChange, onOpenLocalFi
             onWorkingDirChange?.(next.cwd || null);
         }
     }, [port, controller.selectedId, controller.selection.cwd, onWorkingDirChange]);
-    const navigator = <CodeSessionList key={port} controller={controller} />;
+    const navigator = <CodeSessionList key={port} controller={controller} newSessionShortcut={newSessionShortcut} />;
     const workbench = <CodeWorkbench key={port} controller={controller} endpointKey={String(port)} onOpenLocalFile={onOpenLocalFile} />;
     if (sidebarHost) return <>
         {createPortal(<div className="code-manager-session-navigator-content">{navigator}</div>, sidebarHost)}

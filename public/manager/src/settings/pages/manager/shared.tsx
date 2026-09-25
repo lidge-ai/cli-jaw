@@ -121,6 +121,11 @@ const COPY = {
                 scope: '단축키',
                 description: '터미널 탭을 열고 새 셸 세션을 시작합니다.',
             },
+            shortcutNewCodeSession: {
+                label: '새 Code 세션',
+                scope: '단축키',
+                description: 'Code 모드 사이드바에서 새 세션 초안을 시작합니다.',
+            },
             shortcutTerminalNewTab: {
                 label: '새 터미널 탭',
                 scope: '단축키',
@@ -311,6 +316,11 @@ const COPY = {
                 label: 'New terminal session',
                 scope: 'Shortcut',
                 description: 'Open the terminal tab and start a new shell session.',
+            },
+            shortcutNewCodeSession: {
+                label: 'New Code session',
+                scope: 'Shortcut',
+                description: 'Start a new session draft in Code mode.',
             },
             shortcutTerminalNewTab: {
                 label: 'New terminal tab',
@@ -503,6 +513,11 @@ const COPY = {
                 scope: '快捷键',
                 description: '打开终端标签并启动新的 Shell 会话。',
             },
+            shortcutNewCodeSession: {
+                label: '新 Code 会话',
+                scope: '快捷键',
+                description: '在 Code 模式侧边栏中开始新的会话草稿。',
+            },
             shortcutTerminalNewTab: {
                 label: '新终端标签',
                 scope: '快捷键',
@@ -693,6 +708,11 @@ const COPY = {
                 label: '新しいターミナルセッション',
                 scope: 'ショートカット',
                 description: 'ターミナルタブを開き、新しいシェルセッションを開始します。',
+            },
+            shortcutNewCodeSession: {
+                label: '新しい Code セッション',
+                scope: 'ショートカット',
+                description: 'Code モードのサイドバーで新しいセッションの下書きを開始します。',
             },
             shortcutTerminalNewTab: {
                 label: '新しいターミナルタブ',
@@ -887,6 +907,7 @@ const SHORTCUT_COPY_KEYS: Record<DashboardShortcutAction, keyof typeof COPY.ko.f
     toggleLeftSidebar: 'shortcutToggleLeftSidebar',
     focusTerminal: 'shortcutFocusTerminal',
     newTerminalSession: 'shortcutNewTerminalSession',
+    newCodeSession: 'shortcutNewCodeSession',
     terminalNewTab: 'shortcutTerminalNewTab',
     terminalClear: 'shortcutTerminalClear',
     openDiff: 'shortcutOpenDiff',

@@ -12,6 +12,7 @@ export const MANAGER_SHORTCUT_ACTIONS: DashboardShortcutAction[] = [
     'toggleRightPanel',
     'focusTerminal',
     'newTerminalSession',
+    'newCodeSession',
     'openDiff',
     'openFolderTree',
     'closeFocusedTab',
@@ -51,6 +52,9 @@ export const DEFAULT_MANAGER_SHORTCUT_KEYMAP: DashboardShortcutKeymap = {
     toggleRightPanel: 'Meta+B',
     focusTerminal: 'Ctrl+`',
     newTerminalSession: 'Ctrl+Shift+`',
+    // Alt over Meta: Meta+Shift+N is Chrome's incognito chord, so a web-hosted
+    // dashboard would never see the keydown. Alt+Shift+N has no browser default.
+    newCodeSession: 'Alt+Shift+N',
     openDiff: 'Meta+Shift+D',
     openFolderTree: 'Meta+Shift+E',
     closeFocusedTab: 'Meta+W',
@@ -159,14 +163,14 @@ export function normalizeManagerShortcutKeymap(value: unknown): DashboardShortcu
 function resolveEventKey(event: KeyboardEvent): string {
     if (event.code === 'Backquote') return '`';
     if (event.altKey && event.code?.startsWith('Digit')) return event.code.slice(5);
-    const k = normalizeKey(event.key);
-    if (k.length === 1) return k;
-    // macOS Option+letter produces special chars (e.g. ∆ for Alt+J).
-    // Fall back to event.code to recover the original letter.
+    // macOS Option+letter produces special chars (e.g. ∆ for Alt+J, ˜ for
+    // Option+Shift+N), and those are themselves single characters -- so the
+    // character cannot be trusted to be the letter the chord names. The code
+    // wins whenever Option is held, exactly as it does for the digits above.
     if (event.altKey && event.code?.startsWith('Key')) {
         return event.code.slice(3).toLowerCase();
     }
-    return k;
+    return normalizeKey(event.key);
 }
 
 export function shortcutMatches(event: KeyboardEvent, raw: string, platform: string = currentClientPlatform()): boolean {

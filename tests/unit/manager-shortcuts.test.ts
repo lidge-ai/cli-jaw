@@ -210,6 +210,36 @@ test('Alt+Digit recovers jumpInstance even when macOS rewrites the key character
     );
 });
 
+test('Alt+letter recovers the physical letter even when macOS rewrites it into one character', () => {
+    // Option+Shift+N on a US layout reports the single character '˜', so a
+    // matcher that answers with the character never reaches the code fallback and
+    // the newCodeSession chord is dead on exactly the platform that needs it.
+    assert.equal(
+        actionForShortcutEvent(keyEvent('˜', { altKey: true, shiftKey: true, code: 'KeyN' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
+        'newCodeSession',
+    );
+    // A dead key reports no character at all, and must recover the same letter.
+    assert.equal(
+        actionForShortcutEvent(keyEvent('Dead', { altKey: true, shiftKey: true, code: 'KeyN' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
+        'newCodeSession',
+    );
+    // Option+J is '∆': the same fallback applies with no shift held.
+    assert.equal(
+        actionForShortcutEvent(keyEvent('∆', { altKey: true, code: 'KeyJ' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
+        'nextInstance',
+    );
+    assert.equal(
+        actionForShortcutEvent(keyEvent('Dead', { altKey: true, code: 'KeyJ' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
+        'nextInstance',
+    );
+    // Option is what makes the character unreliable; without it the character
+    // still wins, so an unrelated ⌘/Ctrl chord is unaffected by the fallback.
+    assert.equal(
+        actionForShortcutEvent(keyEvent('˜', { metaKey: true, shiftKey: true, code: 'KeyN' }), DEFAULT_MANAGER_SHORTCUT_KEYMAP, onMac),
+        null,
+    );
+});
+
 test('instance settings shortcut defaults and overrides survive normalization', () => {
     const defaults = normalizeManagerShortcutKeymap({});
     assert.equal(defaults.toggleInstanceSettings, 'Meta+,');

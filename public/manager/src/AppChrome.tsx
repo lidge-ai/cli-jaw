@@ -22,6 +22,7 @@ import { useWindowFullscreen } from './hooks/useWindowFullscreen';
 import type { useDashboardView } from './hooks/useDashboardView';
 import type { DashboardDetailTab, DashboardInstance, DashboardNotesAuthoringMode, DashboardNotesGraphSettings, DashboardNotesViewMode, DashboardScanResult, DashboardShortcutAction, ManagerEvent, NoteMetadata } from './types';
 import { createManagerCaptureKeydownHandler } from './manager-shortcut-runner';
+import { normalizeManagerShortcutKeymap } from './manager-shortcuts';
 
 type AppChromeProps = {
     view: ReturnType<typeof useDashboardView>;
@@ -158,6 +159,7 @@ export function AppChrome(props: AppChromeProps) {
                         dashboardSettingsUi={props.dashboardSettingsUi} titleSupport={props.titleSupport} onDashboardSettingsPatch={props.handleDashboardSettingsPatch}
                         viewMode={props.view.viewMode} onViewModeChange={props.view.setViewMode}
                         port={Number(window.location.port) || 3457} workingDir={props.view.rightFolderRootPath || ''}
+                        codeNewSessionShortcut={normalizeManagerShortcutKeymap(props.view.dashboardShortcutKeymap).newCodeSession}
                         query={props.query} onQueryChange={props.setQuery} onSelectInstance={props.handleSelectInstance} />
                 )}
                 activityHeight={props.view.activityDockCollapsed ? 48 : props.view.activityDockHeight}
