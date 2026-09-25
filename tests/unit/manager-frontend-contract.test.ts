@@ -459,14 +459,12 @@ test('manager sidebar actions stay compact and active-group owned', () => {
     assert.ok(row.includes('Prev'), 'row actions must use compact Prev label');
     assert.ok(row.includes('aria-label="Restart"'), 'compact Res label must preserve full Restart accessibility text');
     assert.ok(row.includes('Res'), 'row actions must use compact Res label');
-    assert.ok(components.includes('.instance-row.priority-active.is-selected {'), 'selected raised background must be scoped to the top Active row');
+    assert.ok(components.includes('.instance-row.priority-active.is-selected,'), 'selected tint must cover the top Active row');
     assert.ok(components.includes('.instance-row:not(.priority-active).is-selected {'), 'ordinary selected rows must get a readable selected affordance');
-    assert.ok(components.includes('box-shadow: inset 3px 0 0'), 'ordinary selected rows must keep a compact left selection rail');
-    assert.equal(components.includes('.instance-row.is-selected {'), false, 'ordinary selected rows must not receive the Active-group selected background');
-    assert.ok(components.includes('.instance-row.priority-active.is-selected::before'), 'selected stripe must be scoped to the top Active row');
-    assert.ok(components.includes('width: 3px'), 'selected active stripe must remain visually readable in compact rows');
-    assert.ok(components.includes('z-index: 1'), 'selected active stripe must render above the compact row surface');
-    assert.ok(components.includes('pointer-events: none'), 'selected active stripe must not intercept row clicks');
+    assert.ok(components.includes('background: var(--accent-soft);'), 'selected rows must use the quiet accent-soft surface');
+    assert.equal(components.includes('box-shadow: inset 3px 0 0'), false, 'selected rows must not use a thick left edge stripe');
+    assert.equal(components.includes('.instance-row.is-selected {'), false, 'selected styling must stay scoped by row priority');
+    assert.equal(components.includes('.instance-row.priority-active.is-selected::before'), false, 'selected Active rows must not render an overlay edge stripe');
     assert.equal(components.includes('.instance-row.is-selected::before'), false, 'ordinary selected rows must not receive the Active-group overlay stripe');
     for (const css of [polish, compact]) {
         assert.ok(css.includes('.manager-sidebar .instance-row.priority-active .instance-actions'), 'Active group rows must always expose compact actions');
