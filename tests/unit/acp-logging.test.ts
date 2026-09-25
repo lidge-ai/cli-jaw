@@ -5,11 +5,12 @@ import { readSource } from './source-normalize.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
+import { readSpawnAgentSource, readSpawnFile } from '../helpers/spawn-source.mts';
 
 const ACP_PATH = new URL('../../src/cli/acp-client.ts', import.meta.url).pathname;
 const SPAWN_PATH = new URL('../../src/agent/spawn.ts', import.meta.url).pathname;
 const acpSrc = readSource(ACP_PATH, 'utf8');
-const spawnSrc = readSource(SPAWN_PATH, 'utf8');
+const spawnSrc = readSpawnAgentSource({ normalized: true });
 
 // ─── acp-client.ts ───────────────────────────────────
 
@@ -38,7 +39,9 @@ test('ACP unexpected exit is warned', () => {
 });
 
 test('unexpected exit check uses consumed killReason to detect truly unexpected exits', () => {
-    const exitHandler = spawnSrc.slice(spawnSrc.indexOf("acp.on('exit'"));
+    // The ACP exit handler lives in the Copilot backend module.
+    const copilotSrc = readSpawnFile('backend-copilot.ts', { normalized: true });
+    const exitHandler = copilotSrc.slice(copilotSrc.indexOf("acp.on('exit'"));
     const consumeIdx = exitHandler.indexOf('consumeKillReason(');
     const unexpectedIdx = exitHandler.indexOf('acp:unexpected-exit');
     assert.ok(consumeIdx > 0, 'consumeKillReason should exist in exit handler');

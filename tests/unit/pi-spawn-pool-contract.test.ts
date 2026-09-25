@@ -3,10 +3,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { activeMainProcesses, killActiveAgent, settleExit } from '../../src/agent/spawn.ts';
+import { readSpawnFile } from '../helpers/spawn-source.mts';
 
 test('Pi spawn keeps employees per-turn and sends boss turns through the pool lease', async () => {
     const source = await readFile(new URL('../../src/agent/spawn.ts', import.meta.url), 'utf8');
-    const branch = source.slice(source.indexOf("if (cli === 'pi')"), source.indexOf("if (cli === 'codex-app')"));
+    // The Pi branch is its own module now; spawn.ts keeps the dispatch line and the
+    // shared kill path.
+    assert.ok(source.includes("if (cli === 'pi') return runPiBackend("));
+    const branch = readSpawnFile('backend-pi.ts');
     const employee = branch.indexOf('if (opts.agentId)');
     const employeeOpen = branch.indexOf('openPiRpc(', employee);
     const pooledAcquire = branch.indexOf('acquirePiRuntime({', employee);

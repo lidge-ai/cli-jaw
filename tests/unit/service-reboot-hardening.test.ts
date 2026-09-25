@@ -6,6 +6,7 @@ import path from 'node:path';
 import { buildServicePath, resolveBundledNodePath } from '../../src/core/runtime-path.ts';
 import { makeCleanEnv } from '../../src/agent/spawn.ts';
 import { readSource } from './source-normalize.js';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const ROOT = process.cwd();
 const SERVER = path.join(ROOT, 'server.ts');
@@ -92,7 +93,7 @@ test('SRH-004b: dist-mode service commands prefer sidecar Node over process.exec
 });
 
 test('SRH-005: spawn path and detectCli logic use service-safe PATH handling', () => {
-    const spawnSrc = readSource(SPAWN, 'utf8');
+    const spawnSrc = readSpawnAgentSource({ normalized: true });
     const configSrc = readSource(CONFIG, 'utf8');
     const cliDetectionSrc = readSource(CLI_DETECTION, 'utf8');
     const cliDetectSrc = readSource(CLI_DETECT, 'utf8');

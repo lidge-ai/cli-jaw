@@ -12,10 +12,11 @@ import {
     DUP_REGISTRATION_KILL_REASON,
 } from '../../src/agent/spawn/kill-reason.ts';
 import { shouldAnnounceStallTruncation } from '../../src/agent/error-classifier.ts';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const spawnSrc = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+const spawnSrc = readSpawnAgentSource();
 
 // ─── SI-001: killReasons Map and consumeKillReason exist ───
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createQueueController } from '../../src/agent/spawn/queue.ts';
 import { SessionLanes } from '../../src/orchestrator/session-lanes.ts';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,7 +13,7 @@ const __dirname = dirname(__filename);
 // ─── SF-001: steerAgent flow — kill existing + wait + start new ───
 
 test('SF-001: steerAgent flow: kill → wait → insert → orchestrate', () => {
-    const src = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
 
     // Extract steerAgent function body
     const fnStart = src.indexOf('export async function steerAgent');
@@ -79,7 +80,7 @@ test('SF-002: exit handler saves interrupted content to DB via insertMessageWith
     assert.ok(insertTraceIdx > interruptedIdx, 'insertMessageWithTraceRun should come after interrupted tagging');
 
     // Also verify spawn.ts exit handlers delegate to handleAgentExit
-    const spawnSrc = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const spawnSrc = readSpawnAgentSource();
 
     const acpExitIdx = spawnSrc.indexOf("acp.on('exit'");
     assert.ok(acpExitIdx > 0);
@@ -97,7 +98,7 @@ test('SF-002: exit handler saves interrupted content to DB via insertMessageWith
 // ─── SF-003: buildHistoryBlock includes trace (which has interrupted tag) ───
 
 test('SF-003: buildHistoryBlock uses trace for assistant messages, preserving interrupted tag', () => {
-    const src = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
 
     // Find buildHistoryBlock function
     const fnIdx = src.indexOf('function buildHistoryBlock');
@@ -129,7 +130,7 @@ test('SF-003: buildHistoryBlock uses trace for assistant messages, preserving in
 });
 
 test('SF-004: buildHistoryBlock filters stale worklog continue artifacts', () => {
-    const src = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
     const fnIdx = src.indexOf('function buildHistoryBlock');
     assert.ok(fnIdx > 0, 'buildHistoryBlock function should exist');
     const fnEnd = src.indexOf('function isStaleWorklogHistoryArtifact', fnIdx);
@@ -149,7 +150,7 @@ test('SF-004: buildHistoryBlock filters stale worklog continue artifacts', () =>
 // checks for prepared AGY fresh/resume argv and compact handoff, not source text.
 
 test('SF-004c: agy passes configured prompt order to the bootstrap envelope', () => {
-    const src = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
     const agyBranchIdx = src.indexOf("if (cli === 'agy') {");
     const preflightIdx = src.indexOf('// ─── DIFF-A: Preflight', agyBranchIdx);
     assert.ok(agyBranchIdx > 0, 'agy should have a dedicated bootstrap branch');
@@ -166,7 +167,7 @@ test('SF-004c: agy passes configured prompt order to the bootstrap envelope', ()
 // ─── SF-EDGE: processQueue is called after mainManaged exit ───
 
 test('SF-EDGE: processQueue is triggered after mainManaged exit in both paths', () => {
-    const src = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
 
     // ACP path — processQueue passed to handleAgentExit (or called directly)
     const acpExitIdx = src.indexOf("acp.on('exit'");
@@ -186,7 +187,7 @@ test('SF-EDGE: processQueue is triggered after mainManaged exit in both paths', 
 });
 test('SF-006: queued web steer accepts item before background old-process wait', () => {
     const routeSrc = fs.readFileSync(join(__dirname, '../../src/routes/orchestrate.ts'), 'utf8');
-    const spawnSrc = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+    const spawnSrc = readSpawnAgentSource();
 
     const routeIdx = routeSrc.indexOf("app.post('/api/orchestrate/queue/:id/steer'");
     assert.ok(routeIdx > 0, 'queued steer route should exist');

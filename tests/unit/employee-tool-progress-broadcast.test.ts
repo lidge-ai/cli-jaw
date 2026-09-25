@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const ROOT = path.resolve(new URL('../..', import.meta.url).pathname);
 
@@ -55,7 +56,7 @@ test('parent mirror keeps receiving employee tools past the entry cap (doc 86 §
 });
 
 test('spawn parent live-run employee appends use worker progress sanitizer', () => {
-    const src = fs.readFileSync(path.join(ROOT, 'src', 'agent', 'spawn.ts'), 'utf8');
+    const src = readSpawnAgentSource();
     assert.match(src, /sanitizeWorkerProgressTools/);
     assert.match(src, /function\s+appendParentLiveRunTool/);
     assert.doesNotMatch(src, /appendLiveRunTool\(ctx\.parentLiveScope,\s*\{\s*\.\.\.(?:tool|parsedTool|parsed\.tool)/);

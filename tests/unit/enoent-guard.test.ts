@@ -7,10 +7,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readSpawnAgentSource, readSpawnFile } from '../helpers/spawn-source.mts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const spawnSrc = fs.readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
+const spawnSrc = readSpawnAgentSource();
 const quotaSrc = fs.readFileSync(join(__dirname, '../../lib/quota-copilot.ts'), 'utf8');
 
 // ─── EG-001: preflight detectCli check exists before spawn ───
@@ -59,9 +60,13 @@ test('EG-002: standard CLI branch has child.on(\'error\') listener', () => {
 // ─── EG-003: ACP error listener exists ───
 
 test('EG-003: ACP branch has acp.on(\'error\') listener', () => {
-    const acpBranchIdx = spawnSrc.indexOf('// ─── Copilot ACP branch');
+    // The Copilot ACP branch lives in src/agent/spawn/backend-copilot.ts; spawn.ts
+    // keeps only the dispatch line. The window starts at the client construction.
+    assert.ok(spawnSrc.includes("if (cli === 'copilot') return runCopilotBackend("), 'ACP branch should be dispatched');
+    const copilotSrc = readSpawnFile('backend-copilot.ts');
+    const acpBranchIdx = copilotSrc.indexOf('new AcpClient(');
     assert.ok(acpBranchIdx > 0, 'ACP branch should exist');
-    const block = spawnSrc.slice(acpBranchIdx, acpBranchIdx + 2400);
+    const block = copilotSrc.slice(acpBranchIdx, acpBranchIdx + 2400);
 
     assert.ok(
         block.includes("acp.on('error'"),

@@ -9,6 +9,7 @@ import {
     resolveSpawnOutputText,
 } from '../../src/agent/events/helpers.ts';
 import type { SpawnContext } from '../../src/types/agent.ts';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 function baseCtx(overrides: Partial<SpawnContext> = {}): SpawnContext {
     return {
@@ -94,7 +95,7 @@ test('resolveSpawnOutputText prefers normalized display text over longer raw esc
 });
 
 test('plain-text runtime display branches normalize escaped newlines before broadcast', () => {
-    const spawnSrc = readFileSync('src/agent/spawn.ts', 'utf8');
+    const spawnSrc = readSpawnAgentSource();
     assert.match(spawnSrc, /const segment = normalizeAssistantDisplayText\(event\.text\)/);
     assert.match(spawnSrc, /const displayDelta = normalizeAssistantDisplayText\(delta\)/);
     assert.match(spawnSrc, /const newText = normalizeAssistantDisplayText\(/);

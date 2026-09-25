@@ -146,8 +146,14 @@ cli-jaw/
 │   │   ├── claude-runtime-run.ts ← native Claude main adaptation to shared host/lifecycle and fallback terminal ordering
 │   │   ├── prompt-context.ts ← history/operational/partial boundaries and bounded accepted Cursor redirects
 │   │   ├── steer-input-guard.ts ← transient scoped Stop fence through fallback enqueue
-│   │   ├── spawn.ts          ← CLI spawn + ACP/Codex App/Pi RPC/AGY/Kiro plain text/log session capture + v2 SQLite session resume + 큐 + 메모리 flush + 429 retry timer + isAgentBusy/isSteerInProgress + buildHistoryBlock compact cutoff + working_dir scoping + enqueue→processQueue race fix + QueueItem persistent DB queue + makeCleanEnv PATH augment
+│   │   ├── spawn.ts          ← CLI spawn + standard CLI (claude/codex/opencode/AGY/Kiro) plain text/log session capture + backend dispatch (native ACP/Copilot/Pi/Codex App → spawn/backend-*.ts) + v2 SQLite session resume + 큐 + 메모리 flush + 429 retry timer + isAgentBusy/isSteerInProgress + buildHistoryBlock compact cutoff + working_dir scoping + enqueue→processQueue race fix + QueueItem persistent DB queue + makeCleanEnv PATH augment
 │   │   ├── spawn/            ← spawn 서브모듈
+│   │   │   ├── backend-context.ts ← SpawnBackendLocals (spawnAgent 값 스냅샷) + SpawnBackendHost (spawn.ts 모듈 상태/헬퍼)
+│   │   │   ├── backend-native-acp.ts ← Cursor/Grok native ACP main 백엔드 (runNativeAcpBackend)
+│   │   │   ├── backend-copilot.ts ← Copilot ACP 백엔드 (runCopilotBackend)
+│   │   │   ├── backend-pi.ts ← Pi RPC 백엔드 (runPiBackend)
+│   │   │   ├── backend-codex-app.ts ← Codex AppServer 백엔드 (runCodexAppBackend)
+│   │   │   ├── types.ts      ← spawnAgent 공유 타입 (MainRunState/MainSessionMeta/SpawnLifecycle 는 spawn.ts 가 재수출)
 │   │   │   ├── queue.ts      ← QueueItem persistent DB queue + processQueue race fix + enqueue/dequeue + drainRecoveredQueue (부팅 시 복구 큐 기동, server.ts가 transport 준비 후 호출) + `_fromQueue` 표식 (대기자 없는 턴을 채널이 답할 수 있게)
 │   │   │   ├── resume.ts     ← session resume logic + stale resume detection
 │   │   │   └── process-kill.ts ← child process kill helper

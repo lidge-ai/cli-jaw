@@ -10,11 +10,12 @@ import { shouldBuildHistoryBlock } from '../../src/agent/prompt-context.ts';
 import { clearAllBroadcastListeners } from '../../src/core/bus.ts';
 import { subscribe } from '../../src/core/event-bus.ts';
 import type { SpawnContext } from '../../src/types/agent.ts';
+import { readSpawnAgentSource } from '../helpers/spawn-source.mts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const src = (path: string): string => readFileSync(join(__dirname, '../..', path), 'utf8');
 
-const spawnSrc = src('src/agent/spawn.ts');
+const spawnSrc = readSpawnAgentSource();
 const lifecycleSrc = src('src/agent/lifecycle-handler.ts');
 const flushSrc = src('src/agent/memory-flush-controller.ts');
 const eventsSrc = src('src/agent/events.ts');

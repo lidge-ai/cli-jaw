@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { attachWatchdog } from '../../src/agent/watchdog.ts';
 import { shouldAnnounceStallTruncation, STALL_TRUNCATION_NOTICE } from '../../src/agent/error-classifier.ts';
+import { readSpawnAgentSource, readSpawnFile } from '../helpers/spawn-source.mts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -107,10 +108,13 @@ test('CAS-004: a codex-app stall reason produces the #405 truncation notice', as
 // watchdog, and settings.agentTimeout must be parsed once.
 
 test('CAS-005: the codex-app turn owns no private stall timer, and agentTimeout is parsed once', () => {
-    const spawnSrc = readFileSync(join(__dirname, '../../src/agent/spawn.ts'), 'utf8');
-    const turnStart = spawnSrc.indexOf('const runCodexAppTurn = async (');
+    const spawnSrc = readSpawnAgentSource();
+    // The turn window is sliced from the module that owns it; the agentTimeout count
+    // below still covers all of spawnAgent's source.
+    const codexAppSrc = readSpawnFile('backend-codex-app.ts');
+    const turnStart = codexAppSrc.indexOf('const runCodexAppTurn = async (');
     assert.ok(turnStart > 0, 'the codex-app turn must exist');
-    const turnBlock = spawnSrc.slice(turnStart, turnStart + 14_000);
+    const turnBlock = codexAppSrc.slice(turnStart, turnStart + 14_000);
 
     assert.doesNotMatch(turnBlock, /idleTimer|absoluteTimer/, 'no hand-rolled turn timer may survive');
     assert.match(turnBlock, /attachWatchdog\(/, 'the turn uses the shared watchdog');
