@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CodeItem } from '../../src/code-mode/wire.ts';
-import { noteworthyStatus, shortenPath, summariseToolInput, toolSummary } from '../../public/manager/src/code/tool-summary.ts';
+import { noteworthyStatus, shortenPath, summariseToolInput, toolInputDescription, toolInputDisplay, toolSummary } from '../../public/manager/src/code/tool-summary.ts';
 import { pendingUserItem, withPendingUserItem, PENDING_USER_ITEM_ID } from '../../public/manager/src/code/pending-user-item.ts';
 import { createCodeDraft } from '../../public/manager/src/code/code-controller-drafts.ts';
 
@@ -62,6 +62,46 @@ test('summaries stay one short line whatever the argument shape is', () => {
     assert.equal(shortenPath('/work/repo/src/deep/file.ts', CWD), 'src/deep/file.ts');
     assert.equal(shortenPath('/elsewhere/short.ts', CWD), '/elsewhere/short.ts');
     assert.equal(shortenPath(`/elsewhere/${'d'.repeat(80)}/x/y.ts`, CWD), '…/x/y.ts');
+});
+
+test('the description argument becomes muted secondary text, collapsed to one line', () => {
+    assert.equal(toolInputDescription(JSON.stringify({ command: 'npm test', description: 'Run unit tests' })), 'Run unit tests');
+    assert.equal(toolInputDescription(JSON.stringify({ command: 'npm test' })), '');
+    assert.equal(toolInputDescription(JSON.stringify({ description: 'line one\nline two' })), 'line one');
+    assert.equal(toolInputDescription('not json'), '');
+    assert.equal(toolInputDescription(undefined), '');
+});
+
+test('the expanded input block decodes commands and pretty-prints the rest', () => {
+    const heredoc = "ssh host 'cat > file <<EOF\nalpha\nbeta\nEOF'";
+    const command = toolInputDisplay(JSON.stringify({ command: heredoc, description: 'x' }));
+    assert.equal(command?.content, heredoc, 'the body keeps the command\'s real newlines');
+    assert.equal(command?.command, true);
+    const other = toolInputDisplay(JSON.stringify({ pattern: 'needle', path: '/work/repo' }));
+    assert.equal(other?.content, JSON.stringify({ pattern: 'needle', path: '/work/repo' }, null, 2));
+    assert.equal(other?.command, false);
+    // A non-JSON argument (e.g. a bare file_change path) renders as sent.
+    assert.equal(toolInputDisplay('/work/repo/a/b.ts')?.content, '/work/repo/a/b.ts');
+    assert.equal(toolInputDisplay(undefined), null);
+});
+
+test('a command envelope keeps its extra fields as parameters and its description in full', () => {
+    const display = toolInputDisplay(JSON.stringify({ command: 'npm test', timeout: 30, cwd: '/work/repo', description: 'first\nsecond' }));
+    assert.equal(display?.command, true);
+    assert.equal(display?.content, 'npm test');
+    assert.equal(display?.parameters, JSON.stringify({ timeout: 30, cwd: '/work/repo' }, null, 2),
+        'envelope fields beyond the command and description stay visible');
+    assert.equal(display?.description, 'first\nsecond', 'the body keeps the whole description, not just the row\'s line');
+    // No extra envelope fields, no Parameters block.
+    assert.equal(toolInputDisplay(JSON.stringify({ command: 'npm test' }))?.parameters, null);
+    assert.equal(toolInputDisplay(JSON.stringify({ pattern: 'x' }))?.parameters, null, 'non-command calls do not split parameters');
+});
+
+test('a retention-truncated input still decodes its recognised field', () => {
+    const truncated = '{"command": "ssh host \'cat > f <<EOF\\nalpha\\nbeta';
+    const display = toolInputDisplay(truncated);
+    assert.equal(display?.command, true);
+    assert.equal(display?.content, 'ssh host \'cat > f <<EOF\nalpha\nbeta');
 });
 
 test('only actionable states are worth a badge', () => {

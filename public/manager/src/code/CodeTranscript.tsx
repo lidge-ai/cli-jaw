@@ -1,10 +1,11 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { CodeItem, CodeItemKind, CodeProviderId } from '../../../../src/code-mode/wire';
 import { useCodeTranscriptVirtualRows } from './useCodeTranscriptVirtualRows';
 import { useCodeTranscriptScroll } from './use-code-transcript-scroll';
 import { useThrottledMarkdown } from './use-throttled-markdown';
 import { CODE_RUNTIME_LABELS, codeItemStatus } from './code-types';
-import { noteworthyStatus, toolSummary } from './tool-summary';
+import { noteworthyStatus, toolInputDescription, toolInputDisplay, toolSummary } from './tool-summary';
+import { copyText } from '../clipboard/copy-text';
 import { PENDING_USER_ITEM_ID } from './pending-user-item';
 
 const MarkdownRenderer = lazy(() => import('../notes/rendering/MarkdownRenderer').then(m => ({ default: m.MarkdownRenderer })));
@@ -24,14 +25,21 @@ const HIDDEN_KINDS: ReadonlySet<CodeItemKind> = new Set<CodeItemKind>(['turn_sta
 /**
  * What a collapsible row measures before it has been measured. Collapsed is one
  * line and exact. Expanded is a guess and deliberately only that: the panes are
- * capped at 200px each by `.code-tool-output` / `.code-tool-args`, so a call
- * with both is far taller, and the real number arrives from the ResizeObserver
- * a frame later. This only has to be closer than one line.
+ * capped at min(18rem,50dvh) each by `.code-tool-output` / `.code-tool-args`,
+ * so a call with both is far taller, and the real number arrives from the
+ * ResizeObserver a frame later. This only has to be closer than one line.
  */
 const COLLAPSED_ROW_PX = 44;
-const EXPANDED_ROW_PX = 320;
+const EXPANDED_ROW_PX = 480;
 /** Same bound the scroll anchors use, for the same reason. */
 const MAX_OPEN_ROWS = 64;
+
+// Past ~15 wrapped lines the capped scroll height already engages; only then
+// is a Show-all toggle worth showing (jsdom cannot measure overflow either, so
+// this estimates by length the same way the activity rows do).
+function isTallToolText(value: string): boolean {
+    return value.length > 1400 || value.split('\n').length > 14;
+}
 
 /**
  * A failed call opens itself, because the reader has to see why it failed. That
@@ -78,6 +86,53 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
     // the duplicate back. Failure and cancellation still get a word, because
     // those change what to do next.
     const toolNote = running ? null : note;
+    const description = tool ? toolInputDescription(item.tool?.input) : '';
+    const inputDisplay = tool ? toolInputDisplay(item.tool?.input) : null;
+    const toolBlocks: Array<{ key: string; label: string; content: string; className: string; copyable: boolean }> = [];
+    if (tool) {
+        if (inputDisplay) toolBlocks.push({ key: 'input', label: 'Input', content: inputDisplay.content, className: 'code-tool-args', copyable: true });
+        if (inputDisplay?.parameters) toolBlocks.push({ key: 'params', label: 'Parameters', content: inputDisplay.parameters, className: 'code-tool-json', copyable: false });
+        if (inputDisplay?.description) toolBlocks.push({ key: 'description', label: 'Description', content: inputDisplay.description, className: 'code-tool-text', copyable: false });
+        if (item.tool?.output !== undefined) toolBlocks.push({ key: 'output', label: 'Output', content: item.tool.output, className: 'code-tool-output', copyable: false });
+    }
+    const toolBodyTall = toolBlocks.some(block => isTallToolText(block.content))
+        || (item.tool?.detail !== undefined && isTallToolText(item.tool.detail))
+        || (item.text !== undefined && isTallToolText(item.text));
+    const [showAll, setShowAll] = useState(false);
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    const [measuredTall, setMeasuredTall] = useState<boolean | null>(null);
+    // A measurement describes the body it was taken from, and the estimate is
+    // what moves when that body changes, so a number taken while the content was
+    // taller is dropped instead of deciding for the shorter content in its place.
+    useEffect(() => { setMeasuredTall(null); }, [toolBodyTall]);
+    // The toggle measures real overflow once the body lays out (browser); where
+    // layout cannot be measured (jsdom reports 0 everywhere) the character
+    // estimate stands in, the same rule the activity rows use. Every capped pane
+    // is measured, not only the <pre> ones: the call's own detail is a paragraph
+    // under the same cap. While expanded the cap is off, so measuring is skipped
+    // — the button must stay to toggle back — and closing the body resets the
+    // measure for the next open.
+    useEffect(() => {
+        if (!open || showAll) return;
+        const panes = bodyRef.current?.querySelectorAll('pre, .code-tool-body > .code-tool-text');
+        if (!panes || panes.length === 0) { setMeasuredTall(null); return; }
+        const list = [...panes];
+        const measured = list.some(pane => pane.scrollHeight > pane.clientHeight + 2);
+        setMeasuredTall(measured || (list.every(pane => pane.scrollHeight === 0) && toolBodyTall));
+    }, [open, showAll, toolBodyTall]);
+    const toolBodyOverflowing = measuredTall ?? toolBodyTall;
+    // Content that no longer overflows has nothing left to disclose: leaving the
+    // disclosure set would hold a "Show less" button, and an uncapped body, over
+    // a call that already fits.
+    useEffect(() => { if (!toolBodyOverflowing) setShowAll(false); }, [toolBodyOverflowing]);
+    const [copied, setCopied] = useState(false);
+    const copiedTimerRef = useRef<number | null>(null);
+    useEffect(() => () => { if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current); }, []);
+    const markCopied = useCallback(() => {
+        setCopied(true);
+        if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = window.setTimeout(() => { copiedTimerRef.current = null; setCopied(false); }, 1200);
+    }, []);
     const label = user ? 'You' : assistant ? CODE_RUNTIME_LABELS[provider] : reasoning ? 'Reasoning'
         : item.kind === 'turn_started' ? 'Turn started' : item.kind === 'session_runtime' ? 'Runtime'
             : item.kind === 'permission_request' ? 'Permission record' : item.kind === 'notice' ? 'Notice' : status;
@@ -86,16 +141,32 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
         {tool ? <details className={`code-tool-card code-tool-${item.status}`} open={open}
             onToggle={event => onExpandedChange?.(item.itemId, event.currentTarget.open)}>
             <summary className="code-tool-summary"><span className="code-tool-chevron" aria-hidden="true">›</span>
-                <span className={`code-tool-name${running ? ' code-tool-name-running' : ''}`}>{toolSummary(item, workingDir)}</span>
+                <span className="code-tool-summary-text">
+                    <span className={`code-tool-name${running ? ' code-tool-name-running' : ''}`}>{toolSummary(item, workingDir)}</span>
+                    {description !== '' && <span className="code-tool-desc">{description}</span>}
+                </span>
                 {toolNote && <span className="code-tool-status">{toolNote}</span>}</summary>
             {/* Built only while open: a collapsed call's output can be megabytes,
                 and constructing it costs the same whether or not it is painted. */}
-            {open && <>
+            {open && <div ref={bodyRef} className="code-tool-body" data-expanded={showAll}>
                 {item.tool?.detail !== undefined && <p className="code-tool-text">{item.tool.detail}</p>}
-                {item.tool?.input !== undefined && <section className="code-tool-section"><span className="code-tool-section-label">Input</span><pre className="code-tool-args">{item.tool.input}</pre></section>}
-                {item.tool?.output !== undefined && <section className="code-tool-section"><span className="code-tool-section-label">Output</span><pre className="code-tool-output">{item.tool.output}</pre></section>}
+                {toolBlocks.map(block => <section key={block.key} className="code-tool-section">
+                    <div className="code-tool-section-head">
+                        <span className="code-tool-section-label">{block.label}</span>
+                        {block.copyable && <button type="button" className={`code-tool-copy${copied ? ' copied' : ''}`}
+                            aria-label={`Copy ${block.label.toLowerCase()}`}
+                            onClick={() => void copyText(block.content).then(result => { if (result.ok) markCopied(); })}>
+                            {copied ? 'Copied' : 'Copy'}
+                        </button>}
+                    </div>
+                    <pre className={block.className}>{block.content}</pre>
+                </section>)}
                 {item.text !== undefined && <pre className="code-tool-text">{item.text}</pre>}
-            </>}
+                {running && item.tool?.output === undefined && item.tool?.detail === undefined
+                    && <p className="code-tool-waiting">Waiting for output…</p>}
+                {toolBodyOverflowing && <button type="button" className="code-tool-toggle" aria-expanded={showAll}
+                    onClick={() => setShowAll(value => !value)}>{showAll ? 'Show less' : 'Show all'}</button>}
+            </div>}
         </details> : reasoning ? <details className="code-thinking" open={open}
             onToggle={event => onExpandedChange?.(item.itemId, event.currentTarget.open)}>
             <summary className={`code-thinking-summary${item.status === 'running' ? ' code-tool-name-running' : ''}`}>{item.status === 'running' ? 'Thinking…' : 'Reasoning'}</summary>

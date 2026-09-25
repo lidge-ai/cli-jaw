@@ -647,7 +647,11 @@ unmounts rows. A reader's choice outlives the failure default, so a failed call
 that has been read can be closed. The disclosure is part of the virtualizer's
 item key: a measured size always wins over an estimate, so a row measured while
 collapsed would keep that height once expanded, and re-keying hands it back to
-the estimate until its real height is observed.
+the estimate until its real height is observed. Overflow inside an open body is
+measured on every capped pane, the call's own detail paragraph included, and an
+expansion the body no longer justifies is retracted rather than left holding
+`Show less` and an uncapped pane over content that fits. A running call reads as
+waiting only while it has neither output nor a detail of its own to show.
 
 Notices sit over the transcript, directly above it rather than absolutely
 positioned from the pane, which would place them inside the workspace header and

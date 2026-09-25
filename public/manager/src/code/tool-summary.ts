@@ -1,5 +1,5 @@
 import type { CodeItem } from '../../../../src/code-mode/wire';
-import { firstToolField, parseToolArguments, TOOL_INPUT_KEY_ORDER } from '../../../../src/shared/tool-input.js';
+import { firstInputLine, firstToolField, parseToolArguments, parseToolInput, prettyToolInput, TOOL_DESCRIPTION_KEYS, TOOL_INPUT_KEY_ORDER, TOOL_INPUT_KEYS } from '../../../../src/shared/tool-input.js';
 
 /**
  * One line that says what a tool call did, in the user's terms.
@@ -71,6 +71,41 @@ export function summariseToolInput(input: string | undefined, workingDir: string
         return '';
     }
     return raw.includes('/') && !raw.includes(' ') ? shortenPath(raw, workingDir) : firstLine(raw);
+}
+
+/**
+ * The call's own description, shown as muted secondary text under the row
+ * label. It is the runtime's reason for the call, not the label itself.
+ */
+export function toolInputDescription(input: string | undefined): string {
+    const description = parseToolInput(input).description;
+    return description === null ? '' : firstInputLine(description);
+}
+
+/**
+ * What the expanded call shows. A shell call prints its decoded command with
+ * real newlines, never the {"command": ...} envelope; every other tool
+ * pretty-prints its arguments, and a non-JSON argument stays as sent (a
+ * retention-truncated envelope still decodes its recognised field).
+ *
+ * `parameters` keeps the rest of a command envelope (timeout, cwd…) visible so
+ * nothing the call sent is hidden; `description` is the call's own description
+ * in full — the summary row only ever borrows its first line.
+ */
+export function toolInputDisplay(input: string | undefined): { content: string; command: boolean; parameters: string | null; description: string | null } | null {
+    if (input === undefined) return null;
+    const parsed = parseToolInput(input);
+    let parameters: string | null = null;
+    if (parsed.object && parsed.field === 'command') {
+        const hidden = new Set([...TOOL_INPUT_KEYS.command, ...TOOL_DESCRIPTION_KEYS]);
+        const rest = Object.fromEntries(Object.entries(parsed.object).filter(([key]) => !hidden.has(key)));
+        if (Object.keys(rest).length) parameters = JSON.stringify(rest, null, 2);
+    }
+    const command = parsed.field === 'command' && parsed.value !== null;
+    const content = command ? parsed.value!
+        : parsed.object ? prettyToolInput(input)
+            : parsed.value ?? input;
+    return { content, command, parameters, description: parsed.description };
 }
 
 export function toolSummary(item: CodeItem, workingDir: string): string {
