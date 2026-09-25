@@ -56,8 +56,20 @@ for (const tool of ['Agent', 'Task']) {
         assert.deepEqual(args, { prompt: 'work', run_in_background: false });
     });
 
+    // CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 removes the option from the tool schema,
+    // so a call without it is a foreground call and must not be refused.
+    test(`${tool}: omitted flag returns neutral output (background disabled at source)`, async () => {
+        const args = Object.freeze({ prompt: 'work' });
+        assert.deepEqual(await invoke(tool, args), {});
+        assert.deepEqual(args, { prompt: 'work' });
+    });
+
+    test(`${tool}: an input object with no flag at all is the omitted case`, async () => {
+        assert.deepEqual(await invoke(tool, {}), {});
+    });
+
     const deniedInputs: [string, unknown][] = [
-        ['omitted', {}], ['true', { run_in_background: true }],
+        ['true', { run_in_background: true }],
         ['undefined', { run_in_background: undefined }], ['null flag', { run_in_background: null }],
         ['string false', { run_in_background: 'false' }], ['zero', { run_in_background: 0 }],
         ['object flag', { run_in_background: {} }], ['array flag', { run_in_background: [] }],
