@@ -66,6 +66,71 @@ test('lazy host recovery is isolated by role and port and never launches a provi
     assert.ok(existsSync(join(home, 'code-worker-19002.sqlite')));
 });
 
+test('catalog reads never prime provider inventory; prime() is the one-shot owner', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    let primes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers,
+        primeLiveModels: async () => { primes += 1; } });
+    t.after(async () => { await host.dispose(); rmSync(home, { recursive: true, force: true }); });
+    // The read path below the HTTP layer: models() renders every catalog.
+    assert.equal(host.get().models().providers.length, 4);
+    assert.equal(primes, 0);
+    assert.equal(fake.opens(), 0);
+    await host.prime();
+    await host.prime();
+    assert.equal(primes, 1);
+    assert.equal(fake.opens(), 0);
+});
+
+test('a failed prime keeps its receipt and retries exactly once later, not on a second activation', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    let primes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers, primeRetryMs: 5,
+        primeLiveModels: async () => { primes += 1; throw new Error('inventory unavailable'); } });
+    t.after(async () => { await host.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await assert.rejects(host.prime(), { message: 'inventory unavailable' });
+    await assert.rejects(host.prime(), { message: 'inventory unavailable' });
+    assert.equal(primes, 1);
+    // Failure does not poison the host: the registry catalogs still serve.
+    assert.equal(host.get().models().providers.length, 4);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(primes, 2, 'one delayed follow-up probe');
+});
+
+test('an incomplete prime retries once so a CLI installed after boot is found; a complete one does not', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    const results = [false, false];
+    let primes = 0;
+    let completePrimes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers, primeRetryMs: 5,
+        primeLiveModels: async () => results[primes++] ?? true });
+    const complete = createCodeHost({ home, role: 'manager', port: 19002, providers: fake.providers, primeRetryMs: 5,
+        primeLiveModels: async () => { completePrimes += 1; return true; } });
+    t.after(async () => { await host.dispose(); await complete.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await host.prime();
+    await complete.prime();
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(primes, 2, 'the follow-up runs once even when it is still incomplete');
+    assert.equal(completePrimes, 1);
+    assert.equal(fake.opens(), 0);
+});
+
+test('dispose cancels a pending prime follow-up', async t => {
+    const home = mkdtempSync(join(tmpdir(), 'code-host-'));
+    const fake = providers();
+    let primes = 0;
+    const host = createCodeHost({ home, role: 'worker', port: 19001, providers: fake.providers, primeRetryMs: 10,
+        primeLiveModels: async () => { primes += 1; return false; } });
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    await host.prime();
+    await host.dispose();
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(primes, 1);
+});
+
 test('one host returns one manager and closes its database after disposal', async t => {
     const home = mkdtempSync(join(tmpdir(), 'code-host-'));
     const fake = providers();

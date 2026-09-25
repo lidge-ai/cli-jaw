@@ -13,7 +13,8 @@
  * prompt, or block on a slow binary.
  *
  * So the two are separated. A read never probes for Cursor or Grok; only an
- * explicit prime does, and `describe()` returns whatever is already in memory.
+ * explicit prime does — `CodeHost.prime()`, called once by server startup, is
+ * the sole owner — and `describe()` returns whatever is already in memory.
  */
 import { claudeCatalogToChoices, resolveClaudeBundleCatalog } from '../../cli/claude-model-discovery.js';
 import { buildClaudeEffortsByModel } from '../../cli/claude-models.js';
@@ -123,9 +124,10 @@ export function readProviderLiveModels(id: LiveCatalogProviderId): ProviderLiveM
  * Fill every provider snapshot, including the ones a read will not fill on its
  * own. This is the only path that spawns Cursor's or Grok's CLI.
  */
-export async function primeProviderLiveModels(): Promise<void> {
+export async function primeProviderLiveModels(): Promise<boolean> {
     const ids: LiveCatalogProviderId[] = ['claude', 'cursor', 'grok'];
     await Promise.all(ids.map(id => refresh(id, true) ?? Promise.resolve()));
+    return ids.every(id => slotOf(id).value !== null);
 }
 
 /** @internal exported for unit tests */

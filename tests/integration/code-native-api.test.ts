@@ -147,7 +147,8 @@ describe('code native HTTP', { concurrency: false }, () => {
         return home;
     }
 
-    async function assignHost(home: string, hostPort: number, providers = createFakeCodeProviders().providers): Promise<Host> {
+    async function assignHost(home: string, hostPort: number, providers = createFakeCodeProviders().providers,
+        primeLiveModels?: () => Promise<boolean | void>): Promise<Host> {
         const previous = host;
         host = createCodeHost({
             home,
@@ -155,6 +156,7 @@ describe('code native HTTP', { concurrency: false }, () => {
             port: hostPort,
             providers,
             idleReapMs: 3_600_000,
+            ...(primeLiveModels ? { primeLiveModels } : {}),
         });
         await previous?.dispose().catch(() => undefined);
         return host;
@@ -237,6 +239,26 @@ describe('code native HTTP', { concurrency: false }, () => {
         const after = await request(base + '/api/code/sessions/' + sessionId);
         // Cancel returns after op.work, so the snapshot has already left streaming.
         assert.notEqual((after.json['session'] as Json)['status'], 'streaming');
+    });
+
+    test('CODE-INT-009 catalog read on a fresh host starts no provider inventory', async () => {
+        const home = tempHome();
+        const fake = createFakeCodeProviders();
+        let primes = 0;
+        await assignHost(home, 19_088, fake.providers, async () => { primes += 1; });
+        // The composed path: HTTP → getService() → host.get() → models().
+        // Cursor and Grok discovery spawn a CLI, and prime() — owned by server
+        // startup — is the only caller a test must observe; a read is not one.
+        const catalog = await request(base + '/api/code/models');
+        assert.equal(catalog.status, 200);
+        assert.equal((catalog.json['providers'] as Json[]).length, 4);
+        assert.equal(primes, 0);
+        assert.equal(fake.counts.opens, 0);
+        // Explicit activation runs the injected filler exactly once.
+        await host?.prime();
+        await host?.prime();
+        assert.equal(primes, 1);
+        assert.equal(fake.counts.opens, 0);
     });
 
     test('CODE-INT-005 negative contract', async () => {

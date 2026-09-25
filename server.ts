@@ -748,6 +748,10 @@ server.listen(PORT, bindHost, async () => {
 
     initAlertDelivery();
 
+    // Provider live-model inventory (Cursor/Grok CLI probes) is owned by host
+    // activation — startup, here — never by a catalog read (src/code-mode/host.ts).
+    void nativeCodeHost.prime().catch(() => { /* static registry lists stand */ });
+
     // ─── Seed default employees if none exist ────────
     const seeded = await seedDefaultEmployees();
     if (seeded.seeded > 0) {

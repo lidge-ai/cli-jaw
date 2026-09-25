@@ -80,7 +80,9 @@ test('PLM-007: codex-app keeps its own Codex snapshot path', () => {
 test('PLM-008: reading a catalog never spawns a CLI for cursor or grok', async () => {
     // The rule catalog.ts states: catalogs must never execute a CLI or a login
     // probe. Reads go through the shared snapshot, which only an explicit prime
-    // fills for these two.
+    // fills for these two. This file exercises the snapshot reader in isolation;
+    // the composed HTTP/host proof is CODE-INT-009 (code-native-api.test.ts)
+    // and the prime() contract tests in code-native-host.test.ts.
     const { readProviderLiveModels, resetProviderLiveModelsForTest } =
         await import('../../src/code-mode/providers/provider-live-models.ts');
     resetProviderLiveModelsForTest();
