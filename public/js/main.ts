@@ -45,6 +45,10 @@ import {
     loadCommands, update as updateSlashDropdown, handleKeydown as handleSlashKeydown,
     handleClick as handleSlashClick, handleOutsideClick as handleSlashOutsideClick,
 } from './features/slash-commands.js';
+import {
+    update as updateSkillMentions, handleKeydown as handleSkillMentionKeydown,
+    handleClick as handleSkillMentionClick, handleOutsideClick as handleSkillMentionOutsideClick,
+} from './features/skill-mentions.js';
 import { toggleSkill, filterSkills, searchSkills } from './features/skills.js';
 import {
     loadSettings, setPerm, onCliChange,
@@ -118,6 +122,7 @@ function isVoiceRecordingShortcut(e: KeyboardEvent): boolean {
 document.getElementById('btnSend')?.addEventListener('click', () => { void sendMessage('button'); });
 const chatInput = document.getElementById('chatInput') as HTMLTextAreaElement | null;
 chatInput?.addEventListener('keydown', (e) => {
+    if (handleSkillMentionKeydown(e as KeyboardEvent)) return;
     if (handleSlashKeydown(e as KeyboardEvent)) return;
     handleKey(e as KeyboardEvent);
 });
@@ -127,6 +132,7 @@ chatInput?.addEventListener('input', (e) => {
     if (slashInputRaf) cancelAnimationFrame(slashInputRaf);
     slashInputRaf = requestAnimationFrame(() => {
         updateSlashDropdown((e.target as HTMLTextAreaElement)?.value || '');
+        void updateSkillMentions(e.target as HTMLTextAreaElement | null);
         slashInputRaf = 0;
     });
 });
@@ -135,6 +141,13 @@ chatInput?.addEventListener('cmd-execute', () => {
 });
 document.getElementById('cmdDropdown')?.addEventListener('click', handleSlashClick);
 document.addEventListener('click', handleSlashOutsideClick);
+document.getElementById('skillMentionDropdown')?.addEventListener('click', handleSkillMentionClick);
+document.addEventListener('click', handleSkillMentionOutsideClick);
+// Caret moves without typing (click, arrows, Home/End) re-evaluate the `$` token under the caret.
+chatInput?.addEventListener('click', () => { void updateSkillMentions(chatInput); });
+chatInput?.addEventListener('keyup', (e) => {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes((e as KeyboardEvent).key)) void updateSkillMentions(chatInput);
+});
 initPendingQueue();
 initBgtaskBadge();
 document.getElementById('filePreviewClear')?.addEventListener('click', clearAttachedFiles);

@@ -321,6 +321,7 @@
   "drag.drop": "파일을 여기에 드랍하세요",
   "status.responding": "응답 중",
   "aria.cmdList": "커맨드 목록",
+  "aria.skillMentionList": "스킬 목록",
   "btn.attach": "파일 첨부",
   "input.placeholder": "메시지 입력...",
   "queue.pendingTitle": "대기 중",
