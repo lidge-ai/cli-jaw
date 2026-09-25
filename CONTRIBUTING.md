@@ -124,4 +124,14 @@ A maintainer can waive the requirement with the `ui-screenshot-waived` label
 stating the change does not touch the UI — e.g. "no UI changes" — posted after
 the latest push by someone with write access or above.
 
+### Stacked pull requests
+
+Merge stacked PRs bottom-up with squash merge. After each parent lands, move its child with:
+
+```bash
+scripts/restack-pr.sh <child-branch> <old-parent-head>
+```
+
+The helper refuses dirty worktrees, stops on any conflict, and verifies the moved diff with `git patch-id`. Re-run CI on the moved child before merging it. If the child branch was force-pushed since the review, pass the reviewed base explicitly with `--reviewed-base`.
+
 > 📋 Found a bug or have a feature idea? [Open an issue](https://github.com/lidge-ai/cli-jaw/issues)
