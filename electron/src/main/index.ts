@@ -334,7 +334,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    applyDockIcon({ platform: process.platform, dock: app.dock, exists: existsSync }, APP_ICON_PATH);
+    if (process.platform === 'darwin' && !applyDockIcon({ platform: process.platform, dock: app.dock, exists: existsSync }, APP_ICON_PATH)) {
+      ringBuffer.append(`[dock icon] could not apply ${APP_ICON_PATH}\n`);
+    }
     configureEmbeddedBrowserSession();
     initializeAppUpdater();
     await bootstrapOnce();
