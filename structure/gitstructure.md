@@ -103,17 +103,11 @@ bash structure/verify-counts.sh
 
 `AGENTS.md` 규칙:
 
-- `str_func.md` 파일 트리 라인수 표기 형식: `(NNNL)`
-- 파일 수정 후 동기화 검증:
+- `str_func.md` 파일 트리는 멤버십 지도다 (줄 수는 기록하지 않는다)
+- 파일을 추가·삭제·이동한 뒤 항목이 실제 파일을 가리키는지 검증:
 
 ```bash
 bash structure/verify-counts.sh
-```
-
-- 자동 보정:
-
-```bash
-bash structure/verify-counts.sh --fix
 ```
 
 ## 7) Structure Sync Scope

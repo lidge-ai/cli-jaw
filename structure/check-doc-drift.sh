@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-doc-drift.sh — CI gate for structure docs drift detection
-# Validates: commands.md, server_api.md, websocket events, str_func line counts
+# Validates: commands.md, server_api.md, websocket events, str_func membership
 # Exit: 0 = all pass, 1 = drift detected
 set -euo pipefail
 
@@ -537,9 +537,9 @@ NODE
   fi
 }
 
-check_str_func_counts() {
+check_str_func_membership() {
   echo ""
-  echo -e "${BOLD}📋 4/4 — str_func.md line counts${RESET}"
+  echo -e "${BOLD}📋 4/4 — str_func.md membership${RESET}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   if [[ ! -f structure/verify-counts.sh ]]; then
@@ -548,12 +548,11 @@ check_str_func_counts() {
   fi
 
   if bash structure/verify-counts.sh >/tmp/check-doc-drift.verify.log 2>&1; then
-    pass "verify-counts.sh — all line counts match"
+    pass "verify-counts.sh — all listed paths exist"
   else
     VC_EXIT=$?
     cat /tmp/check-doc-drift.verify.log
-    fail "verify-counts.sh — ${VC_EXIT} line count(s) drifted"
-    info "Fix: bash structure/verify-counts.sh --fix"
+    fail "verify-counts.sh — ${VC_EXIT} membership issue(s)"
   fi
   rm -f /tmp/check-doc-drift.verify.log
 }
@@ -561,7 +560,7 @@ check_str_func_counts() {
 check_commands_doc
 check_server_api_doc
 check_websocket_doc
-check_str_func_counts
+check_str_func_membership
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -575,6 +574,5 @@ else
   echo -e "  ${YELLOW}${BOLD}How to fix:${RESET}"
   echo -e "  ${DIM}  1. Read the ❌ messages above${RESET}"
   echo -e "  ${DIM}  2. Update the docs to match reality${RESET}"
-  echo -e "  ${DIM}  3. For line counts: bash structure/verify-counts.sh --fix${RESET}"
   exit 1
 fi

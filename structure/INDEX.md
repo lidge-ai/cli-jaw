@@ -216,7 +216,7 @@ Support labels must stay aligned with agbrowse:
 |----------|------|
 | `check-doc-drift.sh` | `commands.md` / `server_api.md` / websocket events / `str_func.md` 드리프트 검사 (legacy bash; commands/routes 검사는 `scripts/docs/check-docs.mts`가 AST 기반으로 이중화) |
 | `scripts/docs/*.mts` | AST 기반 inventory 추출기 (`extract-commands`, `extract-routes`) + `npm run docs:check` live 비교 게이트 |
-| `verify-counts.sh` | `str_func.md`의 라인 카운트가 실제 소스와 일치하는지 검증 |
+| `verify-counts.sh` | `str_func.md` 파일 트리의 모든 항목이 실제 파일을 가리키는지 검증 (멤버십; 줄 수는 기록하지 않음) |
 | `scripts/check-private-boundary.mjs` | index 또는 `--range <base> <head>`의 모든 outgoing commit tree에서 금지된 private 경로 검사; `.githooks/pre-push`는 Git stdin을 `--pre-push`로 전달 |
 
 ---

@@ -501,9 +501,9 @@ test('SAF-004i: install risk gate covers fresh-machine installer regressions', (
     assert.ok(gateSrc.includes('scripts/require-release-evidence.mjs'), 'gate should ensure publish-time release evidence guard is packed');
     assert.ok(gateSrc.includes("'public/public/'"), 'gate should reject nested Vite publicDir artifacts');
     assert.ok(gateSrc.includes("'public/dist/dist/'"), 'gate should reject nested frontend build output');
-    assert.ok(gateSrc.includes('structure/verify-counts.sh'), 'gate should enforce repository structure sync');
-    assert.ok(gateSrc.includes("commandExists('rg')"), 'structure sync should require ripgrep before running');
-    assert.ok(gateSrc.includes("existsSync('public/dist')"), 'structure sync should wait for frontend build output before running');
+    assert.ok(gateSrc.includes('structure tree membership'), 'gate label should describe tree membership');
+    assert.ok(gateSrc.includes('structure/verify-counts.sh'), 'gate should enforce repository structure tree membership');
+    assert.ok(gateSrc.includes("existsSync('structure/verify-counts.sh')"), 'structure membership check should run whenever the verifier exists');
 });
 
 test('SAF-004j: packaged fresh-install verifiers check new-shell readiness', () => {
