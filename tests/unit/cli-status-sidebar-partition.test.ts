@@ -67,6 +67,12 @@ test('isCliStatusUsable keeps indeterminate probe states on top', () => {
     }
 });
 
+test('isCliStatusUsable keeps last-known install/auth facts while the probe is failing', () => {
+    assert.equal(isCliStatusUsable(row({ probeState: 'failing', probeError: 'boom', available: false, authenticated: null }), undefined), false);
+    assert.equal(isCliStatusUsable(row({ probeState: 'failing', probeError: 'boom', authenticated: false }), undefined), false);
+    assert.equal(isCliStatusUsable(row({ probeState: 'failing', probeError: 'boom', available: null, authenticated: null }), undefined), true);
+});
+
 test('hasUsableCliStatus suppresses the banner while a stale row was working', () => {
     const entries: Array<[string, CliStatusInfo]> = [
         ['claude', row({ probeState: 'stale' })],

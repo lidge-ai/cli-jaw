@@ -478,7 +478,7 @@ function renderCliStatus(data: { cliStatus: Record<string, CliStatusInfo> | null
 
     if (el) el.innerHTML = html;
 
-    const allEntries = Object.entries(cliStatus);
+    const allEntries = Object.entries(cliStatus).filter(([name]) => !SIDEBAR_HIDDEN_CLIS.has(name));
     // The alarm shares the partition's usable rule: a stale-but-preserved row
     // or an unsettled probe is last-known-good, not evidence of absence —
     // otherwise it false-alarms through every re-check window (#277).

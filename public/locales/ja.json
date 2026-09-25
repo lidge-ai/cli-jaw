@@ -306,7 +306,7 @@
   "cli.showMore": "もっと見る ▸",
   "cli.authRequired": "インストール/認証が必要です",
   "cli.notAuthenticated": "認証が必要です — 下のコマンドを実行してください",
-  "cli.undetectedGroup": "未検出の CLI ({count})",
+  "cli.undetectedGroup": "インストール・ログインが必要 ({count})",
   "drag.drop": "ここにファイルをドロップ",
   "status.responding": "応答中",
   "aria.cmdList": "コマンド一覧",
