@@ -454,6 +454,22 @@
             margin-top: auto;
         }
 
+        .download-card.is-detected {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent), 0 12px 40px rgba(34, 211, 238, 0.12);
+        }
+
+        .download-card .detected-label {
+            display: none;
+            color: var(--accent);
+            font-size: 12.5px;
+            font-weight: 600;
+        }
+
+        .download-card.is-detected .detected-label {
+            display: block;
+        }
+
         .download-meta {
             margin-top: 14px;
             color: var(--text-muted, #a1a1aa);
@@ -2014,7 +2030,7 @@
                             Get Started
                             <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
                         </a>
-                        <a class="button button-ghost" href="#download">Download the app</a>
+                        <a class="button button-ghost" data-download-hero href="#download">Download the app</a>
                         <a class="button button-ghost" href="https://github.com/lidge-jun/cli-jaw" target="_blank" rel="noreferrer">View on GitHub</a>
                     </div>
                     <div class="hero-quiet-links" aria-label="More resources">
@@ -2244,18 +2260,21 @@
                 <h2 class="section-title" id="download-title">Get the desktop app.</h2>
                 <p class="section-desc">The app bundles the manager dashboard, a Node.js server sidecar and the <code>jaw</code> command. It lives in your menu bar and keeps every instance one click away.</p>
                 <div class="download-grid">
-                    <article class="download-card">
+                    <article class="download-card" data-download-card="mac">
                         <h3>macOS</h3>
+                        <span class="detected-label">Recommended for your computer</span>
                         <p>Apple Silicon. Signed, notarized and updated in-app.</p>
-                        <a class="button button-primary" data-download="mac" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .dmg</a>
+                        <a class="button button-ghost" data-download="mac" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .dmg</a>
                     </article>
-                    <article class="download-card">
+                    <article class="download-card" data-download-card="win">
                         <h3>Windows</h3>
+                        <span class="detected-label">Recommended for your computer</span>
                         <p>x64 installer. Unsigned, so SmartScreen may ask you to confirm.</p>
                         <a class="button button-ghost" data-download="win" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .exe</a>
                     </article>
-                    <article class="download-card">
+                    <article class="download-card" data-download-card="linux">
                         <h3>Linux</h3>
+                        <span class="detected-label">Recommended for your computer</span>
                         <p>x64 AppImage. Make it executable, then run it.</p>
                         <a class="button button-ghost" data-download="linux" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .AppImage</a>
                     </article>
@@ -2414,11 +2433,38 @@
         })();
     </script>
     <script>
-        // Progressive enhancement: point the download buttons at the exact files of the
-        // latest stable release. The releases/latest page stays as the fallback link.
+        // Progressive enhancement for #download: highlight the visitor's platform and point
+        // the buttons at the exact files of the latest stable release. Without JS every
+        // card keeps the releases/latest link.
         (() => {
-            const buttons = document.querySelectorAll('[data-download]');
-            if (!buttons.length || !('fetch' in window)) return;
+            const buttons = [...document.querySelectorAll('[data-download]')];
+            if (!buttons.length) return;
+            const labels = { mac: 'macOS', win: 'Windows', linux: 'Linux' };
+            const detectPlatform = () => {
+                const hint = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '').toLowerCase();
+                const ua = navigator.userAgent.toLowerCase();
+                if (/android|iphone|ipad|ipod/.test(ua) || (navigator.maxTouchPoints > 1 && /mac/.test(hint))) return null;
+                if (/mac/.test(hint) || /mac os x/.test(ua)) return 'mac';
+                if (/win/.test(hint) || /windows/.test(ua)) return 'win';
+                if (/linux|x11/.test(hint) || /linux|x11/.test(ua)) return 'linux';
+                return null;
+            };
+            const platform = detectPlatform();
+            const hero = document.querySelector('[data-download-hero]');
+            if (platform) {
+                const card = document.querySelector('[data-download-card="' + platform + '"]');
+                if (card) {
+                    card.classList.add('is-detected');
+                    card.parentElement.prepend(card);
+                }
+                buttons.forEach((button) => {
+                    const mine = button.dataset.download === platform;
+                    button.classList.toggle('button-primary', mine);
+                    button.classList.toggle('button-ghost', !mine);
+                });
+                if (hero) hero.textContent = 'Download for ' + labels[platform];
+            }
+            if (!('fetch' in window)) return;
             const patterns = { mac: /-arm64\.dmg$/, win: /Setup[ .].*\.exe$/, linux: /\.AppImage$/ };
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 3000);
@@ -2426,11 +2472,15 @@
                 .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
                 .then((release) => {
                     const assets = Array.isArray(release.assets) ? release.assets : [];
-                    buttons.forEach((button) => {
-                        const pattern = patterns[button.dataset.download];
-                        const asset = pattern && assets.find((item) => pattern.test(item.name));
-                        if (asset && asset.browser_download_url) button.href = asset.browser_download_url;
+                    const urls = {};
+                    Object.keys(patterns).forEach((key) => {
+                        const asset = assets.find((item) => patterns[key].test(item.name));
+                        if (asset && asset.browser_download_url) urls[key] = asset.browser_download_url;
                     });
+                    buttons.forEach((button) => {
+                        if (urls[button.dataset.download]) button.href = urls[button.dataset.download];
+                    });
+                    if (hero && platform && urls[platform]) hero.href = urls[platform];
                     const version = document.querySelector('[data-download-version]');
                     if (version && release.tag_name) version.textContent = 'Latest release ' + release.tag_name;
                 })
@@ -2441,4 +2491,5 @@
 </body>
 
 </html>
+
 
