@@ -3,7 +3,7 @@ import { getDesktop, isElectron } from '../panels/desktop-bridge';
 import type { BrowserPickedElement, BrowserWebviewCommand, BrowserWebviewNativeAction, BrowserWebviewScreenshot, BrowserWebviewTabState } from '../panels/desktop-bridge';
 import { DEFAULT_BROWSER_URL, isRestrictedBrowserHost, normalizeBrowserTarget } from './browser-url';
 import { BrowserAddressBar } from './browser-address-bar';
-import { createAddressBarState, displayedAddress, reduceAddressBar, type AddressBarAction, type AddressBarState } from './browser-address-state';
+import { createAddressBarState, displayedAddress, reduceAddressBar, shouldShowRecentVisits, type AddressBarAction, type AddressBarState } from './browser-address-state';
 import { pickFaviconUrl, faviconInitial } from './browser-favicon';
 import { loadBrowserHistory, saveBrowserHistory, upsertBrowserHistory, type BrowserHistoryEntry } from './browser-history-store';
 import './browser-panel.css';
@@ -308,7 +308,6 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const [addressState, setAddressState] = useState<AddressBarState>(() => createAddressBarState(initialTab.current.url));
     const [historyEntries, setHistoryEntries] = useState<BrowserHistoryEntry[]>(() => loadBrowserHistory());
-    const committedByUserRef = useRef<Set<string>>(new Set());
     const pendingNavigationRefs = useRef<Map<string, string>>(new Map());
     /**
      * The webview `src` attribute is bound ONCE per page tab and never
@@ -384,10 +383,17 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const activeRegistrationId = registrationIdFor(activeTab.id);
     const activeBridgeState = bridgeStates[activeRegistrationId] ?? null;
     const nativeInspecting = activeBridgeState?.inspecting === true;
+    // Page coordinates from the guest (CDP box models) are CSS px; the panel
+    // overlays live in DIP, so bounds picked under a non-1 zoomFactor must be
+    // scaled before they are drawn.
+    const zoomFactorRef = useRef(1);
+    zoomFactorRef.current = activeBridgeState?.zoomFactor ?? activeTab.zoomFactor ?? 1;
 
     const panelInstanceId = useRef<symbol>(Symbol('browser-panel'));
     /** regId -> guest webContentsId for this panel's live registrations. */
     const registeredWebContentsIds = useRef<Map<string, number>>(new Map());
+    /** Stable viewport box the active webview fills (survives tab switches). */
+    const webviewStackRef = useRef<HTMLDivElement | null>(null);
 
     const registerWebviewTarget = useCallback((tabId: string, webview: ElectronWebviewElement) => {
         const browserBridge = getDesktop()?.browser;
@@ -439,6 +445,39 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
         });
     }, [updateTab]);
 
+    // Fit-to-width: ask the guest to re-fit its zoom whenever the panel box
+    // resizes (drawer drag, sidebar toggle, window resize). The initial
+    // observe() fire also covers first layout; the guest no-ops while the
+    // user holds a manual zoom from the zoom menu.
+    useEffect(() => {
+        const browserBridge = getDesktop()?.browser;
+        const host = webviewStackRef.current;
+        if (!canUseElectronWebview || !host || typeof browserBridge?.controlWebview !== 'function') return undefined;
+        const controlWebview = browserBridge.controlWebview;
+        let timer = 0;
+        const requestFit = () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
+                void controlWebview({ kind: 'fitToWidth', tabId: registrationIdFor(activeTabIdRef.current) });
+            }, 200);
+        };
+        const observer = new ResizeObserver(requestFit);
+        observer.observe(host);
+        return () => {
+            window.clearTimeout(timer);
+            observer.disconnect();
+        };
+    }, [canUseElectronWebview, registrationIdFor]);
+
+    // A hidden tab keeps whatever zoom it had when the panel resized; the
+    // observer above only covers the active tab and does not refire for an
+    // unchanged box, so re-fit once when a tab comes back to the front.
+    useEffect(() => {
+        const browserBridge = getDesktop()?.browser;
+        if (!canUseElectronWebview || !activeRegistrationId || typeof browserBridge?.controlWebview !== 'function') return;
+        void browserBridge.controlWebview({ kind: 'fitToWidth', tabId: activeRegistrationId });
+    }, [activeRegistrationId, canUseElectronWebview]);
+
     // v5: native inspect returns the REAL element (selector/role/name/bounds).
     // When it fires for this panel's active tab, pin the element and open the
     // composer anchored to the element's box center.
@@ -449,7 +488,8 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
             if (tabId !== activeRegistrationId) return;
             setPickedElement({ ...element, pickedAt: Date.now(), pageUrl: activeTab.url, tabId: activeRegistrationId });
             if (element.bounds) {
-                setCommentAnchor({ x: element.bounds.x + Math.round(element.bounds.width / 2), y: element.bounds.y + Math.round(element.bounds.height / 2) });
+                const zoom = zoomFactorRef.current;
+                setCommentAnchor({ x: Math.round((element.bounds.x + element.bounds.width / 2) * zoom), y: Math.round((element.bounds.y + element.bounds.height / 2) * zoom) });
             }
             setCommentMode(true);
             const label = element.name || element.text || element.selector;
@@ -705,7 +745,6 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
         pendingNavigationRefs.current.delete(id);
         initialSrcRefs.current.delete(id);
         lastKnownUrlRefs.current.delete(id);
-        committedByUserRef.current.delete(id);
         stableWebviewRefCallbacks.current.delete(id);
         unregisterWebviewTarget(id);
         setTabs(current => {
@@ -727,16 +766,11 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const navigate = useCallback(() => {
         const rawTarget = addressState.focused ? addressState.draft : displayedAddress(addressState);
         dispatchAddress({ type: 'submit' });
-        const normalized = normalizeBrowserTarget(rawTarget);
-        if (normalized && normalized !== DEFAULT_BROWSER_URL) {
-            committedByUserRef.current.add(activeTab.id);
-        }
         openUrlInTab(activeTab.id, rawTarget);
         inputRef.current?.blur();
     }, [activeTab.id, addressState, dispatchAddress, openUrlInTab]);
 
     const openHistoryEntry = useCallback((url: string) => {
-        committedByUserRef.current.add(activeTab.id);
         dispatchAddress({ type: 'submit' });
         openUrlInTab(activeTab.id, url);
         inputRef.current?.blur();
@@ -1131,7 +1165,7 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
                                     )}
                                     <div className="browser-more-zoom" role="group" aria-label="Page zoom" onClick={event => event.stopPropagation()}>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomOut')}>Zoom out</button>
-                                        <span className="browser-more-zoom-label">{Math.round((activeTab.zoomFactor ?? 1) * 100)}%</span>
+                                        <span className="browser-more-zoom-label">{Math.round((activeTab.zoomFactor ?? 1) * 100)}%{activeBridgeState?.zoomMode === 'auto' && (activeTab.zoomFactor ?? 1) < 1 ? ' fit' : ''}</span>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomIn')}>Zoom in</button>
                                         <button type="button" className="browser-more-item" onClick={() => void handleZoom('zoomReset')}>Reset</button>
                                     </div>
@@ -1150,15 +1184,16 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
                 </div>
             )}
             {canUseElectronWebview ? (
-                <div className="browser-webview-stack">
+                <div className="browser-webview-stack" ref={webviewStackRef}>
                     <div key={activeTab.id} className="browser-webview-host is-active">
-                        {historyEntries.length > 0 && !activeTab.loading && ((addressState.focused && addressState.draft.trim() === '') || !committedByUserRef.current.has(activeTab.id)) && (
+                        {historyEntries.length > 0 && shouldShowRecentVisits(addressState) && (
                             <div className="browser-history-empty" aria-label="Recent visits">
                                 {historyEntries.map(entry => (
                                     <button
                                         key={`${entry.url}:${entry.at}`}
                                         type="button"
                                         className="browser-history-item"
+                                        onMouseDown={event => event.preventDefault()}
                                         onClick={() => openHistoryEntry(entry.url)}
                                     >
                                         <span className="browser-history-title">{entry.title || entry.url}</span>

@@ -20,6 +20,17 @@ export function displayedAddress(state: AddressBarState): string {
     return state.focused ? state.draft : state.liveUrl;
 }
 
+/**
+ * Recents overlay gate. The overlay covers the page, so it belongs to the
+ * address bar only while that bar holds focus: focus seeds the draft with the
+ * live URL, and an empty draft means the user cleared the field to search.
+ * Anything else typed is a query the user is composing, and an unfocused bar
+ * always leaves the page visible.
+ */
+export function shouldShowRecentVisits(state: AddressBarState): boolean {
+    return state.focused && (state.draft.trim() === '' || state.draft === state.liveUrl);
+}
+
 export function reduceAddressBar(state: AddressBarState, action: AddressBarAction): AddressBarState {
     switch (action.type) {
         case 'sync-live':

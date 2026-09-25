@@ -34,6 +34,7 @@ export type PickedElement = {
     role: string | null;
     name: string | null;
     text: string | null;
+    /** Viewport-relative CSS px (DOM.getBoxModel document bounds minus the visual viewport offset). */
     bounds: { x: number; y: number; width: number; height: number } | null;
 };
 
@@ -196,13 +197,35 @@ async function nodeAxInfo(contents: WebContents, backendNodeId: number): Promise
     }
 }
 
+/**
+ * Scroll position of the visual viewport inside the document, in CSS px.
+ * DOM.getBoxModel returns document-space bounds; subtracting this offset
+ * yields viewport-relative coordinates for overlays and input dispatch.
+ */
+async function visualViewportPageOffset(contents: WebContents): Promise<{ x: number; y: number }> {
+    try {
+        const metrics = await send<{
+            cssVisualViewport?: { pageX?: number; pageY?: number };
+            layoutViewport?: { pageX?: number; pageY?: number };
+            visualViewport?: { pageX?: number; pageY?: number };
+        }>(contents, 'Page.getLayoutMetrics');
+        return {
+            x: metrics.cssVisualViewport?.pageX ?? metrics.layoutViewport?.pageX ?? metrics.visualViewport?.pageX ?? 0,
+            y: metrics.cssVisualViewport?.pageY ?? metrics.layoutViewport?.pageY ?? metrics.visualViewport?.pageY ?? 0,
+        };
+    } catch {
+        return { x: 0, y: 0 };
+    }
+}
+
 async function resolvePickedElement(contents: WebContents, backendNodeId: number): Promise<PickedElement | null> {
     try {
         await send(contents, 'Accessibility.enable').catch(() => undefined);
         const { node } = await send<{ node: DomDescribeNode }>(contents, 'DOM.describeNode', { backendNodeId, depth: 0 });
-        const [bounds, ax] = await Promise.all([
+        const [bounds, ax, viewportOffset] = await Promise.all([
             backendNodeBounds(contents, backendNodeId),
             nodeAxInfo(contents, backendNodeId),
+            visualViewportPageOffset(contents),
         ]);
         // Text comes ONLY from the accessibility name. Raw outerHTML stripping
         // could leak hidden attributes / input values / script text from a
@@ -213,7 +236,14 @@ async function resolvePickedElement(contents: WebContents, backendNodeId: number
             role: ax.role,
             name: trimNodeText(ax.name),
             text: trimNodeText(ax.name),
-            bounds,
+            bounds: bounds
+                ? {
+                    x: bounds.x - Math.round(viewportOffset.x),
+                    y: bounds.y - Math.round(viewportOffset.y),
+                    width: bounds.width,
+                    height: bounds.height,
+                }
+                : null,
         };
     } catch {
         return null;
@@ -295,6 +325,67 @@ export async function domSnapshot(contents: WebContents, maxNodes = 120): Promis
         });
     }
     return out;
+}
+
+// --- fit-to-width: read-only layout metrics probe ---
+
+export type PageLayoutMetrics = {
+    /** cssLayoutViewport.clientWidth — viewport width in CSS px at current zoom. */
+    viewportCssWidth: number;
+    /** cssContentSize.width — full document scroll width in CSS px. */
+    contentCssWidth: number;
+};
+
+/**
+ * One-off `Page.getLayoutMetrics` read for fit-to-width zoom. Like
+ * `assertPointInViewport` this never enables the Page domain — it is a single
+ * read-only command, no subscription, no script execution.
+ *
+ * When an adapter session already owns the debugger (inspect/act/snapshot in
+ * use), the probe rides that session. Otherwise it attaches transiently and
+ * detaches afterwards so idle tabs never keep a debugger attached.
+ */
+export async function pageLayoutMetrics(contents: WebContents): Promise<PageLayoutMetrics | null> {
+    const read = async (): Promise<PageLayoutMetrics | null> => {
+        const metrics = await send<{
+            cssLayoutViewport?: { clientWidth?: number };
+            layoutViewport?: { clientWidth?: number };
+            cssVisualViewport?: { clientWidth?: number };
+            cssContentSize?: { width?: number };
+            contentSize?: { width?: number };
+        }>(contents, 'Page.getLayoutMetrics');
+        const viewportCssWidth = metrics.cssLayoutViewport?.clientWidth
+            ?? metrics.layoutViewport?.clientWidth
+            ?? metrics.cssVisualViewport?.clientWidth;
+        const contentCssWidth = metrics.cssContentSize?.width ?? metrics.contentSize?.width;
+        if (typeof viewportCssWidth !== 'number' || typeof contentCssWidth !== 'number') return null;
+        if (viewportCssWidth <= 0 || contentCssWidth <= 0) return null;
+        return { viewportCssWidth, contentCssWidth };
+    };
+
+    if (sessions.get(contents.id) || sessionInit.get(contents.id)) {
+        try {
+            await ensureSession(contents);
+            return await read();
+        } catch {
+            return null;
+        }
+    }
+
+    let attached = false;
+    try {
+        contents.debugger.attach(CDP_VERSION);
+        attached = true;
+        return await read();
+    } catch {
+        return null;
+    } finally {
+        // Leave the debugger attached if an adapter session started using it
+        // while the probe ran — its lifecycle now owns the attachment.
+        if (attached && !sessions.has(contents.id) && contents.debugger.isAttached()) {
+            try { contents.debugger.detach(); } catch { /* ignore */ }
+        }
+    }
 }
 
 // --- v4 interactive actions (Input domain) ---
