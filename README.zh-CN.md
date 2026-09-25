@@ -1,19 +1,80 @@
-<div align="center">
+<p align="center">
+  <img src="docs/assets/readme/banner.jpg" alt="CLI-JAW — 你的个人 AI 助手。每个 AI CLI，一个仪表盘。" width="100%">
+</p>
 
-# CLI-JAW
+<p align="center"><b>一个助手、一份记忆、一个仪表盘，统一你已经在付费的 AI 编码 CLI。</b><br>
+Claude、Codex、Cursor、Grok、Copilot、OpenCode、Kiro、Antigravity 和 Pi — 像一支团队那样协作。</p>
 
-### 你的个人 AI 助手。2 行安装。10 个 AI 运行时入口，一个仪表盘。
+<p align="center">
+  <a href="https://npmjs.com/package/cli-jaw"><img src="https://img.shields.io/npm/v/cli-jaw?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-jun/cli-jaw?label=release" alt="latest release"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.4-339933?logo=node.js&logoColor=white" alt="Node.js 22.4+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
-[![npm](https://img.shields.io/npm/v/cli-jaw)](https://npmjs.com/package/cli-jaw)
-[![Version](https://img.shields.io/badge/v2.2.3-GA-brightgreen)](https://github.com/lidge-jun/cli-jaw/releases)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)](https://typescriptlang.org)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.4-blue)](https://nodejs.org)
-[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-supported-2496ED?logo=docker&logoColor=white)](#docker)
+```bash
+# 现有用户想要最小改动：JAW_SAFE=1 npm install -g cli-jaw
+npm install -g cli-jaw
+jaw dashboard
+```
 
-[English](README.md) / [한국어](README.ko.md) / **中文** / [日本語](README.ja.md)
+<p align="center">
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
+</p>
 
-</div>
+<table>
+<tr>
+<td width="50%" valign="middle">
+
+### 每个 agent 都在一处
+
+在管理面板里启动、停止并预览每个正在运行的实例。
+
+</td>
+<td width="50%"><img src="docs/screenshots/manager-dashboard-light.png" alt="CLI-JAW 管理面板" width="100%"></td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### 为工作准备的看板
+
+看板泳道、优先级矩阵和提醒，跟踪每个会话正在做什么。
+
+</td>
+<td width="50%"><img src="docs/screenshots/dashboard-kanban.png" alt="agent 会话的看板" width="100%"></td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### agent 能读的笔记
+
+内置的 Markdown 工作区，支持所见即所得编辑、数学公式和 Mermaid 图表。
+
+</td>
+<td width="50%"><img src="docs/screenshots/notes-wysiwyg.png" alt="笔记编辑器" width="100%"></td>
+</tr>
+</table>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <b>中文</b> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-jun.github.io/cli-jaw/"><b>官网</b></a> · <a href="https://lidge-jun.github.io/cli-jaw/dev/">文档</a>
+</p>
+
+---
+
+## CLI-JAW 是什么？
+
+CLI-JAW 把你已经在用的 AI 编码 CLI 统一成**一个助手、一份记忆、一个仪表盘**。你的主 CLI（“Boss”）把其他 CLI 当作“员工”调用，于是你不用再在多个应用之间复制粘贴，在一个地方就能下达指令。
+
+- **无需 API 密钥** — 通过你已经在付费的订阅路由
+- **无按 token 计费** — 月费固定，和你现有的订阅一样
+- **本地运行** — 你的代码不会离开本机
+- **随处可用** — Web、桌面应用、终端、Telegram、Discord 或 Slack
+
+原生 Code API（`/api/code`）提供隔离的 Codex、Claude、Cursor 和 Grok 会话，具备持久 transcript 和原生 resume。参见 [native Code sessions](structure/runtime-integration.md#native-code-sessions)。
+
+---
 
 ## 安装
 
@@ -23,7 +84,7 @@
 ```bash
 # macOS / Linux
 JAW_SAFE=1 npm install -g cli-jaw    # skips optional tool/runtime setup
-jaw init                              # 准备好后再交互式配置
+jaw init                              # interactive setup later when you're ready
 ```
 
 
@@ -55,17 +116,60 @@ jaw.cmd doctor
 
 <!-- windows-support:end -->
 
+无论走哪条路径，cli-jaw 现在都能把两者精确区分开：`jaw doctor --json` 会把
+`platform` 报告为 `windows-native` 或 `wsl`，两者各有独立诊断。原生
+Windows 不会再仅仅因为机器上配置了 WSL interop 就收到“在 WSL 里重新安装”
+的建议。
+
 </details>
 
 ```bash
-# macOS / Linux / WSL，已安装 Node.js 22.4+
+# macOS / Linux / WSL with Node.js 22+ already installed
 npm install -g cli-jaw
 jaw dashboard
 ```
 
+> **npm 12+？** npm 现在默认阻止依赖的安装脚本。如果看到 `npm warn allow-scripts`，请批准脚本后再安装：
+>
+> ```bash
+> npm install -g cli-jaw --allow-scripts=cli-jaw
+> ```
+
+<details>
+<summary><b>Windows npm 安装恢复</b> — npm 12+ 阻止了脚本，或 PowerShell 执行策略限制</summary>
+
+npm 12+ 可能完成全局安装，同时阻止 CLI-JAW 的依赖
+`postinstall`。只批准这一个包然后重新安装，或把批准保存下来供
+以后升级使用：
+
+```powershell
+npm install -g cli-jaw --allow-scripts=cli-jaw
+npm config set allow-scripts=cli-jaw --location=user
+jaw doctor
+```
+
+如果 PowerShell 报告 `jaw.ps1` 无法加载，因为脚本执行
+已被禁用，请在下列受控变通方案中选择一个：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+jaw.cmd doctor
+node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
+```
+
+`jaw.ps1` 是 PowerShell 的 npm shim，受执行策略约束；
+`jaw.cmd` 是等价的 cmd shim，不走该策略。直接使用
+`node` 的形式会绕过两个 shim。`jaw doctor` 会报告被阻止或过期的安装、
+残留的 npm 暂存目录，以及当前 PowerShell 策略；它还会
+打印对应的恢复指引。
+
+</details>
+
 完成。打开 **http://localhost:24576** 进入管理仪表盘。单个 agent Web UI 在运行 `jaw serve` 时仍从 **http://localhost:3457** 提供。需要 [Node.js 22.4+](https://nodejs.org)。
 
 > **第一次用？** 默认 npm 安装会初始化 CLI-JAW，并尝试配置原生 Claude。其他 AI CLI 是可选项；在 macOS/Linux 上如需安装全部工具，可运行 `CLI_JAW_INSTALL_CLI_TOOLS=1 npm install -g cli-jaw`。Windows 请使用下方 WSL 安装路径。
+
+> **已退役的 runtime。** Claude E（`claude-e`）和 AI-E multiplexer（`ai-e`）已被移除。已保存的选择会以已退役状态显示，且无法执行；请选择一个可用的 runtime。详情：[runtime integration](structure/runtime-integration.md)。
 
 <details>
 <summary><b>macOS 一键安装</b> — 没有 Node.js？用这个</summary>
@@ -82,14 +186,14 @@ bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 <summary><b>Windows（WSL — Windows 子系统 Linux）</b> — 从零一键安装</summary>
 
 ```powershell
-# 1. 安装 WSL（以管理员身份运行 PowerShell）
+# 1. Install WSL (PowerShell as Admin)
 wsl --install
 ```
 
 重启后打开 **Ubuntu**，然后：
 
 ```bash
-# 2. 安装 CLI-JAW + 所有依赖
+# 2. Install CLI-JAW + all dependencies
 curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
@@ -105,7 +209,101 @@ wsl.exe -d Ubuntu -- bash -lc "jaw dashboard"
 </details>
 
 <details>
-<summary><b>Fresh-machine evidence</b> — maintainer release check</summary>
+<summary><b>原生 Windows（PowerShell beta）</b> — 分离的服务器日志</summary>
+
+`jaw serve` 会保留它继承的 stdout 和 stderr 流，并把
+两个流都追加到 `<JAW_HOME>\logs\serve.log`。启动时，已经达到 5 MiB 的文件
+会被轮转一次为 `serve.log.1`。原生 Windows 仍然没有注册的
+`jaw service` 日志后端。PowerShell 的
+`Start-Process -RedirectStandardOutput/-RedirectStandardError` 会在每次启动时创建或
+截断目标文件，所以不要把这两个选项指向
+实例自有的 `serve.log`。
+
+如果需要独立的、由运维方拥有的 stdout/stderr 文件，请改为在子 PowerShell 进程
+内部做重定向。下面的示例把它们追加到
+`<JAW_HOME>\logs` 下，同时避开 `Start-Process` 的截断默认行为：
+
+```powershell
+$jawHome = 'C:\jaw\worker-a'
+$port = 3458
+$logDir = Join-Path $jawHome 'logs'
+$outLog = Join-Path $logDir 'serve.out.log'
+$errLog = Join-Path $logDir 'serve.err.log'
+New-Item -ItemType Directory -Force -Path $logDir -ErrorAction Stop | Out-Null
+foreach ($path in @($outLog, $errLog)) {
+    # OpenOrCreate preserves existing content while proving that the child can append.
+    $probe = [IO.File]::Open($path, 'OpenOrCreate', 'Write', 'ReadWrite')
+    $probe.Dispose()
+}
+
+$jaw = (Get-Command jaw.cmd -ErrorAction Stop).Source
+$childCommand = "& '$jaw' --home '$jawHome' serve --port $port --no-open 1>> '$outLog' 2>> '$errLog'"
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCommand))
+Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-EncodedCommand', $encoded -WindowStyle Hidden | Out-Null
+```
+
+请在各自独立的 PowerShell 终端里读取每个流（`Get-Content -Wait`
+会占用该终端）。这些命令使用显式路径，因为启动终端里的变量
+在新的 PowerShell 会话中不可用：
+
+```powershell
+# Terminal 1
+Get-Content -LiteralPath 'C:\jaw\worker-a\logs\serve.out.log' -Tail 100 -Wait
+
+# Terminal 2
+Get-Content -LiteralPath 'C:\jaw\worker-a\logs\serve.err.log' -Tail 100 -Wait
+```
+
+生命周期命令以 home 为作用域，在发送信号前会校验
+`<JAW_HOME>\jaw.pid.json`：
+
+```powershell
+& $jaw --home $jawHome service stop --port $port
+& $jaw --home $jawHome service restart --port $port
+```
+
+单独运行 `service restart` 会以分离方式安全重启实例，但
+无法重现运维方的文件重定向。要保留文件捕获，请
+`stop`、可选地轮转已关闭的日志，然后重新运行上面的启动块：
+
+```powershell
+$pidFile = Join-Path $jawHome 'jaw.pid.json'
+$serverProcess = $null
+if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+    $record = Get-Content -LiteralPath $pidFile -Raw -ErrorAction Stop | ConvertFrom-Json
+    $serverProcess = Get-Process -Id ([int]$record.pid) -ErrorAction SilentlyContinue
+}
+
+& $jaw --home $jawHome service stop --port $port
+if ($LASTEXITCODE -ne 0) {
+    throw "jaw service stop failed with exit code $LASTEXITCODE"
+}
+if ($serverProcess) {
+    try {
+        if (-not $serverProcess.WaitForExit(5000)) {
+            throw "jaw serve pid $($serverProcess.Id) did not exit within 5000ms"
+        }
+    } finally {
+        $serverProcess.Dispose()
+    }
+}
+
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+foreach ($path in @($outLog, $errLog)) {
+    if (Test-Path -LiteralPath $path) {
+        Move-Item -LiteralPath $path -Destination "$path.$stamp" -ErrorAction Stop
+    }
+}
+# Run the Start-Process launch block above again.
+```
+
+不要使用 `Get-Process node | Stop-Process`；它可能终止无关的
+cli-jaw 实例和 AI runtime 进程。
+
+</details>
+
+<details>
+<summary><b>全新机器证据</b> — 维护者发布检查</summary>
 
 发布安装器变更前，请在干净 VM 上运行此流程。collector 会把环境快照、installer 日志、实际运行的 collector/installer/verifier 脚本及其 SHA-256 哈希、verifier 日志和新 shell PATH probe 写入 `~/cli-jaw-fresh-install-evidence-*`。
 
@@ -117,31 +315,64 @@ bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target wsl
 ```
 
-从 Windows PowerShell 运行时，请走受支持的 WSL 路径：
+从 Windows PowerShell 进入受支持的 WSL 路径：
 
 ```powershell
 wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-jun/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
-把 evidence 目录作为发布证据前，请先 audit：
+如果 collector 报告 WSL 内没有 `powershell.exe`，请在审计前从 Windows PowerShell 运行：
+
+```powershell
+wsl.exe -d Ubuntu -- bash -lc 'EVIDENCE_DIR="$(ls -dt ~/cli-jaw-fresh-install-evidence-* | head -1)"; { echo "command=wsl.exe -d Ubuntu -- bash -lc jaw --version"; jaw --version; } | tee "$EVIDENCE_DIR/33-powershell-to-wsl-probe.log"'
+```
+
+对于未合并的分支或本地 VM 检出，请显式传入本地安装器和 verifier：
+
+```bash
+bash scripts/collect-fresh-install-evidence.sh --target macos --install-script scripts/install.sh --verifier-script scripts/verify-fresh-install.sh
+bash scripts/collect-fresh-install-evidence.sh --target wsl --install-script scripts/install-wsl.sh --verifier-script scripts/verify-fresh-install.sh
+```
+
+在把收集到的每个目录当作目标证据之前，请先审计：
 
 ```bash
 EVIDENCE_DIR="$(ls -dt ~/cli-jaw-fresh-install-evidence-* | head -1)"
 AUDITOR="$(npm root -g)/cli-jaw/scripts/audit-fresh-install-evidence.mjs"
 node "$AUDITOR" "$EVIDENCE_DIR" --target macos
 node "$AUDITOR" "$EVIDENCE_DIR" --target wsl
+
+# For a local checkout, audit with the checkout's auditor:
+node scripts/audit-fresh-install-evidence.mjs "$EVIDENCE_DIR" --target macos
+node scripts/audit-fresh-install-evidence.mjs "$EVIDENCE_DIR" --target wsl
 ```
 
-发布前 matrix gate 需要同时传入 macOS 和 WSL evidence：
+发布安装器变更前，请用两个严格的 evidence 目录运行 matrix gate：
 
 ```bash
 GATE="$(npm root -g)/cli-jaw/scripts/verify-release-evidence.mjs"
 node "$GATE" --macos /path/to/macos-evidence --wsl /path/to/wsl-evidence
+
+# For a local checkout:
+node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /path/to/wsl-evidence
 ```
+
+matrix gate 会拒绝用过期 collector、installer 或 verifier 脚本收集到的证据；归档的证据脚本必须与运行该 gate 的当前包或检出匹配。
+
+当 `scripts/promote-to-main.sh`、`scripts/release-preview.sh` 或 `npm publish` 检测到自上一个 tag 以来有安装器敏感变更时，它会在任何 git push 或 npm publish 之前运行同一个 matrix gate。请在开始发布前设置证据目录：
+
+```bash
+CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence \
+CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence \
+bash scripts/promote-to-main.sh
+```
+
+`scripts/promote-to-main.sh` 只提升**已经通过认证的 `preview` head**。除非存在针对该精确 `preview` SHA 的成功 `test.yml` push run，否则它拒绝启动。不带参数时，它提升当前的 `origin/preview` head；可选的 SHA 参数必须等于同一个 head，因此它起断言作用，而不是用来提升更旧的提交。
+
+脚本会派发 npm publish，然后不检查发布是否成功就退出，之后也无法再次运行。对于部分完成的发布——npm publish 缺失、GitHub release 缺失、`latest` 上的版本不对，或 `main` 上的红色提交——的恢复方法记录在 [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구-preview--main--npm)。
 
 </details>
 
@@ -156,65 +387,19 @@ docker compose up -d       # → http://localhost:3457
 
 ---
 
-## CLI-JAW 是什么？
-
-CLI-JAW 是一个开源平台，将你已经在用的 AI 编码 CLI — Pi、Antigravity、Claude、Codex、Codex App、Cursor、Gemini、Grok、Kiro、OpenCode、Copilot — 统一成**一个助手、一份记忆、一个仪表盘**。
-
-你的主 CLI（Boss）调度其他 CLI 作为"员工"。不用在各种应用之间来回切换，直接在一个地方下达指令。
-
-- **无需 API 密钥** — 通过你已有的订阅路由
-- **无按 token 计费** — 和你现在的月费一样
-- **本地运行** — 代码不会离开你的机器
-
-<div align="center">
-
-![CLI-JAW Manager Dashboard](docs/screenshots/manager-dashboard-light.png)
-
-</div>
-
-### 桌面应用
-
-如果你更喜欢原生窗口而不是浏览器标签页，CLI-JAW 提供 **Electron 桌面壳**。桌面应用会启动 manager dashboard，并管理底层的 `jaw dashboard serve` 进程。打包版包含 Node.js sidecar 服务器，因此会优先使用应用内 bundled `jaw` shim，再回退到全局终端安装。
-
-最终用户可以直接从 **GitHub Releases** 下载桌面 artifact：
-
-- **macOS**：下载 DMG，把 CLI-JAW 拖到 Applications 后启动。当前工作流生成的版本使用 Developer ID 签名，并经过 Apple 公证与 ticket stapling 验证。
-- **Windows**：下载 NSIS installer。它包含同一个 sidecar server，并把打包的 `jaw` shim 加入 PATH。Windows artifact 目前仍未签名，可能触发 SmartScreen。
-- **Linux**：下载 AppImage，赋予执行权限后运行。
-
-首次启动后，接受 **Install CLI command** 提示即可从 bundled sidecar 创建终端 `jaw` 命令。如果跳过了提示，之后可在 tray menu 使用 **Install CLI to Terminal**。这个路径不要求为打包应用或终端 shim 进行全局 npm 安装。
-
-已安装的 macOS 应用会在后台检查对应的 GitHub Release channel，也可使用 **CLI-JAW → Check for Updates…**。preview 版本只跟随 preview release，stable 版本只跟随 stable release；下载和重启安装都需要用户明确确认。旧的未签名应用无法安全地自动迁移到新的信任链，因此首个签名版 DMG 需要手动安装一次，之后的签名版本可在应用内更新。
-
-开发者构建：
-
-```bash
-# 在仓库根目录执行一次
-npm install && npm --prefix electron install
-
-npm run electron:dev          # hot reload 开发
-npm run electron:dist:mac     # 构建包含 bundled sidecar 的 macOS arm64 .dmg + .zip
-```
-
-打包产物位于 `electron/dist/`。GitHub Actions desktop release workflow 会在 release publish 或 manual dispatch 时构建 macOS arm64 DMG/ZIP、Windows x64 NSIS/ZIP 和 Linux AppImage artifacts。`better-sqlite3` 等原生模块保留在 manager/sidecar server 中；Electron main process 不直接 import 它们。
-
-本地 Developer ID 构建需配置签名与公证凭据后运行 `npm run electron:dist:mac:signed`；普通 `electron:dist:mac` 仍是 ad-hoc 本地构建。正式 GitHub Actions 路径会验证 Team `U9ATA49N28` 的 Developer ID 签名、Apple 公证与 stapling，以及更新 ZIP metadata/SHA-512，任一失败都会阻止发布。
-
----
-
 ## 认证
 
-只需一个。选择你已经订阅的服务：
+你只需要**一个**。选择你已有的订阅：
 
 ```bash
-# 免费选项（无需信用卡）
-copilot login        # GitHub Copilot（有免费层）
-opencode             # OpenCode — 有免费模型
-kiro                 # AWS Kiro（AWS 账户免费层）
+# Free options (no credit card needed)
+copilot login        # GitHub Copilot (free tier available)
+opencode             # OpenCode — free models available
+kiro                 # AWS Kiro (free tier with AWS account)
 
-# 付费（你已经在付的月订阅）
-claude auth login    # Anthropic Claude Pro 或更高
-codex login          # OpenAI ChatGPT Pro 或更高
+# Paid (monthly subscription you already pay for)
+claude auth login    # Anthropic Claude Pro or higher
+codex login          # OpenAI ChatGPT Pro or higher
 cursor-agent login   # Cursor
 grok login --oauth   # xAI Grok / Grok Heavy
 ```
@@ -235,7 +420,7 @@ grok login --oauth   # xAI Grok / Grok Heavy
  ✅ Copilot CLI     installed
  ✅ Database        jaw.db OK
  ✅ Skills          29 active, 238 reference
- ✅ MCP（插件）      3 servers configured
+ ✅ MCP (plugins)   3 servers configured
  ✅ Memory          structured/ exists
  ✅ Server          port 3457 available
 ```
@@ -244,319 +429,148 @@ grok login --oauth   # xAI Grok / Grok Heavy
 
 ---
 
-## 仪表盘
+## 你能得到什么
 
-仪表盘是你的指挥中心：`jaw dashboard` 会在 `http://localhost:24576` 启动管理器；单个 agent Web UI 由 `jaw serve` 在 `http://localhost:3457` 及相邻 managed ports 提供。
-Web/TUI 实时更新使用 SSE-first `GET /api/events` 通道；WebSocket 只作为旧服务器在 SSE 从未打开时的 fallback。
+### 员工：你的 CLI 调用其他 CLI
 
-### 实例管理器
+你只和一个 AI（“Boss”）对话。当它需要专业工作时，会把任务分派给员工——每个员工运行自己的 CLI 和模型——并在回答你之前审查它们的输出。
 
-查看每个正在运行的 AI 实例——一键启动、停止、重启。在仪表盘中直接预览实时 Web UI。
+```text
+You: "Fix the frontend styling and update the API endpoint"
 
-<div align="center">
-
-![Dashboard Navigator](docs/screenshots/dashboard-navigator.png)
-
-</div>
-
-### 看板
-
-将实例卡片拖入泳道（Backlog → Ready → In Progress → Review → Done）。跟踪每个 AI 会话正在做什么。
-
-<div align="center">
-
-![看板](docs/screenshots/dashboard-kanban.png)
-
-</div>
-
-### 优先级矩阵
-
-艾森豪威尔矩阵管理你的任务和提醒。优先处理重要的事。
-
-<div align="center">
-
-![优先级矩阵](docs/screenshots/priority-matrix.png)
-
-</div>
-
-### 笔记
-
-仪表盘内的迷你 Obsidian。文件夹、可视化（WYSIWYG）+ 源码 + 分屏编辑、KaTeX（数学公式渲染）、Mermaid（图表即代码）、语法高亮代码块。
-
-<div align="center">
-
-![笔记编辑器](docs/screenshots/notes-wysiwyg.png)
-
-</div>
-
-### 代理状态
-
-一目了然地监控每个 AI 引擎的健康状况和使用情况。
-
-<div align="center">
-
-![Claude 状态](docs/screenshots/claude-status-widget.png)
-
-</div>
-
----
-
-## 员工系统的工作原理
-
-核心理念：**你的主 CLI 调用其他 CLI 作为工作者。**
-
-你和一个 AI（Boss）对话。当它需要专业工作时，会向员工分派任务——每个员工运行自己的 CLI 和模型：
-
-```
-你："修复前端样式，并更新 API 端点"
-
-Boss（Claude）思考中...
-  ├── 分派到 Frontend 员工（OpenCode）→ "修复 dashboard.tsx 中的 CSS grid 布局"
-  ├── 分派到 Backend 员工（Codex）     → "更新 /api/users 以返回分页元数据"
-  └── 综合两方结果返回给你
+Boss (Claude)
+  ├── Frontend employee (OpenCode) → "Fix the CSS grid layout in dashboard.tsx"
+  ├── Backend employee (Codex)     → "Update /api/users to return pagination metadata"
+  └── Synthesizes both results for you
 ```
 
 ```bash
-# 底层就是一条命令：
-jaw dispatch --agent "Frontend" --task "修复 dashboard.tsx 中的 CSS grid 布局"
-jaw dispatch --agent "Backend" --task "运行只读验证" --watch
-jaw worker status Backend
+jaw dispatch --agent "Backend" --task "Run read-only verification" --watch
+jaw dispatch --virtual "security" --task "Review this branch for auth and secret leaks" --watch
 ```
 
-员工是在你的设置中配置的其他 AI CLI。每个有自己的会话、模型和上下文。Boss 审核它们的输出后再呈现给你。
+### PABCD：计划、审计、构建、检查、完成
 
-### 员工 vs 子代理
+对于复杂任务，CLI-JAW 运行结构化工作流。每一次转换都由你批准；只读工作者验证计划和结果。
 
-这是两个不同的东西：
+| 阶段 | 会发生什么 |
+|---|---|
+| **P — Plan** | Boss 写出 diff 级别的计划，然后停下等你审查 |
+| **A — Audit** | 只读工作者检查计划是否可行 |
+| **B — Build** | Boss 实现；只读工作者进行验证 |
+| **C — Check** | 类型检查、文档更新、一致性检查 |
+| **D — Done** | 汇总所有变更，回到空闲状态 |
 
-| | 员工 | 子代理 |
-|---|---|---|
-| **是什么** | 配置为工作者的其他 AI CLI（Codex、OpenCode 等） | 单个 CLI 内置的并行任务工具 |
-| **何时用** | 跨不同代码库或领域的多专家协作 | 内部研究、文件读取、并行分析 |
-| **如何用** | `jaw dispatch --agent "Name" --task "..."` | 自动——CLI 在内部生成 |
+状态在重启后保留。用 `jaw orchestrate` 或 `/pabcd` 开始，用 `/continue` 恢复，用 `/goal` 让长期目标保持存活。参见 [PABCD](https://lidge-jun.github.io/cli-jaw/dev/concepts/pabcd.html)。
 
-员工用于"Frontend 做 CSS，Backend 做 API"。子代理用于"做决定前并行读取 5 个文件"。
+### 记忆、技能和 MCP
+
+- **三层记忆** — 最近的会话历史、从对话中沉淀出来的结构化笔记，以及可搜索的 soul/task 快照：`jaw memory search "how did we set up the API auth?"`
+- **200+ 技能** — 办公文档（PDF、DOCX、XLSX、PPTX、HWP）、浏览器和桌面自动化、媒体、GitHub、Notion 和开发指南：`jaw skill install <name>`
+- **所有引擎共用一份 MCP 配置** — `jaw mcp install @anthropic/context7` 会一次同步 Claude、Codex、Kiro、OpenCode、Copilot 和 Antigravity
+
+### 浏览器和桌面自动化
+
+通过 DevTools Protocol 驱动 Chrome；用 `jaw browser vision-click "Login button"` 按描述点击；在 macOS 和 Windows 上通过 Codex Computer Use 控制桌面应用；用 `jaw browser web-ai` 询问 ChatGPT、Gemini 或 Grok 的 Web UI。
+
+### 消息
+
+从 **Telegram**（语音消息、论坛主题、定时 heartbeat 任务）、**Discord** 和 **Slack**（Socket Mode、线程、文件中继、mention 监听）与你的 agent 聊天。可以同时启用多个渠道；home 渠道会接收主动发送的内容。
+
+<details>
+<summary>Telegram 设置（3 步）</summary>
+
+1. 给 [@BotFather](https://t.me/BotFather) 发消息 → `/newbot` → 复制 token
+2. `jaw init --telegram-token YOUR_TOKEN`，或使用 Web UI 设置
+3. 给 bot 发送任意消息。Chat ID 会在第一条消息时自动保存
+
+</details>
+
+<details>
+<summary>Slack 设置（引导式向导）</summary>
+
+1. `jaw slack setup` — 打印 app manifest、打开 Slack 应用页面、实时校验两个 token，并写入设置
+2. 在 bot 需要读取的每个频道执行 `/invite @cli-jaw`，然后重启 `jaw serve`
+
+群组 DM 需要 `message.mpim` 事件和 `mpim:history` scope。在容器中，`SLACK_BOT_TOKEN`、`SLACK_APP_TOKEN`、`SLACK_TEAM_ID` 和 `SLACK_CHANNEL_IDS` 在运行时拥有各自的字段。详情：[Slack tools](docs/slack-tools.md)。
+
+</details>
+
+### 桌面应用
+
+Electron 应用会启动管理面板，随包提供内置的 Node.js sidecar，并常驻你的菜单栏。请从 [GitHub Releases](https://github.com/lidge-jun/cli-jaw/releases/latest) 下载：
+
+- **macOS（Apple Silicon）** — 打开 DMG，把 CLI-JAW 拖入 Applications。构建产物经过 Developer ID 签名、公证和 stapling，并支持应用内更新。
+- **Windows（x64）** — 运行 Setup `.exe`。它没有签名，因此 SmartScreen 可能会要求你确认。
+- **Linux（x64）** — 给 AppImage 添加执行权限后运行。
+
+首次启动后，接受 **Install CLI command**（或使用托盘项 **Install CLI to Terminal**），即可在终端中得到 `jaw`，无需全局 npm 安装。
 
 ---
 
 ## AI 运行时
 
-无按 token 的 API 计费。通过你已有的订阅路由。
+无按 token 的 API 计费。通过你已经在付费的订阅路由。
 
 | CLI | 默认模型 | 认证 | 费用 |
 |---|---|---|---|
-| **Pi** | `grok-composer-2.5-fast` | Settings profile API key、local proxy，或 `PI_CODING_AGENT_BIN` | 通过隔离的 `PI_CODING_AGENT_DIR` 连接 local/API endpoint 的 first-class `pi --mode rpc` runtime |
+| **Pi** | `grok-composer-2.5-fast` | Settings profile API key、local proxy，或 `PI_CODING_AGENT_BIN` | 通过隔离 profile 连接 local/API endpoint |
 | **Claude** | `claude-opus-4-8` | `claude auth login` | Claude Pro 或更高订阅 |
-| **Antigravity** | AGY-selected | 由 `agy` 在运行时检查 | `agy -p` 实验性 AGY print-mode runtime；可选 `--model` 会先做 capability probe，确认支持时才传递（AGY 1.0.12 已观察到）；通过 `--conversation` resume；无独立 effort flag |
+| **Antigravity** | AGY-selected | 由 `agy` 在运行时检查 | 实验性 print-mode runtime |
 | **Codex** | `gpt-5.5` | `codex login` | ChatGPT Pro 或更高订阅 |
 | **Codex App** | `gpt-5.5` | `codex login` | ChatGPT Pro 或更高订阅 |
-| **Cursor** | `composer-2.5` | `cursor-agent login` 或 `CURSOR_API_KEY` | Cursor 订阅；quota 为 auth/status-only |
-| **Grok** | `grok-build` | `grok login --oauth` | Grok 订阅；配额仅限认证/状态 |
+| **Cursor** | `composer-2.5` | `cursor-agent login` 或 `CURSOR_API_KEY` | Cursor 订阅 |
+| **Grok** | `grok-build` | `grok login --oauth` | Grok 订阅 |
 | **Kiro** | registry-selected | `kiro` | AWS Kiro 免费层 |
-| **OpenCode** | `opencode-go/kimi-k2.6` | `opencode` | 有免费模型 |
-| **Copilot** | `claude-sonnet-4.6` | `copilot login` | 有免费层 |
+| **OpenCode** | `opencode-go/kimi-k2.6` | `opencode` | 有免费模型可用 |
+| **Copilot** | `claude-sonnet-4.6` | `copilot login` | 有免费层可用 |
 
-GPT 5.5 和 Claude Opus 4.8 从 Pro 订阅及以上开放。自 6 月起，如果要使用订阅计划赠送的 Claude 用量，请选择 `claude` runtime。
-
-配额/状态面板保持与 registry 相同的 runtime keyset。Wrapper runtime（`codex-app`）委托给 underlying provider；Pi/AGY/Cursor/Grok/OpenCode 这类 CLI 不暴露 quota window 时，会以 auth/status-only 显示。
-
-**回退链**：当一个引擎被限速时，下一个自动接上。用 `/fallback [cli1 cli2...]` 配置。
-
-**OpenCode 通配符**：连接任意模型端点——OpenRouter、本地 LLM（大语言模型）、任何 OpenAI 兼容 API。
-
-> 切换引擎：`/cli codex`。切换模型：`/model gpt-5.5`。Web、终端、Telegram 或 Discord 均可。
+如果某个引擎被限速，下一个会接上（`/fallback`）。用 `/cli codex` 实时切换引擎，用 `/model gpt-5.5` 切换模型 — 可在 Web、终端、Telegram、Discord 或 Slack 中使用。
 
 ---
 
-## PABCD 编排（Plan → Audit → Build → Check → Done）
+## CLI
 
-对于复杂任务，CLI-JAW 使用结构化的 5 阶段工作流。每次转换都需要你的批准——没有你的确认什么都不会发布。
+```bash
+# Core
+jaw dashboard                     # launch manager dashboard
+jaw serve                         # start an agent server (http://localhost:3457)
+jaw chat                          # terminal chat UI
+jaw ask "question"                # one prompt, one answer — no TTY needed
+jaw doctor                        # installation and runtime diagnostics
 
+# Instances
+jaw clone ~/project                           # clone instance to new directory
+jaw --home ~/project serve --port 3458        # run a second instance
+jaw service install                           # auto-start on boot (macOS launchd / Linux systemd)
+jaw --home ~/project service restart --port 3458  # restart only this instance
+
+# Agents and workflow
+jaw employee list
+jaw dispatch --agent "Backend" --task "..." --watch
+jaw orchestrate                   # PABCD workflow
+jaw goal status                   # persistent goals
+
+# Skills, MCP, memory, browser
+jaw skill list
+jaw mcp install <package>
+jaw memory search <query>
+jaw browser fetch "https://example.com" --json
 ```
-P (Plan) → A (Audit) → B (Build) → C (Check) → D (Done) → IDLE
-   ⛔          ⛔          ⛔         auto        auto
-```
 
-| 阶段 | 发生什么 |
+用 `jaw clone` 创建的每个实例都有自己的设置、记忆、数据库和 MCP 配置，管理面板可以看到全部。远程和无头主机：[structure/remote-headless.md](structure/remote-headless.md)。完整命令参考：[CLI docs](https://lidge-jun.github.io/cli-jaw/dev/reference/cli.html)。
+
+---
+
+## 文档
+
+| 主题 | 位置 |
 |---|---|
-| **P — Plan** | Boss AI 编写 diff 级别的计划。停下等你审查 |
-| **A — Audit** | 只读工作者验证计划是否可行（imports 存在、签名匹配） |
-| **B — Build** | Boss 实现。只读工作者验证结果 |
-| **C — Check** | 类型检查（`tsc --noEmit`）、文档更新、一致性检查 |
-| **D — Done** | 汇总所有变更。返回空闲状态 |
-
-状态持久化在数据库中，服务器重启后仍然保留。工作者不能修改文件——只能验证。用 `jaw orchestrate`、`/orchestrate` 或 `/pabcd` 启动，并用 `/continue` 显式恢复进行中的 worklog。阶段前进需要证据 attestation，例如 `jaw orchestrate B --attest '{"from":"A","to":"B","did":"<what you did>"}'`（C→D 还需粘贴 `checkOutput` 和 `exitCode`）。Workflow helper slash commands 包括 `/plan`、`/interview`、`/deliberate`、`/planaudit`、`/review`、`/search`、`/goal`、`/goalplan`、`/team`、`/task`、`/fork`、`/gd`；`/plan` 是说明“这就是 PABCD P”的兼容指南，不会创建第二套计划模式。`/search <query>` 通过 active search skill 路由搜索意图。Bounded automation 用 `/goal run ...` 表达，没有单独的 `/autopilot`。Durable goal（`/goal <objective>` 加 `update`/`done`/`cancel`/`pause`/`resume`）在重启后仍保留，goal 恢复会在 Web/CLI 等所有界面重新触发工作。AI `goal pause --agent --audit` 使用两步审计 gate（`goal_pause_gate_pending` 抑制自动 continuation）。`/gd` 是 `/goal done --force` 的简写（跳过完成证据 gate）。`/goal run`（`preflight`/`start`/`stop`/`status`）是需通过 preflight 的仅跟踪预览，记录 turn/dispatch 预算（强制尚未落地）。
-
----
-
-## 记忆
-
-三个层次，各覆盖不同的回忆范围。
-
-| 层 | 存储内容 | 工作方式 |
-|---|---|---|
-| **History Block** | 近期会话上下文 | 最近 10 个会话，最多 8000 字符，按工作目录限定范围。注入到提示开头 |
-| **Memory Flush** | 从对话中提取的结构化知识 | 达到阈值后触发（默认 10 轮）。提取为事件记录、每日日志、语义笔记，保存为 markdown |
-| **Soul + Task Snapshot** | 身份和语义检索 | 核心价值观、语调、边界。全文搜索索引每次提示返回最多 4 条语义相关结果 |
-
-三层全部自动注入系统提示。记忆可搜索：
-
-```bash
-jaw memory search "我们是怎么设置 API 认证的？"
-```
-
----
-
-## 技能
-
-200+ 参考技能和活跃运行时技能覆盖开发工作流、办公文档、自动化、媒体和内容写作。
-
-| 分类 | 技能 | 覆盖范围 |
-|---|---|---|
-| **办公** | `jaw-pdf`, `jaw-docx`, `jaw-xlsx`, `jaw-pptx`, `jaw-hwp` | 读取、创建、编辑文档。HWP/HWPX（韩国文字处理器格式）原生支持 |
-| **自动化** | `jaw-browser`, `vision-click`, `jaw-screen-capture`, `jaw-desktop-control` | Chrome DevTools Protocol（CDP）浏览器控制、AI 坐标点击、macOS 截屏、Computer Use |
-| **媒体** | `jaw-video`, `imagegen`, `lecture-stt`, `tts` | Remotion 视频、OpenAI 图像生成、讲座转录、文字转语音 |
-| **集成** | `jaw-github`, `notion`, `jaw-telegram-send`, `jaw-memory` | Issues/PRs/CI、Notion 页面、Telegram 媒体发送、持久记忆 |
-| **可视化** | `jaw-diagram` | 在聊天中渲染 SVG 图表、图形、交互式可视化 |
-| **内容/写作** | `k-writing` | 韩语推广/内容写作：thread、Instagram 卡片新闻、LinkedIn、网站/博客和润色输出，包含强制搜索、钩子评分和去 AI 痕迹校验 |
-| **开发指南** | `jaw-dev`, `jaw-dev-frontend`, `jaw-dev-backend`, `jaw-dev-data`, `jaw-dev-testing`, `jaw-dev-pabcd` | 注入代理提示的工程指南 |
-
-参考技能位于 `skills_ref/`，按需安装到活跃运行时。
-
-```bash
-jaw skill install <name>    # 激活参考技能
-jaw skill list              # 查看可用技能
-```
-
----
-
-## 浏览器和桌面自动化
-
-| 功能 | 工作方式 |
-|---|---|
-| **Chrome DevTools Protocol** | 导航、点击、输入、截屏、执行 JS、滚动、按键——Chrome 的远程控制 |
-| **Vision-click** | 截屏 → AI 提取目标坐标 → 点击。`jaw browser vision-click "Login button"` |
-| **Computer Use** | 通过 Codex Computer Use 自动化桌面应用。用 Safari 访问 localhost，体验如同 Codex 应用 |
-| **Web-AI 供应商** | `jaw browser web-ai --vendor chatgpt\|gemini\|grok`——会话生命周期、诊断、源码审计、ChatGPT code-mode zip 回收支持 |
-| **Diagram 技能** | 生成 SVG 图表和交互式可视化，在聊天中内联渲染 |
-
-Computer Use 让你用自然语言控制任何 macOS 应用——Finder、Safari、系统设置、Xcode。
-
----
-
-## 消息
-
-### Telegram
-
-```
-📱 Telegram ←→ 🦈 CLI-JAW ←→ 🤖 AI Engines
-```
-
-文字聊天、语音消息（通过多供应商 STT——语音转文字 自动转录）、文件/照片上传、斜杠命令（51 个已注册；workflow helper：`/plan`、`/interview`、`/review`、`/search`、`/goal`、`/orchestrate`、`/task`、`/fork`、`/gd`；CLI/Web 动态 `/skill:<id>`）、论坛主题路由与 **Dashboard Telegram Hub**（`/setthread`、`/threads`、`/hubhelp`、Manager UI 中按主题的 `model`/`systemPrompt` override）、定时任务（`every`/`cron` heartbeat）结果自动送达。
-
-<details>
-<summary>设置（3 步）</summary>
-
-1. 给 [@BotFather](https://t.me/BotFather) 发消息 → `/newbot` → 复制 token
-2. `jaw init --telegram-token YOUR_TOKEN` 或在 Web UI 设置中输入
-3. 给 bot 发送任意消息。Chat ID 首次消息时自动保存
-
-</details>
-
-### Discord
-
-与 Telegram 功能相同——文字、文件、命令。频道/线程路由、规范 `/api/channel/send`、代理结果广播转发器。通过 Web UI 设置配置。
-
-### 语音 & STT
-
-语音输入支持 Web（麦克风按钮）、Telegram（语音消息）和 Discord。供应商：OpenAI 兼容、Google Vertex AI 或任意自定义端点。
-
----
-
-## MCP（Model Context Protocol）
-
-[MCP](https://modelcontextprotocol.io) 是一个让 AI 工具共享能力的标准——就像 AI 代理的插件。CLI-JAW 用一个文件管理所有引擎的 MCP 配置。
-
-```bash
-jaw mcp install @anthropic/context7
-# → 同步到 Claude、Codex、Gemini、Kiro、OpenCode、Copilot、Antigravity 的配置文件
-```
-
-不用再分别编辑多个 JSON 文件。安装一次，每个 MCP 感知引擎都会获得配置。Grok CLI 是标准运行时，但在 Grok 暴露兼容配置面之前不计为 MCP 同步对象。Antigravity MCP 同步是独立的 config target，不等同于 `agy` runtime registry entry。
-
-```bash
-jaw mcp sync       # 手动编辑后重新同步
-```
-
----
-
-## CLI 命令
-
-```bash
-# 核心
-jaw dashboard                     # 启动管理仪表盘
-jaw serve                         # 启动服务器（http://localhost:3457）
-jaw chat                          # 终端聊天 UI
-jaw chat search "query"           # 搜索聊天历史
-jaw doctor                        # 安装和运行时诊断
-
-# 实例
-jaw clone ~/project               # 克隆实例到新目录
-jaw --home ~/project serve --port 3458  # 运行第二个实例
-jaw service install               # 开机自启（macOS/Linux）
-jaw project set ~/repo            # 为 review/orchestration 设置 projectDirs
-jaw lock                          # 保护当前实例不被 stop-all 流程停止
-
-# AI 和编排
-jaw employee list                         # 列出已配置员工 + static 员工
-jaw dispatch --agent "Backend" --task "..."  # 分派员工
-jaw dispatch --agent "Backend" --task "..." --watch  # 分派并流式查看安全进度
-jaw worker status Backend            # 查看当前/上一轮员工进度
-jaw orchestrate                   # 进入/控制 PABCD 工作流
-jaw goal status                   # 持久 goal 生命周期
-jaw task list                     # 代理原生任务清单
-# 聊天中：/continue                 # 显式恢复 worklog/PABCD
-
-# 技能和 MCP
-jaw skill install <name>          # 激活技能
-jaw skill list                    # 列出可用技能
-jaw mcp install <package>         # 安装 MCP → 同步支持的 MCP 感知引擎
-jaw mcp sync                      # 重新同步 MCP 配置
-
-# 记忆
-jaw memory search <query>         # 跨所有记忆层搜索
-jaw memory save <file> <content>  # 保存到结构化记忆
-
-# 浏览器
-jaw browser start                 # 启动 Chrome 自动化
-jaw browser fetch "https://example.com" --json --trace  # 自适应 URL 读取
-jaw browser snapshot              # 捕获页面状态
-jaw browser vision-click "Login"  # AI 驱动的点击
-jaw browser web-ai status         # ChatGPT/Gemini/Grok web-AI 会话工具
-jaw browser web-ai code --vendor chatgpt --model thinking --effort heavy --prompt "Build an MVP" --output-zip ./result.zip
-
-# 仪表盘连接器
-jaw dashboard memory search "query"  # 只读跨实例记忆搜索
-jaw dashboard chat search "query"    # 跨实例聊天搜索
-jaw connector board add --title "Fix docs"
-jaw reminders add "Follow up tomorrow"
-
-# 维护
-jaw reset                         # 完全重置
-```
-
----
-
-## 多实例
-
-运行互相隔离的独立实例，各有独立的设置、记忆和数据库：
-
-```bash
-jaw clone ~/my-project
-jaw --home ~/my-project serve --port 3458
-```
-
-每个实例完全独立——不同的工作目录、记忆、MCP 配置。管理仪表盘可以看到全部。
+| 官网和快速上手 | [lidge-jun.github.io/cli-jaw](https://lidge-jun.github.io/cli-jaw/) |
+| 指南、概念、参考 | [Developer docs](https://lidge-jun.github.io/cli-jaw/dev/) |
+| 架构 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [structure/](structure/) |
+| Slack 工具和本地 API | [docs/slack-tools.md](docs/slack-tools.md) |
+| Runtime 集成（含已退役 runtime） | [structure/runtime-integration.md](structure/runtime-integration.md) |
 
 ---
 
@@ -565,31 +579,11 @@ jaw --home ~/my-project serve --port 3458
 ```bash
 npm run build          # tsc → dist/
 npm run build:frontend # vite → public/dist/
-npm run dev            # tsx server.ts（热重载）
-npm test               # programmatic node:test driver (tests/run.mts, isolation:'process')
-npm run gate:all       # 命名 release/docs parity gates
-bash structure/check-doc-drift.sh
+npm run dev            # tsx server.ts (hot-reload)
+npm test               # node:test driver (tests/run.mts)
+npm run gate:all       # release/docs parity gates
+npm run electron:dev   # desktop app with hot reload
 ```
-
-架构详情：[ARCHITECTURE.md](docs/ARCHITECTURE.md) · 测试覆盖：[TESTS.md](TESTS.md) · 内部结构文档：[structure/](structure/)
-
----
-
-## 对比
-
-| | CLI-JAW 2.x | Hermes Agent | Claude Code |
-|---|---|---|---|
-| **模型接入** | Pi、Antigravity、Claude、Codex、Codex App、Cursor、Gemini、Grok、Kiro、OpenCode 和 Copilot（通过厂商/原生认证） | API 密钥（OpenRouter 200+、Nous Portal） | 仅 Anthropic |
-| **费用模型** | 你已经在付的月订阅 | 按 token API 计费 | Anthropic 订阅 |
-| **主 UI** | 管理仪表盘 + Web 应用 + Mac 应用 + 终端 UI | 仅终端 | CLI + IDE 插件 |
-| **仪表盘** | 多实例管理器、看板、笔记工作区 | 无 | 无 |
-| **消息** | Telegram（语音）+ Discord | Telegram/Discord/Slack/WhatsApp/Signal | 无 |
-| **记忆** | 3 层（History/Flush/Soul）+ 全文搜索 | 自我改进循环 + Honcho | 文件型自动记忆 |
-| **多代理** | 员工系统（分派其他 CLI）+ PABCD | 子代理生成 | Task 工具 |
-| **浏览器自动化** | Chrome DevTools + vision-click + Computer Use | 有限 | 通过 MCP |
-| **运行环境** | 本地 + Docker | 本地/Docker/SSH/Daytona/Modal | 本地 |
-| **技能** | 200+ 参考技能 + 活跃运行时技能 | 自动创建 + agentskills.io | 用户配置 |
-| **多语言** | 英语、韩语、中文、日语 | 英语 | 英语 |
 
 ---
 
@@ -597,35 +591,30 @@ bash structure/check-doc-drift.sh
 
 | 问题 | 解决办法 |
 |---|---|
-| `cli-jaw: command not found` | 重新运行 `npm install -g cli-jaw`。macOS/Linux/WSL：检查 `~/.local/bin` 或 `npm prefix -g` + `/bin` 是否在 `$PATH` 中。从 Windows PowerShell 运行时，请通过 WSL login shell：`wsl.exe -d Ubuntu -- bash -lc "jaw dashboard"` |
+| `cli-jaw: command not found` | 再运行一次 `npm install -g cli-jaw`。macOS/Linux/WSL：检查 `~/.local/bin` 或 `npm prefix -g` + `/bin` 是否在 `$PATH` 中。从 Windows PowerShell 调用 WSL 时，请通过 login shell：`wsl.exe -d Ubuntu -- bash -lc "jaw dashboard"`。 |
+| `npm warn allow-scripts ...` | npm >= 12 会阻止依赖安装脚本：`npm install -g cli-jaw --allow-scripts=cli-jaw`，或用 `npm config set allow-scripts=cli-jaw --location=user` 持久保存。已经装过了？`jaw init` 会完成设置。 |
+| pnpm/bun 阻止了构建脚本 | pnpm 11+：`pnpm add -g --allow-build=cli-jaw cli-jaw`。bun：`bun add -g --trust cli-jaw`。 |
+| 全新安装的 verifier 失败 | 修复报告出的 PATH 或可执行位问题，然后重新运行 `bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"`。 |
 | `Error: node version` | 升级到 Node.js 22.4+：`nvm install 22` |
-| `NODE_MODULE_VERSION` mismatch | `npm run ensure:native`（自动重编译原生模块） |
-| `EADDRINUSE: port 3457` | 另一个实例正在运行。使用 `--port 3458` 或先停止 |
-| Telegram / Discord 认证失败 | 运行 `jaw doctor`，检查 token，重启 `jaw serve` |
-| 浏览器命令失败 | 安装 Chrome/Chromium。先运行 `jaw browser start` |
+| `NODE_MODULE_VERSION` mismatch | `npm run ensure:native` |
+| `EADDRINUSE: port 3457` | 另一个实例正在运行。使用 `--port 3458` 或先停止它 |
+| Telegram / Discord / Slack 认证失败 | 运行 `jaw doctor`，检查 token，重启 `jaw serve` |
 | 员工分派挂起 | 运行 `jaw employee list`，确认员工 CLI 已认证（`jaw doctor`），然后用 `jaw dispatch --watch` 重试 |
-| 员工分派返回 non-JSON 或 HTML | 服务器可能过旧或缺少 route。运行 `npm run build`，或重启 manager/dashboard 进程 |
-| Computer Use 不工作 | 仅限 macOS。需要 Codex CLI。在系统设置中检查自动化权限 |
 
 ---
 
 ## 参与贡献
 
-公开代码和产品文档保存在本仓库。私有计划和历史记录只保存在独立的同级克隆 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) 中；请通过 [issue](https://github.com/lidge-jun/cli-jaw/issues) 申请访问权限。禁止在本仓库内创建私有记录，包括 `devlog`、`_plan`、`_fin` 或 `.jwc` 别名，也不得在公开文档或源码中引用私有记录路径。此边界优先于通用技能默认值；`docs/` 和 `structure/` 仅用于公开产品文档。
-
-上传前请完成[本地 pre-push 设置和检查](CONTRIBUTING.md#local-private-path-check)。CI 是上传后的补充检查，无法阻止首次泄露。
+公开代码和产品文档保存在这里。私有规划和历史只保存在独立的同级克隆 [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal) 中；请通过 [issue](https://github.com/lidge-jun/cli-jaw/issues) 申请访问权限。不要在本检出中创建私有记录，包括 `devlog`、`_plan`、`_fin` 或 `.jwc` 别名，也不要在公开文档或源码中包含私有记录路径。上传变更前，请先完成[本地 pre-push 设置和检查](CONTRIBUTING.md#local-private-path-check)。
 
 1. 从 `dev` Fork 并创建分支
 2. `npm run build && npm run build:frontend && npm test`
-3. release-sensitive 修改还要运行 `npm run gate:all` 和 touched surface focused checks
+3. 对发布敏感的变更，还要运行 `npm run gate:all`
 4. 提交 PR
-
-Bug 报告和功能建议：[Open an issue](https://github.com/lidge-jun/cli-jaw/issues)
 
 ---
 
-<div align="center">
+<p align="center"><a href="LICENSE"><b>MIT License</b></a> · 由受够了在 AI 应用之间来回切标签的开发者们打造。</p>
 
-**[MIT License](LICENSE)** · 由受够了在 AI 应用间切换标签的开发者们打造。
 
-</div>
+

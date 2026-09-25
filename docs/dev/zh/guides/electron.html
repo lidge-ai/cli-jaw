@@ -69,7 +69,7 @@
 <p class="lead">CLI-JAW 也提供 Electron 桌面应用。打包构建会包含 Node.js 22 sidecar，因此无需全局 npm install，也能运行 dashboard server 并安装终端 <code>jaw</code> 命令。</p>
 
 <h2>安装</h2>
-<p>从 release 或手动 desktop-release workflow 下载桌面 artifact。macOS 提供 DMG/ZIP，Windows 提供 NSIS installer/ZIP，Linux 提供 AppImage。</p>
+<p>请从 <a href="https://github.com/lidge-jun/cli-jaw/releases/latest" target="_blank">GitHub Releases</a>、手动 desktop-release workflow 或落地页<a href="https://lidge-jun.github.io/cli-jaw/#download" target="_blank">下载区</a>下载桌面 artifact。每次发布提供三个 artifact：macOS Apple Silicon（<code>.dmg</code>）、Windows x64 Setup（<code>.exe</code>）、Linux x64（<code>.AppImage</code>）。</p>
 <pre><code># Build from source:
 npm run electron:dist:mac</code></pre>
 
@@ -124,7 +124,7 @@ npm run electron:dist:mac</code></pre>
 </table>
 
 <h2>macOS 权限</h2>
-<p>Electron 应用可能会提示需要 macOS 自动化访问权限。请在"系统偏好设置">"隐私与安全性">"自动化"中授予权限。应用的退出流程可见且能妥善处理清理工作。当前 release artifacts 尚未签名/公证，因此 macOS 首次启动可能需要右键 → 打开。</p>
+<p>Electron 应用可能会提示需要 macOS 自动化访问权限。请在"系统偏好设置">"隐私与安全性">"自动化"中授予权限。应用的退出流程可见且能妥善处理清理工作。macOS 构建已使用 Developer ID 签名、经 Apple 公证并完成 stapling，并可在应用内更新。Windows artifact 未签名，SmartScreen 可能发出警告：请选择 More info → Run anyway。Linux AppImage 可能需要先执行 <code>chmod +x</code>。</p>
 
 <h2>终端命令安装</h2>
 <p>打包应用可在首次启动或 tray menu 中安装终端 <code>jaw</code> 命令，指向 bundled sidecar shim。macOS 在需要时通过 admin prompt 安装到 <code>/usr/local/bin</code>，Linux 使用 <code>~/.local/bin</code>。Windows PATH 注册由 NSIS installer script 处理。</p>

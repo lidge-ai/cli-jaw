@@ -15,6 +15,7 @@ const entry = resolve('electron/src/main/index.ts');
 const boundaryExports: Record<string, string[]> = {
   'install-cli': ['promptInstallCli', 'isCliInstalled', 'installCli'],
   'reminder-popover': ['createReminderPopover'], 'reminder-badge': ['createReminderBadgePoller'],
+  'tray-instances': ['createTrayInstancesPoller'],
   'health-check': ['waitForManagerReady', 'isManagerHealthy', 'probeOnce'],
   'dialog': ['showJawNotFoundDialog', 'showCrashLoopDialog', 'showSpawnFailedDialog'],
   'app-metrics': ['startAppMetricsCollector'], 'terminal/index': ['registerTerminalIpc', 'cleanupTerminals'],
@@ -149,6 +150,7 @@ function launch(env: NodeJS.ProcessEnv, root: string, args = ['--spawn'], option
     if (name === 'showJawNotFoundDialog') return Promise.resolve('pick');
     if (name === 'createReminderPopover') return { destroy() {}, toggle() {}, hide() {} };
     if (name === 'createReminderBadgePoller') return { stop() {}, start() {}, refreshNow() {} };
+    if (name === 'createTrayInstancesPoller') return { stop() {}, start() {}, refreshNow() {}, snapshot() { return { instances: [], updatedAt: null, failures: 0 }; } };
     if (name === 'startAppMetricsCollector') return { stop() {} };
   };
   const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });

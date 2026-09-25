@@ -422,6 +422,70 @@
         }
 
         .hero-actions,
+.download-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 28px;
+        }
+
+        .download-card {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 22px;
+            border: 1px solid var(--border-strong);
+            border-radius: 16px;
+            background: rgba(11, 11, 14, 0.6);
+        }
+
+        .download-card h3 {
+            margin: 0;
+            font-size: 17px;
+        }
+
+        .download-card p {
+            margin: 0;
+            color: var(--text-muted, #a1a1aa);
+            font-size: 14px;
+        }
+
+        .download-card .button {
+            margin-top: auto;
+        }
+
+        .download-card.is-detected {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent), 0 12px 40px rgba(34, 211, 238, 0.12);
+        }
+
+        .download-card .detected-label {
+            display: none;
+            color: var(--accent);
+            font-size: 12.5px;
+            font-weight: 600;
+        }
+
+        .download-card.is-detected .detected-label {
+            display: block;
+        }
+
+        .download-meta {
+            margin-top: 14px;
+            color: var(--text-muted, #a1a1aa);
+            font-size: 13.5px;
+        }
+
+        @media (max-width: 767px) {
+            .download-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-download {
+                display: none;
+            }
+        }
+
         .hero-quiet-links {
             display: flex;
             align-items: center;
@@ -1936,6 +2000,7 @@
                 <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
                 Docs
             </a>
+            <a class="nav-link nav-download" href="#download">Download</a>
             <a class="nav-link nav-mobile-start" href="#quickstart">Get Started</a>
             <a class="nav-link nav-github" href="https://github.com/lidge-jun/cli-jaw" target="_blank" rel="noreferrer">
                 <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7A5.4 5.4 0 0 0 19.4 4 5 5 0 0 0 19.3.5S18.2.1 15 1.8a13.4 13.4 0 0 0-7 0C4.8.1 3.7.5 3.7.5A5 5 0 0 0 3.6 4a5.4 5.4 0 0 0-1.4 3.7c0 5.4 3.5 6.6 6.8 7A4.8 4.8 0 0 0 8 18v4"/><path d="M8 19c-3 .9-3-1.5-4-2"/></svg>
@@ -1965,6 +2030,7 @@
                             Get Started
                             <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
                         </a>
+                        <a class="button button-ghost" data-download-hero href="#download">Download the app</a>
                         <a class="button button-ghost" href="https://github.com/lidge-jun/cli-jaw" target="_blank" rel="noreferrer">View on GitHub</a>
                     </div>
                     <div class="hero-quiet-links" aria-label="More resources">
@@ -2188,6 +2254,35 @@
             </div>
         </section>
 
+        <section class="section band" id="download" aria-labelledby="download-title">
+            <div class="container reveal">
+                <p class="kicker">Download</p>
+                <h2 class="section-title" id="download-title">Get the desktop app.</h2>
+                <p class="section-desc">The app bundles the manager dashboard, a Node.js server sidecar and the <code>jaw</code> command. It lives in your menu bar and keeps every instance one click away.</p>
+                <div class="download-grid">
+                    <article class="download-card" data-download-card="mac">
+                        <h3>macOS</h3>
+                        <span class="detected-label">Recommended for your computer</span>
+                        <p>Apple Silicon. Signed, notarized and updated in-app.</p>
+                        <a class="button button-ghost" data-download="mac" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .dmg</a>
+                    </article>
+                    <article class="download-card" data-download-card="win">
+                        <h3>Windows</h3>
+                        <span class="detected-label">Recommended for your computer</span>
+                        <p>x64 installer. Unsigned, so SmartScreen may ask you to confirm.</p>
+                        <a class="button button-ghost" data-download="win" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .exe</a>
+                    </article>
+                    <article class="download-card" data-download-card="linux">
+                        <h3>Linux</h3>
+                        <span class="detected-label">Recommended for your computer</span>
+                        <p>x64 AppImage. Make it executable, then run it.</p>
+                        <a class="button button-ghost" data-download="linux" href="https://github.com/lidge-jun/cli-jaw/releases/latest">Download .AppImage</a>
+                    </article>
+                </div>
+                <p class="download-meta"><span data-download-version>Latest release</span> · <a href="https://github.com/lidge-jun/cli-jaw/releases/latest" target="_blank" rel="noreferrer">All downloads and release notes</a> · Prefer the terminal? <code>npm install -g cli-jaw</code></p>
+            </div>
+        </section>
+
         <section class="section band" id="platform" aria-labelledby="platform-title">
             <div class="container reveal">
                 <p class="kicker">Platform</p>
@@ -2199,7 +2294,7 @@
                 <div class="platform-blocks">
                     <article class="platform-block">
                         <div class="platform-copy"><h3>Desktop runtime, packaged</h3><p>DMG, NSIS, and AppImage releases include the server, Node.js sidecar, frontend, production dependencies, and a <code>jaw</code> command shim.</p></div>
-                        <div class="code-block"><span class="dim"># end-user flow</span><br>Download from GitHub Releases<br>Open CLI-JAW Desktop<br>Install CLI command<br>jaw dashboard</div>
+                        <div class="code-block"><span class="dim"># end-user flow</span><br><a href="#download">Download from GitHub Releases</a><br>Open CLI-JAW Desktop<br>Install CLI command<br>jaw dashboard</div>
                     </article>
                     <article class="platform-block">
                         <div class="platform-copy"><h3>Container isolation</h3><p>Run as a non-root user with the Chromium sandbox enabled. The agent sees the mounted workspace, not the rest of the host.</p></div>
@@ -2337,6 +2432,64 @@
             });
         })();
     </script>
+    <script>
+        // Progressive enhancement for #download: highlight the visitor's platform and point
+        // the buttons at the exact files of the latest stable release. Without JS every
+        // card keeps the releases/latest link.
+        (() => {
+            const buttons = [...document.querySelectorAll('[data-download]')];
+            if (!buttons.length) return;
+            const labels = { mac: 'macOS', win: 'Windows', linux: 'Linux' };
+            const detectPlatform = () => {
+                const hint = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '').toLowerCase();
+                const ua = navigator.userAgent.toLowerCase();
+                if (/android|iphone|ipad|ipod/.test(ua) || (navigator.maxTouchPoints > 1 && /mac/.test(hint))) return null;
+                if (/mac/.test(hint) || /mac os x/.test(ua)) return 'mac';
+                if (/win/.test(hint) || /windows/.test(ua)) return 'win';
+                if (/linux|x11/.test(hint) || /linux|x11/.test(ua)) return 'linux';
+                return null;
+            };
+            const platform = detectPlatform();
+            const hero = document.querySelector('[data-download-hero]');
+            if (platform) {
+                const card = document.querySelector('[data-download-card="' + platform + '"]');
+                if (card) {
+                    card.classList.add('is-detected');
+                    card.parentElement.prepend(card);
+                }
+                buttons.forEach((button) => {
+                    const mine = button.dataset.download === platform;
+                    button.classList.toggle('button-primary', mine);
+                    button.classList.toggle('button-ghost', !mine);
+                });
+                if (hero) hero.textContent = 'Download for ' + labels[platform];
+            }
+            if (!('fetch' in window)) return;
+            const patterns = { mac: /-arm64\.dmg$/, win: /Setup[ .].*\.exe$/, linux: /\.AppImage$/ };
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3000);
+            fetch('https://api.github.com/repos/lidge-jun/cli-jaw/releases/latest', { signal: controller.signal, headers: { Accept: 'application/vnd.github+json' } })
+                .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+                .then((release) => {
+                    const assets = Array.isArray(release.assets) ? release.assets : [];
+                    const urls = {};
+                    Object.keys(patterns).forEach((key) => {
+                        const asset = assets.find((item) => patterns[key].test(item.name));
+                        if (asset && asset.browser_download_url) urls[key] = asset.browser_download_url;
+                    });
+                    buttons.forEach((button) => {
+                        if (urls[button.dataset.download]) button.href = urls[button.dataset.download];
+                    });
+                    if (hero && platform && urls[platform]) hero.href = urls[platform];
+                    const version = document.querySelector('[data-download-version]');
+                    if (version && release.tag_name) version.textContent = 'Latest release ' + release.tag_name;
+                })
+                .catch(() => { /* keep the releases/latest fallback */ })
+                .finally(() => clearTimeout(timer));
+        })();
+    </script>
 </body>
 
 </html>
+
+

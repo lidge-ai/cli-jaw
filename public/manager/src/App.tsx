@@ -19,7 +19,7 @@ import { useInvalidationSubscription } from './sync/useInvalidationSubscription'
 import type { BoardView } from './dashboard-board/board-view';
 import { type ScheduleGroup } from './dashboard-schedule/DashboardScheduleSidebar';
 import { normalizeSidebarModeForBuild, REMINDERS_WORKSPACE_ENABLED } from './dashboard-features';
-import { readInitialSidebarMode, readTrayRemindersMode } from './dashboard-url-state';
+import { readInitialSelectedPort, readInitialSidebarMode, readTrayRemindersMode } from './dashboard-url-state';
 import { TrayRemindersApp } from './dashboard-reminders/TrayRemindersApp';
 import { useDashboardRegistry } from './hooks/useDashboardRegistry';
 import { useDashboardView, hydrateInstanceSettings, createInstanceSettingsNavigation, useSettingsDirtyState } from './hooks/useDashboardView';
@@ -195,6 +195,9 @@ export function App() { if (readTrayRemindersMode(window.location.search) && REM
                 const ui = loaded.registry.ui;
                 const restored = hydrateInstanceSettings(ui);
                 view.setSelectedPort(ui.selectedPort); view.setActiveDetailTab(restored.selectedTab); view.setSidebarCollapsed(ui.sidebarCollapsed);
+                // Menu bar "open instance" links win over the restored selection without persisting it.
+                const urlPort = readInitialSelectedPort(window.location.search);
+                if (urlPort !== null) view.setSelectedPort(urlPort);
                 view.setActivityDockCollapsed(ui.activityDockCollapsed); view.setActivityDockHeight(ui.activityDockHeight);
                 const sidebarMode = normalizeSidebarModeForBuild(readInitialSidebarMode(window.location.search) ?? restored.sidebarMode); // restored carries the legacy settings request
                 view.setSidebarMode(sidebarMode);

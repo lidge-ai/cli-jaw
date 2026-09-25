@@ -1,21 +1,80 @@
-<div align="center">
+<p align="center">
+  <img src="docs/assets/readme/banner.jpg" alt="CLI-JAW — your personal AI agent. Every AI CLI, one dashboard." width="100%">
+</p>
 
-# CLI-JAW
+<p align="center"><b>One assistant, one memory, one dashboard for the AI coding CLIs you already pay for.</b><br>
+Claude, Codex, Cursor, Grok, Copilot, OpenCode, Kiro, Antigravity and Pi — working together as a team.</p>
 
-### Your personal AI agent. 2 lines to install. 10 AI runtime surfaces in one dashboard.
+<p align="center">
+  <a href="https://npmjs.com/package/cli-jaw"><img src="https://img.shields.io/npm/v/cli-jaw?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/github/v/release/lidge-jun/cli-jaw?label=release" alt="latest release"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.4-339933?logo=node.js&logoColor=white" alt="Node.js 22.4+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
-[![npm](https://img.shields.io/npm/v/cli-jaw)](https://npmjs.com/package/cli-jaw)
-[![Release](https://img.shields.io/github/v/release/lidge-jun/cli-jaw)](https://github.com/lidge-jun/cli-jaw/releases)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)](https://typescriptlang.org)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.4-blue)](https://nodejs.org)
-[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-supported-2496ED?logo=docker&logoColor=white)](#-docker)
+```bash
+# existing users who want minimal changes: JAW_SAFE=1 npm install -g cli-jaw
+npm install -g cli-jaw
+jaw dashboard
+```
 
-**English** / [한국어](README.ko.md) / [中文](README.zh-CN.md) / [日本語](README.ja.md)
+<p align="center">
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Download for macOS (.dmg)"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Windows-.exe-24292f?logo=windows&logoColor=white" alt="Download for Windows (.exe)"></a>
+  <a href="https://github.com/lidge-jun/cli-jaw/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Download for Linux (.AppImage)"></a>
+</p>
 
-</div>
+<table>
+<tr>
+<td width="50%" valign="middle">
 
-The native Code API (`/api/code`) provides isolated Codex, Claude, Cursor, and Grok sessions with durable transcripts and native resume. It uses the installed CLIs and their existing logins. See [native Code sessions](structure/runtime-integration.md#native-code-sessions).
+### Every agent in one place
+
+Start, stop and preview every running instance from the manager dashboard.
+
+</td>
+<td width="50%"><img src="docs/screenshots/manager-dashboard-light.png" alt="CLI-JAW manager dashboard" width="100%"></td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### A board for the work
+
+Kanban lanes, a priority matrix and reminders track what each session is doing.
+
+</td>
+<td width="50%"><img src="docs/screenshots/dashboard-kanban.png" alt="Kanban board of agent sessions" width="100%"></td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Notes that agents can read
+
+A built-in Markdown workspace with WYSIWYG editing, math and Mermaid diagrams.
+
+</td>
+<td width="50%"><img src="docs/screenshots/notes-wysiwyg.png" alt="Notes editor" width="100%"></td>
+</tr>
+</table>
+
+<p align="center">
+  <b>English</b> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">中文</a> · <a href="README.ja.md">日本語</a> · 📖 <a href="https://lidge-jun.github.io/cli-jaw/"><b>Website</b></a> · <a href="https://lidge-jun.github.io/cli-jaw/dev/">Docs</a>
+</p>
+
+---
+
+## What is CLI-JAW?
+
+CLI-JAW unifies the AI coding CLIs you already use into **one assistant with one memory and one dashboard**. Your main CLI (the "Boss") calls the others as "employees", so you stop copy-pasting between apps and give orders from a single place.
+
+- **No API keys needed** — routes through subscriptions you already pay for
+- **No per-token billing** — flat monthly cost, same as what you already have
+- **Runs locally** — your code never leaves your machine
+- **Reach it anywhere** — Web, desktop app, terminal, Telegram, Discord or Slack
+
+The native Code API (`/api/code`) provides isolated Codex, Claude, Cursor, and Grok sessions with durable transcripts and native resume. See [native Code sessions](structure/runtime-integration.md#native-code-sessions).
+
+---
 
 ## Install
 
@@ -76,7 +135,8 @@ jaw dashboard
 > npm install -g cli-jaw --allow-scripts=cli-jaw
 > ```
 
-### Windows npm install recovery
+<details>
+<summary><b>Windows npm install recovery</b> — npm 12+ blocked scripts or PowerShell execution policy</summary>
 
 npm 12+ may finish a global install while blocking CLI-JAW's dependency
 `postinstall`. Approve only this package and reinstall, or save the approval for
@@ -103,27 +163,13 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 leftover npm staging directories, and the current PowerShell policy; it also
 prints the matching recovery guidance.
 
+</details>
+
 That's it. Open **http://localhost:24576** for the manager dashboard. Per-instance agent Web UIs still run from **http://localhost:3457** when you start `jaw serve`. Requires [Node.js 22.4+](https://nodejs.org).
 
 > **First time?** The default npm install initializes CLI-JAW and attempts native Claude setup. Other AI CLIs are optional; install them all during npm setup with `CLI_JAW_INSTALL_CLI_TOOLS=1 npm install -g cli-jaw` on macOS/Linux. On Windows, use the WSL install path below.
 
-### Retired JWC integration
-
-Jawcode SDK, ACP child, TUI bundles and installer integration have been removed.
-Use Code for native Codex, Claude, Cursor or Grok sessions. A saved `jwc` runtime
-selection remains visible as retired and cannot execute; choose an available
-runtime explicitly. Existing external installations and saved user files are
-left intact. `jaw jwc` reports retirement and performs no installation or cleanup.
-
-### Retired Claude E and AI-E runtimes
-
-The Claude E helper (`claude-e`, including `native/claude-e`, compatibility
-`claude-exec`, and legacy `jaw-claude-i`) and the AI-E multiplexer (`ai-e`,
-`@bitkyc08/ai-e`) have been removed. Use `claude` for Claude Code. A saved
-`claude-e` or `ai-e` runtime selection remains visible as retired and cannot
-execute; choose an available runtime explicitly. Existing settings, session
-buckets and user files are left intact. Execution reports
-`retired_runtime:claude-e` or `retired_runtime:ai-e` before fallback.
+> **Retired runtimes.** Claude E (`claude-e`) and the AI-E multiplexer (`ai-e`) have been removed. A saved selection stays visible as retired and cannot execute; choose an available runtime. Details: [runtime integration](structure/runtime-integration.md).
 
 <details>
 <summary><b>macOS one-click</b> — don't have Node.js? This installs everything</summary>
@@ -341,24 +387,6 @@ docker compose up -d       # → http://localhost:3457
 
 ---
 
-## What is CLI-JAW?
-
-CLI-JAW is an open-source platform that unifies the AI coding CLIs you already use — Pi, Claude, Antigravity, Codex, Codex App, Cursor, Grok, Kiro, OpenCode, and Copilot — into **one assistant with one memory and one dashboard**.
-
-Your main CLI (the “Boss”) calls the others as “employees.” You stop copy-pasting between apps and start giving orders from a single place.
-
-- **No API keys needed** — routes through subscriptions you already pay for
-- **No per-token billing** — flat monthly cost, same as what you already have
-- **Runs locally** — your code never leaves your machine
-
-<div align="center">
-
-![CLI-JAW Manager Dashboard](docs/screenshots/manager-dashboard-light.png)
-
-</div>
-
----
-
 ## Authenticate
 
 You only need **one**. Pick whichever subscription you already have:
@@ -401,308 +429,56 @@ Check everything at once: `jaw doctor`
 
 ---
 
-## The Dashboard
+## What you get
 
-The dashboard is your command center. `jaw dashboard` starts the manager at `http://localhost:24576`; individual agent Web UIs are served by `jaw serve` from `http://localhost:3457` and nearby managed ports.
-Live Web/TUI updates use the SSE-first `GET /api/events` channel, with legacy WebSocket fallback only for older servers where SSE never opens.
+### Employees: your CLI calls the others
 
-Interactive `jaw chat` defaults to collapsed Activity with a separate final answer.
-Fullscreen: Ctrl+O toggles details; F6 opens read-only history; Enter expands a
-journal record; A shows the exact saved answer. Appearance → Presentation switches
-to Legacy without changing runtime or permission settings. History selection does
-not change the server-active chat targeted by message/Stop. `--simple` and piped
-`--raw` retain their existing behavior. See [TUI controls](structure/commands.md).
+You talk to one AI (the "Boss"). When it needs specialized work, it dispatches tasks to employees — each running its own CLI and model — and reviews their output before answering you.
 
-Codex app-server and Pi RPC also record versioned, redacted runtime events independently of channel delivery. Native terminal handling keeps empty final answers distinct from live previews; final response selection remains independent of presentation. Slack adds a request-owned safe progress observer and explicit failure/delivery distinction; Telegram and Discord retain their existing flow. Classic uses this event stream for its bounded live Activity display.
-
-Pi prepares capabilities asynchronously before dispatching a prompt and keeps that decision for the RPC instance. Failed or incomplete preparation cannot dispatch with guessed support. Worker cleanup tracks both RPC and version processes and retains temporary data when closure or directory ownership is uncertain; the older command-discovery step may still block briefly. See [runtime ownership](structure/runtime-integration.md#capability-preparation-and-execution-ownership).
-
-Runtime history is persisted in a bounded Activity journal. Discovery uses `GET /api/traces/activity-runs?session=<id>`; replay uses `GET /api/traces/<runId>/activity?session=<id>` with `after`, fixed `through` and `limit` cursors. Owned public traces require the original chat session on raw reads too; Open trace captures that identity from the server. Internal worker records are not public replay. Missing or expired history is explicit and never replaces the final answer; historical decisions cannot be answered from replay. Existing ownerless raw traces retain their compatibility access policy.
-
-Print-mode providers also record accepted text, reasoning and tool activity without changing their existing answer selection. Untagged text remains unclassified; the existing lifecycle supplies the application-final answer. Tool status/detail converges across live and saved views, and partially retained history keeps its omission notice. Activity recording failure does not add a retry or channel send. Classic live and retained Activity rendering is layered separately over this observer.
-
-Display preferences use `presentation.mode`: `activity` is the default for fresh and upgraded settings without a choice; explicit `legacy` is preserved. Instance settings → Display provides the reversible choice, independently of runtime transport and permissions. Classic groups live tools and intermediate output in a collapsed Activity section while keeping the final answer separate. Open details stay open as updates arrive; limited or incomplete previews are labeled. Live approval/question controls remain available in either mode. Classic restores retained Activity on transcript rows; outside-transcript discovery remains available to the TUI, while the Classic disclosure is removed. Saved final answers come from MESSAGE, not the redacted journal; unavailable reads retain an explicit retry path. Raw Trace uses bounded earlier/later pages. Interactive TUI controls and saved-answer ownership are described above; integrated Electron QA remains a separate gate.
-
-Workbench keeps Overview, Preview and Logs as modes. The header gear or Meta+, opens the full Instance settings page; Preview stays mounted and hidden so returning preserves its iframe. Back to workspace or Escape closes settings and returns to Overview. Shared navigation separates Instance and Manager scopes; Classic's header gear opens the same Instance pages. Unsaved changes are guarded when leaving settings, changing categories or changing instance, including keyboard and desktop shortcuts. Retained settings pages keep their own drafts. Activity has a one-row header, grouped tool rows and an Open in Trace footer. Classic's t3 shell supports dark/light themes, visible keyboard focus and reduced motion.
-
-For frontend integrations, `ui.instanceSettingsOpen` is a Manager registry preference, separate from instance settings saves. The Vite `public/settings/index.html` entry builds to `public/dist/settings/index.html` and supplies the Classic settings iframe; `npm run build:frontend` includes it.
-
-Cursor, Grok and Claude retain `print` compatibility mode. Their optional `perCli.<cli>.transport` setting is validated independently of display preferences; selecting an unimplemented native adapter gives an explicit error, never silently launches print. Existing settings without this field migrate to native once (`nativeTransportMigration`); post-stamp print is operator intent. Native/print session storage is isolated. `/api/cli-status` reports compiled native main/worker support separately from cached binary/authentication readiness.
-
-Manager → Model defaults offers native as the default and print reversal for those three runtimes. Saving only the display mode and/or runtime transport through the settings API preserves a running turn; transport applies to the next run, while current completion retains its original session bucket. Combining the save with model, permissions or other execution settings keeps the existing invalidation behavior. Manual settings-file transport changes also retain their existing invalidation policy.
-
-Permission selectors display **Auto (YOLO)** for the stored `auto` policy. Automatic approval, permission bypass and **Safe** support vary by runtime and transport; explicit questions may still require an answer. YOLO is a display label here, not an additional policy choice.
-
-Auto also enables [full local Jaw API access](docs/slack-tools.md#full-local-api-access): qualified direct-local tools need no manually copied grant or operator token, including Slack history and native/worker callers. Full sends require an explicit destination. Safe/custom policies and forwarded/proxy callers retain their existing credential path. This is instance-wide local-operator authority; provider permissions, task scope and actual account capabilities remain separate.
-
-Claude native uses the optional pinned Agent SDK: main turns reuse a sequential session, while each worker assignment owns a fresh query and instruction directory. Stop closes the query; the default mid-run steer policy uses kill/resume with interrupted context, while follow-up mode queues. Native supports Auto (YOLO) / Safe permissions, live approvals/questions, validated image input and foreground child activity. Deny/unknown profiles (including the output-only memory extractor) require print compatibility; background SDK tasks remain unavailable. An unavailable SDK fails the explicit native request without falling back to print.
-
-Claude main steering waits for its own interrupted run, not a surviving worker in the same scope. Shutdown still includes workers. A completed answer is separate from physical cleanup; pending or failed cleanup remains tracked within the existing bounded waits.
-
-Classic and its Manager/Electron chat surface share a live request panel. It answers only the selected live request's original execution IDs; stream outages retain a visible manual refresh path and never replay a response automatically. Image input is limited to four supported images, 5MiB each/10MiB total; existing staged-file references remain separate. Activity timeline/default/history rollout is independent of this decision surface.
-
-Cursor main turns support the native ACP path with explicit `transport: "native"` and literal `permissions: "auto"`; restrictive native permissions and workers are rejected before prompt-file or session preparation. Model/effort use native advertised choices (Composer models may require unset effort). Canonical tool/commentary activity is separate from the full final answer; interrupted text remains available for steer salvage. Native I/O refreshes only its own collector through a private, text-free callback. Display defaults and owned history UI remain separate rollout layers.
-
-Grok main also supports native ACP with literal auto permissions, existing CLI authentication and advertised model/effort values. Mid-run steering cancels and drains the original prompt before sending the replacement in the same native session, without Cursor's context reinjection. One logical turn produces one final answer. A replacement already in progress may send later input to the existing queue; Stop cancels pending inputs through the final enqueue decision, while fresh post-Stop input remains admissible. Transport or ownership failures fail the request without an automatic retry. Restrictive Grok policies and native workers remain unavailable.
-
-Native Cursor redirects use **cancel-reprompt**, not in-band input: the original prompt's cancelled response and pending updates finish before the replacement is sent in the same native session. cli-jaw restores the original request, accepted redirects and bounded incomplete output as context while keeping current instructions active. `/steer` uses this path; another pending redirect may queue, but a failed or indeterminate dispatch is not automatically retried. `/queue steer <n>` retains its separate interrupt-and-run-now behavior.
-
-Native decision APIs are available at `GET /api/runtime/requests?sessionId=...` and `POST /api/runtime/requests/:id`. They use the existing instance authentication policy, exact run/session/scope/turn matching and opaque choice handles. Decisions expire after two minutes; accepting a response records a choice, not tool completion. Provider activation and Activity approval controls remain separate follow-on layers; messaging behavior is unchanged.
-
-### Instance Manager
-
-See every running AI instance — start, stop, restart with one click. Preview live Web UIs directly in the dashboard.
-
-Manager preview embeds the selected instance's regular Web UI. On long-running
-homes with large chat databases, a fresh Chrome tab can briefly allocate more
-memory while the preview loads its recent message window, renders markdown and
-structured cards, and lets Chrome's garbage collector settle. If memory drops
-back after a few minutes, treat it as a cold-load peak rather than a manager
-server leak; the `jaw dashboard` manager process should stay much smaller than
-the embedded browser renderer and the individual `jaw serve` worker processes.
-
-<div align="center">
-
-![Dashboard Navigator](docs/screenshots/dashboard-navigator.png)
-
-</div>
-
-### Kanban Board
-
-Drag instance cards into lanes (Backlog → Ready → In Progress → Review → Done). Track what each AI session is working on.
-
-<div align="center">
-
-![Kanban Board](docs/screenshots/dashboard-kanban.png)
-
-</div>
-
-### Priority Matrix
-
-Eisenhower matrix for your tasks and reminders. Prioritize what matters.
-
-<div align="center">
-
-![Priority Matrix](docs/screenshots/priority-matrix.png)
-
-</div>
-
-### Notes
-
-A mini-Obsidian inside the dashboard. Folders, visual (WYSIWYG) + raw + split editing, KaTeX (math rendering), Mermaid (diagram-as-code), syntax-highlighted code blocks.
-
-<div align="center">
-
-![Notes Editor](docs/screenshots/notes-wysiwyg.png)
-
-</div>
-
-### Agent Status
-
-Monitor each AI engine's health and usage at a glance.
-
-<div align="center">
-
-![Claude Status](docs/screenshots/claude-status-widget.png)
-
-</div>
-
-### Desktop App
-
-Prefer a native window to a browser tab? CLI-JAW ships an **Electron desktop shell** that boots the manager dashboard and supervises the underlying `jaw dashboard serve` process for you. Packaged desktop builds include a Node.js sidecar server, so the app can prefer its bundled `jaw` shim before falling back to a global terminal install.
-
-The Manager sidebar separates instance selection from session and process actions, and remembers your preferred width when panels temporarily narrow the workspace. Its bottom terminal has named session tabs, keyboard navigation and light/dark/auto theme support. Hiding the panel keeps shells running; closing a terminal session ends that shell. Failed terminal startup offers explicit recovery without discarding existing sessions.
-
-For end users, download the desktop artifact from **GitHub Releases**:
-
-- **macOS**: download the DMG, drag CLI-JAW into Applications, then launch it. Releases produced by the current workflow are Developer ID signed, notarized and stapled, and so is the DMG itself.
-- **Windows**: download the NSIS installer. It includes the same sidecar server and adds the packaged `jaw` shim to PATH. Windows artifacts are currently unsigned and may show SmartScreen.
-- **Linux**: download the AppImage, make it executable, and run it.
-
-After first launch, accept the **Install CLI command** prompt to create the terminal `jaw` command from the bundled sidecar. If you skip the prompt, use the tray menu item **Install CLI to Terminal** later. This path does not require a global npm install for the packaged app or terminal shim.
-
-The installed macOS app checks its matching GitHub Release channel in the background and also exposes **CLI-JAW → Check for Updates…**. Preview builds select matching preview tags from the GitHub release feed; stable builds use GitHub's latest stable release. Each selected release carries its own `latest-mac.yml`. Download and restart/install both require explicit confirmation. An existing unsigned install cannot safely bootstrap into this trust chain, so install the first signed DMG manually once; subsequent signed releases can update in-app.
-
-Developer build:
-
-```bash
-# one-time, from the repo root
-npm install && npm --prefix electron install
-
-npm run electron:dev          # develop with hot reload
-npm run electron:dist:mac     # build macOS arm64 .dmg + .zip with bundled sidecar
-```
-
-For a local Developer ID build, configure your signing identity and the `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` notarization credentials, then run `npm run electron:dist:mac:signed`. This command notarizes and staples both the app and the DMG, and verifies the Developer ID authority, hardened runtime, timestamp, nested signature, Gatekeeper assessment, stapled tickets and update ZIP/DMG metadata and hashes. The ordinary `electron:dist:mac` command disables identity discovery and produces a plain ad-hoc local build, not a rehearsal of the signed path. The canonical GitHub Actions workflow fails closed unless its macOS app and DMG are signed by Team `U9ATA49N28`, notarized, stapled and update-metadata verified.
-
-The packaged app lands in `electron/dist/`. The GitHub Actions desktop release workflow builds macOS arm64 DMG/ZIP, Windows x64 NSIS/ZIP, and Linux AppImage artifacts on release publish or manual dispatch. Native modules such as `better-sqlite3` stay in the manager/sidecar server — the Electron main process never imports them.
-
----
-
-## How the Employee System Works
-
-This is the core idea: **your main CLI calls other CLIs as workers.**
-
-You talk to one AI (the "Boss"). When it needs specialized work, it dispatches tasks to employees — each running their own CLI with their own model:
-
-```
+```text
 You: "Fix the frontend styling and update the API endpoint"
 
-Boss (Claude) thinks...
-  ├── Dispatches to Frontend employee (OpenCode) → "Fix the CSS grid layout in dashboard.tsx"
-  ├── Dispatches to Backend employee (Codex)     → "Update /api/users to return pagination metadata"
+Boss (Claude)
+  ├── Frontend employee (OpenCode) → "Fix the CSS grid layout in dashboard.tsx"
+  ├── Backend employee (Codex)     → "Update /api/users to return pagination metadata"
   └── Synthesizes both results for you
 ```
 
 ```bash
-# Under the hood, it's one command:
-jaw dispatch --agent "Frontend" --task "Fix the CSS grid layout in dashboard.tsx"
 jaw dispatch --agent "Backend" --task "Run read-only verification" --watch
 jaw dispatch --virtual "security" --task "Review this branch for auth and secret leaks" --watch
-jaw worker status Backend
 ```
 
-Employees are other AI CLIs configured in your settings. Each has its own session, its own model, its own context. For one-off specialist checks, the Boss can also dispatch an ephemeral virtual employee with `--virtual`; it uses the same dispatch machinery but is not saved to the employee database. The Boss reviews their output before presenting it to you.
+### PABCD: plan, audit, build, check, done
 
-### Employees vs. Sub-agents
-
-These are different things:
-
-| | Employees | Sub-agents |
-|---|---|---|
-| **What** | Other AI CLIs (Codex, OpenCode, etc.) configured as workers | Built-in parallel task tool within a single CLI |
-| **When** | Multi-specialist work across different codebases or domains | Internal research, file reads, parallel analysis |
-| **How** | `jaw dispatch --agent "Name" --task "..."` | Automatic — the CLI spawns them internally |
-
-Use employees for "Frontend does CSS, Backend does API." Use sub-agents for "read these 5 files in parallel before deciding."
-
----
-
-## AI Runtime Surfaces
-
-No per-token API billing. Route through subscriptions you already pay for.
-
-| CLI | Default Model | Auth | Cost |
-|---|---|---|---|
-| **Pi** | `grok-composer-2.5-fast` | Settings profile API key, local proxy, or `PI_CODING_AGENT_BIN` | First-class `pi --mode rpc` runtime for local/API endpoints through an isolated `PI_CODING_AGENT_DIR` |
-| **Claude** | `claude-opus-4-8` | `claude auth login` | Claude Pro subscription or higher |
-| **Antigravity** | AGY-selected | checked by `agy` at run time | Experimental AGY print-mode runtime (`agy -p`); optional `--model` is capability-probed (observed in AGY 1.0.12); resume via `--conversation`; no separate effort flag |
-| **Codex** | `gpt-5.5` | `codex login` | ChatGPT Pro subscription or higher |
-| **Codex App** | `gpt-5.5` | `codex login` | ChatGPT Pro subscription or higher |
-| **Cursor** | `composer-2.5` | `cursor-agent login` or `CURSOR_API_KEY` | Cursor subscription; native usage with optional dashboard-session fallback |
-| **Grok** | `grok-build` | `grok login --oauth` | Grok subscription; JSON weekly usage read with native credentials, with gRPC/monthly fallbacks |
-| **Kiro** | registry-selected | `kiro` | AWS Kiro free tier; `kiro-cli chat --no-interactive` runtime |
-| **OpenCode** | `opencode-go/kimi-k2.6` | `opencode` | Free models available |
-| **Copilot** | `claude-sonnet-4.6` | `copilot login` | Free tier available |
-
-GPT 5.5 and Claude Opus 4.8 are enabled from Pro-tier subscriptions and higher. Starting in June, select `claude` when you want CLI-JAW to use the Claude allowance bundled with the subscription plan.
-
-On a new install, CLI-JAW prefers **Codex App** when the local `app-server` entrypoint and Codex authentication are ready. Existing installations keep their saved runtime until the one-time Settings notice is explicitly accepted; choosing “keep” preserves the current runtime. Set `CLI_JAW_DEFAULT_CLI=claude` to override the clean-install policy.
-
-OpenCodex routing remains owned by Codex's root `openai_base_url` setting. CLI-JAW only compares that read-only URL with the live OpenCodex runtime-port and `/healthz` fingerprint for diagnostics; it does not rewrite Codex config or inject an execution endpoint.
-
-The quota/status panel keeps the same runtime keyset as the registry. Cold status requests return a neutral “checking” snapshot immediately while binary, authentication, and capability probes run in a bounded child process. Wrapper runtimes (`codex-app`) delegate to their underlying provider, while providers without a measured quota remain status-only. AGY uses native IDE/selected-account quota, Cursor uses its selected native account with explicit cookie compatibility, and OpenCode Go reads usage directly. Grok uses the current CLI auth store for JSON weekly credits, with gRPC weekly and legacy monthly fallbacks. Each provider failure is isolated in the quota response.
-
-Native quota readers follow the OpenCodex source contract: Codex window duration/plan policy, Spark and reset-credit metadata; Claude model-scoped windows and credential-scoped cache. Missing measurements remain unknown, 429 alone never means 100%, and upstream bodies are bounded. See `docs/migration/quota-reader-parity.md`.
-
-**Fallback chain**: if one engine is rate-limited, the next picks up. Configure with `/fallback [cli1 cli2...]`.
-
-**OpenCode wildcard**: connect any model endpoint — OpenRouter, local LLMs (Large Language Models), any OpenAI-compatible API.
-
-> Switch engines live: `/cli codex`. Switch models: `/model gpt-5.5`. Works from Web, Terminal, Telegram, Discord, or Slack.
-
-**Mid-run steering**: the default policy is `multiSession.midRunPolicy: 'steer'`. Codex App accepts in-flight input; native Cursor cancels and drains the active prompt, then re-prompts in the same session with application-restored context. Other paths interrupt the current run and carry bounded partial output into a new run; this is not a guarantee of complete history retention. Prefer waiting in line? Choose `followup` or `collect` in Settings → Agent.
-
----
-
-## PABCD Orchestration (Plan → Audit → Build → Check → Done)
-
-For complex tasks, CLI-JAW uses a structured 5-phase workflow. You approve every transition — nothing ships without your OK.
-
-```
-P (Plan) → A (Audit) → B (Build) → C (Check) → D (Done) → IDLE
-   ⛔          ⛔          ⛔         auto        auto
-```
+For complex tasks CLI-JAW runs a structured workflow. You approve every transition; read-only workers verify the plan and the result.
 
 | Phase | What happens |
 |---|---|
-| **P — Plan** | Boss writes a diff-level plan. Stops for your review |
-| **A — Audit** | Read-only worker verifies the plan is feasible (imports exist, signatures match) |
-| **B — Build** | Boss implements. Read-only worker verifies the result |
-| **C — Check** | Type-check (`tsc --noEmit`), docs update, consistency check |
-| **D — Done** | Summary of all changes. Returns to idle |
+| **P — Plan** | Boss writes a diff-level plan and stops for your review |
+| **A — Audit** | A read-only worker checks the plan is feasible |
+| **B — Build** | Boss implements; a read-only worker verifies |
+| **C — Check** | Type-check, docs update, consistency check |
+| **D — Done** | Summary of all changes, back to idle |
 
-State is database-persisted and survives restarts. Workers cannot modify files — only verify. Activate with `jaw orchestrate`, `/orchestrate`, or `/pabcd`; resume an active worklog explicitly with `/continue`. Forward phase transitions require evidence attestation, e.g. `jaw orchestrate B --attest '{"from":"A","to":"B","did":"<what you did>"}'` (C→D also needs pasted `checkOutput` and `exitCode`). Workflow helper slash commands include `/plan`, `/interview`, `/deliberate`, `/planaudit`, `/review`, `/search`, `/goal`, `/goalplan`, `/team`, `/task`, `/fork`, and `/gd`; `/plan` is a compatibility guide that explains "this is PABCD P" and points to the right next command instead of creating a second planning mode. `/search <query>` routes search intent through the active search skill: classify local vs external lookup, rewrite focused queries, discover candidate URLs, and only then use browser commands such as `browser fetch` for evidence verification. Bounded automation is expressed as `/goal run ...`, not a separate top-level `/autopilot`. Durable goals — `/goal <objective>` plus `update`/`done`/`cancel`/`pause`/`resume` — are functional and survive restarts, and a goal resume re-fires the work on every interface (Web/CLI included, not just messaging). AI-initiated `goal pause --agent --audit` arms a two-tap gate: one audit/finalizer continuation may run with `pause_gate_pending`, and if that turn exits with the gate still armed, `goal_pause_gate_pending` suppresses further auto-continuation until a productive checkpoint or a second audited pause. `/gd` is shorthand for `/goal done --force` (skips the completion evidence gate). `/goal run` (`preflight`/`start`/`stop`/`status`) is a tracking-only preview: it gates on preflight and tracks turn/dispatch budget, with enforcement still to come.
+State survives restarts. Start with `jaw orchestrate` or `/pabcd`, resume with `/continue`, and keep long objectives alive with `/goal`. See [PABCD](https://lidge-jun.github.io/cli-jaw/dev/concepts/pabcd.html).
 
----
+### Memory, skills and MCP
 
-## Memory
+- **Three memory layers** — recent session history, structured notes flushed from conversations, and a searchable soul/task snapshot: `jaw memory search "how did we set up the API auth?"`
+- **200+ skills** — office documents (PDF, DOCX, XLSX, PPTX, HWP), browser and desktop automation, media, GitHub, Notion and dev guides: `jaw skill install <name>`
+- **One MCP config for every engine** — `jaw mcp install @anthropic/context7` syncs Claude, Codex, Kiro, OpenCode, Copilot and Antigravity at once
 
-Three layers, each covering a different recall horizon.
+### Browser and desktop automation
 
-| Layer | What it stores | How it works |
-|---|---|---|
-| **History Block** | Recent session context | Last 10 sessions, max 8000 chars, scoped to working directory. Injected at prompt start |
-| **Memory Flush** | Structured knowledge from conversations | Triggered after threshold (default 10 turns). Extracts episodes, daily logs, semantic notes as markdown |
-| **Soul + Task Snapshot** | Identity and semantic recall | Core values, tone, boundaries. Full-text search index returns up to 4 semantically relevant hits per prompt |
+Drive Chrome through the DevTools Protocol, click by description with `jaw browser vision-click "Login button"`, control desktop apps through Codex Computer Use on macOS and Windows, and ask ChatGPT, Gemini or Grok web UIs with `jaw browser web-ai`.
 
-All three layers feed into the system prompt automatically. Memory is searchable:
+### Messaging
 
-```bash
-jaw memory search "how did we set up the API auth?"
-```
-
----
-
-## Skills
-
-200+ reference skills plus active runtime skills cover dev workflows, office documents, automation, media, and content writing.
-
-| Category | Skills | What they cover |
-|---|---|---|
-| **Office** | `jaw-pdf`, `jaw-docx`, `jaw-xlsx`, `jaw-pptx`, `jaw-hwp` | Read, create, edit documents. HWP/HWPX (Korean word-processor formats) supported natively |
-| **Automation** | `jaw-browser`, `vision-click`, `jaw-screen-capture`, `jaw-desktop-control` | Chrome DevTools Protocol (CDP) browser control, structure-first grounding with a coordinate fallback, macOS screenshots, Computer Use |
-| **Media** | `jaw-video`, `imagegen`, `lecture-stt`, `tts` | Remotion video, OpenAI image generation, lecture transcription, text-to-speech |
-| **Integration** | `jaw-github`, `notion`, `jaw-telegram-send`, `jaw-memory` | Issues/PRs/CI, Notion pages, Telegram media delivery, persistent memory |
-| **Visualization** | `jaw-diagram` | SVG diagrams, charts, interactive visualizations rendered in chat |
-| **Content / Writing** | `k-writing` | Korean promotional/content writing: thread, Instagram cardnews, LinkedIn, website/blog, and humanize outputs with mandatory search, hook scoring, and anti-AI checks |
-| **Dev Guides** | `jaw-dev`, `jaw-dev-frontend`, `jaw-dev-backend`, `jaw-dev-data`, `jaw-dev-testing`, `jaw-dev-pabcd` | Engineering guidelines injected into agent prompts |
-
-Reference skills live in `skills_ref/` and install into the active runtime on demand; active skills are loaded from the user runtime home.
-
-```bash
-jaw skill install <name>    # activate a reference skill
-jaw skill list              # see what's available
-```
-
----
-
-## Browser & Desktop Automation
-
-| Capability | How it works |
-|---|---|
-| **Chrome DevTools Protocol** | Navigate, click, type, screenshot, evaluate JS, scroll, press keys — remote control for Chrome |
-| **Vision-click** | Describe a target, get it clicked. Asks the browser where its elements are first and clicks a ref when the answer lands on one; falls back to a coordinate for canvas and custom-rendered UI. Declines rather than guessing when the target is ambiguous, covered, or the page moved. `jaw browser vision-click "Login button"` |
-| **Computer Use** | Desktop app automation via Codex Computer Use. Use Safari for localhost and it feels like the Codex app |
-| **Web-AI vendors** | `jaw browser web-ai --vendor chatgpt\|gemini\|grok` with session lifecycle, diagnostics, source-audit/answer-artifact support, and ChatGPT code-mode zip recovery |
-| **Diagram Skill** | Generate SVG diagrams and interactive visualizations, rendered inline in chat |
-
-Computer Use lets you control desktop apps — Finder, Safari, System Settings, Xcode on macOS; any window on Windows — through natural language. Point it at your localhost dev server in a browser and you get a full visual testing loop. The two hosts expose different APIs (macOS is app-scoped, Windows is window-scoped), and the `jaw-desktop-control` skill routes between them.
-
----
-
-## Messaging
-
-### Telegram
-
-```
-📱 Telegram ←→ 🦈 CLI-JAW ←→ 🤖 AI Engines
-```
-
-Text chat, voice messages (auto-transcribed via STT — speech-to-text), file/photo upload, slash commands (52 registered, 51 visible; workflow helpers include `/plan`, `/interview`, `/review`, `/search`, `/goal`, `/orchestrate`, `/task`, `/fork`, `/gd`; dynamic `/skill:<id>` on CLI/Web), forum-topic routing and **Dashboard Telegram Hub** (`/setthread`, `/threads`, `/hubhelp`, per-topic model/systemPrompt overrides in Manager UI), scheduled task delivery via `every`/`cron` heartbeat jobs.
+Chat with your agent from **Telegram** (voice messages, forum topics, scheduled heartbeat jobs), **Discord** and **Slack** (Socket Mode, threads, file relay, mention watching). Enable several channels at once; the home channel receives proactive sends.
 
 <details>
-<summary>Setup (3 steps)</summary>
+<summary>Telegram setup (3 steps)</summary>
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token
 2. `jaw init --telegram-token YOUR_TOKEN` or use Web UI settings
@@ -710,170 +486,91 @@ Text chat, voice messages (auto-transcribed via STT — speech-to-text), file/ph
 
 </details>
 
-### Discord
-
-Same capabilities as Telegram — text, files, commands. Channel/thread routing, canonical `/api/channel/send`, and forwarder support for agent result broadcast. Setup via Web UI settings.
-
-You can enable multiple inbound channels at once. The manager and Web UI settings separate **enabled channels** from the **home channel**: enabled channels start their transport gateways; the home channel is the fallback for proactive sends and legacy `settings.channel` is a deprecated read-only alias for one major version.
-
-### Slack
-
-[Trusted bot triggers](docs/slack-tools.md#letting-one-other-bot-start-a-turn) can optionally select an operator-configured `workflowSkill` after the actual sender, channel, bot-user, marker and self-mention match. Only the selected enabled skill is loaded (64 KiB maximum); unverified sender/request context or unavailable or ambiguous skill selection is visibly blocked without model fallback. Existing four-field rules retain legacy behavior and normal approval, tool grants and source permissions still apply. Empty or standalone `SILENT` workflow results show an unconfirmed notice and failure ACK; inspect records before retrying because work may already have begun. There is no automatic rerun, and an AI reply alone does not prove business completion.
-
-Opted-in workflow requests use the `followup` queue when busy; never steer or collect them into an unrelated running turn. Read the selected skill at admission and preserve its captured content, hash and source metadata across queueing and restart. Silent outcomes settle the workflow request as unconfirmed/failed while preserving provider/native final text and status; never automatically rerun.
-
-Slack text sends preserve Markdown and explicit Block Kit `blocks`, splitting multiple tables into separate messages. `ok:true` means every chunk was posted, independently of rendering verification. Inspect `delivery.verification` (`verified`, `failed`, or `unavailable`) and `delivery.messages` for each posted chunk's timestamp, verification error, table-content status, and feature evidence. A persisted mismatch is `failed`; missing permission, unavailable/malformed readback, or a missing timestamp is `unavailable`. Neither stops remaining posts or triggers reposting. Actual validation/POST failures retain `ok:false`; partial receipts include `postedChunks`, `totalChunks`, and `sent:true, retryable:false`. Never blindly resend posted chunks. `tableContent` compares ordered text, numeric value/display, links and supported styles; ordinary Markdown character references decode once while code and escaped ampersands stay literal. `richContent` and `sourceAccuracy` remain `not_checked`, and readback stays bounded to 1 MiB.
-
-
-Group DMs are supported when the app has joined the conversation and has the `message.mpim` event subscription plus `mpim:history`. Existing apps need these added in Slack and a reinstall to grant the scope; updating cli-jaw alone does not change installed permissions. Group DMs retain the conversation allowlist and mention/thread rules. Missing this scope leaves existing IM/channel messaging available and reports the group-DM capability gap.
-
-Slack replies show a bounded native progress plan with recent safe tool activity, queue/wait status and a separate delivery result. Elapsed time refreshes every second in native mode, subject to Slack/network backpressure. Explicit shell tool-call purposes and English action/target summaries distinguish file reads, searches, tests and scripts, including supported shell forms. Known file tools show sanitized project-relative filenames or an outside-project basename; raw commands, host paths, file contents and reasoning stay private. Failure and cancellation do not become successful reactions merely because a message was sent.
-
-
-Socket Mode bot with the same shared command catalog — mentions, DMs, slash commands, file/image relay, thread replies. Each Slack-triggered agent turn receives the current conversation ID and parent thread timestamp explicitly, so history/member lookups and targeted replies do not depend on parsing an internal session label or enabling multi-session.
-
-Heartbeat jobs can opt into Slack mention watching with `mentionWatch: { channel: "slack", userId, channelIds, maxHits?, since? }`. This runs inside the existing `runHeartbeatJob`, not a separate daemon: it walks explicitly configured, joined channels backward with `conversations.history` because `search.messages` is a user-token method and bot tokens cannot hold `search:read`. The scan keeps a completed-message frontier and unfinished-walk resume bound, rotates the first channel between ticks, stops the tick on 429, and reports channel IDs beyond the 60-channel ceiling. Before each hit it yields to active PABCD, agent work, queued messages, or pending replay; the agent returns answer text only, then the server posts it to the source thread with `sendChannelOutput` and records the message as seen. Failed sends remain eligible for retry, so delivery is at-least-once. Keep watch jobs disabled (`enabled: false`) until the channel subset and target user are configured; every tick intersects `channelIds` with the current `slack.channelIds` allowlist again.
-
-Each answer runs in the chat session bound to the thread it is answering, so the reply shares that conversation's history instead of the shared default session. The execution scope is deliberately a different one (`mention-watch:<remoteKey>`): a background turn registered in the thread's own scope would look busy to the next human message, which Slack then steers into it rather than starting a new run. Because placement is per conversation, the yield check is too — the thread must be PABCD-`IDLE`, its session must have no work in flight, and its lane must be free. The lane is checked and never awaited, since a lane wait has no bound while the heartbeat holds every other job. A session row is created only when a hit is actually being answered, because a remote-bound session cannot be deleted afterwards.
-
 <details>
-<summary>Setup (guided wizard)</summary>
+<summary>Slack setup (guided wizard)</summary>
 
-1. `jaw slack setup` — prints the app manifest (or `jaw slack manifest | pbcopy`), opens the Slack app creation page, then validates your two tokens live (`auth.test` + `apps.connections.open`) and writes the settings
+1. `jaw slack setup` — prints the app manifest, opens the Slack app page, validates both tokens live and writes the settings
 2. `/invite @cli-jaw` in each channel the bot should read, then restart `jaw serve`
 
-Why not OAuth one-click? Slack issues the app-level token (`xapp-`, required for Socket Mode) only from the app settings UI, and the PKCE localhost flow bans bot scopes — a browser click cannot configure a self-hosted Socket Mode bot. The wizard is the shortest honest path.
-
-For Docker/Kubernetes deployments, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_TEAM_ID`, and `SLACK_CHANNEL_IDS` are runtime-only owners of their matching fields. While any are present, Settings keeps connection editing/reset read-only as a group and the CLI setup paths refuse mixed input; remove the variables and restart cli-jaw before changing the connection there. Persistence strips only fields owned by configured variables, so environment values are never copied into `settings.json` and metadata-only overrides do not erase file-backed tokens. Delivery preferences such as mention/thread/forwarding behavior remain editable.
+Group DMs need the `message.mpim` event and `mpim:history` scope. For containers, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_TEAM_ID` and `SLACK_CHANNEL_IDS` own their fields at runtime. Details: [Slack tools](docs/slack-tools.md).
 
 </details>
 
-### Voice & STT
+### Desktop app
 
-Voice input works on Web (mic button), Telegram (voice messages), and Discord. Providers: OpenAI-compatible, Google Vertex AI, or any custom endpoint.
+The Electron app boots the manager dashboard, ships a bundled Node.js sidecar, and lives in your menu bar. Download it from [GitHub Releases](https://github.com/lidge-jun/cli-jaw/releases/latest):
 
----
+- **macOS (Apple Silicon)** — open the DMG and drag CLI-JAW into Applications. Builds are Developer ID signed, notarized and stapled, and update in-app.
+- **Windows (x64)** — run the Setup `.exe`. It is unsigned, so SmartScreen may ask you to confirm.
+- **Linux (x64)** — make the AppImage executable and run it.
 
-## MCP (Model Context Protocol)
-
-[MCP](https://modelcontextprotocol.io) is a standard that lets AI tools share capabilities — like plugins for AI agents. CLI-JAW manages MCP config for all your engines from one file.
-
-```bash
-jaw mcp install @anthropic/context7
-# → syncs to Claude, Codex, Kiro, OpenCode, Copilot, and Antigravity config files simultaneously
-```
-
-No more editing several different JSON files. Install once, every MCP-aware engine gets it. Grok CLI is a standard runtime here, but it is not counted as MCP-sync capable until Grok exposes a compatible config surface. Antigravity MCP sync is a separate config target from the `agy` runtime registry entry.
-
-```bash
-jaw mcp sync       # re-sync after manual edits
-```
+After first launch, accept **Install CLI command** (or use the tray item **Install CLI to Terminal**) to get `jaw` in your terminal without a global npm install.
 
 ---
 
-## CLI Commands
+## AI runtimes
+
+No per-token API billing. Route through subscriptions you already pay for.
+
+| CLI | Default model | Auth | Cost |
+|---|---|---|---|
+| **Pi** | `grok-composer-2.5-fast` | Settings profile API key, local proxy, or `PI_CODING_AGENT_BIN` | Local/API endpoints through an isolated profile |
+| **Claude** | `claude-opus-4-8` | `claude auth login` | Claude Pro subscription or higher |
+| **Antigravity** | AGY-selected | checked by `agy` at run time | Experimental print-mode runtime |
+| **Codex** | `gpt-5.5` | `codex login` | ChatGPT Pro subscription or higher |
+| **Codex App** | `gpt-5.5` | `codex login` | ChatGPT Pro subscription or higher |
+| **Cursor** | `composer-2.5` | `cursor-agent login` or `CURSOR_API_KEY` | Cursor subscription |
+| **Grok** | `grok-build` | `grok login --oauth` | Grok subscription |
+| **Kiro** | registry-selected | `kiro` | AWS Kiro free tier |
+| **OpenCode** | `opencode-go/kimi-k2.6` | `opencode` | Free models available |
+| **Copilot** | `claude-sonnet-4.6` | `copilot login` | Free tier available |
+
+If one engine is rate-limited the next picks up (`/fallback`). Switch engines live with `/cli codex` and models with `/model gpt-5.5` — from Web, Terminal, Telegram, Discord, or Slack.
+
+---
+
+## CLI
 
 ```bash
 # Core
 jaw dashboard                     # launch manager dashboard
-jaw serve                         # start server (http://localhost:3457)
+jaw serve                         # start an agent server (http://localhost:3457)
 jaw chat                          # terminal chat UI
-jaw chat search "query"           # search chat history
 jaw ask "question"                # one prompt, one answer — no TTY needed
-echo "question" | jaw ask -       # same, reading the prompt from stdin
 jaw doctor                        # installation and runtime diagnostics
-jaw slack setup                   # guided Slack app setup (manifest + token validation)
-jaw messaging ingress list        # inspect / replay the durable inbound journal
 
 # Instances
-jaw clone ~/project               # clone instance to new directory
-jaw --home ~/project serve --port 3458  # run second instance
-jaw service install               # auto-start on boot (macOS/Linux)
+jaw clone ~/project                           # clone instance to new directory
+jaw --home ~/project serve --port 3458        # run a second instance
+jaw service install                           # auto-start on boot (macOS launchd / Linux systemd)
 jaw --home ~/project service restart --port 3458  # restart only this instance
-jaw --home ~/project service stop --port 3458     # stop only this instance
-jaw project set ~/repo            # set projectDirs for review/orchestration
-jaw lock                          # protect this instance from stop-all flows
 
-# AI & Orchestration
-jaw employee list                         # list configured + static employees
-jaw dispatch --agent "Backend" --task "..."  # dispatch employee
-jaw dispatch --agent "Backend" --task "..." --watch  # dispatch and stream safe progress
-jaw dispatch --virtual "testing" --task "..." --watch  # one-off virtual employee
-jaw worker status Backend            # inspect current/previous employee progress
-jaw orchestrate                   # enter/control PABCD workflow
-jaw goal status                   # persistent goal lifecycle
-jaw task list                     # agent-native task checklist
-# in chat: /continue               # explicit worklog/PABCD resume
+# Agents and workflow
+jaw employee list
+jaw dispatch --agent "Backend" --task "..." --watch
+jaw orchestrate                   # PABCD workflow
+jaw goal status                   # persistent goals
 
-# Skills & MCP
-jaw skill install <name>          # activate a skill
-jaw skill list                    # list available skills
-jaw mcp install <package>         # install MCP → syncs supported MCP-aware engines
-jaw mcp sync                      # re-sync MCP configs
-
-# Memory
-jaw memory search <query>         # search across all memory layers
-jaw memory save <file> <content>  # save to structured memory
-
-# Browser
-jaw browser start                 # launch Chrome automation
-jaw browser fetch "https://example.com" --json --trace  # adaptive URL reader
-jaw browser snapshot              # capture page state
-jaw browser vision-click "Login"  # describe a target; refuses rather than guessing
-jaw browser web-ai status         # ChatGPT/Gemini/Grok web-AI session tooling
-jaw browser web-ai code --vendor chatgpt --model thinking --effort heavy --prompt "Build an MVP" --output-zip ./result.zip
-
-# Search
-# in chat: /search "npm trusted publishing official docs"  # search-skill routing + evidence verification
-
-# Dashboard connectors
-jaw dashboard memory search "query"  # read-only cross-instance memory search
-jaw dashboard chat search "query"    # cross-instance chat search
-jaw connector board add --title "Fix docs"
-jaw reminders add "Follow up tomorrow"
-
-# Maintenance
-jaw reset                         # full reset
+# Skills, MCP, memory, browser
+jaw skill list
+jaw mcp install <package>
+jaw memory search <query>
+jaw browser fetch "https://example.com" --json
 ```
+
+Each instance created with `jaw clone` has its own settings, memory, database and MCP config, and the manager dashboard sees them all. Remote and headless hosts: [structure/remote-headless.md](structure/remote-headless.md). Full command reference: [CLI docs](https://lidge-jun.github.io/cli-jaw/dev/reference/cli.html).
 
 ---
 
-## Multi-Instance
+## Documentation
 
-Run isolated instances with separate settings, memory, and database:
-
-```bash
-jaw clone ~/my-project
-jaw --home ~/my-project serve --port 3458
-```
-
-Each instance is fully independent — different working directory, different memory, different MCP config. The manager dashboard sees them all.
-
-For a standalone `jaw serve`, use the home-scoped lifecycle commands instead of killing every Node process. The server records verifiable ownership in `<JAW_HOME>/jaw.pid.json`; `stop` and `restart` refuse stale, foreign, or unverifiable records. Registered launchd/systemd instances delegate to their service manager.
-
-```bash
-# Windows PowerShell
-jaw --home C:\jaw\worker-a service restart --port 3458
-
-# macOS/Linux
-jaw --home "$HOME/jaw/worker-a" service stop --port 3458
-```
-
-### Remote and headless hosts
-
-On Linux, opening a file from the Web UI dispatches `xdg-open` without waiting for
-the desktop application to exit. A successful response acknowledges launch only;
-a headless host still needs a desktop handler to display the file.
-
-`ssh host 'jaw serve ...'` runs a non-login, non-interactive shell that reads none of the
-files the installer adds `~/.local/bin` to, so `jaw` can work when you log in and still fail
-over SSH with `nohup: failed to run command 'jaw'`. Run `jaw doctor` and check the
-**Non-interactive PATH (ssh)** row, then call jaw by absolute path or export PATH inside the
-remote command.
-
-On a host with no service manager (a container whose PID 1 is tini, for example),
-`jaw service --backend supervisor` generates a keep-alive loop to wire into your container
-entrypoint or cron. Full guide: [structure/remote-headless.md](structure/remote-headless.md).
+| Topic | Where |
+|---|---|
+| Website and quickstart | [lidge-jun.github.io/cli-jaw](https://lidge-jun.github.io/cli-jaw/) |
+| Guides, concepts, reference | [Developer docs](https://lidge-jun.github.io/cli-jaw/dev/) |
+| Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [structure/](structure/) |
+| Slack tools and local API | [docs/slack-tools.md](docs/slack-tools.md) |
+| Runtime integration (including retired runtimes) | [structure/runtime-integration.md](structure/runtime-integration.md) |
 
 ---
 
@@ -883,37 +580,10 @@ entrypoint or cron. Full guide: [structure/remote-headless.md](structure/remote-
 npm run build          # tsc → dist/
 npm run build:frontend # vite → public/dist/
 npm run dev            # tsx server.ts (hot-reload)
-npm test               # programmatic node:test driver (tests/run.mts, isolation:'process', per-file test home)
-npm run test:shard -- 1/4        # deterministic quarter of root+unit (same split CI's test i/4 runs)
-npm run test:integration:all     # tests/integration + manager + bin (CI's integration job; needs a TEST_PORT server)
-npm run gate:all       # named release/docs parity gates (incl. doc-drift, strict-baseline, redaction-sinks)
-npm run docs:check     # AST commands/routes inventory vs structure docs
-bash structure/check-doc-drift.sh
+npm test               # node:test driver (tests/run.mts)
+npm run gate:all       # release/docs parity gates
+npm run electron:dev   # desktop app with hot reload
 ```
-
-Architecture details: [ARCHITECTURE.md](docs/ARCHITECTURE.md) · Pre-prompt context hooks: [pre-prompt-context-hooks.md](docs/dev/pre-prompt-context-hooks.md) · Internal structure docs: [structure/](structure/)
-
-Desktop QA has an explicit [isolated launch profile](structure/infra.md#isolated-desktop-qa): fixed task-owned homes and ports, no global app registration or Manager lifecycle actions. It requires a prepared, scrubbed launch environment; it is not a sandbox for arbitrary commands or proof that a packaged artifact passed QA.
-
-Sidecar builds use [owned staging and target-runtime smoke checks](structure/infra.md#sidecar-build-and-smoke-ownership). Failed builds retain evidence rather than overwriting unknown output; a skipped or timed-out smoke is not verification.
-
----
-
-## How It Compares
-
-| | CLI-JAW 2.x | Hermes Agent | Claude Code |
-|---|---|---|---|
-| **Model access** | Pi, Antigravity, Claude, Codex, Codex App, Cursor, Gemini, Grok, Kiro, OpenCode, and Copilot through vendor/native auth where supported | API keys (OpenRouter 200+, Nous Portal) | Anthropic only |
-| **Cost model** | Monthly subscriptions you already pay for | Per-token API billing | Anthropic subscription |
-| **Primary UI** | Manager dashboard + Web app + Electron desktop + terminal UI | Terminal only | CLI + IDE plugins |
-| **Dashboard** | Multi-instance manager, Kanban, Notes workspace | None | None |
-| **Messaging** | Telegram (voice) + Discord + Slack | Telegram/Discord/Slack/WhatsApp/Signal | None |
-| **Memory** | 3-layer (History/Flush/Soul) + full-text search | Self-improving loop + Honcho | File-based auto-memory |
-| **Multi-agent** | Employee system (dispatch other CLIs) + PABCD | Subagent spawn | Task tool |
-| **Browser automation** | Chrome DevTools + vision-click + Computer Use | Limited | Via MCP |
-| **Execution** | Local + Docker | Local/Docker/SSH/Daytona/Modal | Local |
-| **Skills** | 200+ reference skills + active runtime skills | Self-creating + agentskills.io | User-configured |
-| **Languages** | English, Korean, Chinese, Japanese | English | English |
 
 ---
 
@@ -922,44 +592,29 @@ Sidecar builds use [owned staging and target-runtime smoke checks](structure/inf
 | Problem | Solution |
 |---|---|
 | `cli-jaw: command not found` | `npm install -g cli-jaw` again. macOS/Linux/WSL: check `~/.local/bin` or `npm prefix -g` + `/bin` is in `$PATH`. From Windows PowerShell, invoke WSL through a login shell: `wsl.exe -d Ubuntu -- bash -lc "jaw dashboard"`. |
-| `npm warn allow-scripts ...` | npm >= 12 blocks dependency install scripts by default, so the install "succeeds" without running CLI-JAW's setup. Fix: `npm install -g cli-jaw --allow-scripts=cli-jaw` or persist with `npm config set allow-scripts=cli-jaw --location=user`. Do **not** copy npm's own printed hint — it omits the package argument and fails with `ENOENT package.json` ([npm/cli#9835](https://github.com/npm/cli/issues/9835)). Already installed? `jaw init` finishes setup without reinstalling. |
-| pnpm/bun blocked build scripts | pnpm 11+: `pnpm add -g --allow-build=cli-jaw cli-jaw` (pnpm ≤ 10: `pnpm approve-builds -g`). bun: `bun add -g --trust cli-jaw`. |
-| `cli-jaw: permission denied` | The global shim can see CLI-JAW, but its `dist/bin/cli-jaw.js` target is not executable. Re-run `npm install -g cli-jaw` or, in a checkout, run `npm run build && npm run check:cli-bin-links`. |
-| Fresh install verifier fails | `scripts/verify-fresh-install.sh` checks both public aliases: `jaw` and `cli-jaw`. Fix the reported PATH or executable-bit issue, then rerun `bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"`. |
+| `npm warn allow-scripts ...` | npm >= 12 blocks dependency install scripts: `npm install -g cli-jaw --allow-scripts=cli-jaw`, or persist with `npm config set allow-scripts=cli-jaw --location=user`. Already installed? `jaw init` finishes setup. |
+| pnpm/bun blocked build scripts | pnpm 11+: `pnpm add -g --allow-build=cli-jaw cli-jaw`. bun: `bun add -g --trust cli-jaw`. |
+| Fresh install verifier fails | Fix the reported PATH or executable-bit issue, then rerun `bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"`. |
 | `Error: node version` | Upgrade to Node.js 22.4+: `nvm install 22` |
-| `NODE_MODULE_VERSION` mismatch | `npm run ensure:native` (auto-rebuilds native modules) |
-| `EADDRINUSE: port 3457` | Another instance running. Use `--port 3458` or stop it first |
+| `NODE_MODULE_VERSION` mismatch | `npm run ensure:native` |
+| `EADDRINUSE: port 3457` | Another instance is running. Use `--port 3458` or stop it first |
 | Telegram / Discord / Slack auth fails | Run `jaw doctor`, check tokens, restart `jaw serve` |
-| Browser commands fail | Install Chrome/Chromium. Run `jaw browser start` first |
-| Employee dispatch hangs | Run `jaw employee list`, ensure the employee CLI is authenticated (`jaw doctor`), then retry with `jaw dispatch --watch` |
-| Employee dispatch returns non-JSON or HTML | The server may be stale or missing the route. Run `npm run build` or restart the manager/dashboard process. |
-| Computer Use not working | macOS or Windows; Codex CLI required. macOS: check Automation permission in System Settings. Windows: run calls inside `node_repl` and keep the Codex desktop app running in the logged-on session — an empty `list_windows()` means you are not on the pipe, not that no windows are open |
+| Employee dispatch hangs | `jaw employee list`, make sure the employee CLI is authenticated (`jaw doctor`), retry with `jaw dispatch --watch` |
 
 ---
 
 ## Contributing
 
-Public code and product docs live here. Private planning and history live only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal); request access through an [issue](https://github.com/lidge-jun/cli-jaw/issues). Do not create private records in this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases, or include private record paths in public docs/source. This boundary overrides generic skill defaults; `docs/` and `structure/` are for public product documentation.
-
-Follow [local pre-push setup and checks](CONTRIBUTING.md#local-private-path-check) before uploading changes. CI is a backstop after upload and cannot prevent initial disclosure.
+Public code and product docs live here. Private planning and history live only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal); request access through an [issue](https://github.com/lidge-jun/cli-jaw/issues). Do not create private records in this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases, or include private record paths in public docs/source. Follow [local pre-push setup and checks](CONTRIBUTING.md#local-private-path-check) before uploading changes.
 
 1. Fork and branch from `dev`
 2. `npm run build && npm run build:frontend && npm test`
-3. For release-sensitive changes, also run `npm run gate:all` and any focused checks for the touched surface.
+3. For release-sensitive changes, also run `npm run gate:all`
 4. Submit a PR
-
-Bug reports and feature ideas: [Open an issue](https://github.com/lidge-jun/cli-jaw/issues)
 
 ---
 
-<div align="center">
+<p align="center"><a href="LICENSE"><b>MIT License</b></a> · Built by developers who got tired of tab-switching between AI apps.</p>
 
-**[MIT License](LICENSE)** · Built by developers who got tired of tab-switching between AI apps.
 
-</div>
 
-Boss turns receive host-local calendar dates and Monday–Sunday week ranges to resolve relative dates; explicit timezone or week conventions take precedence.
-
-For opt-in local services that must survive global package updates, see [verified local service builds](docs/pinned-service-artifacts.md).
-
-Send a Slack attachment with `jaw slack send C123 --file ./report.pdf --caption "Report" --json` (add `--thread <parent-ts>` for a reply). Inspect the upload receipt; failed uploads do not silently become text-only messages.
