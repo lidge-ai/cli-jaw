@@ -22,13 +22,31 @@ import { log } from './logger.js';
 import { MAX_DISPATCH_APPROVAL_TTL_SECONDS } from './dispatch-approval.js';
 import { isRuntimeTransport, isSwitchableNativeCli } from '../agent/runtime/selection.js';
 
+/** Next-run preferences that must not revoke an already admitted run. */
+const PRESERVING_KEYS: ReadonlySet<string> = new Set(['presentation', 'perCli', 'projectDirs']);
+
+/** `null` explicitly clears the list. An array preserves the run only when every
+ * entry survives normalization (a realpath rewrite is fine; a dropped entry, `[]`,
+ * a relative or missing path is not), so a patch that would silently clear or
+ * shrink the root keeps the old invalidation. Duplicates also fail the length
+ * check and keep today's behaviour. */
+function preservingProjectDirs(value: unknown): boolean {
+    if (value === null) return true;
+    if (!Array.isArray(value) || value.length === 0) return false;
+    const normalized = normalizeProjectDirs(value);
+    return normalized !== null && normalized.length === value.length;
+}
+
 /** Explicit display/next-run preferences must not revoke already admitted runs.
+ * `projectDirs` does not change the running process (its cwd is `workingDir`);
+ * revoking the turn for it surfaced as "Claude native runtime failed".
  * Unknown, empty or execution-changing mixtures retain the existing invalidation.
  */
 export function settingsPatchPreservesActiveRun(input: Record<string, unknown>): boolean {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const keys = Object.keys(input);
-    if (!keys.length || keys.some(key => key !== 'presentation' && key !== 'perCli')) return false;
+    if (!keys.length || keys.some(key => !PRESERVING_KEYS.has(key))) return false;
+    if (keys.includes('projectDirs') && !preservingProjectDirs(input['projectDirs'])) return false;
     const sanitized = sanitizeSettingsInput(input, 'api');
     if (sanitized.invalidPaths.length || sanitized.serverOwnedPaths.length || sanitized.rejectedPaths.length) return false;
     const patch = sanitized.value;
