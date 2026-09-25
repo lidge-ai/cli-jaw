@@ -94,6 +94,8 @@ for (const mode of ['foreign', 'array', 'malformed-array', 'oversized-array'] as
                 : mode === 'malformed-array' ? [input.uuid, 7] : Array(65).fill(input.uuid) };
         f.output.push(result('wrong', { ...correlation, session_id: 'foreign-native' }));
         assert.equal((await pending).status, 'error'); assert.equal(f.session.nativeSessionId, 'native');
+        // Distinct from owner loss, which now reports `claude_owner_stale`.
+        assert.equal(f.session.lastError, 'claude_correlation_stale');
         assert.equal(f.events.some(event => event.kind === 'turn-end' && event.finalText !== null), false);
     });
 }

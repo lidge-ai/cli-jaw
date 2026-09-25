@@ -52,6 +52,20 @@ export interface ClaudeNativeRunOptions {
     cancelling?(reason: string): void;
 }
 
+/** Name the guard that ended the turn. Only an unknown cause keeps the credential hint. */
+export function claudeFailureDiagnostic(code: string | null | undefined): string {
+    switch (code) {
+        case 'claude_background_tasks_unsupported':
+            return 'Claude native supports foreground tasks only. Set run_in_background:false.';
+        case 'claude_sdk_frame_malformed':
+            return 'Claude completed tool activity but returned an SDK frame cli-jaw could not parse. Existing delivered files may still be valid; inspect the run trace instead of changing model or login.';
+        case 'claude_owner_stale':
+            return 'Claude stopped this turn because the session was reset or a setting that changes how it runs (CLI, model, permissions, working directory) was saved while it was running. Send the message again.';
+        default:
+            return `Claude native runtime failed${code ? ` (${code})` : ''}. Check the selected model, permissions and existing CLI login.`;
+    }
+}
+
 /** Claude adaptation only. The shared host owns execution; existing lifecycle owns delivery. */
 export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: null; promise: Promise<Result> } {
     const base = input.exit, worker = !base.mainManaged;
@@ -93,11 +107,15 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
     const resultFor = (outcome: RuntimeTurnOutcome): Result => ({ text: outcome.finalText?.trim() ?? '',
         code: outcome.status === 'done' ? 0 : outcome.status === 'stopped' ? 130 : 1, runtimeOutcome: outcome,
         traceRunId, sessionId: ctx.sessionId, cost: ctx.cost, tools: ctx.toolLog });
-    const diagnostic = () => facade?.lastError === 'claude_background_tasks_unsupported'
-        ? 'Claude native supports foreground tasks only. Set run_in_background:false.'
-        : facade?.lastError === 'claude_sdk_frame_malformed'
-            ? 'Claude completed tool activity but returned an SDK frame cli-jaw could not parse. Existing delivered files may still be valid; inspect the run trace instead of changing model or login.'
-        : 'Claude native runtime failed. Check the selected model, permissions and existing CLI login.';
+    // Owner loss settles through `settle` → `runtimeDiagnostic` without calling `failed()`
+    // (native-runtime-run.ts), so the guard code is logged here, once per run, wherever the
+    // diagnostic is first produced. The trace keeps only the user-facing text.
+    let failureCodeLogged = false;
+    const diagnostic = () => {
+        const code = facade?.lastError ?? null;
+        if (code && !failureCodeLogged) { failureCodeLogged = true; console.warn(`[runtime:claude] turn failed code=${code}`); }
+        return claudeFailureDiagnostic(code);
+    };
     const ensureFallbackStarted = () => {
         if (started || ended || fallbackProjection) return;
         fallbackProjection = new RuntimeProjection(identity);

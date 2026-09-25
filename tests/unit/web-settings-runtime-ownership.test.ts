@@ -72,6 +72,25 @@ test('display plus eligible transport still leaves the admitted run owned', asyn
     await applySettingsPatch({ presentation: { mode: 'legacy' }, perCli: { claude: { transport: 'print' } } });
     assertCurrent(owners, true); assert.deepEqual(snapshot(), before);
 });
+// A project-root change used to revoke the running turn, which the Claude native
+// runtime reported as "Claude native runtime failed. Check … login".
+test('project root change leaves the admitted run owned and applies the root', async () => {
+    const owners = tokens(), before = snapshot();
+    await applySettingsPatch({ projectDirs: [home] });
+    assertCurrent(owners, true); assert.deepEqual(snapshot(), before);
+    assert.deepEqual(config.settings['projectDirs'], [fs.realpathSync.native(home)]);
+});
+test('clearing the project root with null leaves the admitted run owned', async () => {
+    const owners = tokens();
+    await applySettingsPatch({ projectDirs: null });
+    assertCurrent(owners, true);
+    assert.equal(config.settings['projectDirs'], null);
+});
+test('project root mixed with an execution change keeps the invalidation', async () => {
+    const owners = tokens();
+    await applySettingsPatch({ projectDirs: [home], perCli: { claude: { model: 'opus' } } });
+    assertCurrent(owners, false);
+});
 for (const [name, patch] of [
     ['permissions', { presentation: { mode: 'legacy' }, permissions: 'safe' }],
     ['model', { perCli: { claude: { transport: 'print', model: 'opus' } } }],
@@ -88,7 +107,8 @@ test('real settings HTTP route uses the preserving web wrapper, including revers
     const owners = tokens(), before = snapshot();
     try {
         for (const patch of [{ presentation: { mode: 'legacy' } }, { perCli: { claude: { transport: 'print' } } },
-            { presentation: { mode: 'activity' }, perCli: { claude: { transport: 'native' } } }]) {
+            { presentation: { mode: 'activity' }, perCli: { claude: { transport: 'native' } } },
+            { projectDirs: [home] }, { presentation: { mode: 'legacy' }, projectDirs: [home] }]) {
             const response = await fetch(`http://127.0.0.1:${address.port}/api/settings`, {
                 method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
                 signal: AbortSignal.timeout(5000),
@@ -116,10 +136,18 @@ test('strict classifier rejects malformed, empty, inherited and unrelated mixtur
         Object.create({ presentation: { mode: 'legacy' } }),
         { perCli: { claude: Object.create({ transport: 'native' }) } },
         Object.assign(Object.create({ perCli: { claude: { model: 'opus' } } }), { presentation: { mode: 'legacy' } }),
+        // A project-root value that would silently clear or shrink the root mid-turn.
+        { projectDirs: 'x' }, { projectDirs: [1] }, { projectDirs: {} }, { projectDirs: [] },
+        { projectDirs: ['./rel'] }, { projectDirs: ['/definitely/missing/cli-jaw-dir'] }, { projectDirs: [home, home] },
+        { projectDirs: [home], cli: 'cursor' }, { projectDirs: [home], workingDir: '/x' },
     ]) assert.equal(settingsPatchPreservesActiveRun(input as Record<string, unknown>), false, JSON.stringify(input));
     assert.equal(settingsPatchPreservesActiveRun({ presentation: { mode: 'legacy' }, perCli: {
         cursor: { transport: 'native' }, grok: { transport: 'print' }, claude: { transport: 'native' },
     } }), true);
+    for (const input of [{ projectDirs: [home] }, { projectDirs: null },
+        { presentation: { mode: 'legacy' }, projectDirs: [home] }]) {
+        assert.equal(settingsPatchPreservesActiveRun(input), true, JSON.stringify(input));
+    }
 });
 
 test('safe save failure preserves ownership without swallowing the write error', async t => {
