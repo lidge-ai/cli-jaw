@@ -93,6 +93,24 @@ export function describeCliProbe(info: CliStatusInfo): 'checking' | 'unknown' | 
     return info.available === true && info.capabilityReady !== false ? 'ready' : 'unavailable';
 }
 
+/**
+ * Sidebar partition: a card stays in the top group only while current or
+ * preserved evidence says the CLI is usable — installed, capability-ready and
+ * authenticated. `unavailable`/`capability-failed` rows demote, and a `ready`
+ * or `stale` row demotes only on concrete evidence (missing binary/capability
+ * or `authenticated === false` from either the status probe or the quota
+ * reader). Indeterminate probe states (checking/unknown/failing) are not
+ * proof of absence, and a stale row is last-known-good — a previously working
+ * CLI keeps its place until a fresh probe says otherwise.
+ */
+export function isCliStatusUsable(info: CliStatusInfo, quota: QuotaEntry | null | undefined): boolean {
+    const probe = describeCliProbe(info);
+    if (probe === 'checking' || probe === 'unknown' || probe === 'probe-failing') return true;
+    if (probe === 'unavailable' || probe === 'capability-failed') return false;
+    if (info.available !== true || info.capabilityReady === false) return false;
+    return info.authenticated !== false && quota?.authenticated !== false;
+}
+
 export type CliProbeAvailabilityPresentation = {
     kind: 'checking' | 'unknown' | 'failing' | 'none';
     message: string | null;
