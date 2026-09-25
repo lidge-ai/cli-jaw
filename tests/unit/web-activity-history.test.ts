@@ -107,7 +107,8 @@ test('failed read retains answer and retry restores the same host',{timeout:1000
     serve=async url=>response(page(Number(url.searchParams.get('after')??0)));
     await history.hydrateActivityHost(host,base.runId,true);
     assert.equal(host.querySelectorAll('.activity-turn').length,1);
-    assert.equal(host.querySelector<HTMLButtonElement>('.activity-read-control button')!.hidden,true);
+    assert.equal(host.querySelector<HTMLElement>('.activity-read-control')!.hidden,true);
+    assert.equal(host.querySelector<HTMLButtonElement>('.activity-read-retry')!.hidden,true);
 });
 
 test('copied foreign trace controls stay disabled; owned raw-only legacy trace remains inspectable',{timeout:10000},async()=>{
@@ -121,6 +122,26 @@ test('copied foreign trace controls stay disabled; owned raw-only legacy trace r
     assert.equal(own.querySelector<HTMLElement>('.process-step-trace')!.tabIndex,0);
     assert.match(own.querySelector('.activity-read-control')!.textContent!,/was not recorded/);
     assert.equal(own.querySelector<HTMLButtonElement>('.activity-read-control button')!.hidden,true);
+});
+
+test('read status folds into the expanded Activity area or a collapsed details row',{timeout:10000},async()=>{
+    serve=async url=>response(page(Number(url.searchParams.get('after')??0),events,{incomplete:true}));
+    const host=message();await history.hydrateActivityHost(host,base.runId);
+    const disclosure=host.querySelector<HTMLElement>('.activity-disclosure')!;
+    assert.ok(disclosure);
+    assert.match(disclosure.querySelector<HTMLElement>('.activity-read-status')!.textContent!,/Some recorded activity is unavailable/);
+    const retry=disclosure.querySelector<HTMLButtonElement>('.activity-read-retry')!;
+    assert.equal(retry.hidden,false);assert.equal(retry.textContent,'Refresh activity');
+    assert.equal(host.querySelector<HTMLElement>('.activity-read-control')!.hidden,true);
+
+    const emptyRun='tr_empty0123456789012';
+    serve=async url=>response(page(Number(url.searchParams.get('after')??0),[],{runId:emptyRun,through:0,nextAfter:0}));
+    const empty=message('SAVED ANSWER',emptyRun);await history.hydrateActivityHost(empty,emptyRun);
+    assert.equal(empty.querySelector('.activity-disclosure'),null);
+    const box=empty.querySelector<HTMLDetailsElement>('.activity-read-control')!;
+    assert.equal(box.tagName,'DETAILS');assert.equal(box.open,false);assert.equal(box.hidden,false);
+    assert.match(box.querySelector<HTMLElement>('.activity-read-status')!.textContent!,/No detailed Activity is retained/);
+    assert.equal(box.querySelector<HTMLButtonElement>('.activity-read-retry')!.hidden,false);
 });
 
 test('live events during fixed-through restore are reduced once and tail catch-up settles',{timeout:10000},async()=>{
