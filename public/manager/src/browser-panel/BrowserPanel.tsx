@@ -308,7 +308,6 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const [addressState, setAddressState] = useState<AddressBarState>(() => createAddressBarState(initialTab.current.url));
     const [historyEntries, setHistoryEntries] = useState<BrowserHistoryEntry[]>(() => loadBrowserHistory());
-    const committedByUserRef = useRef<Set<string>>(new Set());
     const pendingNavigationRefs = useRef<Map<string, string>>(new Map());
     /**
      * The webview `src` attribute is bound ONCE per page tab and never
@@ -705,7 +704,6 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
         pendingNavigationRefs.current.delete(id);
         initialSrcRefs.current.delete(id);
         lastKnownUrlRefs.current.delete(id);
-        committedByUserRef.current.delete(id);
         stableWebviewRefCallbacks.current.delete(id);
         unregisterWebviewTarget(id);
         setTabs(current => {
@@ -727,16 +725,11 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
     const navigate = useCallback(() => {
         const rawTarget = addressState.focused ? addressState.draft : displayedAddress(addressState);
         dispatchAddress({ type: 'submit' });
-        const normalized = normalizeBrowserTarget(rawTarget);
-        if (normalized && normalized !== DEFAULT_BROWSER_URL) {
-            committedByUserRef.current.add(activeTab.id);
-        }
         openUrlInTab(activeTab.id, rawTarget);
         inputRef.current?.blur();
     }, [activeTab.id, addressState, dispatchAddress, openUrlInTab]);
 
     const openHistoryEntry = useCallback((url: string) => {
-        committedByUserRef.current.add(activeTab.id);
         dispatchAddress({ type: 'submit' });
         openUrlInTab(activeTab.id, url);
         inputRef.current?.blur();
@@ -1152,13 +1145,14 @@ export function BrowserPanel(props: BrowserPanelProps = {}) {
             {canUseElectronWebview ? (
                 <div className="browser-webview-stack">
                     <div key={activeTab.id} className="browser-webview-host is-active">
-                        {historyEntries.length > 0 && !activeTab.loading && ((addressState.focused && addressState.draft.trim() === '') || !committedByUserRef.current.has(activeTab.id)) && (
+                        {historyEntries.length > 0 && addressState.focused && addressState.draft.trim() === '' && (
                             <div className="browser-history-empty" aria-label="Recent visits">
                                 {historyEntries.map(entry => (
                                     <button
                                         key={`${entry.url}:${entry.at}`}
                                         type="button"
                                         className="browser-history-item"
+                                        onMouseDown={event => event.preventDefault()}
                                         onClick={() => openHistoryEntry(entry.url)}
                                     >
                                         <span className="browser-history-title">{entry.title || entry.url}</span>
