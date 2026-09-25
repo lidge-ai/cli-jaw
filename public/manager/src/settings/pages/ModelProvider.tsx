@@ -298,11 +298,10 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                     <SettingsNote>No active overrides.</SettingsNote>
                 ) : (
                     <SettingsKeyValue
-                        items={overrideRows.map(([cli, cfg]) => ({
-                            label: cli,
-                            value: `${cfg?.model || '—'} / ${cfg?.effort || '—'}`,
-                            mono: true,
-                        }))}
+                        items={overrideRows.flatMap(([cli, cfg]) => [
+                            { label: `${cli} model`, value: cfg?.model || '—', mono: true },
+                            { label: `${cli} effort`, value: cfg?.effort || '—', mono: true },
+                        ])}
                     />
                 )}
                 <SettingsActions
