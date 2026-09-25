@@ -10,8 +10,7 @@
 .rail-button.is-active {
     background: var(--sidebar-row-active, var(--bg-raised));
     border-color: transparent;
-    color: var(--text-primary);
-    box-shadow: inset 2px 0 0 var(--accent);
+    color: var(--accent);
 }
 .rail-collapse-button { margin-left: auto; }
 .manager-shell.is-sidebar-collapsed .rail-collapse-button { margin-left: 0; }
@@ -340,6 +339,7 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     border-radius: var(--radius-md);
     background: transparent;
     padding: 10px;
+    transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
 .instance-row.density-compact {
     min-height: 36px;
@@ -429,16 +429,10 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     outline: var(--focus-ring);
     outline-offset: 2px;
 }
-.instance-row.priority-active.is-selected { border-color: transparent; background: var(--sidebar-row-selected); }
+.instance-row.priority-active.is-selected,
 .instance-row:not(.priority-active).is-selected {
-    border-color: color-mix(in srgb, var(--accent) 42%, transparent);
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
-    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 62%, transparent);
-}
-.instance-row.priority-active.is-selected::before {
-    content: ""; position: absolute; left: 0; top: 7px; bottom: 7px;
-    z-index: 1; width: 3px; border-radius: 3px; background: var(--accent);
-    pointer-events: none;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-soft);
 }
 .instance-row-main {
     width: 100%;
@@ -535,6 +529,8 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
 }
 @media (prefers-reduced-motion: reduce) {
     .instance-session-list { animation: none; }
+    .instance-row,
+    .instance-session-row,
     .instance-group-chevron,
     .instance-row .instance-row-quick .quick-btn,
     .quick-btn {
@@ -558,14 +554,15 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     line-height: 16px;
     text-align: left;
     cursor: pointer;
+    transition: background var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 .instance-session-row:hover:not(:disabled) { background: var(--row-bg-hover); color: var(--text-primary); }
 .instance-session-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .instance-session-row:disabled { cursor: default; opacity: 0.6; }
 .instance-session-row.is-active {
     color: var(--text-primary);
-    box-shadow: inset 3px 0 0 var(--accent);
-    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .instance-session-title {
     min-width: 0;
