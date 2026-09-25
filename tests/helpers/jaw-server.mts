@@ -96,7 +96,9 @@ export function withSettingsSchema(settings: Record<string, unknown>): Record<st
     return {
         settingsSchemaVersion: 4,
         multiSessionDefaultMigration: null,
-        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'left-in-place' },
+        // Current (v2) stamp so boot does not re-run the native-transport migration: these
+        // servers drive fake CLIs over the print transport the loader pins for them.
+        nativeTransportMigration: { id: 'native-transport-default-v2', state: 'left-in-place' },
         maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'left-in-place', from: 1 },
         ...settings,
         multiSession: { enabled: true, maxConcurrent: 4, ...multiSession },

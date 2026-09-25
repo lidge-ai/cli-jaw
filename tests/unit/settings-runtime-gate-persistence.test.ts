@@ -37,7 +37,9 @@ function document(
         settingsSchemaVersion: 4,
         runtimeDefaultMigration: cli === 'claude' ? pending() : null,
         multiSessionDefaultMigration: null,
-        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'already-native' },
+        // Current stamp, for the same reason as the schema version above: a v1 stamp
+        // re-runs the native-transport migration and rewrites the file on its own.
+        nativeTransportMigration: { id: 'native-transport-default-v2', state: 'already-native' },
         maxConcurrentDefaultMigration: {
             id: 'max-concurrent-default-v1',
             state: 'left-in-place',
