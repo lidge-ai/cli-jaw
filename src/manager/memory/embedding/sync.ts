@@ -18,6 +18,8 @@ export interface SyncOptions {
   batchSize?: number;
   concurrency?: number;
   onProgress?: (instanceId: string, done: number, total: number) => void;
+  /** Stops scheduling instances and batches; embeddings already requested are not stored. */
+  signal?: AbortSignal;
 }
 
 interface ChunkRow {
@@ -33,6 +35,7 @@ interface ChunkRow {
 export async function syncAllInstances(opts: SyncOptions): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
   for (const inst of opts.instances) {
+    if (opts.signal?.aborted) break;
     if (!inst.hasDb) continue;
     try {
       const r = await syncInstance(inst.instanceId, inst.dbPath, opts);
@@ -119,6 +122,8 @@ async function syncInstance(
           }
         }
 
+        if (opts.signal?.aborted) return;
+
         if (embeddings.length !== batch.items.length) {
           result.errors.push(`Batch ${batch.start}: expected ${batch.items.length} embeddings, got ${embeddings.length}`);
           return;
@@ -155,6 +160,7 @@ async function syncInstance(
     }
 
     for (let i = 0; i < batches.length; i += concurrency) {
+      if (opts.signal?.aborted) break;
       const group = batches.slice(i, i + concurrency);
       await Promise.all(group.map(b => processBatch(b)));
       if (i + concurrency < batches.length) {

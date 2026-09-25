@@ -61,6 +61,7 @@ import type { EmbeddingConfig } from './memory/embedding/index.js';
 import { addBroadcastListener } from '../core/bus.js';
 import { subscribe as subscribeManagerBus } from '../core/event-bus.js';
 import { exceedsBackpressureLimit, SSE_MAX_BUFFER_BYTES } from '../routes/events.js';
+import { closeSseConnections, trackSseConnection } from '../routes/sse-connections.js';
 import { resolveDashboardHome } from './dashboard-home.js';
 import { fetchWorkerAssistantTextById } from './worker-messages.js';
 import {
@@ -739,10 +740,13 @@ app.get('/api/manager/events/stream', (req, res) => {
     const cleanup = () => {
         if (closed) return;
         closed = true;
+        untrack();
         if (ping) clearInterval(ping);
         if (unsubscribe) unsubscribe();
         if (!res.writableEnded) res.end();
     };
+    // Tracked so shutdown drains this stream before server.close() (#790).
+    const untrack = trackSseConnection(cleanup);
 
     unsubscribe = subscribeManagerBus((entry) => {
         if (closed || res.writableEnded) return;
@@ -1010,6 +1014,7 @@ const shutdown = createDashboardShutdown({
     lifecycle,
     previewProxy,
     server,
+    closeSseConnections,
     exit: code => process.exit(plannedRestartCode ?? code),
 });
 
