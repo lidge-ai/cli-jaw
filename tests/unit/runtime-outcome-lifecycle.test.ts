@@ -438,3 +438,36 @@ for (const mode of ['print-active', 'native-reserved', 'worker'] as const) test(
     else assert.equal(typeof activateSlackToolGrant(requestId, f.scopeKey, f.sessionId), 'undefined');
     assert.ok(activateSlackToolGrant(requestId + '-next', f.scopeKey, f.sessionId));
 });
+
+// Interview mode appends a hidden tracker block. Print turns always stripped it;
+// native finals were stored and shown raw. The pipeline still needs the raw text.
+test('native final: interview tracker never reaches history, agent_done or the projection terminal', async () => {
+    const raw = 'visible answer\n\n<interview_tracker>\nassessment: {"goal":"high"}\nknown: []\nunknown: []\n</interview_tracker>';
+    const f = fixture({ status: 'done', finalText: raw, partialText: '' });
+    const events = await capture(() => handleAgentExit(f.params));
+    assert.deepEqual(f.rows().map(row => row.content), ['visible answer']);
+    assert.equal(events.filter(event => event.type === 'agent_done')[0]?.data['text'], 'visible answer');
+    assert.equal(f.ends[0]?.finalText, 'visible answer');
+    // resolve() keeps the tracker so the orchestrator pipeline can parse it.
+    assert.equal(f.result()?.runtimeOutcome?.finalText, raw);
+    assert.ok(f.result()?.text.includes('<interview_tracker>'));
+});
+
+test('native final without a tracker is stored, shown and resolved unchanged', async () => {
+    const f = fixture({ status: 'done', finalText: 'plain answer', partialText: '' });
+    const events = await capture(() => handleAgentExit(f.params));
+    assert.deepEqual(f.rows().map(row => row.content), ['plain answer']);
+    assert.equal(events.filter(event => event.type === 'agent_done')[0]?.data['text'], 'plain answer');
+    assert.equal(f.ends[0]?.finalText, 'plain answer');
+    assert.equal(f.result()?.runtimeOutcome?.finalText, 'plain answer');
+});
+
+test('internal native final keeps its text for the projection terminal', async () => {
+    const raw = 'employee answer\n<interview_tracker>known: []</interview_tracker>';
+    const f = fixture({ status: 'done', finalText: raw, partialText: '' });
+    f.params.mainManaged = false;
+    await capture(() => handleAgentExit(f.params));
+    assert.deepEqual(f.rows(), []);
+    assert.equal(f.ends[0]?.finalText, raw);
+    assert.equal(f.result()?.runtimeOutcome?.finalText, raw);
+});
