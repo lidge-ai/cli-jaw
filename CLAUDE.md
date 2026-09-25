@@ -11,6 +11,7 @@ Native Code interruption seals callbacks before persisting accepted buffered con
 ## Documentation Map
 
 - Start at `structure/INDEX.md` for the current architecture map.
+- Architecture contract notes live in `structure/AGENTS.md` §Root contract notes.
 - Workbench modernization uses a one-row Activity header with Codex-style expanded rows/groups; the Workbench Settings tab is replaced by a ZCode-style full settings page that swaps the workspace (header gear / Meta+,, `← Back to workspace`, grouped icon nav, card content), persisted as Manager registry `ui.instanceSettingsOpen`. A unified settings registry separates Instance/Manager scopes and the same page is served standalone from `dist/settings` behind the Classic header gear (the right-panel 설정 tab is gone); Classic uses the t3 token shell. Preserve per-page save owners, dirty guards, Preview iframe identity and independent live Requests; see `structure/frontend.md`.
 - Keep `README.md`, `AGENTS.md`, this file, and `structure/AGENTS.md` aligned when command/API/orchestration behavior changes. Concurrent inbound gateway changes belong in `structure/INDEX.md`, `structure/infra.md`, `structure/telegram.md`, and the messaging runtime docs.
 - `docs/` and `structure/` contain public product documentation only. Private plans, audits, evidence, and history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal); request access through an [issue](https://github.com/lidge-ai/cli-jaw/issues).

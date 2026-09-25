@@ -140,6 +140,8 @@
     "test:messaging-conformance": "tsx --experimental-test-module-mocks tests/run.mts tests/unit/channel-contract-conformance.test.ts tests/unit/messaging-command-parity.test.ts tests/unit/messaging-durable-ingress.test.ts tests/unit/telegram-ingress-journal.test.ts tests/unit/discord-ingress-journal.test.ts tests/unit/ingress-generation.test.ts tests/unit/messaging-trace-context.test.ts tests/unit/messaging-metrics.test.ts",
     "check:sidecar-prune-safety": "node scripts/check-sidecar-prune-safety.mjs",
     "sync:electron-version": "node scripts/sync-electron-version.cjs",
+    "gate:dev-ff-main": "node scripts/release-gates.mjs dev-ff-main",
+    "gate:agents-size": "node scripts/release-gates.mjs agents-size",
     "gate:all": "node scripts/release-gates.mjs",
     "prepublishOnly": "npm run check:private-boundary && npm run build && npm run build:frontend && npm run check:frontend-build-output",
     "electron:dev": "concurrently -k -n jaw,electron \"node scripts/electron-dev-manager.mjs\" \"npm --prefix electron run dev\"",
