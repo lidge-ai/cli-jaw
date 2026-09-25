@@ -24,13 +24,13 @@ export function ChannelSetupEntry({ channel, client, dirty, open, onOpenChange, 
     }, [client, dirty, key]);
     const pendingDraft = !open && dirty.isDirty();
     return <>
-        <button ref={trigger} type="button" data-onboard-channel={channel}
+        <button ref={trigger} type="button" className="settings-action" data-onboard-channel={channel}
             disabled={disabled || open || pendingDraft} onClick={() => {
                 if (disabled || dirty.isDirty()) return;
                 dirty.set(key, { value: true, original: false, valid: false });
                 onOpenChange(true);
             }}>{t('onboarding.open')}</button>
-        {pendingDraft && <p className="settings-field-hint">Save or discard your changes before opening setup.</p>}
+        {pendingDraft && <span className="settings-field-hint">Save or discard your changes before opening setup.</span>}
         {open && <ChannelSetupDialog key={channel} channel={channel} client={client} t={t}
             initialDraft={{}} returnFocus={trigger.current}
             onBeforeSave={() => async () => {

@@ -20,6 +20,9 @@ import {
     PageLoading,
     PageOffline,
     usePageSnapshot,
+    SettingsActions,
+    SettingsKeyValue,
+    StatusBadge,
 } from './page-shell';
 import { expandPatch } from './path-utils';
 import { slackText } from './components/SlackSetup';
@@ -190,25 +193,37 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave, man
         >
             <fieldset disabled={setupOpen} className="settings-slack-fields">
             <SettingsSection
-                title="Channels"
-                hint="Choose which channels receive inbound chat. Outbound send can still work on any configured channel."
+                title="Status"
+                hint="Live transport state plus a readiness probe for this channel."
             >
-                <ChannelEnablementControl
-                    pageChannel="discord"
-                    snapshot={state.kind === 'ready' ? state.data : {}}
-                    enabledChannels={enabledChannels}
-                    homeChannel={homeChannel}
-                    setEnabledChannels={setEnabledChannels}
-                    setHomeChannel={setHomeChannel}
-                    dirty={dirty}
-                    idPrefix="di-channel"
+                <SettingsKeyValue
+                    items={[
+                        {
+                            label: 'Discord',
+                            value: enabled ? (
+                                <StatusBadge tone="ok">Enabled</StatusBadge>
+                            ) : (
+                                <StatusBadge tone="neutral">Disabled</StatusBadge>
+                            ),
+                        },
+                        ...(environmentManaged
+                            ? [{ label: 'Managed by', value: environmentVariables.join(', '), mono: true }]
+                            : []),
+                    ]}
                 />
                 <TransportStatusChips client={client} channel="discord" />
+                <HealthBadge
+                    client={client}
+                    label="Discord"
+                    endpoint="/api/health"
+                    method="GET"
+                    interpret={interpretDiscordHealth}
+                />
             </SettingsSection>
 
-            <SettingsSection title="Discord" hint={environmentManaged
+            <SettingsSection title="Credentials" hint={environmentManaged
                 ? t('settings.discord.managedByEnvironment', { variables: environmentVariables.join(', ') })
-                : 'Bot token, guild + channels, forwarding rules.'}>
+                : 'Bot token, guild, and channel IDs.'}>
                 <ToggleField
                     id="dc-enabled"
                     label="Discord enabled"
@@ -276,6 +291,22 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave, man
                         });
                     }}
                 />
+            </SettingsSection>
+
+            <SettingsSection
+                title="Routing"
+                hint="Choose which channels receive inbound chat and how replies are delivered. Outbound send can still work on any configured channel."
+            >
+                <ChannelEnablementControl
+                    pageChannel="discord"
+                    snapshot={state.kind === 'ready' ? state.data : {}}
+                    enabledChannels={enabledChannels}
+                    homeChannel={homeChannel}
+                    setEnabledChannels={setEnabledChannels}
+                    setHomeChannel={setHomeChannel}
+                    dirty={dirty}
+                    idPrefix="di-channel"
+                />
                 <ToggleField
                     id="dc-forwardAll"
                     label="Forward all"
@@ -316,22 +347,16 @@ export default function ChannelsDiscord({ port, client, dirty, registerSave, man
                     }}
                 />
             </SettingsSection>
-
-            <SettingsSection
-                title="Health"
-                hint="Probes /api/health for Discord readiness. Degraded mode means the bot is missing the MESSAGE_CONTENT intent (slash commands only)."
-            >
-                <HealthBadge
-                    client={client}
-                    label="Discord"
-                    endpoint="/api/health"
-                    method="GET"
-                    interpret={interpretDiscordHealth}
-                />
-            </SettingsSection>
             </fieldset>
-            <ChannelSetupEntry channel="discord" client={client} dirty={dirty} disabled={environmentManaged}
-                open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<DiscordSnapshot>('/api/settings'))} />
+            <SettingsSection
+                title="Actions"
+                hint="Guided setup validates credentials with the issuer before saving."
+            >
+                <SettingsActions>
+                    <ChannelSetupEntry channel="discord" client={client} dirty={dirty} disabled={environmentManaged}
+                        open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<DiscordSnapshot>('/api/settings'))} />
+                </SettingsActions>
+            </SettingsSection>
         </form>
     );
 }

@@ -93,15 +93,15 @@ export function ChannelSetupDialog({channel,client,t,initialDraft,returnFocus,on
                 <label htmlFor="sl-setup-name">{t('onboarding.slackAppName')}</label>
                 <input id="sl-setup-name" value={name} onChange={event=>{setName(event.target.value);setFlow(resetSlackSetup);setManifestStatus('');}}/>
                 <p>{t('onboarding.guide.slack')}</p>
-                <button type="button" onClick={()=>void manifest()}>{t('onboarding.slackGenerateManifest')}</button>
+                <button type="button" className="settings-action" onClick={()=>void manifest()}>{t('onboarding.slackGenerateManifest')}</button>
                 <p role="status">{manifestStatus}</p>
-                <button type="button" disabled={flow.slackSetupStage==='manifest'} onClick={()=>{
+                <button type="button" className="settings-action" disabled={flow.slackSetupStage==='manifest'} onClick={()=>{
                     window.open(ISSUER_URLS.slack,'_blank','noopener');setFlow(markSlackIssuerOpened);
                 }}>{t('onboarding.openIssuer')}</button>
             </>}
             {flow.step===1 && channel!=='slack' && <>
                 <p>{t(`onboarding.guide.${channel}`)}</p>
-                <button type="button" onClick={()=>window.open(ISSUER_URLS[channel],'_blank','noopener')}>{t('onboarding.openIssuer')}</button>
+                <button type="button" className="settings-action" onClick={()=>window.open(ISSUER_URLS[channel],'_blank','noopener')}>{t('onboarding.openIssuer')}</button>
             </>}
             {flow.step===2 && fieldsFor(channel).map(field=><label key={field.key}>
                 {t(`onboarding.token.${field.key}`)}{field.optional ? ` (${t('onboarding.optional')})` : ''}
@@ -110,17 +110,17 @@ export function ChannelSetupDialog({channel,client,t,initialDraft,returnFocus,on
                 <span>{t(`onboarding.hint.${channel}.${field.key}`)}</span>
             </label>)}
             {flow.step===3 && <>
-                <button type="button" onClick={()=>void validate()}>{t('onboarding.validate')}</button>
+                <button type="button" className="settings-action" onClick={()=>void validate()}>{t('onboarding.validate')}</button>
                 {flow.validatedIdentity && <p>{t('onboarding.valid',{identity:flow.validatedIdentity})}</p>}
             </>}
             {flow.step===4 && <p>{t(flow.saved?`onboarding.next.${channel}`:'onboarding.saveHint')}</p>}
-            {flow.step>1 && <button type="button" onClick={()=>setFlow(goBack)}>{t('onboarding.back')}</button>}
-            {flow.step<4 ? <button type="button" disabled={!canAdvance(flow)} onClick={()=>setFlow(advance)}>{t('onboarding.next')}</button>
-                : <button type="button" disabled={!flow.validatedIdentity} onClick={()=>void save()}>{t('onboarding.save')}</button>}
+            {flow.step>1 && <button type="button" className="settings-action" onClick={()=>setFlow(goBack)}>{t('onboarding.back')}</button>}
+            {flow.step<4 ? <button type="button" className="settings-action settings-action-save" disabled={!canAdvance(flow)} onClick={()=>setFlow(advance)}>{t('onboarding.next')}</button>
+                : <button type="button" className="settings-action settings-action-save" disabled={!flow.validatedIdentity} onClick={()=>void save()}>{t('onboarding.save')}</button>}
         </fieldset>
         {(error || flow.error || (flow.step===2 && blockerForStep(flow))) && <p role="alert">{error ?? t(`onboarding.error.${flow.error ?? blockerForStep(flow)}`)}</p>}
         {!!flow.missingScopes.length && <p role="alert">{flow.missingScopes.join(', ')}</p>}
         {!!flow.missingCapabilities.length && <p role="status">{t('onboarding.warning.missingCapabilities',{capabilities:flow.missingCapabilities.join(', ')})}</p>}
-        <button type="button" disabled={channel!=='slack' && busy} onClick={close}>{t('onboarding.close')}</button>
+        <button type="button" className="settings-action" disabled={channel!=='slack' && busy} onClick={close}>{t('onboarding.close')}</button>
     </dialog>;
 }

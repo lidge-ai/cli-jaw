@@ -7,7 +7,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SettingsPageProps } from '../types';
 import { ToggleField, SecretField, TextField } from '../fields';
-import { SettingsSection, PageError, PageLoading, usePageSnapshot } from './page-shell';
+import {
+    SettingsSection,
+    PageError,
+    PageLoading,
+    usePageSnapshot,
+    SettingsKeyValue,
+    SettingsNote,
+    StatusBadge,
+} from './page-shell';
+import type { StatusTone } from './page-shell';
 
 // Local mirror of MANAGED_INSTANCE_PORT_FROM/TO (src/manager/constants.ts). The frontend
 // bundle must not import server modules; the backend validates the real range authoritatively.
@@ -119,8 +128,43 @@ export default function TelegramHub({ port, client, dirty, registerSave, manager
     if (loadError) return <PageError message={loadError} />;
     if (!config) return <PageLoading label="Loading Telegram hub…" />;
 
+    const runtimeTone: StatusTone =
+        runtime?.state === 'polling' ? 'ok'
+            : runtime?.state === 'starting' ? 'warn'
+                : runtime?.state === 'error' ? 'error'
+                    : 'neutral';
+
     return (
         <form className="settings-page-form settings-form" onSubmit={(e) => { e.preventDefault(); void onSave(); }}>
+            <SettingsSection title="Status" hint="Live hub runtime reported by the manager.">
+                <SettingsKeyValue
+                    items={[
+                        {
+                            label: 'Hub',
+                            value: enabled ? (
+                                <StatusBadge tone="ok">Enabled</StatusBadge>
+                            ) : (
+                                <StatusBadge tone="neutral">Disabled</StatusBadge>
+                            ),
+                        },
+                        {
+                            label: 'Runtime',
+                            value: (
+                                <StatusBadge tone={runtimeTone}>
+                                    {runtime?.state ?? 'unknown'}
+                                </StatusBadge>
+                            ),
+                        },
+                        ...(runtime?.chatId
+                            ? [{ label: 'Bound chat', value: runtime.chatId, mono: true }]
+                            : []),
+                    ]}
+                />
+                {runtime?.error ? (
+                    <SettingsNote tone="error" role="alert">{runtime.error}</SettingsNote>
+                ) : null}
+            </SettingsSection>
+
             <SettingsSection title="Telegram hub" hint="One dashboard-owned bot routes Telegram chat topics to instances 3457–3506.">
                 <ToggleField
                     id="hub-enabled" label="Enable hub" value={enabled}
@@ -135,11 +179,6 @@ export default function TelegramHub({ port, client, dirty, registerSave, manager
                     id="hub-chat-id" label="Hub chat ID" value={chatId} placeholder="823… or -100…"
                     onChange={(next) => { setChatId(next); dirty.set('hub.chatId', { value: next, original: config.chatId, valid: true }); }}
                 />
-                {runtime ? (
-                    <p className="settings-help">
-                        Runtime: {runtime.state}{runtime.chatId ? ` · ${runtime.chatId}` : ''}{runtime.error ? ` · ${runtime.error}` : ''}
-                    </p>
-                ) : null}
                 <label className="settings-field" htmlFor="hub-default-port">
                     <span className="settings-field-label">Default port</span>
                     <input
@@ -155,21 +194,31 @@ export default function TelegramHub({ port, client, dirty, registerSave, manager
 
             <SettingsSection title="Topic routes" hint="(chatId, threadId) → instance port. Bind in a bot private topic or group topic with /setthread <port>.">
                 {config.routes.length === 0 ? (
-                    <p className="settings-empty">No routes yet.</p>
+                    <SettingsNote>No routes yet.</SettingsNote>
                 ) : (
-                    <table className="settings-table">
-                        <thead><tr><th>Thread</th><th>Port</th><th>Label</th><th>Model</th><th>Prompt</th><th>On</th><th /></tr></thead>
-                        <tbody>
-                            {config.routes.map((r) => (
-                                <tr key={`${r.chatId}:${r.threadId}`}>
-                                    <td>{r.threadId}</td><td>{r.port}</td><td>{r.label || '—'}</td>
-                                    <td>{r.model || '—'}</td><td>{r.systemPrompt ? '✓' : '—'}</td>
-                                    <td>{r.enabled ? '✓' : '—'}</td>
-                                    <td><button type="button" onClick={() => void removeRoute(r)}>Delete</button></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="settings-card-toolbar">
+                        <table className="settings-overrides-table">
+                            <thead><tr><th>Thread</th><th>Port</th><th>Label</th><th>Model</th><th>Prompt</th><th>On</th><th /></tr></thead>
+                            <tbody>
+                                {config.routes.map((r) => (
+                                    <tr key={`${r.chatId}:${r.threadId}`}>
+                                        <td>{r.threadId}</td><td>{r.port}</td><td>{r.label || '—'}</td>
+                                        <td>{r.model || '—'}</td><td>{r.systemPrompt ? '✓' : '—'}</td>
+                                        <td>{r.enabled ? '✓' : '—'}</td>
+                                        <td>
+                                            <button
+                                                type="button"
+                                                className="settings-action settings-action-danger"
+                                                onClick={() => void removeRoute(r)}
+                                            >
+                                                Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </SettingsSection>
         </form>

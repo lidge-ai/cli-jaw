@@ -18,6 +18,9 @@ import {
     PageLoading,
     PageOffline,
     usePageSnapshot,
+    SettingsActions,
+    SettingsKeyValue,
+    StatusBadge,
 } from './page-shell';
 import { expandPatch } from './path-utils';
 import { slackText } from './components/SlackSetup';
@@ -213,25 +216,37 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave, ma
         >
             <fieldset disabled={setupOpen} className="settings-slack-fields">
             <SettingsSection
-                title="Channels"
-                hint="Choose which channels receive inbound chat. Outbound send can still work on any configured channel."
+                title="Status"
+                hint="Live transport state plus a token/connectivity probe for this channel."
             >
-                <ChannelEnablementControl
-                    pageChannel="telegram"
-                    snapshot={state.kind === 'ready' ? state.data : {}}
-                    enabledChannels={enabledChannels}
-                    homeChannel={homeChannel}
-                    setEnabledChannels={setEnabledChannels}
-                    setHomeChannel={setHomeChannel}
-                    dirty={dirty}
-                    idPrefix="tg-channel"
+                <SettingsKeyValue
+                    items={[
+                        {
+                            label: 'Telegram',
+                            value: enabled ? (
+                                <StatusBadge tone="ok">Enabled</StatusBadge>
+                            ) : (
+                                <StatusBadge tone="neutral">Disabled</StatusBadge>
+                            ),
+                        },
+                        ...(environmentManaged
+                            ? [{ label: 'Managed by', value: environmentVariables.join(', '), mono: true }]
+                            : []),
+                    ]}
                 />
                 <TransportStatusChips client={client} channel="telegram" />
+                <HealthBadge
+                    client={client}
+                    label="Telegram"
+                    endpoint="/api/telegram/probe"
+                    method="POST"
+                    interpret={interpretTelegramProbe}
+                />
             </SettingsSection>
 
-            <SettingsSection title="Telegram" hint={environmentManaged
+            <SettingsSection title="Credentials" hint={environmentManaged
                 ? t('settings.telegram.managedByEnvironment', { variables: environmentVariables.join(', ') })
-                : 'Bot token, allow-list, and forwarding rules.'}>
+                : 'Bot token and the allow-list for inbound chats.'}>
                 <ToggleField
                     id="tg-enabled"
                     label="Telegram enabled"
@@ -284,6 +299,22 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave, ma
                         });
                     }}
                 />
+            </SettingsSection>
+
+            <SettingsSection
+                title="Routing"
+                hint="Choose which channels receive inbound chat and how replies are delivered. Outbound send can still work on any configured channel."
+            >
+                <ChannelEnablementControl
+                    pageChannel="telegram"
+                    snapshot={state.kind === 'ready' ? state.data : {}}
+                    enabledChannels={enabledChannels}
+                    homeChannel={homeChannel}
+                    setEnabledChannels={setEnabledChannels}
+                    setHomeChannel={setHomeChannel}
+                    dirty={dirty}
+                    idPrefix="tg-channel"
+                />
                 <ToggleField
                     id="tg-forwardAll"
                     label="Forward all responses"
@@ -311,22 +342,16 @@ export default function ChannelsTelegram({ port, client, dirty, registerSave, ma
                     }}
                 />
             </SettingsSection>
-
-            <SettingsSection
-                title="Health"
-                hint="Probe the bot to confirm token + connectivity. 404 means the instance hasn't shipped the probe endpoint yet."
-            >
-                <HealthBadge
-                    client={client}
-                    label="Telegram"
-                    endpoint="/api/telegram/probe"
-                    method="POST"
-                    interpret={interpretTelegramProbe}
-                />
-            </SettingsSection>
             </fieldset>
-            <ChannelSetupEntry channel="telegram" client={client} dirty={dirty} disabled={environmentManaged}
-                open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<TelegramSnapshot>('/api/settings'))} />
+            <SettingsSection
+                title="Actions"
+                hint="Guided setup validates credentials with the issuer before saving."
+            >
+                <SettingsActions>
+                    <ChannelSetupEntry channel="telegram" client={client} dirty={dirty} disabled={environmentManaged}
+                        open={setupOpen} onOpenChange={setSetupOpen} onSaved={async () => setData(await client.get<TelegramSnapshot>('/api/settings'))} />
+                </SettingsActions>
+            </SettingsSection>
         </form>
     );
 }

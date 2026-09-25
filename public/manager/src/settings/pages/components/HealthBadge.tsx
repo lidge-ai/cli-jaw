@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsClient } from '../../types';
 import { SettingsRequestError } from '../../settings-client';
+import { StatusBadge } from '../page-shell';
+import type { StatusTone } from '../page-shell';
 
 export type HealthState =
     | { kind: 'idle' }
@@ -66,21 +68,24 @@ export function HealthBadge({ client, label, endpoint, method = 'GET', interpret
         };
     }, [auto, probe]);
 
+    const tone: StatusTone =
+        state.kind === 'ok' ? 'ok'
+            : state.kind === 'degraded' ? 'warn'
+                : state.kind === 'error' ? 'error'
+                    : 'neutral';
     return (
-        <div className="settings-health-badge" role="status" aria-live="polite">
+        <div className="settings-health-badge settings-card-toolbar" role="status" aria-live="polite">
             <button
                 type="button"
-                className="settings-action settings-action-discard"
+                className="settings-action"
                 onClick={() => void probe()}
                 disabled={state.kind === 'checking'}
             >
                 {state.kind === 'checking' ? 'Checking…' : `Check ${label}`}
             </button>
-            <span className={`settings-health-pill is-${state.kind}`}>
-                {pillLabel(state)}
-            </span>
+            <StatusBadge tone={tone}>{pillLabel(state)}</StatusBadge>
             {detailFor(state) ? (
-                <span className="settings-health-detail">{detailFor(state)}</span>
+                <span className="settings-health-detail settings-field-hint">{detailFor(state)}</span>
             ) : null}
         </div>
     );
