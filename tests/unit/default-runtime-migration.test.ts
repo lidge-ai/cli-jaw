@@ -86,7 +86,9 @@ test('DRM-004: a current-schema pending reload is not rewritten', () => {
         settingsSchemaVersion: config.SETTINGS_SCHEMA_VERSION,
         runtimeDefaultMigration: pending(),
         multiSessionDefaultMigration: { id: 'multi-session-default-v3', state: 'pending' },
-        nativeTransportMigration: { id: 'native-transport-default-v1', state: 'left-in-place' },
+        // The current native-transport stamp: a v1 stamp re-runs the transport migration
+        // on load, which would rewrite the file for a reason this test is not about.
+        nativeTransportMigration: { id: config.NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' },
         maxConcurrentDefaultMigration: { id: 'max-concurrent-default-v1', state: 'left-in-place', from: 1 },
         multiSession: { enabled: false, maxConcurrent: 1, midRunPolicy: 'steer', channels: { telegram: false, discord: false, slack: true } },
         messaging: { enabledChannels: ['telegram'], homeChannel: 'telegram', latestSeen: {}, lastActive: {} },

@@ -96,29 +96,31 @@ test('boot invalid transport is removed before defaults without losing siblings'
     assert.equal(config.isSettingsPersistenceBlocked(), false);
 });
 
-test('established missing-file home is conservative while retaining migration shape', t => {
+test('established missing-file home gets native transports but keeps conservative sessions', t => {
     writeFileSync(config.DB_PATH, 'established-home-marker');
     t.after(() => unlinkSync(config.DB_PATH));
-    assertModes(config.settingsForHomeWithoutSettingsFile(), ['print', 'print', 'print']);
+    assertModes(config.settingsForHomeWithoutSettingsFile(), ['native', 'native', 'native']);
     const loaded = config.loadSettings();
-    assertModes(loaded, ['print', 'print', 'print']);
+    assertModes(loaded, ['native', 'native', 'native']);
     assert.equal(loaded.multiSession.enabled, false);
     assert.equal(loaded.multiSession.maxConcurrent, 1);
     assert.equal(loaded.multiSessionDefaultMigration?.state, 'pending');
-    assert.equal(loaded.nativeTransportMigration?.state, 'left-in-place');
+    assert.equal(loaded.nativeTransportMigration?.id, config.NATIVE_TRANSPORT_MIGRATION_ID);
+    assert.equal(loaded.nativeTransportMigration?.state, 'applied');
     assert.equal(loaded.maxConcurrentDefaultMigration?.state, 'left-in-place');
     assert.equal(config.isSettingsPersistenceBlocked(), false);
     const again = config.loadSettings();
-    assertModes(again, ['print', 'print', 'print']);
+    assertModes(again, ['native', 'native', 'native']);
     assert.equal(again.multiSession.maxConcurrent, 1);
-    assert.equal(JSON.parse(readFileSync(config.SETTINGS_PATH, 'utf8')).nativeTransportMigration.state, 'left-in-place');
+    assert.equal(JSON.parse(readFileSync(config.SETTINGS_PATH, 'utf8')).nativeTransportMigration.state, 'applied');
 });
 
-test('corrupt and future-version existing files stay print and preserve persistence latch', () => {
+test('corrupt and future-version existing files run native in memory and preserve persistence latch', () => {
     for (const source of ['{broken', JSON.stringify({ settingsSchemaVersion: 99, cli: 'codex-app' })]) {
         writeSettings(source);
         const loaded = config.loadSettings();
-        assertModes(loaded, ['print', 'print', 'print']);
+        // The stand-in holds Auto permissions, so every engine can run natively.
+        assertModes(loaded, ['native', 'native', 'native']);
         assert.equal(config.isSettingsPersistenceBlocked(), true);
         config.saveSettings({ ...loaded, locale: 'ko' });
         assert.equal(readFileSync(config.SETTINGS_PATH, 'utf8'), source);
@@ -191,19 +193,19 @@ test('actual existing --force init is not classified fresh under a future-native
     assert.deepEqual(result.modes, ['native', 'native', 'native'], 'unstamped --force rewrite then loadSettings is the stamped migrator');
 });
 
-test('actual init without settings in an established home writes conservative choices', t => {
+test('actual init without settings in an established home writes native transports and conservative sessions', t => {
     const home = mkdtempSync(join(tmpdir(), 'jaw-transport-established-init-'));
     t.after(() => rmSync(home, { recursive: true, force: true }));
     writeFileSync(join(home, 'jaw.db'), 'established-marker');
     const result = initAt(home);
     const written = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8'));
-    assertModes(written, ['print', 'print', 'print']);
-    assert.equal(written.nativeTransportMigration?.state, 'left-in-place');
+    assertModes(written, ['native', 'native', 'native']);
+    assert.equal(written.nativeTransportMigration?.state, 'applied');
     assert.equal(written.maxConcurrentDefaultMigration?.state, 'left-in-place');
     assert.equal(written.multiSession.maxConcurrent, 1);
-    assert.deepEqual(result.modes, ['print', 'print', 'print']);
-    assert.equal(result.nativeTransport?.state, 'left-in-place');
+    assert.deepEqual(result.modes, ['native', 'native', 'native']);
+    assert.equal(result.nativeTransport?.state, 'applied');
     assert.equal(result.maxConcurrentDefault?.state, 'left-in-place');
     assert.equal(result.maxConcurrent, 1);
-    assert.deepEqual(result.secondModes, ['print', 'print', 'print']);
+    assert.deepEqual(result.secondModes, ['native', 'native', 'native']);
 });

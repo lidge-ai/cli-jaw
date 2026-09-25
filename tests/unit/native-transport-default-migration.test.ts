@@ -9,6 +9,7 @@ import {
     isSettingsPersistenceBlocked,
     JAW_HOME,
     loadSettings,
+    NATIVE_TRANSPORT_MIGRATION_ID,
     SETTINGS_PATH,
 } from '../../src/core/config.ts';
 import { runtimeSessionBucket } from '../../src/agent/runtime/selection.ts';
@@ -110,7 +111,7 @@ test('custom permissions leave all three print and skip claude', () => {
     }
 });
 
-test('post-stamp explicit print survives reload', () => {
+test('post-v2-stamp explicit print survives reload', () => {
     const existing = document();
     for (const cli of engines) delete existing.perCli[cli]!.transport;
     writeSettings(existing);
@@ -126,19 +127,71 @@ test('post-stamp explicit print survives reload', () => {
     assert.equal(disk().perCli.cursor.transport, 'print');
 });
 
-test('partial stamp is not finished when permissions later become auto', () => {
+test('v1 stamp with a print chosen after it flips to native once and stamps v2', () => {
+    const existing = document();
+    existing.permissions = 'auto';
+    existing.nativeTransportMigration = { id: 'native-transport-default-v1', state: 'applied' };
+    existing.perCli.cursor!.transport = 'print';
+    existing.perCli.grok!.transport = 'native';
+    existing.perCli.claude!.transport = 'print';
+    writeSettings(existing);
+
+    const loaded = loadSettings();
+    assert.deepEqual(modesOf(loaded), ['native', 'native', 'native']);
+    assert.deepEqual(loaded.nativeTransportMigration, { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' });
+    assert.deepEqual(modesOf(disk()), ['native', 'native', 'native']);
+
+    // The update ran once: a print chosen after the v2 stamp is operator intent again.
+    const next = disk();
+    next.perCli.claude.transport = 'print';
+    writeSettings(next);
+    assert.equal(loadSettings().perCli.claude.transport, 'print');
+    assert.equal(disk().perCli.claude.transport, 'print');
+});
+
+test('v1 stamp under safe permissions flips claude only and stamps v2 partial', () => {
+    const existing = document();
+    existing.permissions = 'safe';
+    existing.nativeTransportMigration = { id: 'native-transport-default-v1', state: 'left-in-place' };
+    for (const cli of engines) existing.perCli[cli]!.transport = 'print';
+    writeSettings(existing);
+
+    const loaded = loadSettings();
+    assert.deepEqual(modesOf(loaded), ['print', 'print', 'native']);
+    assert.equal(loaded.nativeTransportMigration?.id, NATIVE_TRANSPORT_MIGRATION_ID);
+    assert.equal(loaded.nativeTransportMigration?.state, 'partial');
+});
+
+test('v2 partial stamp retries only the skipped engines once permissions become auto', () => {
     const existing = document();
     existing.permissions = 'safe';
     for (const cli of engines) existing.perCli[cli]!.transport = 'print';
     writeSettings(existing);
     loadSettings();
 
+    // Claude was flipped by the stamp; a print chosen for it afterwards is operator intent.
     const next = disk();
     next.permissions = 'auto';
+    next.perCli.claude.transport = 'print';
     writeSettings(next);
+    const loaded = loadSettings();
+    assert.deepEqual(modesOf(loaded), ['native', 'native', 'print']);
+    assert.deepEqual(loaded.nativeTransportMigration, { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' });
+    assert.deepEqual(modesOf(disk()), ['native', 'native', 'print']);
+});
+
+test('v2 partial stamp under unchanged restrictive permissions does not rewrite the file', () => {
+    const existing = document();
+    existing.permissions = 'safe';
+    for (const cli of engines) existing.perCli[cli]!.transport = 'print';
+    writeSettings(existing);
+    loadSettings();
+    const before = readFileSync(SETTINGS_PATH, 'utf8');
+
     const loaded = loadSettings();
     assert.deepEqual(modesOf(loaded), ['print', 'print', 'native']);
     assert.equal(loaded.nativeTransportMigration?.state, 'partial');
+    assert.equal(readFileSync(SETTINGS_PATH, 'utf8'), before);
 });
 
 test('runtimeSessionBucket prefix is unchanged', () => {
@@ -146,17 +199,17 @@ test('runtimeSessionBucket prefix is unchanged', () => {
     assert.equal(runtimeSessionBucket('x', 'native'), 'native-v1:x');
 });
 
-test('established missing-file stays print across two loads', () => {
+test('established missing-file gets native across two loads with conservative sessions', () => {
     writeFileSync(DB_PATH, 'established-home-marker');
     const first = loadSettings();
-    assert.deepEqual(modesOf(first), ['print', 'print', 'print']);
-    assert.equal(first.nativeTransportMigration?.state, 'left-in-place');
+    assert.deepEqual(modesOf(first), ['native', 'native', 'native']);
+    assert.equal(first.nativeTransportMigration?.state, 'applied');
     assert.equal(first.maxConcurrentDefaultMigration?.state, 'left-in-place');
     assert.equal(first.multiSession.maxConcurrent, 1);
     const written = disk();
-    assert.equal(written.nativeTransportMigration.state, 'left-in-place');
+    assert.equal(written.nativeTransportMigration.state, 'applied');
     const second = loadSettings();
-    assert.deepEqual(modesOf(second), ['print', 'print', 'print']);
+    assert.deepEqual(modesOf(second), ['native', 'native', 'native']);
     assert.equal(second.multiSession.maxConcurrent, 1);
 });
 
@@ -173,8 +226,10 @@ test('fresh missing-file stays native across two loads', () => {
 
 test('persisted partial + from/to stamps reload without latch', () => {
     const existing = document();
+    // Cursor stays skipped because Safe still cannot run it natively.
+    existing.permissions = 'safe';
     existing.nativeTransportMigration = {
-        id: 'native-transport-default-v1',
+        id: NATIVE_TRANSPORT_MIGRATION_ID,
         state: 'partial',
         skipped: [{ cli: 'cursor', reason: 'restrictive_permissions' }],
     };
@@ -196,12 +251,21 @@ test('persisted partial + from/to stamps reload without latch', () => {
     assert.equal(loaded.perCli.cursor.transport, 'print');
 });
 
-test('exported helper skips a stamped object', () => {
+test('exported helper skips a v2-stamped object and re-runs a v1-stamped one', () => {
     const s = {
+        permissions: 'auto',
+        perCli: { cursor: { transport: 'print' }, grok: { transport: 'print' }, claude: { transport: 'print' } },
+        nativeTransportMigration: { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' },
+    };
+    assert.deepEqual(applyNativeTransportDefaultMigration(s), { didChange: false });
+    assert.equal(s.perCli.cursor.transport, 'print');
+
+    const legacy = {
         permissions: 'auto',
         perCli: { cursor: { transport: 'print' }, grok: { transport: 'print' }, claude: { transport: 'print' } },
         nativeTransportMigration: { id: 'native-transport-default-v1', state: 'applied' },
     };
-    assert.deepEqual(applyNativeTransportDefaultMigration(s), { didChange: false });
-    assert.equal(s.perCli.cursor.transport, 'print');
+    assert.deepEqual(applyNativeTransportDefaultMigration(legacy), { didChange: true });
+    assert.deepEqual(Object.values(legacy.perCli).map(row => row.transport), ['native', 'native', 'native']);
+    assert.deepEqual(legacy.nativeTransportMigration, { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' });
 });

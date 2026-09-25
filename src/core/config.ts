@@ -221,7 +221,11 @@ export function runMigration(projectDir: string) {
 export const SETTINGS_SCHEMA_VERSION = 4;
 export const RUNTIME_DEFAULT_MIGRATION_ID = 'codex-app-default-v2' as const;
 export const MULTI_SESSION_DEFAULT_MIGRATION_ID = 'multi-session-default-v3' as const;
-export const NATIVE_TRANSPORT_MIGRATION_ID = 'native-transport-default-v1' as const;
+// v2 re-runs the flip for every existing home, including one that chose print after the
+// v1 stamp: an update moves every switchable engine to native where its permissions let
+// native run. v1 stamps stay valid documents; they just no longer end the migration.
+export const NATIVE_TRANSPORT_MIGRATION_ID = 'native-transport-default-v2' as const;
+export const LEGACY_NATIVE_TRANSPORT_MIGRATION_IDS = ['native-transport-default-v1'] as const;
 export const MAX_CONCURRENT_DEFAULT_MIGRATION_ID = 'max-concurrent-default-v1' as const;
 // The schema version that introduced the session-default flip. Its migration marker is
 // keyed to this boundary, not to SETTINGS_SCHEMA_VERSION, so later schema bumps do not
@@ -244,7 +248,7 @@ export type MultiSessionDefaultMigration = {
 };
 
 export type NativeTransportMigration = {
-    id: typeof NATIVE_TRANSPORT_MIGRATION_ID;
+    id: typeof NATIVE_TRANSPORT_MIGRATION_ID | (typeof LEGACY_NATIVE_TRANSPORT_MIGRATION_IDS)[number];
     state: 'applied' | 'already-native' | 'partial' | 'left-in-place';
     skipped?: Array<{ cli: 'cursor' | 'grok' | 'claude'; reason: string }>;
 };
@@ -564,18 +568,17 @@ export function settingsForHomeWithoutSettingsFile(): ReturnType<typeof createDe
         };
         return next;
     }
+    // Transports are not pinned to print here: an established home gets native like any
+    // other upgrade, for each engine its permissions let run natively.
     for (const cli of SWITCHABLE_NATIVE_CLIS) {
-        next.perCli[cli] = { ...next.perCli[cli]!, transport: 'print' };
+        next.perCli[cli] = { ...next.perCli[cli]!, transport: nativeTransportFor(cli, next.permissions) };
     }
     next.multiSession = { ...next.multiSession, ...LEGACY_MULTI_SESSION_BASELINE };
     next.multiSessionDefaultMigration = {
         id: MULTI_SESSION_DEFAULT_MIGRATION_ID,
         state: 'pending',
     };
-    next.nativeTransportMigration = {
-        id: NATIVE_TRANSPORT_MIGRATION_ID,
-        state: 'left-in-place',
-    };
+    next.nativeTransportMigration = nativeTransportStamp(next.permissions);
     next.maxConcurrentDefaultMigration = {
         id: MAX_CONCURRENT_DEFAULT_MIGRATION_ID,
         state: 'left-in-place',
@@ -1225,7 +1228,7 @@ function validateNativeTransportMigration(value: unknown): void {
     if (keys.some((key) => !allowed.has(key))
         || !keys.includes('id')
         || !keys.includes('state')
-        || migration['id'] !== NATIVE_TRANSPORT_MIGRATION_ID
+        || !isNativeTransportMigrationId(migration['id'])
         || !validState) {
         throw new Error('invalid_native_transport_migration');
     }
@@ -1354,15 +1357,47 @@ function canFlipNativeTransport(
         : permissions === 'auto';
 }
 
-/** Boot-only. Do not call from migrateSettings, ENOENT, init, or the unreadable catch. */
+function isNativeTransportMigrationId(value: unknown): boolean {
+    return value === NATIVE_TRANSPORT_MIGRATION_ID
+        || (LEGACY_NATIVE_TRANSPORT_MIGRATION_IDS as readonly unknown[]).includes(value);
+}
+
+/** The transport an engine gets on update: native unless its permissions cannot run natively. */
+function nativeTransportFor(cli: typeof SWITCHABLE_NATIVE_CLIS[number], permissions: unknown): 'native' | 'print' {
+    return canFlipNativeTransport(cli, permissions) ? 'native' : 'print';
+}
+
+/** The stamp a home that received `nativeTransportFor` on every engine carries. */
+function nativeTransportStamp(permissions: unknown): NativeTransportMigration {
+    const skipped = SWITCHABLE_NATIVE_CLIS
+        .filter(cli => !canFlipNativeTransport(cli, permissions))
+        .map(cli => ({ cli, reason: nativeTransportSkipReason(cli) }));
+    return skipped.length > 0
+        ? { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'partial', skipped }
+        : { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' };
+}
+
+/**
+ * Boot-only. Do not call from migrateSettings, ENOENT, init, or the unreadable catch.
+ *
+ * Without a v2 stamp (absent, or a v1 stamp of any state) every switchable engine that is
+ * not native flips when its permissions allow, including one whose print was chosen after
+ * v1. With a v2 `partial` stamp only the engines the stamp skipped are retried: their
+ * print was the system's refusal, not an operator choice, so they flip once permissions
+ * allow. Any other v2 stamp is final, and a print chosen after it is kept.
+ */
 export function applyNativeTransportDefaultMigration(s: Record<string, any>): SettingsDefaultMigrationResult {
-    if (hasNamedMigrationStamp(s['nativeTransportMigration'], NATIVE_TRANSPORT_MIGRATION_ID)) {
-        return { didChange: false };
-    }
+    const stamp = s['nativeTransportMigration'];
+    const stamped = hasNamedMigrationStamp(stamp, NATIVE_TRANSPORT_MIGRATION_ID);
+    const retry = stamped && stamp['state'] === 'partial' && Array.isArray(stamp['skipped'])
+        ? new Set((stamp['skipped'] as Array<{ cli?: unknown }>).map(row => row?.cli))
+        : null;
+    if (stamped && !retry) return { didChange: false };
     if (!isPlainRecord(s['perCli'])) s['perCli'] = {};
     const skipped: NonNullable<NativeTransportMigration['skipped']> = [];
     let flipped = false;
     for (const cli of SWITCHABLE_NATIVE_CLIS) {
+        if (retry && !retry.has(cli)) continue;
         const current = isPlainRecord(s['perCli'][cli]) ? s['perCli'][cli] : {};
         if (resolveRuntimeTransport(current['transport']) === 'native') continue;
         if (!canFlipNativeTransport(cli, s['permissions'])) {
@@ -1371,6 +1406,15 @@ export function applyNativeTransportDefaultMigration(s: Record<string, any>): Se
         }
         s['perCli'][cli] = { ...current, transport: 'native' };
         flipped = true;
+    }
+    if (retry) {
+        // Nothing became runnable: leave the stored stamp byte-for-byte, so an unchanged
+        // restrictive home does not rewrite settings.json on every boot.
+        if (!flipped) return { didChange: false };
+        s['nativeTransportMigration'] = skipped.length > 0
+            ? { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'partial', skipped }
+            : { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'applied' };
+        return { didChange: true };
     }
     s['nativeTransportMigration'] = skipped.length > 0
         ? { id: NATIVE_TRANSPORT_MIGRATION_ID, state: 'partial', skipped }
@@ -1601,9 +1645,6 @@ export function loadSettings() {
 
         const next = createDefaultSettings();
         next.cli = 'claude';
-        for (const cli of SWITCHABLE_NATIVE_CLIS) {
-            next.perCli[cli] = { ...next.perCli[cli]!, transport: 'print' };
-        }
         // This branch stands in for a state we could not read — corrupt JSON, an
         // unsupported version, a permission error. The new-install defaults are the wrong
         // thing to borrow here: they would turn sessions on for someone whose real
@@ -1614,6 +1655,11 @@ export function loadSettings() {
         // A file whose permissions we refused must not come back as Auto (YOLO).
         if (err?.message === 'invalid_settings_permissions') next.permissions = 'safe';
         applyEnvOverrides(next);
+        // Transport follows the permissions this in-memory stand-in actually holds: native
+        // where they let native run, print otherwise (Cursor/Grok under Safe).
+        for (const cli of SWITCHABLE_NATIVE_CLIS) {
+            next.perCli[cli] = { ...next.perCli[cli]!, transport: nativeTransportFor(cli, next.permissions) };
+        }
         commitCandidate({ value: next, shape: 'absent' });
 
         console.warn(`[jaw:settings] failed to load ${SETTINGS_PATH}: ${err?.message || String(error)}`);
