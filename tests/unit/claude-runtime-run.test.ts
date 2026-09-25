@@ -47,7 +47,9 @@ mock.module('../../src/trace/store.js', { namedExports: {
         traceEnds.push({ id, status }); traceClosePolicies.push(policy);
     },
 } });
-mock.module('../../src/core/db.js', { namedExports: { insertMessage: { run() {} } } });
+// Records the user rows the adapter stores (claude-runtime-run.ts insert site).
+const insertedRows: unknown[][] = [];
+mock.module('../../src/core/db.js', { namedExports: { insertMessage: { run(...args: unknown[]) { insertedRows.push(args); } } } });
 mock.module('../../src/core/bus.js', { namedExports: {
     broadcast: (name: string, value: Record<string, unknown>) => {
         broadcasts.push({ name, value });
@@ -67,6 +69,7 @@ mock.module('../../src/agent/runtime/projection.js', { namedExports: { RuntimePr
 } } });
 mock.module('../../src/agent/runtime/events.js', { namedExports: { recordRuntimeEvent: () => null } });
 const { startClaudeNativeRun, claudeFailureDiagnostic } = await import('../../src/agent/claude-runtime-run.ts');
+const { withSkillMentions } = await import('../../src/core/skill-mentions.ts');
 
 const outcome: RuntimeTurnOutcome = { status: 'done', finalText: 'answer', partialText: 'partial' };
 function fixture(worker = false) {
@@ -538,4 +541,18 @@ test('late successful owned retirement releases its retained control only after 
     assert.equal(lateCleanup, 1);
     assert.equal(reserved[0]!.current(), false);
     assert.equal(hasClaudeWorker('worker'), false);
+});
+
+test('a main run stores what the user wrote, not the appended inline-skill block', async () => {
+    const f = fixture();
+    const typed = 'job text $jaw-browser';
+    const skills = [{ id: 'jaw-browser', name: 'jaw-browser', description: 'Chrome', content: '# Browser skill body' }];
+    const sent = withSkillMentions(typed, typed, { skills, cli: 'claude' });
+    assert.ok(sent.includes('# Browser skill body'));
+    f.options.exit.prompt = sent;
+    insertedRows.length = 0;
+    await f.start().promise;
+    const userRows = insertedRows.filter(args => args[0] === 'user');
+    assert.equal(userRows.length, 1);
+    assert.equal(userRows[0]?.[1], typed);
 });
