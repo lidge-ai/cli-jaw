@@ -1,4 +1,4 @@
-import { activityEntryText, activityStatus, type ActivityState } from '../../../src/shared/activity-state.js';
+import { activityStatus, type ActivityState } from '../../../src/shared/activity-state.js';
 import { groupActivityEntries } from '../../../src/shared/activity-kind.js';
 import { createActivityRow, updateActivityRow, createActivityRows } from './activity-rows.js';
 import type { RuntimeItemStatus } from '../../../src/shared/runtime-contract.js';
@@ -12,7 +12,6 @@ export interface ActivityChoices {
 
 const MAX_CHOICES = 128;
 const PAGE_SIZE = 40;
-const PREVIEW_CHARS = 3000;
 
 export const createActivityChoices = (): ActivityChoices => ({ open: false, items: new Map(), page: null });
 
@@ -178,8 +177,9 @@ export function createActivityView(
         connection.hidden = !display.connectionUnavailable;
         const loss = model.omitted;
         const entries = [...model.entries.values()];
-        const limited = !!(loss.entries || loss.textChars || loss.requests || loss.finalChars)
-            || entries.some(entry => activityEntryText(entry).length > PREVIEW_CHARS);
+        // Rows render everything retention kept, so the notice fires only when
+        // retention itself dropped something — never for display clipping.
+        const limited = !!(loss.entries || loss.textChars || loss.requests || loss.finalChars);
         text(omitted, limited
             ? 'Preview is limited. Some activity, text or request notices are omitted.' : '');
         omitted.hidden = !limited;
@@ -210,7 +210,7 @@ export function createActivityView(
                 node.ontoggle = () => saveItem(entry.itemId, itemNode);
                 nodes.set(entry.itemId, node);
             }
-            updateActivityRow(node, entry, PREVIEW_CHARS);
+            updateActivityRow(node, entry);
             const open = choices.items.get(entry.itemId) ?? (entry.kind === 'tool' && entry.status === 'running');
             renderedOpen.set(node, open);
             if (node.open !== open) node.open = open;

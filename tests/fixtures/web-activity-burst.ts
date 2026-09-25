@@ -253,8 +253,10 @@ function preview(cycle: CycleState): BurstPreview {
     const root = turn.view.element;
     for (const node of root.querySelectorAll<HTMLElement>('.activity-item')) {
         const id = node.dataset.activityItemId ?? '';
+        // Bulk outputs arrive as 4096-byte fields; retention keeps the 9-char
+        // name then gives output the remaining 4087 chars, cutting it mid-body.
         const expected = id.startsWith('bulk-')
-            ? `C${decimal(cycle.binding.cycle.index, 2)}B${id.slice(5)}|${'x'.repeat(2991)}\n[Preview limited; some text is omitted]`
+            ? `C${decimal(cycle.binding.cycle.index, 2)}B${id.slice(5)}|${'x'.repeat(4078)}`
             : 'ok';
         requireFact(node.querySelector('.activity-item-text')?.textContent === expected, 'visible_preview_oracle');
     }

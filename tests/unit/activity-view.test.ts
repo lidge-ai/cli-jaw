@@ -142,7 +142,8 @@ test('tool fields and latest action render literal XSS text without HTML or mark
     assert.match(group.firstElementChild!.getAttribute('aria-label')!, /1 step/);
     assert.ok(group.firstElementChild!.textContent!.includes(attack));
     assert.equal(view.element.querySelector('img, script, strong'), null);
-    assert.equal(rows(view.element)[0].querySelector('pre')?.textContent, [attack, attack, attack].join('\n'));
+    const pres = [...rows(view.element)[0].querySelectorAll('.activity-item-body pre')].map(node => node.textContent);
+    assert.deepEqual(pres, [attack, attack, attack]);
 });
 
 for (const ending of ['done', 'error'] as const) {
@@ -390,16 +391,25 @@ test('pending native toggles survive immediate recycle and preview eviction does
     assert.equal(returned.querySelector('pre')!.textContent, 'returned snapshot');
 });
 
-test('view text clipping notice lives in the disclosure body and survives a collapsed group', () => {
+test('retention-omission notice lives in the disclosure body and survives a collapsed group', () => {
     const { model, view, group } = mount();
-    tool(model, 'long', '가'.repeat(3500));
-    assert.equal(model.omitted.textChars, 0);
+    tool(model, 'long', '가'.repeat(5000));
+    assert.ok(model.omitted.textChars > 0);
     view.render(model);
     assert.equal(group.open, false);
     const notice = view.element.querySelector<HTMLElement>('.activity-omitted')!;
     assert.equal(notice.hidden, false);
     assert.equal(notice.closest('details'), group);
     assert.match(notice.textContent!, /omitted/);
+});
+
+test('fully retained text is shown without the omission notice', () => {
+    const { model, view } = mount();
+    tool(model, 'long', '가'.repeat(3500));
+    assert.equal(model.omitted.textChars, 0);
+    view.render(model);
+    assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, true);
+    assert.equal(rows(view.element)[0].querySelector('pre')!.textContent, '가'.repeat(3500));
 });
 
 test('choice saturation preserves all 128 prior choices, refuses new opens and recovers after closing', async () => {
@@ -461,8 +471,7 @@ test('notices and Trace belong to the disclosure body; answer remains independen
     assert.equal(omitted.closest('details'), group);
     assert.match(omitted.textContent!, /omitted/i);
     assert.match(view.element.textContent!, /live Requests/);
-    assert.match(rows(view.element)[0].querySelector('pre')!.textContent!, /Preview limited/);
-    assert.ok(rows(view.element)[0].querySelector('pre')!.textContent!.length < 3200);
+    assert.equal(rows(view.element)[0].querySelector('pre')!.textContent, '가'.repeat(4000));
     const trace = button(view.element, 'Open in Trace');
     assert.equal(trace.closest('summary'), null);
     assert.equal(trace.closest('details'), group);
@@ -573,8 +582,8 @@ test('reasoning/message split groups, use icons and retain literal bounded previ
     assert.equal(view.element.querySelectorAll('.activity-row-reasoning').length, 1); assert.equal(view.element.querySelectorAll('.activity-row-message').length, 1);
     assert.equal(view.element.querySelector('script'), null); assert.equal(view.element.querySelectorAll('.activity-row-icon svg').length, 7);
     const pre = rows(view.element).at(-1)!.querySelector('pre')!;
-    assert.equal(pre.textContent, 'x'.repeat(3000) + '\n[Preview limited; some text is omitted]');
-    assert.equal(pre.tabIndex, 0); assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, false);
+    assert.equal(pre.textContent, 'x'.repeat(3500));
+    assert.equal(pre.tabIndex, 0); assert.equal(view.element.querySelector<HTMLElement>('.activity-omitted')!.hidden, true);
 });
 
 // The turn carries no leading margin so its summary row lines up with the 24px avatar.
@@ -638,4 +647,79 @@ test('the activity turn carries no leading margin and leads the visible body con
             + "so the turn's removed leading margin would close a real gap");
     }
     view.dispose();
+});
+
+test('T1: JSON tool input labels the decoded command, shows its description and a structured body', () => {
+    const { model, view } = mount();
+    const command = 'ssh clisu-oracle \'cat > ~/git/hooks/pre-receive <<EOF\n#!/bin/bash\nreject\nEOF\'';
+    send(model, { kind: 'tool', itemId: 'ssh', name: 'bash', status: 'done',
+        input: JSON.stringify({ command, description: 'Install raw-rejecting pre-receive hook on clisu' }),
+        output: 'hook installed' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const summary = row.querySelector('summary')!;
+    assert.equal(summary.querySelector('.activity-row-label')!.textContent,
+        `Ran ${'ssh clisu-oracle \'cat > ~/git/hooks/pre-receive <<EOF'}`);
+    assert.doesNotMatch(summary.textContent!, /\{"command":/);
+    const desc = summary.querySelector<HTMLElement>('.activity-row-desc')!;
+    assert.equal(desc.hidden, false);
+    assert.equal(desc.textContent, 'Install raw-rejecting pre-receive hook on clisu');
+    const blocks = [...row.querySelectorAll<HTMLElement>('.activity-block')];
+    assert.deepEqual(blocks.map(node => node.dataset['block']), ['input', 'output']);
+    assert.equal(blocks[0].querySelector('.activity-block-label')!.textContent, 'Command');
+    assert.equal(blocks[0].querySelector('pre')!.textContent, command);
+    assert.equal(blocks[1].querySelector('.activity-block-label')!.textContent, 'Output');
+    assert.equal(blocks[1].querySelector('pre')!.textContent, 'hook installed');
+    assert.ok(blocks[0].querySelector<HTMLButtonElement>('.activity-block-copy'));
+    assert.equal(row.querySelector('.activity-waiting'), null);
+});
+
+test('T2: non-command JSON input renders as pretty-printed Input, unrecognised objects label the tool name', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'mcp', name: 'svc__lookup', status: 'done',
+        input: '{"region":"us","limit":3}', output: 'ok' });
+    send(model, { kind: 'tool', itemId: 'grep', name: 'grep', status: 'done',
+        input: '{"pattern":"needle"}', output: 'hit' });
+    view.render(model);
+    const [mcp, grep] = rows(view.element);
+    assert.equal(mcp.querySelector('.activity-block-label')!.textContent, 'Input');
+    assert.equal(mcp.querySelector('.activity-block pre')!.textContent, '{\n  "region": "us",\n  "limit": 3\n}');
+    assert.equal(mcp.querySelector('.activity-row-label')!.textContent, 'Called svc__lookup');
+    assert.equal(grep.querySelector('.activity-row-label')!.textContent, 'Searched needle');
+});
+
+test('T3: a running row without output shows a waiting line, not an empty block', () => {
+    const { model, view } = mount();
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'running',
+        input: '{"command":"npm test"}' });
+    view.render(model);
+    const row = rows(view.element)[0];
+    assert.equal(row.querySelector('.activity-waiting')!.textContent, 'Waiting for output…');
+    assert.equal(row.querySelectorAll('.activity-block').length, 1);
+    send(model, { kind: 'tool', itemId: 'run', name: 'bash', status: 'running',
+        input: '{"command":"npm test"}', output: 'partial line' });
+    view.render(model);
+    assert.equal(row.querySelector('.activity-waiting'), null);
+    assert.equal(row.querySelectorAll('.activity-block').length, 2);
+});
+
+test('T4: tall content offers Show all which lifts the cap and toggles back', () => {
+    const { model, view } = mount();
+    const tall = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n');
+    send(model, { kind: 'tool', itemId: 'tall', name: 'bash', status: 'done',
+        input: '{"command":"seq 40"}', output: tall });
+    view.render(model);
+    const row = rows(view.element)[0];
+    const body = row.querySelector<HTMLElement>('.activity-item-body')!;
+    const toggle = row.querySelector<HTMLButtonElement>('.activity-block-toggle')!;
+    assert.equal(toggle.hidden, false);
+    assert.equal(toggle.textContent, 'Show all');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'true');
+    assert.equal(toggle.textContent, 'Show less');
+    toggle.click();
+    assert.equal(body.dataset['expanded'], 'false');
+    assert.equal(toggle.textContent, 'Show all');
+    view.render(model);
+    assert.equal(row.querySelector<HTMLButtonElement>('.activity-block-toggle')!.hidden, false);
 });

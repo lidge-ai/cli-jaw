@@ -1,5 +1,7 @@
-import { activityEntryLabel, activityEntryText, type ActivityEntry } from '../../../src/shared/activity-state.js';
+import { activityEntryLabel, type ActivityEntry } from '../../../src/shared/activity-state.js';
 import { classifyActivityTool, isActivityFileEdit, type ActivityRenderGroup, type ActivityToolKind } from '../../../src/shared/activity-kind.js';
+import { firstInputLine, parseToolInput, prettyToolInput } from '../../../src/shared/tool-input.js';
+import { copyText } from './copy-text.js';
 import { hydrateIcons, type IconName } from '../icons.js';
 const glyphs: Record<ActivityToolKind, IconName> = { command: 'terminal', file: 'file', search: 'search', mcp: 'plug', other: 'tool' };
 function el<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, cls: string) {
@@ -9,34 +11,146 @@ function glyph(node: HTMLElement, name: IconName) {
     if (node.dataset['icon'] === name) return;
     node.dataset['icon'] = name; node.setAttribute('aria-hidden', 'true');
     hydrateIcons(node.parentElement!); }
+
+// Past ~15 wrapped lines the capped scroll height already engages; only then is
+// a Show-all toggle worth showing (jsdom cannot measure overflow, so estimate).
+function isTallContent(value: string): boolean {
+    return value.length > 1400 || value.split('\n').length > 14;
+}
+
+function flashCopied(btn: HTMLButtonElement, doc: Document): void {
+    const icon = btn.querySelector<HTMLElement>('[data-icon]');
+    if (!icon) return;
+    icon.dataset['icon'] = 'checkSimple'; hydrateIcons(btn); btn.classList.add('copied');
+    doc.defaultView?.setTimeout(() => { icon.dataset['icon'] = 'copy'; hydrateIcons(btn); btn.classList.remove('copied'); }, 800);
+}
+
+interface Block { key: string; label: string; content: string; copy: boolean }
+
+/** Rebuild only when the block set changes; text stays live between rebuilds. */
+function syncBody(body: HTMLElement, blocks: readonly Block[], waiting: boolean): void {
+    const signature = `${waiting ? 'wait|' : ''}${blocks.map(block => block.key).join('|')}`;
+    if (body.dataset['sig'] !== signature) {
+        body.dataset['sig'] = signature;
+        for (const child of [...body.children]) child.remove();
+        const doc = body.ownerDocument;
+        for (const block of blocks) {
+            const section = el(doc, 'section', 'activity-block');
+            section.dataset['block'] = block.key;
+            const head = el(doc, 'div', 'activity-block-head');
+            const label = el(doc, 'span', 'activity-block-label');
+            text(label, block.label);
+            head.append(label);
+            if (block.copy) {
+                const copy = el(doc, 'button', 'activity-block-copy');
+                copy.type = 'button';
+                copy.setAttribute('aria-label', `Copy ${block.label.toLowerCase()}`);
+                const icon = el(doc, 'span', 'activity-block-copy-icon');
+                icon.dataset['icon'] = 'copy'; icon.setAttribute('aria-hidden', 'true');
+                copy.append(icon);
+                copy.onclick = () => {
+                    const value = section.querySelector('pre')?.textContent;
+                    if (value) void copyText(value).then(result => { if (result.ok) flashCopied(copy, doc); });
+                };
+                head.append(copy);
+            }
+            const pre = el(doc, 'pre', 'activity-item-text activity-block-text');
+            pre.tabIndex = 0; pre.setAttribute('aria-label', block.label);
+            section.append(head, pre);
+            body.append(section);
+        }
+        if (waiting) {
+            const line = el(doc, 'p', 'activity-waiting');
+            text(line, 'Waiting for output…');
+            body.append(line);
+        }
+        const toggle = el(doc, 'button', 'activity-block-toggle');
+        toggle.type = 'button';
+        toggle.onclick = () => {
+            const next = body.dataset['expanded'] !== 'true';
+            body.dataset['expanded'] = String(next);
+            toggle.textContent = next ? 'Show less' : 'Show all';
+            toggle.setAttribute('aria-expanded', String(next));
+        };
+        body.append(toggle);
+        hydrateIcons(body);
+    }
+    const sections = body.querySelectorAll<HTMLElement>('.activity-block');
+    blocks.forEach((block, index) => text(sections[index]!.querySelector('pre')!, block.content));
+    const tall = blocks.some(block => isTallContent(block.content));
+    const toggle = body.querySelector<HTMLElement>('.activity-block-toggle')!;
+    toggle.hidden = !tall;
+    if (!tall && body.dataset['expanded'] === 'true') body.dataset['expanded'] = 'false';
+    const expanded = body.dataset['expanded'] === 'true';
+    text(toggle, expanded ? 'Show less' : 'Show all');
+    toggle.setAttribute('aria-expanded', String(expanded));
+}
+
+function toolBlocks(entry: Extract<ActivityEntry, { kind: 'tool' }>, kind: ActivityToolKind): Block[] {
+    const blocks: Block[] = [];
+    const parsed = parseToolInput(entry.input);
+    if (parsed.value !== null || parsed.object || entry.input) {
+        const command = parsed.field === 'command' || (!parsed.object && kind === 'command');
+        blocks.push({
+            key: 'input',
+            label: command ? 'Command' : 'Input',
+            content: parsed.field === 'command' && parsed.value !== null
+                ? parsed.value
+                : parsed.object ? prettyToolInput(entry.input ?? '') : entry.input ?? '',
+            copy: true,
+        });
+    }
+    if (entry.output) blocks.push({ key: 'output', label: 'Output', content: entry.output, copy: false });
+    if (entry.detail) blocks.push({ key: 'detail', label: entry.status === 'error' ? 'Error' : 'Detail', content: entry.detail, copy: false });
+    return blocks;
+}
+
 export function createActivityRow(doc: Document, id: string): HTMLDetailsElement {
     const row = el(doc, 'details', 'activity-item activity-row'); row.dataset['activityItemId'] = id;
     const head = el(doc, 'summary', 'activity-item-summary');
-    head.append(el(doc, 'span', 'activity-row-icon'), el(doc, 'span', 'activity-row-label'),
+    const labelWrap = el(doc, 'span', 'activity-row-text');
+    const desc = el(doc, 'span', 'activity-row-desc'); desc.hidden = true;
+    labelWrap.append(el(doc, 'span', 'activity-row-label'), desc);
+    head.append(el(doc, 'span', 'activity-row-icon'), labelWrap,
         el(doc, 'span', 'activity-row-status'), el(doc, 'span', 'activity-chevron-sm'));
-    const body = el(doc, 'pre', 'activity-item-text'); body.tabIndex = 0; body.setAttribute('aria-label', 'Activity preview');
+    const body = el(doc, 'div', 'activity-item-body');
     row.append(head, body); glyph(head.lastElementChild as HTMLElement, 'chevronDown'); return row; }
-export function updateActivityRow(row: HTMLDetailsElement, entry: ActivityEntry, limit: number): void {
+export function updateActivityRow(row: HTMLDetailsElement, entry: ActivityEntry): void {
     const kind = entry.kind === 'tool' ? classifyActivityTool(entry.name) : entry.kind;
     row.className = `activity-item activity-row${entry.kind === 'tool' ? '' : ` activity-row-${entry.kind}`}`;
     row.dataset['kind'] = kind; row.dataset['status'] = entry.kind === 'tool' ? entry.status : '';
-    const head = row.querySelector('summary')!; head.setAttribute('aria-label', activityEntryLabel(entry));
+    const head = row.querySelector('summary')!;
     glyph(head.querySelector<HTMLElement>('.activity-row-icon')!, entry.kind === 'tool' ? glyphs[classifyActivityTool(entry.name)]
         : entry.kind === 'reasoning' ? 'brain' : 'thinking');
-    let label = activityEntryLabel(entry), status = '';
+    const desc = head.querySelector<HTMLElement>('.activity-row-desc')!;
+    let label = activityEntryLabel(entry), status = '', description = '';
     if (entry.kind === 'tool') {
         const edit = kind === 'file' && isActivityFileEdit(entry.name);
         const past = kind === 'command' ? 'Ran' : kind === 'file' ? edit ? 'Edited' : 'Read' : kind === 'search' ? 'Searched' : 'Called';
         const active = kind === 'command' ? 'Running' : kind === 'file' ? edit ? 'Editing' : 'Reading' : kind === 'search' ? 'Searching' : 'Calling';
         const verb = entry.status === 'done' ? past : entry.status === 'running' ? active : entry.status === 'error' ? 'Failed' : 'Stopped';
-        const first = (entry.input ?? '').split(/\r?\n/, 1)[0]!.trim() || entry.name;
-        label = `${verb} ${first}`; status = entry.status === 'error' ? 'failed' : entry.status === 'done' ? '' : entry.status;
+        const parsed = parseToolInput(entry.input);
+        // Never label a row with a raw {"command": ...} object: decode the
+        // recognised argument, else fall back to the tool's own name.
+        const target = parsed.value !== null ? firstInputLine(parsed.value)
+            : parsed.object ? entry.name
+            : firstInputLine(entry.input ?? '') || entry.name;
+        description = parsed.description ? firstInputLine(parsed.description) : '';
+        label = `${verb} ${target}`;
+        status = entry.status === 'error' ? 'failed' : entry.status === 'done' ? '' : entry.status;
     }
     text(head.querySelector('.activity-row-label')!, label);
+    text(desc, description); desc.hidden = !description;
+    head.setAttribute('aria-label', description ? `${label} — ${description}` : label);
     const state = head.querySelector<HTMLElement>('.activity-row-status')!;
     text(state, status); state.setAttribute('aria-label', status === 'failed' ? 'Tool call failed' : status);
-    const full = activityEntryText(entry);
-    text(row.querySelector('pre')!, full.length > limit ? `${full.slice(0, limit)}\n[Preview limited; some text is omitted]` : full);
+    const body = row.querySelector<HTMLElement>('.activity-item-body')!;
+    if (entry.kind === 'tool') {
+        syncBody(body, toolBlocks(entry, kind as ActivityToolKind),
+            entry.status === 'running' && !entry.output && !entry.detail);
+    } else {
+        syncBody(body, entry.text ? [{ key: 'text', label: 'Activity preview', content: entry.text, copy: false }] : [], false);
+    }
 }
 export function createActivityRows(doc: Document, list: HTMLElement) {
     const groups = new Map<string, { root: HTMLDivElement; head: HTMLButtonElement; body: HTMLDivElement }>();

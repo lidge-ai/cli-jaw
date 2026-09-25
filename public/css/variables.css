@@ -52,8 +52,7 @@
     --activity-gap: 6px;
     --activity-muted: color-mix(in oklab, var(--text) 60%, transparent);
     --activity-border: color-mix(in oklab, var(--text) 8%, transparent);
-    --activity-output-max: 144px;
-    --activity-output-fade: 32px;
+    --activity-output-max: min(18rem, 50dvh);
     --activity-group-max: min(288px, 50dvh);
     --motion-fast: 150ms;
     --motion-base: 200ms;
