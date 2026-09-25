@@ -64,7 +64,8 @@
     border-radius: var(--radius-sm);
 }
 
-.activity-turn .activity-status.sr-only {
+.activity-turn .activity-status.sr-only,
+.activity-read-live {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
@@ -187,7 +188,8 @@
 .activity-turn .activity-connection,
 .activity-turn .activity-omitted,
 .activity-turn .activity-choice-notice,
-.activity-turn .activity-requests {
+.activity-turn .activity-requests,
+.activity-turn .activity-read-status {
     margin-block: var(--space-2);
 }
 
@@ -248,29 +250,55 @@
     overflow-wrap: anywhere;
 }
 
-.activity-read-control p { margin-block: var(--space-2); }
-.activity-read-control p:empty { display: none; }
-.activity-legacy-cache > summary { cursor: pointer; padding-block: var(--space-2); }
-.activity-read-control button {
-    max-width: 100%;
-    padding: var(--space-2);
-    border: 1px solid var(--text-dim);
+/* The read status is a collapsed details row: quiet summary only, status text and
+   retry live inside the expanded body (or inside the Activity disclosure itself). */
+.activity-read-control > .activity-read-summary {
+    padding-block: var(--space-1);
+    color: var(--activity-muted);
+    cursor: pointer;
     border-radius: var(--radius-sm);
-    color: var(--text);
-    background: var(--surface);
+}
+.activity-read-control > .activity-read-summary:hover { text-decoration: underline; }
+.activity-read-control > .activity-read-status,
+.activity-read-control > .activity-read-retry { margin-inline-start: var(--activity-indent); }
+.activity-read-status { margin-block: var(--space-2); }
+.activity-legacy-cache > summary { cursor: pointer; padding-block: var(--space-2); }
+.activity-turn .activity-read-retry,
+.activity-read-control .activity-read-retry {
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link-color);
     font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
     white-space: normal;
     overflow-wrap: anywhere;
     cursor: pointer;
 }
-.activity-read-control button:disabled { color: var(--text-dim); cursor: default; }
-.activity-read-control button:focus-visible,
-.activity-legacy-cache summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.activity-turn .activity-read-retry:disabled,
+.activity-read-control .activity-read-retry:disabled {
+    color: var(--text-dim); text-decoration: none; cursor: default;
+}
+.activity-turn .activity-read-retry:not(:disabled):hover,
+.activity-read-control .activity-read-retry:not(:disabled):hover { background: none; }
+.activity-read-retry:focus-visible,
+.activity-read-summary:focus-visible,
+.activity-legacy-cache summary:focus-visible {
+    box-shadow: var(--focus-ring-shadow);
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
 .activity-legacy-cache pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .activity-read-control[hidden],
-.activity-read-control [hidden] { display: none; }
+.activity-read-control [hidden],
+.activity-read-status[hidden],
+.activity-read-retry[hidden] { display: none; }
 @media (pointer: coarse) {
-    .activity-read-control button,
+    .activity-read-control .activity-read-summary,
+    .activity-read-control .activity-read-retry,
+    .activity-turn .activity-read-retry,
     .activity-legacy-cache summary { min-height: 44px; }
 }
 

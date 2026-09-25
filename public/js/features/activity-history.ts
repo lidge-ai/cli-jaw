@@ -19,7 +19,7 @@ interface Callbacks {
 }
 type Host = {
     message: HTMLElement; runId: string; cacheScope: string; controller: AbortController;
-    box: HTMLElement; status: HTMLElement; retry: HTMLButtonElement;
+    box: HTMLElement; status: HTMLElement; live: HTMLElement; retry: HTMLButtonElement;
     pending: boolean; loaded: boolean; promise: Promise<void> | null; resolve: (() => void) | null;
 };
 const SELECTOR = '.msg-agent[data-trace-run-id]';
@@ -65,15 +65,31 @@ function finishPromise(host: Host): void {
     host.retry.disabled = false;
     host.pending = false; host.resolve?.(); host.resolve = null; host.promise = null;
 }
+/** Status and retry never stand alone in the message flow: they live inside the
+    mounted Activity disclosure when one exists, otherwise inside this host's own
+    collapsed details so the text only appears once expanded. */
+function present(host: Host): void {
+    const disclosure = host.message.querySelector<HTMLElement>('.activity-disclosure');
+    if (disclosure) {
+        if (host.status.parentElement !== disclosure) {
+            const footer = disclosure.querySelector('.activity-footer');
+            if (footer) footer.before(host.status, host.retry); else disclosure.append(host.status, host.retry);
+        }
+    } else if (host.status.parentElement !== host.box) host.box.append(host.status, host.retry);
+    host.status.hidden = !host.status.textContent;
+    if (host.live.textContent !== host.status.textContent) host.live.textContent = host.status.textContent;
+    host.box.hidden = !!disclosure || (!host.status.textContent && host.retry.hidden);
+}
 function cancel(host: Host, remove: boolean): void {
     host.controller.abort();
     if (remove) observer?.unobserve(host.message);
     else {
         host.status.textContent = 'Activity read cancelled. Retry to inspect.';
-        host.retry.textContent = 'Retry activity'; host.retry.hidden = false; host.box.hidden = false;
+        host.retry.textContent = 'Retry activity'; host.retry.hidden = false;
+        present(host);
     }
     if (queued.delete(host.message)) finishPromise(host);
-    if (remove) { hosts.delete(host.message); host.box.remove(); }
+    if (remove) { hosts.delete(host.message); host.status.remove(); host.retry.remove(); host.live.remove(); host.box.remove(); }
 }
 function prune(): void {
     for (const host of hosts.values()) if (!host.message.isConnected) cancel(host, true);
@@ -82,7 +98,7 @@ function prune(): void {
 
 function entry(message: HTMLElement, runId: string): Host | null {
     const previous = hosts.get(message);
-    if (previous?.runId === runId) return previous;
+    if (previous?.runId === runId) { present(previous); return previous; }
     if (previous) cancel(previous, true);
     prune();
     if (hosts.size >= MAX_HOSTS) {
@@ -94,13 +110,20 @@ function entry(message: HTMLElement, runId: string): Host | null {
         }
         return null;
     }
-    message.querySelector('.activity-read-control')?.remove();
-    const box = document.createElement('div'); box.className = 'activity-read-control';
-    const status = document.createElement('p'); status.setAttribute('role', 'status');
-    const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Load activity';
-    box.append(status, retry); message.querySelector('.agent-body')?.prepend(box);
+    message.querySelectorAll('.activity-read-control, .activity-read-status, .activity-read-live, .activity-read-retry')
+        .forEach(node => node.remove());
+    const box = document.createElement('details'); box.className = 'activity-read-control';
+    const summary = document.createElement('summary'); summary.className = 'activity-read-summary';
+    summary.textContent = 'Activity status';
+    const status = document.createElement('p'); status.className = 'activity-read-status';
+    status.hidden = true;
+    const live = document.createElement('p'); live.className = 'activity-read-live';
+    live.setAttribute('role', 'status');
+    const retry = document.createElement('button'); retry.className = 'activity-read-retry';
+    retry.type = 'button'; retry.textContent = 'Load activity';
+    box.append(summary, status, retry); message.querySelector('.agent-body')?.prepend(live, box);
     const host: Host = { message, runId, cacheScope: getMessageScope(), controller: new AbortController(),
-        box, status, retry, pending: false, loaded: false, promise: null, resolve: null };
+        box, status, live, retry, pending: false, loaded: false, promise: null, resolve: null };
     retry.onclick = () => { void hydrateActivityHost(message, runId, true); };
     hosts.set(message, host); if (mode()) traceAllowed(message, false);
     return host;
@@ -110,8 +133,9 @@ function entry(message: HTMLElement, runId: string): Host | null {
 export function markActivityHistoryUnavailable(message: HTMLElement): void {
     if (!identity || !owns(message, message.dataset['traceRunId'] ?? '', identity.sessionId)) return;
     const host = entry(message, message.dataset['traceRunId']!); if (!host) return;
-    host.loaded = false; host.box.hidden = false; host.retry.hidden = false;
+    host.loaded = false; host.retry.hidden = false;
     host.status.textContent = 'Activity preview is no longer retained in memory. Load it again to inspect.';
+    present(host);
 }
 
 function combine(seed: ActivityRunReadResult, tail: ActivityRunReadResult): RuntimeEvent[] {
@@ -193,14 +217,17 @@ async function execute(host: Host): Promise<void> {
             : '';
         host.retry.textContent = 'Refresh activity';
         host.retry.hidden = !incomplete && !noActivity && !answerError && status !== 'running' && answer.kind === 'saved';
-        host.box.hidden = host.retry.hidden;
-        if (hadFocus && host.box.hidden) host.message.querySelector<HTMLElement>('.activity-summary')?.focus({ preventScroll: true });
+        present(host);
+        if (hadFocus && ((!host.status.textContent && host.retry.hidden)
+            || !!host.retry.closest('details:not([open])'))) {
+            host.message.querySelector<HTMLElement>('.activity-summary')?.focus({ preventScroll: true });
+        }
     } catch (error) {
         if (hosts.get(host.message) !== host || generation !== epoch || path !== locationKey()) return;
         if (host.controller.signal.aborted && host.controller.signal.reason?.name !== 'TimeoutError') return;
         host.status.textContent = error instanceof ActivityReadError ? error.message
             : 'Activity could not be restored. The transcript is unchanged; retry to inspect it.';
-        host.retry.hidden = false; host.box.hidden = false; host.retry.textContent = 'Retry activity';
+        host.retry.hidden = false; host.retry.textContent = 'Retry activity'; present(host);
         if (error instanceof ActivityReadError && error.status === 404) {
             try {
                 await readActivityHttp(`/api/traces/${encodeURIComponent(host.runId)}?${new URLSearchParams({ session: captured.sessionId })}`,
@@ -208,7 +235,7 @@ async function execute(host: Host): Promise<void> {
                 if (current(host, captured, epoch, path)) {
                     traceAllowed(host.message, true);
                     host.status.textContent = 'Detailed Activity was not recorded for this turn. The saved transcript is shown.';
-                    host.retry.hidden = true;
+                    host.retry.hidden = true; present(host);
                 }
             } catch { /* A copied/foreign/expired pointer does not gain raw authority. */ }
         }
@@ -228,7 +255,7 @@ function pump(): void {
     if (!host.message.isConnected || host.controller.signal.aborted || hosts.get(host.message) !== host) {
         finishPromise(host); queueMicrotask(pump); return;
     }
-    active = host; host.status.textContent = 'Loading recorded activity.';
+    active = host; host.status.textContent = 'Loading recorded activity.'; present(host);
     void execute(host).catch(error => console.warn('[activity] history read failed', error)).finally(() => {
         finishPromise(host); if (active === host) active = null; pump();
     });
@@ -242,14 +269,15 @@ export function hydrateActivityHost(message: HTMLElement, runId: string, manual 
     const turn = findLiveActivity(runId);
     if (!manual && host.loaded) return Promise.resolve();
     if (!manual && turn?.message === message && !turn.degraded && !message.dataset['activityRecovering']) {
-        host.box.hidden = true; traceAllowed(message, true); return Promise.resolve();
+        host.status.textContent = ''; host.retry.hidden = true; present(host);
+        traceAllowed(message, true); return Promise.resolve();
     }
     if (queued.size >= MAX_QUEUED) {
         host.status.textContent = 'Activity reads are at their limit. Use Load activity to retry.';
-        host.box.hidden = false; host.retry.hidden = false; return Promise.resolve();
+        host.retry.hidden = false; present(host); return Promise.resolve();
     }
-    host.controller = new AbortController(); host.pending = true; host.box.hidden = false;
-    host.status.textContent = 'Activity read queued.'; host.retry.disabled = true;
+    host.controller = new AbortController(); host.pending = true;
+    host.status.textContent = 'Activity read queued.'; host.retry.disabled = true; present(host);
     host.promise = new Promise(resolve => { host.resolve = resolve; });
     const promise = host.promise; queued.set(message, host); pump(); return promise;
 }
@@ -276,7 +304,8 @@ export function observeActivityHistory(root: ParentNode): void {
         const runId = message.dataset['traceRunId']!;
         if (!owns(message, runId, identity.sessionId)) continue;
         const host = entry(message, runId); if (!host) continue;
-        if (!mode()) { host.box.hidden = true; traceAllowed(message, true); continue; }
+        if (!mode()) { host.status.textContent = ''; host.retry.hidden = true; present(host);
+            traceAllowed(message, true); continue; }
         if (message.closest('details:not([open])')) continue;
         if (observer) observer.observe(message); else void hydrateActivityHost(message, runId);
     }
