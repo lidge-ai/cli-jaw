@@ -840,12 +840,22 @@ idle 만료 시 `setImmediate`로 이벤트 루프 poll 턴을 **한 번 양보*
 
 | 대상 | 상한 | 이유 |
 |------|------|------|
-| 미완 NDJSON 라인 (`spawn/line-buffer.ts`) | 8 MiB, head 보존 | 개행 없는 스트림이 라인 버퍼를 무한히 키운다. 실측 200 MiB 입력 → 힙 1.5 GiB |
+| 미완 NDJSON 라인 (`spawn/line-buffer.ts`) | 8 MiB (pending cap = frame cap) | 개행 없는 스트림이 라인 버퍼를 무한히 키운다. 실측 200 MiB 입력 → 힙 1.5 GiB |
 | agy/kiro `fullText` | 8 MiB / `maxBytes` | **원시 plain-text stdout**을 직접 축적 |
 | 파싱된 assistant 이벤트 경로 | 없음 (의도적) | 상류가 유한. 과거 상한이 실제 최종 답변을 잘라먹은 사고(`8b4ce983b`) |
 | `stderr` | 4000자 (스트리밍 append 전부) | 진단 전용 |
 
 절단은 항상 **보고**한다. 조용한 절단은 금지다.
+
+NDJSON 프레이머(`spawn/line-buffer.ts`)의 두 상한은 구분된다: **pending cap**은
+진행 중인 프레임의 메모리 상한이고, **frame cap**은 완성 프레임의 수락·거절 기준이다.
+둘은 같은 값(8 MiB)을 공유하므로 수락 여부가 chunk 분할에 따라 달라지지 않는다 —
+상한을 넘는 프레임은 한 chunk로 도착하든 여러 chunk로 나뉘든 항상 폐기된다.
+폐기된 프레임은 경계가 되는 LF까지 drain되며 잘린 head에 suffix를 붙여 다른
+payload로 전달하지 않는다(#784). print 경로(`spawn.ts`)의 drop은 `ndjson_overflow` trace 이벤트와 경고로
+보고되고(bounded head sample + 총 길이), 그 LF 이후의 정상 프레임은 오염되지 않는다.
+Pi RPC 경로는 경고만 남기고, 프롬프트 진행 중의 drop은 그 턴을 즉시 `error`로 끝낸다
+(풀 세션은 poison되어 재사용되지 않는다).
 
 ### 진행(progress) 판정
 

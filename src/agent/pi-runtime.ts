@@ -6,7 +6,7 @@ import { decideShellFallback } from '../core/windows-shell-fallback.js';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { JAW_HOME } from '../core/config.js';
-import { clampPendingLine } from './spawn/line-buffer.js';
+import { createNdjsonFramer, MAX_PENDING_LINE_CHARS } from './spawn/line-buffer.js';
 import { probeOpenCodexEndpointModels } from '../cli/opencodex-models.js';
 import { launchSpec } from '../core/exec-name.js';
 import { mergeEnvWindowsSafe } from './spawn-env.js';
@@ -755,25 +755,30 @@ function launchPiRpcExecution(profile: PiProfile, pi: PiSettings, options: {
  * `dispatch` already refuses an unconfirmed child, and it must stay on `close`
  * rather than `exit` so the caller's own settlement still runs after it.
  */
-function readPiRpcLines(child: ChildProcess, dispatch: (line: string) => void): { flush: () => void } {
+function readPiRpcLines(
+    child: ChildProcess, dispatch: (line: string) => void, onDrop: () => void,
+): { flush: () => void } {
     const decoder = new StringDecoder('utf8');
-    let buffer = '';
-    child.stdout?.on('data', (chunk) => {
-        buffer += decoder.write(chunk);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        const clamped = clampPendingLine(buffer);
-        if (clamped.overflowed) {
-            console.warn('[jaw:pi] stdout line exceeded the pending-line cap without a newline — truncating');
-            buffer = clamped.buffer;
+    const framer = createNdjsonFramer();
+    const reportDrops = (drops: readonly { frameChars: number }[]): void => {
+        for (const drop of drops) {
+            console.warn(`[jaw:pi] stdout frame exceeded the ${MAX_PENDING_LINE_CHARS}-char limit — dropped ${drop.frameChars} chars`);
+            onDrop();
         }
-        for (const line of lines) if (line.trim()) dispatch(line.trim());
+    };
+    child.stdout?.on('data', (chunk) => {
+        const framed = framer.push(decoder.write(chunk));
+        reportDrops(framed.drops);
+        for (const line of framed.lines) if (line.trim()) dispatch(line.trim());
     });
     return {
         flush: () => {
-            buffer += decoder.end();
-            if (buffer.trim()) dispatch(buffer.trim());
-            buffer = '';
+            const framed = framer.push(decoder.end());
+            reportDrops(framed.drops);
+            for (const line of framed.lines) if (line.trim()) dispatch(line.trim());
+            const tail = framer.end();
+            if (tail.drop) reportDrops([tail.drop]);
+            if (tail.tail.trim()) dispatch(tail.tail.trim());
         },
     };
 }
@@ -997,7 +1002,13 @@ export function spawnPersistentPiRpc(profile: PiProfile, pi: PiSettings, options
         kill() { void closeSession(true).catch(() => {}); },
     };
 
-    const stdoutLines = readPiRpcLines(child, dispatchLine);
+    const stdoutLines = readPiRpcLines(child, dispatchLine, () => {
+        // The turn's terminal record may be the one dropped, and the stream position
+        // is no longer trustworthy for a reused process: fail the prompt and the session.
+        if (!activePrompt?.turn) return;
+        activePrompt.turn.markFrameLost();
+        failSession(new Error('pi rpc stdout frame dropped'));
+    });
     child.stderr?.on('data', (chunk) => {
         // Persistent RPC sessions live for the pool's idle window (15 min) and
         // longer under load, so an uncapped accumulator grows for the whole
@@ -1141,7 +1152,12 @@ export function openPiRpc(profile: PiProfile, pi: PiSettings, options: OpenPiRpc
             version?.cancel();
             void owner.teardown().then(() => finish(code ?? 1, signal || child.killed ? 'stopped' : 'error'));
         });
-        const stdoutLines = readPiRpcLines(child, dispatchLine);
+        const stdoutLines = readPiRpcLines(child, dispatchLine, () => {
+            if (!promptDispatched || !turn) return;
+            // Settles now, like a terminal record would; the lost frame makes it an error.
+            turn.markFrameLost();
+            finish(0);
+        });
         child.stderr?.on('data', (chunk) => {
             if (stderr.length < PI_RPC_STDERR_MAX_CHARS) stderr += stderrReader.write(chunk);
         });

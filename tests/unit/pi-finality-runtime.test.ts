@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { spawnPiRpc, spawnPersistentPiRpc, DEFAULT_PI_PROFILE, DEFAULT_PI_SETTINGS } from '../../src/agent/pi-runtime.ts';
 import { PiTurnAccumulator, PiRuntimeError, piFailureOutcome, piSupportsSettled } from '../../src/agent/runtime/pi-turn.ts';
 import { FULLTEXT_MAX_CHARS } from '../../src/agent/events/fulltext-bound.ts';
+import { MAX_PENDING_LINE_CHARS } from '../../src/agent/spawn/line-buffer.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'pi-finality-'));
 const binary = join(root, 'pi.mjs');
@@ -217,6 +218,23 @@ test('pooled process termination rejects with bounded partial outcome', { timeou
         assert.deepEqual(piFailureOutcome(error),{status:'stopped',finalText:null,partialText:'interrupted partial'}); return true;
     });
     await closed;
+});
+test('a dropped oversized frame fails the pooled prompt at once instead of waiting for a lost terminal', { timeout: 15000 }, async () => {
+    configure([delta('before drop'), delta('x'.repeat(MAX_PENDING_LINE_CHARS + 16))]);
+    const session = spawnPersistentPiRpc(DEFAULT_PI_PROFILE,DEFAULT_PI_SETTINGS,{model:'fixture',cwd:root,root});
+    const closed = once(session.child,'close');
+    try {
+        await assert.rejects(session.sendPrompt('fixture'),error => {
+            assert.match(String(error),/frame dropped/);
+            assert.deepEqual(piFailureOutcome(error),{status:'error',finalText:null,partialText:'before drop'}); return true;
+        });
+        assert.equal(session.alive,false,'a session that lost a frame is not reused');
+    } finally {session.kill();await closed;}
+});
+test('a dropped oversized frame fails the direct prompt even when the child exits 0', { timeout: 15000 }, async () => {
+    const { result } = await direct([delta('before drop'), delta('x'.repeat(MAX_PENDING_LINE_CHARS + 16)), end([assistant('ok')]), settled])
+        .then(r => r, error => ({ result: { runtimeOutcome: piFailureOutcome(error) } }));
+    assert.deepEqual(result.runtimeOutcome,{status:'error',finalText:null,partialText:'before drop'});
 });
 test('modern correlated abort waits for terminal and preserves stopped partial', { timeout: 10000 }, async () => {
     configure([delta('before abort')]);

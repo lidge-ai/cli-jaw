@@ -339,7 +339,8 @@ import {
     type ExitSettler,
 } from './spawn/exit-settle.js';
 import { releaseChildOutputAfterExit } from './spawn/exit-drain.js';
-import { clampPendingLine } from './spawn/line-buffer.js';
+import { createNdjsonFramer, MAX_PENDING_LINE_CHARS } from './spawn/line-buffer.js';
+import type { NdjsonDrop } from './spawn/line-buffer.js';
 import { appendBoundedFullText } from './events/fulltext-bound.js';
 
 /** No provider turn was dispatched; preserve the captured cancellation receipt. */
@@ -3804,7 +3805,16 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         });
     }
 
-    let buffer = '';
+    const ndjsonFramer = createNdjsonFramer();
+    const reportNdjsonDrop = (drop: NdjsonDrop): void => {
+        console.warn(`[jaw:${agentLabel}] stdout frame exceeded the ${MAX_PENDING_LINE_CHARS}-char limit — dropping the frame and draining to its newline`);
+        appendTraceEvent({
+            runId: ctx.traceRunId,
+            source: 'cli_raw',
+            eventType: 'ndjson_overflow',
+            raw: { droppedFrameChars: drop.frameChars, headSample: drop.headSample },
+        });
+    };
     const recordOpencodeEvent = (line: string, event: CliEventRecord) => {
         if (cli !== 'opencode') return;
         ctx.opencodeRawEvents = pushOpencodeRawEvent(ctx.opencodeRawEvents, line);
@@ -3949,15 +3959,9 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             }
             return;
         }
-        buffer += stdoutReader.write(chunk);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        const clampedPending = clampPendingLine(buffer);
-        if (clampedPending.overflowed) {
-            console.warn(`[jaw:${agentLabel}] stdout line exceeded the pending-line cap without a newline — truncating`);
-            buffer = clampedPending.buffer;
-        }
-        for (const line of lines) {
+        const framed = ndjsonFramer.push(stdoutReader.write(chunk));
+        for (const drop of framed.drops) reportNdjsonDrop(drop);
+        for (const line of framed.lines) {
             if (!line.trim()) continue;
             dispatchNdjsonLine(line);
         }
@@ -4000,7 +4004,9 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             } else if (kiroPlainText) {
                 emitKiroStreamEvents(processKiroStdoutChunk(ctx, stdoutResidual), ctx, agentLabel, cli, empTag, traceAudience);
             } else {
-                buffer += stdoutResidual;
+                const framed = ndjsonFramer.push(stdoutResidual);
+                for (const drop of framed.drops) reportNdjsonDrop(drop);
+                for (const line of framed.lines) if (line.trim()) dispatchNdjsonLine(line);
             }
         }
         const stderrEnd = stderrReader.end();
@@ -4009,9 +4015,10 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             ctx.stderrBuf = sliceWithoutSplittingSurrogate(ctx.stderrBuf + stderrResidual, STDERR_BUF_CAP);
         }
         // Flush residual NDJSON buffer — last event may lack a trailing newline
-        if (buffer.trim()) {
-            dispatchNdjsonLine(buffer);
-            buffer = '';
+        const ndjsonTail = ndjsonFramer.end();
+        if (ndjsonTail.drop) reportNdjsonDrop(ndjsonTail.drop);
+        if (ndjsonTail.tail.trim()) {
+            dispatchNdjsonLine(ndjsonTail.tail);
         }
         flushClaudeBuffers(ctx, agentLabel, empTag);  // flush any pending thinking/input buffers
         if (cli === 'opencode') flushOpenCodeBuffers(ctx, agentLabel, empTag);

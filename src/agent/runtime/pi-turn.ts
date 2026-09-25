@@ -41,6 +41,7 @@ export class PiTurnAccumulator {
     private completed = 0;
     private candidate: Omit<RuntimeTurnOutcome, 'partialText'> = { status: 'done', finalText: null };
     private ended = false;
+    private frameLost = false;
 
     constructor(private readonly settledProtocol: boolean) {}
 
@@ -122,7 +123,13 @@ export class PiTurnAccumulator {
         return added;
     }
 
+    /** A dropped oversized frame means this turn's protocol record is incomplete. */
+    markFrameLost(): void {
+        this.frameLost = true;
+    }
+
     snapshot(status?: RuntimeTurnOutcome['status']): RuntimeTurnOutcome {
+        if (this.frameLost && !status) return { status: 'error', finalText: null, partialText: this.partial };
         return { status: status ?? this.candidate.status,
             finalText: status ? null : this.candidate.finalText, partialText: this.partial };
     }
