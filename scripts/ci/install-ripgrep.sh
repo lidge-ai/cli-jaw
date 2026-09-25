@@ -16,11 +16,11 @@ if [ "$(uname -m)" != "x86_64" ]; then
 fi
 
 DEST="${DEST:-${RUNNER_TEMP:-$(mktemp -d)}/ripgrep-bin}"
-TMPDIR="${RUNNER_TEMP:-$(mktemp -d)}"
+RG_WORK_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/ripgrep-dl.XXXXXX")"
 
 mkdir -p "$DEST"
 
-cd "$TMPDIR"
+cd "$RG_WORK_DIR"
 curl -fsSL --retry 3 "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_ASSET}" -o "$RG_ASSET"
 echo "${RG_SHA256}  ${RG_ASSET}" | sha256sum -c -
 
