@@ -19,7 +19,7 @@ aliases: [CLI-JAW Source Structure, str_func, source structure reference]
 
 ```text
 cli-jaw/
-├── server.ts                 ← Express 라우트 base + auth/CORS/rate-limit + WS bootstrap + `register*Routes()` glue + startup stale orc_state guard + graceful shutdown(closeDb) + employee migration + seed defaults + registerAvatarRoutes + async listen bootstrap (await initActiveMessagingRuntime) + orphaned jaw-emp-* cleanup + clearAllEmployeeSessions startup + no-store Vite index serving (790L)
+├── server.ts                 ← Express 라우트 base + auth/CORS/rate-limit + WS bootstrap + `register*Routes()` glue + startup stale orc_state guard + graceful shutdown(closeDb) + employee migration + seed defaults + registerAvatarRoutes + async listen bootstrap (await initActiveMessagingRuntime) + orphaned jaw-emp-* cleanup + clearAllEmployeeSessions startup + no-store Vite index serving (794L)
 ├── lib/                      ← 외부 통합/공용 헬퍼 (5 root files + mcp/ 8 files)
 │   ├── mcp-sync.ts           ← MCP 통합 + 스킬 복사 + softResetSkills + runSkillReset + trusted repair gate + clone cooldown (83L)
 │   ├── mcp/                  ← MCP 모듈 분리 (8 files)
@@ -71,7 +71,7 @@ cli-jaw/
 │   │   ├── settings-merge.ts ← perCli/activeOverrides/pi deep merge (257L)
 │   │   └── skill-cache.ts    ← 활성 스킬 슬래시 커맨드 캐시 (registerSkillLoader, getSkillCommandsCache, invalidateSkillCommandsCache) (44L)
 │   ├── code-mode/            ← native Code sessions, independent of Jaw orchestration
-│   │   ├── host.ts ← per-backend lazy composition and storage (70L)
+│   │   ├── host.ts ← per-backend lazy composition and storage (102L)
 │   │   ├── manager.ts ← session index, admission and resource capacity (345L)
 │   │   ├── session.ts ← captured turn ownership, cancellation and accepted-buffer drain (656L)
 │   │   ├── normalize.ts ← redacted materialized transcript and coalescing (534L)
@@ -594,12 +594,14 @@ cli-jaw/
 │       └── render/
 │           ├── markdown.ts   ← marked/sanitize pipeline + `/media`/guarded `/api/image` inline media rewrite (193L)
 │           └── delegations.ts ← one-time document capture image-error delegation + render delegation registry (41L)
-├── electron/                 ← Electron tray background app (27 TS/TSX files, 3096L) ✨
+├── electron/                 ← Electron tray background app (40 TS/TSX files, 6046L) ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
-│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1511L)
+│       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC (1550L)
 │       ├── main/lib/qa-session.ts ← isolated QA profile paths before lock and sessions (12L)
-│       ├── main/lib/         ← 19 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 199L, qa-session, install-cli, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
+│       ├── main/lib/tray-menu-model.ts ← pure menu bar instance list model: parse, order, labels, stale marking (85L)
+│       ├── main/lib/tray-instances.ts ← menu bar instance poller for /api/dashboard/instances (87L)
+│       ├── main/lib/         ← 22 top-level helpers plus subdirectories (jaw-spawn 448L, tray-manager 250L, tray-instances, tray-menu-model, qa-session, install-cli, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
 │       └── preload/          ← preload scripts (index 126L + metrics 68L)
 ├── bin/
 │   ├── cli-jaw.ts            ← 29개 root dynamic import branch + grouped user-facing 서브커맨드 라우팅 + --home flag (359L)
