@@ -74,6 +74,7 @@ function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; c
 
 export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSION_SHORTCUT }: { controller: CodeControllerModel; newSessionShortcut?: string | undefined }) {
     const [search, setSearch] = useState('');
+    const draftBadgeId = useId();
     const [grouped, setGrouped] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [paging, setPaging] = useState(false);
@@ -108,9 +109,16 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
         c.newSession();
         // Silently retargeting a draft that holds unsent text or an unreconciled
         // send would move that content to another workspace; setSelection also
-        // early-returns while an operation is in flight. Say why instead.
-        if (c.hasUnsentDraft || c.pending) {
+        // early-returns while the draft it is about to retarget is mid-operation.
+        // Say why instead, each reason in its own words.
+        if (c.hasUnsentDraft) {
             setError('Send or clear the current draft before choosing another workspace.');
+            return;
+        }
+        // A busy *session* is not that case: newSession has already moved the
+        // reader onto a fresh draft, so the + still retargets that draft.
+        if (c.selectedId === null && c.pending) {
+            setError('Wait for the current change to finish before choosing another workspace.');
             return;
         }
         setError(null);
@@ -127,11 +135,15 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
     return <nav className="code-session-list" aria-label="Code sessions">
         <button type="button" className={`code-session-new-primary${c.selectedId === null ? ' active' : ''}`}
             aria-current={c.selectedId === null ? 'true' : undefined}
+            // The name is fixed so it survives the label, badge and chord
+            // changes; the draft state therefore travels as a description.
+            aria-label="New Code session"
+            aria-describedby={c.hasUnsentDraft ? draftBadgeId : undefined}
             title={`Start a new session (${formatShortcut(newSessionShortcut)})`} onClick={c.newSession}>
             <PlusGlyph />
             <span className="code-session-new-label">New session</span>
-            {c.hasUnsentDraft && <span className="code-session-draft-badge">Draft</span>}
-            <kbd className="code-session-new-hint">{formatShortcut(newSessionShortcut)}</kbd>
+            {c.hasUnsentDraft && <span id={draftBadgeId} className="code-session-draft-badge">Draft</span>}
+            <kbd className="code-session-new-hint" aria-hidden="true">{formatShortcut(newSessionShortcut)}</kbd>
         </button>
         <div className="code-session-list-header"><span className="code-session-list-title">Sessions</span></div>
         <div className="code-session-view-toggle" aria-label="Session view">

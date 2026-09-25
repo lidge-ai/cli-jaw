@@ -663,13 +663,19 @@ test('the new session entry is a primary button with a shortcut hint and a Draft
     assert.match(entry.textContent ?? '', /New session/);
     assert.ok(entry.querySelector('svg'), 'the entry carries a plus glyph');
     assert.ok(entry.querySelector('.code-session-new-hint')?.textContent?.trim(), 'the shortcut chord is shown as a hint');
+    assert.equal(entry.getAttribute('aria-label'), 'New Code session', 'the accessible name stays stable while the visible label and badge change');
+    assert.equal(entry.querySelector('.code-session-new-hint')?.getAttribute('aria-hidden'), 'true', 'the chord hint stays out of the accessible name');
     assert.equal(entry.querySelector('.code-session-draft-badge'), null, 'no badge without an unsent draft');
+    assert.equal(entry.getAttribute('aria-describedby'), null, 'nothing is described while there is no draft to name');
     assert.doesNotMatch(h.container.textContent ?? '', /Preserved unsent draft/, 'the old draft row is gone');
     await click(entry); assert.equal(created, 1);
     await h.render(createElement(CodeSessionList, { controller: c, newSessionShortcut: 'Meta+Shift+Q' }));
     assert.equal(h.container.querySelector('.code-session-new-hint')?.textContent, formatShortcut('Meta+Shift+Q'), 'the hint shows the resolved keymap chord, not the default');
     await h.render(createElement(CodeSessionList, { controller: { ...c, hasUnsentDraft: true } }));
     assert.equal(h.container.querySelector('.code-session-draft-badge')?.textContent, 'Draft');
+    // aria-label fixes the name, so the badge has to reach the reader as a
+    // description rather than being dropped from it.
+    assert.equal(entry.getAttribute('aria-describedby'), h.container.querySelector('.code-session-draft-badge')?.id, 'the draft state is described while the badge is shown');
 });
 
 test('the manager newCodeSession shortcut action opens a fresh draft while the list is mounted', bounded, async t => {
@@ -718,6 +724,38 @@ test('a workspace + does not retarget a draft that already holds unsent content'
     assert.deepEqual(selections, [], 'a draft with unsent content keeps its workspace');
     assert.match(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Send or clear the current draft/, 'the reason is surfaced instead of a silent no-op');
     assert.ok(h.container.querySelector('.code-session-draft-badge'), 'the Draft badge explains which draft is blocked');
+});
+
+test('a workspace + still retargets the fresh draft while the viewed session is busy', bounded, async t => {
+    const h = await surface(t); const calls: unknown[] = [];
+    const c = model({
+        sessions: [session({ cwd: '/work/alpha' })],
+        selectedId: 's-a',
+        pending: true,
+        newSession() { calls.push('new'); },
+        async setSelection(patch) { calls.push(patch); },
+    });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    await click(button(h.container, 'Group'));
+    await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
+    // The reader has already left for a fresh draft, so the busy session's own
+    // pending operation is not a reason to refuse the workspace it picked.
+    assert.deepEqual(calls, ['new', { cwd: '/work/alpha' }], 'a busy session does not pin the fresh draft to its workspace');
+    assert.equal(h.container.querySelector('.code-session-list-error'), null, 'nothing was refused, so nothing is explained');
+});
+
+test('a workspace + explains a fresh draft that is itself mid-operation in its own words', bounded, async t => {
+    const h = await surface(t); const selections: unknown[] = [];
+    const c = model({
+        sessions: [session({ cwd: '/work/alpha' })], selectedId: null, session: null, pending: true,
+        async setSelection(patch) { selections.push(patch); },
+    });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    await click(button(h.container, 'Group'));
+    await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
+    assert.deepEqual(selections, [], 'setSelection early-returns while the draft is mid-operation');
+    assert.match(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Wait for the current change to finish/, 'the in-flight reason is distinct from the unsent-draft reason');
+    assert.doesNotMatch(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Send or clear/, 'a busy draft is not an unsent draft');
 });
 
 test('recent workspaces are unique directories ordered by last use, capped at five', () => {
