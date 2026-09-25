@@ -9,6 +9,7 @@ The `/api/code` API owns isolated Codex/Claude/Cursor/Grok sessions through `src
 Native Code interruption seals callbacks before persisting accepted buffered content under the captured store owner. Worker and Manager share the Code JSON body policy in `src/routes/code-body-parser.ts` (1MiB decoded prompt, 6MiB + 4KiB envelope); generic API limits stay separate. Settings navigation guards the drafts actually being discarded, including keyboard and desktop subscriptions.
 
 ## Documentation Map
+- Architecture contract notes live in `structure/AGENTS.md` §Root contract notes.
 
 - Start at `structure/INDEX.md` for the current architecture map.
 - Workbench modernization uses a one-row Activity header with Codex-style expanded rows/groups; the Workbench Settings tab is replaced by a ZCode-style full settings page that swaps the workspace (header gear / Meta+,, `← Back to workspace`, grouped icon nav, card content), persisted as Manager registry `ui.instanceSettingsOpen`. A unified settings registry separates Instance/Manager scopes and the same page is served standalone from `dist/settings` behind the Classic header gear (the right-panel 설정 tab is gone); Classic uses the t3 token shell. Preserve per-page save owners, dirty guards, Preview iframe identity and independent live Requests; see `structure/frontend.md`.
