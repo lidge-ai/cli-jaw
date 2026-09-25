@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { CodeControllerModel } from './code-controller-types';
 import { CodeComposer } from './CodeComposer';
 import { ComposerFooter } from './ComposerFooter';
+import { CodeDraftEmptyState } from './CodeDraftEmptyState';
 import { CodePermissionQueue } from './CodePermissionQueue';
 import { CodeTranscript } from './CodeTranscript';
 import { CodeToastHost } from './CodeToastHost';
@@ -90,9 +91,11 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
         {/* Directly above the transcript, so a notice sits over the conversation
             rather than over the workspace header and its picker. */}
         <CodeToastHost toasts={toasts} onDismiss={dismiss} />
-        <CodeTranscript items={c.items} provider={c.session?.provider ?? c.selection.provider} sessionKey={sessionKey}
-            workingDir={c.session?.cwd ?? c.selection.cwd} loading={c.loading} hasOlderHistory={c.hasOlderHistory}
-            loadOlderHistory={c.loadOlderHistory} permissionCount={c.permissions.length} onOpenLocalFile={onOpenLocalFile} />
+        {c.selectedId === null && c.items.length === 0
+            ? <CodeDraftEmptyState controller={c} />
+            : <CodeTranscript items={c.items} provider={c.session?.provider ?? c.selection.provider} sessionKey={sessionKey}
+                workingDir={c.session?.cwd ?? c.selection.cwd} loading={c.loading} hasOlderHistory={c.hasOlderHistory}
+                loadOlderHistory={c.loadOlderHistory} permissionCount={c.permissions.length} onOpenLocalFile={onOpenLocalFile} />}
         <CodePermissionQueue permissions={c.permissions} operations={c.permissionOperations} session={c.session} synced={c.synced} onAnswer={c.answer} />
         <div className="code-composer-dock">
             {failedInput !== undefined && !busy && !archived && <div className="code-input-recovery">
@@ -102,7 +105,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             </div>}
             <div className="code-composer-surface" aria-label="Code composer controls">
                 <CodeComposer key={`composer:${sessionKey}`} inputText={c.input} canSend={canSend} busy={busy} canStop={canStop} stopping={stopping}
-                    pending={c.pending} readOnly={archived} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop} />
+                    pending={c.pending} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop} />
                 <ComposerFooter key={`footer:${sessionKey}`} controller={c} onNotice={notify} />
             </div>
         </div>

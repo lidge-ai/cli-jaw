@@ -10,6 +10,7 @@ type CodeComposerProps = {
     stopping: boolean;
     pending: boolean;
     readOnly: boolean;
+    autoFocus?: boolean;
     onInputChange: (text: string) => void;
     onSubmit: () => Promise<void>;
     onStop: () => Promise<void>;
@@ -52,6 +53,7 @@ export function CodeComposer(props: CodeComposerProps) {
     return <div className="code-composer">
         <div className="code-composer-input-shell">
             <textarea className="code-composer-input" aria-label="Code prompt" value={props.inputText}
+                autoFocus={props.autoFocus}
                 onChange={event => props.onInputChange(event.target.value)} onKeyDown={handleKeyDown}
                 onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
                 placeholder={props.busy ? 'Draft a follow-up while this turn runs…' : 'Describe a task or ask a question…'}

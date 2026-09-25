@@ -19,6 +19,8 @@ const { CodePermissionQueue } = await import('../../public/manager/src/code/Code
 const { CodeSessionList } = await import('../../public/manager/src/code/CodeSessionList');
 const { CodeTranscriptItem, CodeTranscript } = await import('../../public/manager/src/code/CodeTranscript');
 const { CodeWorkbench } = await import('../../public/manager/src/code/CodeWorkbench');
+const { CodeDraftEmptyState } = await import('../../public/manager/src/code/CodeDraftEmptyState');
+const { recentCodeWorkspaces } = await import('../../public/manager/src/code/code-recent-workspaces');
 const { useThrottledMarkdown } = await import('../../public/manager/src/code/use-throttled-markdown');
 after(() => {
     dom.window.close();
@@ -649,4 +651,62 @@ test('states the reader must act on stay on screen instead of becoming a toast',
     assert.ok(h.container.querySelector('[aria-label="Original prompt"]'));
     await h.render(createElement(CodeWorkbench, { controller: model({ transport: 'disconnected' }), endpointKey: '43225' }));
     assert.match(h.container.textContent ?? '', /Live updates disconnected/);
+});
+
+test('recent workspaces are unique directories ordered by last use, capped at five', () => {
+    const at = (cwd: string, lastUsedAt: number, createdAt = lastUsedAt) => session({ cwd, lastUsedAt, createdAt });
+    assert.deepEqual(recentCodeWorkspaces([]), []);
+    assert.deepEqual(recentCodeWorkspaces([at('/a', 1), at('/b', 5), at('/a', 4), at('/c', 3)]), ['/b', '/a', '/c'],
+        'the workspace, not the session, is the unique unit and newest use wins');
+    assert.deepEqual(recentCodeWorkspaces([at('', 99), at('  ', 50), at('/a', 1)]), ['/a'],
+        'a blank cwd is not a workspace');
+    assert.deepEqual(recentCodeWorkspaces([at('/a', 1), at('/b', 2), at('/c', 3), at('/d', 4), at('/e', 5), at('/f', 6), at('/g', 7)]),
+        ['/g', '/f', '/e', '/d', '/c'], 'the list is capped at five');
+});
+
+test('draft empty state offers workspace, recents and suggested prompts without sending', bounded, async t => {
+    const h = await surface(t);
+    const selections: unknown[] = [], inputs: string[] = []; let sends = 0, picks = 0;
+    const draft = model({ selectedId: null, session: null, items: [],
+        selection: { provider: 'codex-app', cwd: '/work/current', model: 'native-model', effort: null, permissionMode: 'ask' },
+        sessions: [session({ cwd: '/work/current', lastUsedAt: 9 }), session({ cwd: '/work/recent', lastUsedAt: 8 }), session({ cwd: '/work/older', lastUsedAt: 1 })],
+        async setSelection(patch) { selections.push(patch); },
+        setInput(text) { inputs.push(text); },
+        async pickWorkspace() { picks++; },
+        async send() { sends++; },
+    });
+    await h.render(createElement(CodeWorkbench, { controller: draft, endpointKey: '43225' }));
+    const empty = h.container.querySelector('.code-draft-empty'); assert.ok(empty);
+    assert.match(empty.textContent ?? '', /New session/);
+    assert.match(empty.textContent ?? '', /Codex · native-model/);
+    // The current workspace is already the picker's value; offering it again
+    // would be a button that does nothing.
+    assert.deepEqual([...empty.querySelectorAll<HTMLButtonElement>('.code-draft-recent')].map(b => b.textContent),
+        ['/work/recent', '/work/older']);
+    await click(button(empty, '/work/recent')); assert.deepEqual(selections, [{ cwd: '/work/recent' }]);
+    await click(button(empty, 'Explain this codebase'));
+    assert.deepEqual(inputs, ['Explain this codebase']);
+    assert.equal(sends, 0, 'a suggested prompt fills the composer draft, never sends');
+    await click(button(empty, 'Choose Code workspace')); assert.equal(picks, 1);
+    assert.equal(document.activeElement?.getAttribute('aria-label'), 'Code prompt', 'entering the draft lands focus in the composer');
+});
+
+test('in-flight creation freezes the draft empty state instead of offering stale choices', bounded, async t => {
+    const h = await surface(t);
+    const draft = model({ selectedId: null, session: null, items: [], pending: true,
+        operation: { kind: 'creating', error: null }, sessions: [session({ cwd: '/work/recent' })] });
+    await h.render(createElement(CodeWorkbench, { controller: draft, endpointKey: '43225' }));
+    const empty = h.container.querySelector('.code-draft-empty'); assert.ok(empty);
+    assert.equal(empty.querySelector('button.code-draft-empty-picker'), null,
+        'an in-flight create owns the workspace now; the picker reads as a chip');
+    for (const b of empty.querySelectorAll<HTMLButtonElement>('.code-draft-recent, .code-draft-prompt')) assert.equal(b.disabled, true);
+});
+
+test('the draft empty state only replaces the transcript for a draft', bounded, async t => {
+    const h = await surface(t);
+    await h.render(createElement(CodeWorkbench, { controller: model(), endpointKey: '43225' }));
+    assert.equal(h.container.querySelector('.code-draft-empty'), null);
+    assert.ok(h.container.querySelector('[aria-label="Code transcript"]'), 'a selected session keeps its transcript');
+    await h.render(createElement(CodeDraftEmptyState, { controller: model({ selectedId: null, session: null, sessions: [] }) }));
+    assert.ok(h.container.querySelector('.code-draft-empty'));
 });
