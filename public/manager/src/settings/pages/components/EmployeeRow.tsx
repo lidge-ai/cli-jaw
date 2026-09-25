@@ -5,6 +5,7 @@
 
 import { useId } from 'react';
 import { TextField, ToggleField, SelectField } from '../../fields';
+import { SettingsSection, SettingsActions } from '../page-shell';
 import type { EmployeeRecord } from './employees-helpers';
 import { DEFAULT_CLI_OPTIONS } from './employees-helpers';
 import { metaFor } from './agent/agent-meta';
@@ -49,14 +50,7 @@ export function EmployeeRow({
     const renderedNameError = nameError ?? dupeError;
 
     return (
-        <fieldset
-            className="settings-employee-row"
-            aria-label={`Employee ${index + 1}${employee.name ? ` (${employee.name})` : ''}`}
-        >
-            <legend className="settings-employee-legend">
-                {employee.name || `Employee ${index + 1}`}
-            </legend>
-
+        <SettingsSection title={employee.name || `Employee ${index + 1}`}>
             <ToggleField
                 id={`${idBase}-active`}
                 label="Active"
@@ -103,16 +97,16 @@ export function EmployeeRow({
                 />
             </label>
 
-            <div className="settings-employee-footer">
+            <SettingsActions>
                 <button
                     type="button"
-                    className="settings-action settings-action-discard"
+                    className="settings-action settings-action-danger"
                     onClick={onRemove}
                     aria-label={`Remove employee ${employee.name || index + 1}`}
                 >
                     Remove
                 </button>
-            </div>
-        </fieldset>
+            </SettingsActions>
+        </SettingsSection>
     );
 }

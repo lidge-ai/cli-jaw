@@ -1,6 +1,7 @@
 import type { SettingsPageProps } from '../../types';
 import type { DashboardShortcutAction } from '../../../types';
 import { formatShortcut, MANAGER_SHORTCUT_ACTIONS } from '../../../manager-shortcuts';
+import { SettingsSection } from '../page-shell';
 import { COPY, LOCALE_OPTIONS, normalizeDashboardLocale, DashboardSettingToggle, DashboardSettingSelect, DashboardShortcutInput, shortcutCopyKey } from './shared';
 export default function Display({manager}: SettingsPageProps) {
     if (!manager) return null;
@@ -17,12 +18,7 @@ export default function Display({manager}: SettingsPageProps) {
     }
 
     return (
-                <section className="dashboard-settings-section">
-                    <header>
-                        <h3>{copy.displayTitle}</h3>
-                        <p>{copy.displayDescription}</p>
-                    </header>
-                    <div className="dashboard-settings-field-list">
+                <SettingsSection title={copy.displayTitle} hint={copy.displayDescription}>
                         <DashboardSettingToggle
                             id="dashboard-show-activity-title"
                             label={copy.fields.activity.label}
@@ -86,7 +82,6 @@ export default function Display({manager}: SettingsPageProps) {
                                 />
                             );
                         })}
-                    </div>
-                </section>
+                </SettingsSection>
     );
 }

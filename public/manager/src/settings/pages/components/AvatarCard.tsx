@@ -6,6 +6,8 @@
 // page-level dirty store: uploads are atomic side-effects, not pending edits.
 
 import { useEffect, useRef, useState } from 'react';
+import { icon } from '../../../../../js/icons';
+import { SettingsNote } from '../page-shell';
 
 type AvatarKind = 'agent' | 'user';
 
@@ -123,9 +125,11 @@ export function AvatarCard({ kind, port }: Props) {
                 ) : kind === 'agent' ? (
                     <img className="settings-avatar-mascot" src="/icons/mascot.png" alt="" aria-hidden="true" />
                 ) : (
-                    <span className="settings-avatar-placeholder" aria-hidden="true">
-                        👤
-                    </span>
+                    <span
+                        className="settings-avatar-placeholder"
+                        aria-hidden="true"
+                        dangerouslySetInnerHTML={{ __html: icon('user', 28) }}
+                    />
                 )}
             </div>
             <div className="settings-avatar-controls">
@@ -143,7 +147,7 @@ export function AvatarCard({ kind, port }: Props) {
                 <div className="settings-avatar-buttons">
                     <button
                         type="button"
-                        className="settings-action settings-action-secondary"
+                        className="settings-action"
                         onClick={onPick}
                         disabled={busy}
                     >
@@ -152,7 +156,7 @@ export function AvatarCard({ kind, port }: Props) {
                     {imageUrl ? (
                         <button
                             type="button"
-                            className="settings-action settings-action-discard"
+                            className="settings-action settings-action-danger"
                             onClick={() => void onClear()}
                             disabled={busy}
                         >
@@ -161,9 +165,7 @@ export function AvatarCard({ kind, port }: Props) {
                     ) : null}
                 </div>
                 {error ? (
-                    <span className="settings-field-error" role="alert">
-                        {error}
-                    </span>
+                    <SettingsNote tone="error" role="alert">{error}</SettingsNote>
                 ) : null}
             </div>
         </div>

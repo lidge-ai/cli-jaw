@@ -6,7 +6,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { SettingsPageProps } from '../types';
-import { SettingsSection, PageError, PageLoading, PageOffline, usePageSnapshot } from './page-shell';
+import { SettingsSection, SettingsActions, PageError, PageLoading, PageOffline, usePageSnapshot } from './page-shell';
+import { ToggleField } from '../fields';
 import { describeError } from '../components/error-normalize';
 
 type ExportImportProps = SettingsPageProps & {
@@ -103,28 +104,27 @@ export default function AdvancedExport({ port, client, triggerDownload }: Export
                 title="Export"
                 hint={`Download the resolved /i/${port}/api/settings document as JSON.`}
             >
-                <button
-                    type="button"
-                    className="settings-action settings-action-secondary"
-                    onClick={onExport}
-                >
-                    Download settings JSON
-                </button>
+                <SettingsActions>
+                    <button
+                        type="button"
+                        className="settings-action"
+                        onClick={onExport}
+                    >
+                        Download settings JSON
+                    </button>
+                </SettingsActions>
             </SettingsSection>
 
             <SettingsSection
                 title="Import (advanced)"
                 hint="Replaces matching keys via PUT. Only enable when you understand the impact."
             >
-                <label className="settings-field" htmlFor="advanced-toggle">
-                    <span className="settings-field-label">Show import controls</span>
-                    <input
-                        id="advanced-toggle"
-                        type="checkbox"
-                        checked={showAdvanced}
-                        onChange={(event) => setShowAdvanced(event.target.checked)}
-                    />
-                </label>
+                <ToggleField
+                    id="advanced-toggle"
+                    label="Show import controls"
+                    value={showAdvanced}
+                    onChange={setShowAdvanced}
+                />
                 {showAdvanced ? (
                     <>
                         <label className="settings-field" htmlFor="advanced-import">
@@ -142,20 +142,17 @@ export default function AdvancedExport({ port, client, triggerDownload }: Export
                                     {importError}
                                 </span>
                             ) : null}
-                            {importResult ? (
-                                <span className="settings-field-description" role="status">
-                                    {importResult}
-                                </span>
-                            ) : null}
                         </label>
-                        <button
-                            type="button"
-                            className="settings-action settings-action-save"
-                            onClick={() => void onImport()}
-                            disabled={importBusy || importText.trim() === ''}
-                        >
-                            {importBusy ? 'Importing…' : 'Apply import'}
-                        </button>
+                        <SettingsActions status={importResult ?? undefined}>
+                            <button
+                                type="button"
+                                className="settings-action settings-action-save"
+                                onClick={() => void onImport()}
+                                disabled={importBusy || importText.trim() === ''}
+                            >
+                                {importBusy ? 'Importing…' : 'Apply import'}
+                            </button>
+                        </SettingsActions>
                     </>
                 ) : null}
             </SettingsSection>

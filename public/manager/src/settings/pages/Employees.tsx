@@ -5,7 +5,7 @@
 
 import type { SettingsPageProps } from '../types';
 import { useEffect } from 'react';
-import { SettingsSection } from './page-shell';
+import { SettingsSection, SettingsNote } from './page-shell';
 
 export {
     EMPLOYEE_KEYS,
@@ -32,10 +32,10 @@ export default function Employees({ registerSave }: SettingsPageProps) {
                 title="Employees"
                 hint="Runtime employees are now managed from the Agent page."
             >
-                <p className="settings-section-hint">
+                <SettingsNote>
                     Open Runtime / Agent to edit dispatchable employees, static employee model
                     overrides, and database-backed employees in one place.
-                </p>
+                </SettingsNote>
             </SettingsSection>
         </form>
     );

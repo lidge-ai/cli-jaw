@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { DashboardLocale, DashboardShortcutAction } from '../../../types';
+import { SettingsKeyValue, StatusBadge, SettingsNote } from '../page-shell';
 import type { DashboardActivityTitleSupport } from '../../../dashboard-settings/activity-title-support';
 const LOCALE_OPTIONS = [
     { value: 'ko', label: '한국어 (ko)' },
@@ -790,18 +791,14 @@ type DashboardSettingRowProps = {
 
 function DashboardSettingRow(props: DashboardSettingRowProps) {
     return (
-        <div className="dashboard-settings-row">
-            <div className="dashboard-settings-row-main">
-                <label className="dashboard-settings-row-heading" htmlFor={props.id}>
-                    <span>{props.label}</span>
-                    <span className="dashboard-settings-row-scope">{props.scope}</span>
-                </label>
-                <p className="dashboard-settings-row-description">{props.description}</p>
-            </div>
-            <div className="dashboard-settings-row-control">
-                {props.children}
-            </div>
-        </div>
+        <label className="settings-field" htmlFor={props.id}>
+            <span className="settings-field-label">{props.label}</span>
+            {props.children}
+            <span className="settings-field-description">
+                <span className="dashboard-settings-row-scope">{props.scope}</span>{' '}
+                {props.description}
+            </span>
+        </label>
     );
 }
 
@@ -819,7 +816,6 @@ function DashboardSettingToggle(props: DashboardSettingToggleProps) {
         <DashboardSettingRow id={props.id} label={props.label} scope={props.scope} description={props.description}>
             <input
                 id={props.id}
-                className="dashboard-settings-toggle"
                 type="checkbox"
                 checked={props.value}
                 onChange={(event) => props.onChange(event.currentTarget.checked)}
@@ -852,7 +848,6 @@ function DashboardSettingSelect(props: DashboardSettingSelectProps) {
         <DashboardSettingRow id={props.id} label={props.label} scope={props.scope} description={props.description}>
             <select
                 id={props.id}
-                className="dashboard-settings-select"
                 value={props.value}
                 onChange={(event) => props.onChange(normalizeDashboardLocale(event.currentTarget.value))}
             >
@@ -869,7 +864,6 @@ function DashboardShortcutInput(props: DashboardShortcutInputProps) {
         <DashboardSettingRow id={`dashboard-shortcut-${props.action}`} label={props.label} scope={props.scope} description={props.description}>
             <input
                 id={`dashboard-shortcut-${props.action}`}
-                className="dashboard-settings-shortcut-input"
                 type="text"
                 value={props.value}
                 aria-label={`${props.label} shortcut`}
@@ -927,21 +921,16 @@ function TitleSupportSummary({ support, locale }: { support: DashboardActivityTi
     const total = support.ready + support.legacy + support.offline;
     const copy = COPY[locale].support;
     return (
-        <div className="dashboard-settings-status-grid" aria-label={copy.ariaLabel}>
-            <div>
-                <span>{copy.ready}</span>
-                <strong>{support.ready}</strong>
-            </div>
-            <div>
-                <span>{copy.legacy}</span>
-                <strong>{support.legacy}</strong>
-            </div>
-            <div>
-                <span>{copy.offline}</span>
-                <strong>{support.offline}</strong>
-            </div>
-            <p>{total === 0 ? copy.empty : copy.restart}</p>
-        </div>
+        <>
+            <SettingsKeyValue
+                items={[
+                    { label: copy.ready, value: <StatusBadge tone="ok">{support.ready}</StatusBadge> },
+                    { label: copy.legacy, value: <StatusBadge tone="warn">{support.legacy}</StatusBadge> },
+                    { label: copy.offline, value: <StatusBadge tone="neutral">{support.offline}</StatusBadge> },
+                ]}
+            />
+            <SettingsNote>{total === 0 ? copy.empty : copy.restart}</SettingsNote>
+        </>
     );
 }
 
