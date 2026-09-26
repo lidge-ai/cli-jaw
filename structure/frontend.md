@@ -741,13 +741,17 @@ refusal keeps the transcript and names the reason (a revision conflict reads "Th
 conversation changed since you chose this point", a missing boundary names a turn that
 never reached Claude or a compaction). A `code_session` event with a higher
 `historyGeneration` makes the reducer take a new snapshot. A rollback, including one seen
-from elsewhere, retires an awaited send whose own row it removed and makes Retry use a
-new key; its recovery strip, kept across reload, reads "This message's turn was removed
-by a rollback. Files it changed were not reverted. Retry sends it as a new message.". A
-same-key retry the server answers `cancelled` for a turn absent from the post-rollback
-transcript reads the same, which is all a reloaded page can go by. An unconfirmed follow-up
-whose turn is absent after a rollback stops being reported as unconfirmed, also when the
-page had dropped that session's transcript.
+from elsewhere or learned only from the next snapshot (the index copy is then the older
+generation), stops awaiting a send whose row it removed. An unconfirmed send keeps its
+key, since nothing the page saw ties it to a removed turn, and reads "The conversation was
+rolled back elsewhere; this message was not sent."; a same-key retry is admitted at most
+once. Only the server's answer names a removed turn: a same-key retry answered
+`cancelled` for a turn absent from the post-rollback transcript, which is all a reloaded
+page can go by, retires the key, and its recovery strip, kept across reload, reads "This
+message's turn was removed by a rollback. Files it changed were not reverted. Retry sends
+it as a new message.". An unconfirmed follow-up whose turn is absent after a rollback
+stops being reported as unconfirmed, also when the page had dropped that session's
+transcript.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs

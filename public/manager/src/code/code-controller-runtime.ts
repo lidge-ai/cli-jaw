@@ -25,6 +25,8 @@ const FOLLOW_UP_UNCONFIRMED = 'Follow-up delivery not confirmed. It was not rese
 const FOLLOW_UP_UNRECORDED = 'Follow-up delivery not confirmed. Claude may have received it, but it will not appear in the conversation. It was not resent.';
 // A rollback posts the revision and epoch the user chose the row at; PATCH's settings copy does not fit its conflict.
 const ROLLBACK_CONFLICT = 'The conversation changed since you chose this point. Review it and try again.';
+// A rollback seen from elsewhere, for a send whose key nothing ties to a removed turn.
+const ROLLED_BACK_ELSEWHERE = 'The conversation was rolled back elsewhere; this message was not sent.';
 const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !current
     || incoming.epoch > current.epoch || (incoming.epoch === current.epoch && (incoming.sequence > current.sequence
         || (incoming.sequence === current.sequence && incoming.revision >= current.revision)));
@@ -324,15 +326,18 @@ export class CodeController {
     }
     /**
      * A rollback removed turns, possibly the one this draft is waiting on. A send whose own
-     * row is gone no longer has a turn to wait for, and its key may now be a removed turn's.
-     * (An unconfirmed follow-up of a removed turn is dropped by update(); one still in flight
-     * settles on its own answer.)
+     * row is gone no longer has a turn to wait for. An unconfirmed send keeps its key: seeing
+     * its row would have settled it, so nothing here ties the key to a removed turn. A same-key
+     * retry is then admitted once, or answers `cancelled` and submit() names the rollback. A
+     * key already retired says it was not sent. (An unconfirmed follow-up of a removed turn is
+     * dropped by update(); one still in flight settles on its own answer.)
      */
     private rolledBack(draft: CodeDraft, state: CodeSessionState): void {
         const kept = (key: string) => state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === key);
         if (draft.awaitingTurn && !kept(draft.awaitingTurn)) draft.awaitingTurn = null;
-        if (draft.retry && !kept(draft.retry.key) && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
-            this.requireNewKey(draft, 'rolled-back');
+        if (draft.retry && !draft.retry.resend && !kept(draft.retry.key)
+            && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
+            draft.operation = { kind: 'unknown-send', error: ROLLED_BACK_ELSEWHERE };
         }
     }
     /**
