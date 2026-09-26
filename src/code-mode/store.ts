@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS code_sessions (
     epoch INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0,
     revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
     last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER,
-    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0
+    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0,
+    rollback_since INTEGER
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
@@ -177,15 +178,21 @@ type TurnRow = {
     status: CodePromptReceipt['status']; accepted_sequence: number; removed_generation: number | null;
 };
 type PlanTurnRow = { turn_id: string; status: string; accepted_sequence: number; native_prompt_uuid: string | null };
-/** The first kept user row whose turn still has a native prompt boundary. */
-const rollbackSinceSql = (session: string) => `(SELECT MIN(i.first_sequence) FROM code_turns t
+/**
+ * The first kept user row whose turn still has a native prompt boundary, as a correlated
+ * subquery on `code_sessions.session_id`. User rows are admitted in turn order, so the earliest
+ * boundary turn (walked on idx_code_turns_boundary) that still has its row owns the minimum.
+ */
+const ROLLBACK_SINCE_SQL = `(SELECT i.first_sequence FROM code_turns t
     JOIN code_items i ON i.session_id = t.session_id AND i.item_id = t.turn_id || ':user'
-    WHERE t.session_id = ${session} AND t.native_prompt_uuid IS NOT NULL AND t.removed_generation IS NULL)`;
+    WHERE t.session_id = code_sessions.session_id AND t.native_prompt_uuid IS NOT NULL AND t.removed_generation IS NULL
+    ORDER BY t.accepted_sequence LIMIT 1)`;
+// `rollback_since` is stored: it is refreshed only where boundaries or user rows change, so a
+// session read on the streaming path never walks the session's turns.
 const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permission_mode,
     status, active_turn_id, archived_at, error_json, native_cursor, native_started,
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
-    last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation,
-    ${rollbackSinceSql('code_sessions.session_id')} AS rollback_since`;
+    last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation, rollback_since`;
 const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence, removed_generation';
 type SteerRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
@@ -371,18 +378,23 @@ export class CodeStore {
     /**
      * Adds the rollback columns to databases created before them. Existing turns keep a
      * NULL prompt boundary, so they are never rollback targets; floors and generations start at 0.
+     * A stored rollback start that did not exist yet is computed once for every session.
      */
     private ensureRollbackColumns(): void {
         const columns = (table: string) => new Set((this.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
             .map(column => column.name));
         const sessions = columns('code_sessions'), turns = columns('code_turns');
-        if (sessions.has('replay_floor_sequence') && sessions.has('history_generation')
-            && turns.has('native_prompt_uuid') && turns.has('removed_generation')) return;
         this.database.transaction(() => {
             if (!sessions.has('replay_floor_sequence')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN replay_floor_sequence INTEGER NOT NULL DEFAULT 0');
             if (!sessions.has('history_generation')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN history_generation INTEGER NOT NULL DEFAULT 0');
             if (!turns.has('native_prompt_uuid')) this.database.exec('ALTER TABLE code_turns ADD COLUMN native_prompt_uuid TEXT');
             if (!turns.has('removed_generation')) this.database.exec('ALTER TABLE code_turns ADD COLUMN removed_generation INTEGER');
+            this.database.exec(`CREATE INDEX IF NOT EXISTS idx_code_turns_boundary ON code_turns(session_id, accepted_sequence)
+                WHERE native_prompt_uuid IS NOT NULL AND removed_generation IS NULL`);
+            if (!sessions.has('rollback_since')) {
+                this.database.exec('ALTER TABLE code_sessions ADD COLUMN rollback_since INTEGER');
+                this.database.exec(`UPDATE code_sessions SET rollback_since = ${ROLLBACK_SINCE_SQL}`);
+            }
         }).immediate();
     }
 
@@ -428,9 +440,13 @@ export class CodeStore {
         return record;
     }
 
-    /** Refresh the derived rollback start after boundaries or user rows change, before the session event. */
+    /**
+     * Refresh the stored rollback start after boundaries or user rows change, before the session
+     * event that saves it. Every writer of either calls this.
+     */
     private readRollbackSince(sessionId: string): number | null {
-        return (this.database.prepare(`SELECT ${rollbackSinceSql('?')} AS since`).get(sessionId) as { since: number | null }).since;
+        return (this.database.prepare(`SELECT ${ROLLBACK_SINCE_SQL} AS since FROM code_sessions WHERE session_id = ?`)
+            .get(sessionId) as { since: number | null } | undefined)?.since ?? null;
     }
 
     read(sessionId: string): CodeSessionInfo | null {
@@ -618,14 +634,14 @@ export class CodeStore {
             status = ?, active_turn_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
             native_policy_json = ?, epoch = ?, sequence = ?, revision = ?, last_used_at = ?,
             last_turn_completed_at = ?, last_visited_at = ?, thinking = ?, replay_floor_sequence = ?,
-            history_generation = ? WHERE session_id = ?`)
+            history_generation = ?, rollback_since = ? WHERE session_id = ?`)
             .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId,
                 record.archivedAt, record.error === null ? null : JSON.stringify(mapError(record.error)),
                 record.nativeCursor, Number(record.nativeStarted),
                 record.nativePolicy === null ? null : JSON.stringify(record.nativePolicy), record.epoch,
                 record.sequence, record.revision, record.lastUsedAt, record.lastTurnCompletedAt, record.lastVisitedAt,
                 record.thinking === null ? null : Number(record.thinking), record.replayFloorSequence,
-                record.historyGeneration, record.sessionId);
+                record.historyGeneration, record.rollbackSince, record.sessionId);
     }
 
     private persistEvent(record: CodeSessionRecord, event: CodeWireEvent, mode: EventBudgetMode,

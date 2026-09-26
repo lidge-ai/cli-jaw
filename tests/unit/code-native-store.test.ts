@@ -1261,10 +1261,10 @@ test('rollback availability names why it is off and where recorded boundaries st
     assert.deepEqual(store.read('session-a')!.rollback, { available: false, reason: 'not_started', sinceSequence: null });
     store.create({ ...creation, sessionId: 'session-codex', provider: 'codex-app' });
     assert.equal(store.read('session-codex')!.rollback.reason, 'unsupported');
-    settled(store, 'k1');
-    db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-1'").run();
+    settled(store, 'k1', { status: 'failed', dispatched: false });
+    assert.equal(boundaries(db)['turn-1'], null);
     assert.deepEqual(store.read('session-a')!.rollback, { available: false, reason: 'no_boundary', sinceSequence: null },
-        'a turn without a boundary (admitted before this change) is not a target');
+        'a turn without a boundary is not a target');
     const second = settled(store, 'k2');
     const secondUser = store.snapshot('session-a').items.find(item => item.itemId === `${second.receipt.turnId}:user`)!;
     assert.deepEqual(store.read('session-a')!.rollback, { available: true, reason: null, sinceSequence: secondUser.firstSequence });
@@ -1451,9 +1451,9 @@ test('databases created before rollback gain its columns: old turns have no boun
     const db = new Database(':memory:');
     t.after(() => db.close());
     const legacy = CREATE_CODE_SCHEMA_SQL
-        .replace(',\n    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0', '')
+        .replace(',\n    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0,\n    rollback_since INTEGER', '')
         .replace('\n    native_prompt_uuid TEXT, removed_generation INTEGER,', '');
-    assert.ok(!legacy.includes('replay_floor_sequence') && !legacy.includes('native_prompt_uuid'));
+    assert.ok(!legacy.includes('replay_floor_sequence') && !legacy.includes('rollback_since') && !legacy.includes('native_prompt_uuid'));
     db.exec(legacy);
     db.prepare(`INSERT INTO code_sessions (session_id, provider, cwd, model, permission_mode, status, native_cursor, native_started,
         capabilities_json, epoch, sequence, created_at, last_used_at) VALUES ('legacy', 'claude', '/workspace', 'model', 'ask',
@@ -1468,4 +1468,19 @@ test('databases created before rollback gain its columns: old turns have no boun
     assert.deepEqual(boundaries(db), { old: null });
     assert.equal(store.readTurn('legacy', 'old-key')?.status, 'completed');
     new CodeStore(db);
+});
+
+test('a database with boundaries but no stored rollback start computes it once on open, from the boundary index', t => {
+    const { store, db } = fixture(t);
+    settled(store, 'k1', { status: 'failed', dispatched: false });
+    const second = settled(store, 'k2');
+    settled(store, 'k3');
+    const since = store.read('session-a')!.rollback.sinceSequence;
+    assert.equal(since, store.snapshot('session-a').items.find(item => item.itemId === `${second.receipt.turnId}:user`)!.firstSequence);
+    db.exec('ALTER TABLE code_sessions DROP COLUMN rollback_since');
+    db.exec('DROP INDEX idx_code_turns_boundary');
+    const reopened = new CodeStore(db);
+    assert.equal(reopened.read('session-a')!.rollback.sinceSequence, since);
+    assert.deepEqual(reopened.read('session-a')!.rollback, store.read('session-a')!.rollback);
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_code_turns_boundary'").get());
 });
