@@ -26,6 +26,33 @@ export function codeCanResume(session: CodeSessionInfo): boolean {
     return session.archivedAt === null && session.capabilities.resume && session.resume.available
         && (session.status === 'suspended' || (session.status === 'failed' && session.error?.recoverable === true));
 }
+/**
+ * Whether the open session may roll its conversation back right now. An older server
+ * without the `rollback` field reads as unavailable.
+ */
+export function codeCanRollback(session: CodeSessionInfo | null, synced: boolean, idleOperation: boolean): boolean {
+    return !!session && session.rollback?.available === true && session.archivedAt === null && synced && idleOperation
+        && (session.status === 'idle' || session.status === 'failed');
+}
+
+/**
+ * User rows a rollback may target: a settled turn's own `${turnId}:user` row (never the
+ * unsent row or a follow-up), at or after the first recorded boundary, with a later turn.
+ */
+export function codeRollbackRows(items: readonly CodeItem[], sinceSequence: number | null | undefined): ReadonlySet<string> {
+    const rows = new Set<string>();
+    if (sinceSequence == null) return rows;
+    const settled = new Set(items.filter(item => item.kind === 'turn_completed' || item.kind === 'turn_failed'
+        || item.kind === 'turn_cancelled').map(item => item.turnId));
+    const turns = items.filter(item => item.kind === 'user_message' && item.turnId !== null
+        && item.itemId === `${item.turnId}:user` && item.firstSequence !== undefined);
+    for (const row of turns) {
+        if (row.firstSequence! < sinceSequence || !settled.has(row.turnId)) continue;
+        if (turns.some(later => later.turnId !== row.turnId && later.firstSequence! > row.firstSequence!)) rows.add(row.itemId);
+    }
+    return rows;
+}
+
 export function codeItemStatus(item: CodeItem): string {
     if (item.kind === 'turn_cancelled' || item.status === 'cancelled') return 'Stopped';
     if (item.kind === 'turn_failed' || item.status === 'error') return 'Failed';

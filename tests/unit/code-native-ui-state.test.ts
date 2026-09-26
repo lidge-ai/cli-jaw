@@ -130,3 +130,18 @@ test('a session event does not blank context usage it was never able to carry', 
     state = reduceCodeSession(state, { type: 'snapshot', snapshot: snapshot([item()], 5) });
     assert.equal(state.session?.contextUsage, undefined);
 });
+
+test('a session event with a higher history generation discards held items through a new snapshot', () => {
+    let state = seeded();
+    const rolled: CodeWireEvent = { topic: 'code', event: 'code_session', sessionId: 's', sequence: 4, epoch: 2,
+        session: { ...session, status: 'idle', turnId: null, epoch: 2, sequence: 4, historyGeneration: 1 } };
+    state = reduceCodeSession(state, { type: 'event', event: rolled });
+    assert.deepEqual({ needsSnapshot: state.needsSnapshot, synced: state.synced, cursor: state.cursor }, { needsSnapshot: true, synced: false, cursor: 3 });
+    assert.equal(state.items.length, 1, 'nothing is applied from a stale history');
+    state = reduceCodeSession(state, { type: 'snapshot', snapshot: { ...snapshot([], 4), session: rolled.session! } });
+    assert.deepEqual({ needsSnapshot: state.needsSnapshot, synced: state.synced, items: state.items.length }, { needsSnapshot: false, synced: true, items: 0 });
+    const same: CodeWireEvent = { ...rolled, sequence: 5, session: { ...rolled.session!, sequence: 5 } };
+    assert.equal(reduceCodeSession(state, { type: 'event', event: same }).needsSnapshot, false, 'an equal generation applies normally');
+    const older = reduceCodeSession(seeded(), { type: 'event', event: { ...rolled, session: { ...rolled.session!, historyGeneration: undefined as never } } });
+    assert.equal(older.needsSnapshot, false, 'an older server without the field is generation 0');
+});

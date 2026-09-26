@@ -5,7 +5,7 @@ import type { CodeGitInfo } from './code-session-client';
 
 export type CodeTransportState = 'connected' | 'reconnecting' | 'disconnected';
 export type CodeSessionFilter = { scope: 'all' | 'cwd'; archived: boolean };
-export type CodeOperationKind = 'idle' | 'creating' | 'sending' | 'stopping' | 'resuming' | 'patching' | 'unknown-send';
+export type CodeOperationKind = 'idle' | 'creating' | 'sending' | 'stopping' | 'resuming' | 'patching' | 'rolling-back' | 'unknown-send';
 export interface CodeControllerOptions { port: number; workingDir: string }
 
 export interface CodeControllerModel {
@@ -57,6 +57,8 @@ export interface CodeControllerModel {
     retrySameSend(): Promise<void>;
     stop(): Promise<void>;
     resume(): Promise<void>;
+    /** Claude only: remove the turns after this `${turnId}:user` row. Files are not reverted and nothing is sent. */
+    rollbackSession(itemId: string): Promise<void>;
     rename(id: string, title: string): Promise<void>;
     archive(id: string, archived: boolean): Promise<void>;
     answer(permission: CodePermissionRequest, optionId: string): Promise<void>;

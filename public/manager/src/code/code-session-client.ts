@@ -1,7 +1,7 @@
 import type {
     CodeCancelRequest, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeModelCatalog,
     CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt, CodePromptRequest,
-    CodeSessionInfo, CodeSessionPage, CodeSnapshot, CodeSteerRequest,
+    CodeRollbackRequest, CodeSessionInfo, CodeSessionPage, CodeSnapshot, CodeSteerRequest,
 } from '../../../../src/code-mode/wire';
 
 export interface CodeGitInfo {
@@ -44,6 +44,7 @@ export interface CodeSessionClient {
     steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
     cancelPrompt(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo>;
     attachSession(id: string): Promise<CodeSessionInfo>;
+    rollbackSession(id: string, input: CodeRollbackRequest): Promise<CodeSessionInfo>;
     visitSession(id: string): Promise<CodeSessionInfo>;
     answerPermission(id: string, input: CodePermissionAnswer): Promise<void>;
     getGitInfo(cwd: string, signal?: AbortSignal): Promise<CodeGitInfo>;
@@ -71,6 +72,11 @@ const ERROR_COPY: Record<string, string> = {
     steer_outcome_unknown: 'Follow-up delivery not confirmed. It was not resent.',
     steer_command_unsupported: 'A slash command cannot be sent as a follow-up. Send it after this turn finishes.',
     session_not_found: 'This session is no longer available. Its local draft is retained.',
+    rollback_unavailable: 'Rollback is unavailable after this conversation was compacted, or while its history cannot be read.',
+    rollback_boundary_unavailable: 'This turn can no longer be a rollback point: its history was compacted or predates rollback.',
+    rollback_noop: 'This is already the latest turn, so there is nothing to roll back.',
+    rollback_target_not_found: 'This message is no longer in the conversation. Refreshing the session.',
+    cleanup_pending: 'The previous runtime is still closing. Try again in a moment.',
     unauthorized: 'Authentication is required to access this instance.',
 };
 
@@ -118,6 +124,7 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),
         attachSession: id => sessionRequest('POST', `${sessionPath(id)}/attach`, {}),
+        rollbackSession: (id, input) => sessionRequest('POST', `${sessionPath(id)}/rollback`, input),
         visitSession: id => sessionRequest('POST', `${sessionPath(id)}/visit`, {}),
         async answerPermission(id, input) { await request('POST', `/permissions/${encodeURIComponent(id)}`, input); },
         getGitInfo: (cwd, signal) => request('GET', `/git-info?cwd=${encodeURIComponent(cwd)}`, undefined, signal),

@@ -1054,3 +1054,74 @@ test('a follow-up outcome never overwrites a Stop in progress', async t => {
     await stopping;
     assert.equal(f.controller.getModel().followUp, false, 'a stopping turn takes no follow-up');
 });
+
+function rolledBackFixture(t: TestContext) {
+    const f = fixture(t);
+    const claude = session('a', { provider: 'claude', sequence: 9, rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
+    const turn = (id: string, at: number): CodeItem[] => [
+        { itemId: `${id}:user`, turnId: id, kind: 'user_message', status: 'done', text: `prompt ${id}`, clientTurnKey: `key-${id}`, createdAt: 1, updatedAt: 1, firstSequence: at },
+        { itemId: `${id}:terminal`, turnId: id, kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: at + 1 },
+    ];
+    f.snapshots.set('a', snap(claude, [...turn('t1', 1), ...turn('t2', 3)]));
+    const after = { ...claude, sequence: 11, epoch: 2, revision: 3, historyGeneration: 1 };
+    return { ...f, claude, after, rolled: snap(after, turn('t1', 1)) };
+}
+
+test('rolling back posts the opaque row with the revision and epoch it saw, then takes a fresh snapshot', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => {
+        if (!call.path.endsWith('/rollback')) return undefined;
+        f.snapshots.set('a', f.rolled);
+        return response({ ok: true, session: f.after });
+    });
+    const reads = () => f.calls.filter(call => call.method === 'GET' && call.path === '/sessions/a').length;
+    const before = reads();
+    const rolling = f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.controller.getModel().operation.kind, 'rolling-back');
+    assert.equal(f.controller.getModel().pending, true);
+    await rolling;
+    assert.deepEqual(f.posts().at(-1)!.body, { expectedRevision: 2, expectedEpoch: 1, upToItemId: 't1:user' });
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    assert.ok(reads() > before);
+    assert.deepEqual(f.controller.getModel().items.map(item => item.itemId), ['t1:user', 't1:terminal']);
+    assert.equal(f.controller.getModel().session?.historyGeneration, 1);
+});
+
+test('a refused rollback keeps the transcript and names why; an unavailable session never posts', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'rollback_unavailable' }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.match(f.controller.getModel().operation.error ?? '', /compacted/);
+    assert.equal(f.controller.getModel().items.length, 4);
+    f.controller.clearError();
+    const posts = f.posts().length;
+    f.snapshots.set('a', snap({ ...f.claude, sequence: 12, rollback: { available: false, reason: 'no_boundary', sinceSequence: null } }, []));
+    await f.controller.refresh();
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().length, posts, 'the controller does not post when the server says rollback is unavailable');
+});
+
+test('a rollback seen from elsewhere retires a send whose turn it removed and requires a new key', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const pending = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/prompt') ? pending.promise : undefined);
+    f.controller.setInput('third prompt');
+    const sending = f.controller.send();
+    pending.reject(new TypeError('connection dropped'));
+    await sending;
+    const original = f.posts().at(-1)!.body['clientTurnKey'];
+    assert.equal(f.controller.getModel().operation.kind, 'unknown-send');
+    f.snapshots.set('a', f.rolled);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 11, epoch: 2, session: f.after });
+    await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
+    const model = f.controller.getModel();
+    assert.equal(model.resendRequired, true);
+    assert.match(model.operation.error ?? '', /rolled back/);
+    assert.equal(model.retryText, 'third prompt');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't3', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
+    await f.controller.retrySameSend();
+    assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original);
+});

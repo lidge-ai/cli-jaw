@@ -642,6 +642,14 @@
     border-radius: 12px 12px 4px 12px;
     background: var(--bg-raised);
 }
+/* A quiet text action under the prompt it rolls back to; the confirm carries the weight. */
+.code-message-rollback {
+    margin-top: 4px; padding: 0; border: 0; background: none;
+    color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+}
+.code-message-rollback:hover { color: var(--text-primary); }
+.code-message-rollback:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 /* A prompt the server has not echoed yet is dimmed, never hidden. */
 .code-message-user.is-unsent .code-message-text { opacity: 0.72; border-style: dashed; }
 .code-message-text {
