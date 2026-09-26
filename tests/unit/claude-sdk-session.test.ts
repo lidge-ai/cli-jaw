@@ -412,17 +412,34 @@ function reconfigurable(fail: { model?: number; flags?: number } = {}) {
             async applyFlagSettings(settings: unknown) { flagCalls++; if (fail.flags === flagCalls) throw new Error('flags_failed'); calls.push(['flags', settings]); } };
     } };
 }
-const liveOn = { model: 'claude-opus-5-5', effort: 'high' as const, thinking: true };
-const liveOff = { model: 'claude-sonnet-5', effort: null, thinking: false };
+const liveOn = { model: 'claude-opus-5-5', effort: 'high' as const };
+const liveOff = { model: 'claude-sonnet-5', effort: null };
 
-test('reconfigure moves model, effort and thinking on the idle query in that order', async t => {
+test('reconfigure moves the model and then the effort on the idle query, sending only what changed', async t => {
     const q = reconfigurable();
     const f = await fixture({ queryFactory: q.factory }); t.after(() => f.session.close());
     const turn = f.session.send({ text: 'one' }, () => {});
     q.output.push(result('ok')); await turn;
     await f.session.reconfigure(liveOff, liveOn);
-    assert.deepEqual(q.calls, [['model', 'claude-sonnet-5'],
-        ['flags', { effortLevel: null, alwaysThinkingEnabled: false, showThinkingSummaries: false }]]);
+    assert.deepEqual(q.calls, [['model', 'claude-sonnet-5'], ['flags', { effortLevel: null }]]);
+    q.calls.length = 0;
+    await f.session.reconfigure({ ...liveOff, effort: 'low' }, liveOff);
+    await f.session.reconfigure({ model: 'claude-opus-5-5', effort: 'low' }, { ...liveOff, effort: 'low' });
+    assert.deepEqual(q.calls, [['flags', { effortLevel: 'low' }], ['model', 'claude-opus-5-5']],
+        'an effort-only change skips setModel and a model-only change skips the flags');
+});
+
+test('a live medium effort clears effortLevel, as the open omits medium', async t => {
+    const { buildClaudeSdkOptions } = await import('../../src/agent/runtime/claude-sdk-options.ts');
+    const q = reconfigurable();
+    const f = await fixture({ queryFactory: q.factory }); t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    q.output.push(result('ok')); await turn;
+    await f.session.reconfigure({ ...liveOn, effort: 'medium' }, liveOn);
+    assert.deepEqual(q.calls, [['flags', { effortLevel: null }]]);
+    const open = buildClaudeSdkOptions({ cwd: process.cwd(), binary: process.execPath, env: {}, model: 'claude-opus-5-5',
+        systemPrompt: '', permissions: 'safe', fastMode: false, effort: 'medium' });
+    assert.equal(Object.hasOwn(open, 'effort'), false, 'the open leaves medium to the provider too');
 });
 
 test('reconfigure is refused mid-turn and without query support', async t => {
@@ -438,14 +455,13 @@ test('reconfigure is refused mid-turn and without query support', async t => {
     await assert.rejects(() => bare.session.reconfigure(liveOff, liveOn), /claude_query_control_unavailable/);
 });
 
-test('a failed flag step puts the previous model back; a failed rollback retires the process', async t => {
+test('a failed effort step puts the previous model and effort back; a failed rollback retires the process', async t => {
     const q = reconfigurable({ flags: 1 });
     const f = await fixture({ queryFactory: q.factory }); t.after(() => f.session.close());
     const turn = f.session.send({ text: 'one' }, () => {});
     q.output.push(result('ok')); await turn;
     await assert.rejects(() => f.session.reconfigure(liveOff, liveOn), /flags_failed/);
-    assert.deepEqual(q.calls, [['model', 'claude-sonnet-5'], ['model', 'claude-opus-5-5'],
-        ['flags', { effortLevel: 'high', alwaysThinkingEnabled: true, showThinkingSummaries: true }]]);
+    assert.deepEqual(q.calls, [['model', 'claude-sonnet-5'], ['model', 'claude-opus-5-5'], ['flags', { effortLevel: 'high' }]]);
     assert.equal(f.session.alive, true);
 
     const broken = reconfigurable({ flags: 1, model: 2 });

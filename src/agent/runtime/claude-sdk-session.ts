@@ -27,10 +27,9 @@ export type ClaudeQuery = AsyncIterable<SDKMessage> & {
     close(): void;
     setPermissionMode?(mode: PermissionMode): Promise<void>;
     setModel?(model?: string): Promise<void>;
-    applyFlagSettings?(settings: { effortLevel?: NonNullable<Options['effort']> | null; alwaysThinkingEnabled?: boolean | null;
-        showThinkingSummaries?: boolean | null }): Promise<void>;
+    applyFlagSettings?(settings: { effortLevel?: NonNullable<Options['effort']> | null }): Promise<void>;
 };
-export type ClaudeLiveTuple = { model: string; effort: Options['effort'] | null; thinking: boolean };
+export type ClaudeLiveTuple = { model: string; effort: Options['effort'] | null };
 export interface ClaudeSessionOptions {
     prepared: PreparedClaudeOptions;
     getTurnContext(): ClaudeTurnContext;
@@ -135,28 +134,26 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     /** The specific reason the last turn failed (terminal_reason, subtype, first error), if it did. */
     get lastTurnFailureText(): string | null { return this.turnFailureText; }
     /**
-     * Change model, effort and thinking on the idle resident query (Code sessions). If the
-     * second call fails after the model moved, the previous tuple is put back; if that
-     * also fails the process is retired before the error is reported.
+     * Change model and effort on the idle resident query (Code sessions), sending only what
+     * differs. If the effort step fails after the model moved, the previous model and effort
+     * are put back; if that also fails the process is retired before the error is reported.
+     * Thinking is fixed by the open's explicit `thinking` option, so it is not switched here.
      */
     async reconfigure(next: ClaudeLiveTuple, previous: ClaudeLiveTuple): Promise<void> {
         const query = this.query;
         if (!this.idle || !query?.setModel || !query.applyFlagSettings) throw new Error('claude_query_control_unavailable');
         const setModel = query.setModel.bind(query), applyFlags = query.applyFlagSettings.bind(query);
         const model = (tuple: ClaudeLiveTuple) => setModel(tuple.model && tuple.model !== 'default' ? tuple.model : undefined);
-        const flags = (tuple: ClaudeLiveTuple) => applyFlags({
-            // null returns to the model's default effort, matching an open without `effort`.
-            effortLevel: tuple.effort ?? null,
-            alwaysThinkingEnabled: tuple.thinking, showThinkingSummaries: tuple.thinking,
-        });
+        // Match the open: no effort and medium leave the provider's configured effort intact.
+        const effort = (tuple: ClaudeLiveTuple) => applyFlags({
+            effortLevel: tuple.effort == null || tuple.effort === 'medium' ? null : tuple.effort });
         let modelApplied = false;
         try {
-            await model(next);
-            modelApplied = true;
-            await flags(next);
+            if (next.model !== previous.model) { await model(next); modelApplied = true; }
+            if (next.effort !== previous.effort) await effort(next);
         } catch (error) {
             if (!modelApplied) throw error;
-            try { await model(previous); await flags(previous); }
+            try { await model(previous); await effort(previous); }
             catch (rollbackError) {
                 const closeError = await this.close().then(() => null, (e: unknown) => e);
                 throw new AggregateError([error, rollbackError, ...(closeError ? [closeError] : [])], 'claude_reconfigure_inconsistent');
