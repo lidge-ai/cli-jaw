@@ -745,11 +745,15 @@ export class CodeStore {
         });
     }
 
-    /** A definitive refusal before native acceptance: the key is spent, the turn's slot is free again. */
+    /**
+     * A definitive refusal before native acceptance: the key is spent, the turn's slot is free again.
+     * A turn that settled while the offer was in flight left the row `unknown`; the in-flight call
+     * that then learns the runtime refused the offer is the one owner that can make it definitive.
+     */
     rejectSteer(sessionId: string, reservationId: string): void {
         this.write(() => {
             this.database.prepare(`UPDATE code_steers SET status = 'rejected' WHERE session_id = ? AND client_turn_key = ?
-                AND status = 'reserved'`).run(sessionId, reservationId);
+                AND status IN ('reserved', 'unknown')`).run(sessionId, reservationId);
         });
     }
 
@@ -888,7 +892,8 @@ export class CodeStore {
         });
     }
 
-    private finish(record: CodeSessionRecord, result: CodeSettleTurn): CodeTurnSettlement {
+    /** `lostRuntime`: a restart settles the turn, and nothing can confirm what its runtime consumed. */
+    private finish(record: CodeSessionRecord, result: CodeSettleTurn, lostRuntime = false): CodeTurnSettlement {
         const turn = this.database.prepare(`SELECT ${TURN_COLUMNS} FROM code_turns WHERE session_id = ? AND turn_id = ?`)
             .get(record.sessionId, record.turnId) as TurnRow | undefined;
         if (!turn) throw new CodeStoreError('turn_not_found', 'Code turn not found', 404);
@@ -922,6 +927,7 @@ export class CodeStore {
             after = item.first_sequence;
         }
         // A follow-up no native result consumed may never have reached Claude; say so on its item.
+        // After a restart every committed follow-up of the turn reads that way.
         const undelivered = new Set(result.undeliveredFollowUps ?? []);
         const steers = this.database.prepare(`SELECT client_turn_key, native_uuid FROM code_steers
             WHERE session_id = ? AND turn_id = ? AND status = 'committed'`).all(record.sessionId, turnId) as Array<{ client_turn_key: string; native_uuid: string | null }>;
@@ -929,7 +935,8 @@ export class CodeStore {
             const itemId = `${turnId}:steer:${steer.client_turn_key}`;
             const projected = this.database.prepare('SELECT first_sequence FROM code_items WHERE session_id = ? AND item_id = ?')
                 .get(record.sessionId, itemId) as { first_sequence: number } | undefined;
-            if (steer.native_uuid === null || !undelivered.has(steer.native_uuid) || !projected) continue;
+            const unconfirmed = lostRuntime || (steer.native_uuid !== null && undelivered.has(steer.native_uuid));
+            if (!unconfirmed || !projected) continue;
             record.sequence += 1;
             events.push(this.persistEvent(record, {
                 topic: 'code', event: 'code_item_update', sessionId: record.sessionId, sequence: record.sequence, epoch: record.epoch,
@@ -938,7 +945,9 @@ export class CodeStore {
             this.database.prepare(`UPDATE code_items SET item_json = json_set(item_json, '$.phase', 'unknown', '$.updatedAt', ?)
                 WHERE session_id = ? AND item_id = ?`).run(now, record.sessionId, itemId);
         }
-        this.database.prepare(`UPDATE code_steers SET status = 'rejected' WHERE session_id = ? AND turn_id = ? AND status = 'reserved'`)
+        // A reservation still open here may already have been offered to the runtime: its key answers
+        // unknown (never "send it again"), and the turn's slot stays spent.
+        this.database.prepare(`UPDATE code_steers SET status = 'unknown' WHERE session_id = ? AND turn_id = ? AND status = 'reserved'`)
             .run(record.sessionId, turnId);
         const kind = result.status === 'completed' ? 'turn_completed' : result.status === 'failed' ? 'turn_failed' : 'turn_cancelled';
         events.push(this.event(record, { itemId: `${record.turnId}:terminal`, turnId: record.turnId, kind,
@@ -1006,7 +1015,7 @@ export class CodeStore {
                 const record = rowToRecord(row);
                 record.epoch += 1;
                 const error: CodeSessionError = { code: 'orphaned_turn', message: 'Code turn interrupted by server restart', at: this.now(), recoverable: true };
-                if (record.turnId !== null) events.push(...this.finish(record, { status: 'failed', error }).events);
+                if (record.turnId !== null) events.push(...this.finish(record, { status: 'failed', error }, true).events);
                 else {
                     record.status = 'failed';
                     record.error = error;

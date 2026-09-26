@@ -2085,3 +2085,23 @@ test('a failure after native acceptance is an unknown outcome that is never repl
     assert.equal(g.manager.snapshot(g.row.sessionId).session.status, 'idle');
     assert.equal(userItems(g, g.row.sessionId).length, 1);
 });
+
+test('an offer in flight when the turn settles reads unknown until the runtime refuses it', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    const gate = deferred<void>();
+    handle.steerGate = gate.promise;
+    handle.steerResult = { accepted: false, turnId: 'native-turn', reason: 'not-current' };
+    const pending = f.follow('steer-1');
+    await yieldEventLoop();
+    handle.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+    const status = () => f.db.prepare("SELECT status FROM code_steers WHERE client_turn_key = 'steer-1'").pluck().get();
+    assert.equal(status(), 'unknown', 'settlement cannot tell whether the offer happened');
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_outcome_unknown', 503));
+    gate.resolve();
+    await assert.rejects(pending, errorCode('stale_owner', 409));
+    assert.equal(status(), 'rejected', 'the refusal the runtime returned is definitive');
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_key_spent', 409));
+    assert.equal(userItems(f, f.row.sessionId).length, 1);
+});

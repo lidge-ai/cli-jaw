@@ -1160,7 +1160,7 @@ test('a follow-up the turn budget cannot store is refused before any reservation
     assert.equal(f.steer('steer-2', 'small').receipt, null);
 });
 
-test('settlement marks an unconsumed follow-up unconfirmed, keeps a consumed one, and spends a leftover reservation', t => {
+test('settlement marks an unconsumed follow-up unconfirmed, keeps a consumed one, and leaves a leftover reservation unknown', t => {
     const f = streamingTurn(t);
     f.steer('steer-1');
     const committed = f.store.commitSteer('session-a', 'steer-1', 'follow-up', 'native-1');
@@ -1181,18 +1181,43 @@ test('settlement marks an unconsumed follow-up unconfirmed, keeps a consumed one
     assert.equal(completed.events.some(event => event.update?.phase === 'unknown'), false);
     assert.equal(g.store.snapshot('session-a').items.find(item => item.kind === 'user_message' && item.clientTurnKey === 'steer-1')?.phase, undefined);
 
+    // The offer may still be in flight when the turn settles: the key answers unknown, never "send it again".
     const h = streamingTurn(t);
     h.steer('steer-1');
     h.store.settleTurn(owner(h.running), { status: 'completed' });
-    expectError(() => h.steer('steer-1', 'follow-up', h.running), 'steer_key_spent');
+    expectError(() => h.steer('steer-1', 'follow-up', h.running), 'steer_outcome_unknown', 503);
+    expectError(() => h.store.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), 'steer_outcome_unknown', 503);
     expectError(() => h.store.commitSteer('session-a', 'steer-1', 'follow-up', 'late'), 'stale_owner');
+    h.store.markSteerUnknown('session-a', 'steer-1');
+    assert.equal(steerRows(h.db).find(row => (row as { client_turn_key: string }).client_turn_key === 'steer-1')?.status, 'unknown');
+    // The in-flight call that then learns the runtime refused it records the refusal.
+    h.store.rejectSteer('session-a', 'steer-1');
+    expectError(() => h.steer('steer-1', 'follow-up', h.running), 'steer_key_spent');
 });
 
-test('restart spends a reservation the lost process never offered', t => {
+test('restart leaves a reservation the lost process may have offered unknown', t => {
     const f = streamingTurn(t);
     f.steer('steer-1');
     const restarted = new CodeStore(f.db, { now: () => 5678 });
     restarted.recoverInterrupted();
-    assert.deepEqual(steerRows(f.db), [{ client_turn_key: 'steer-1', status: 'rejected', native_uuid: null }]);
-    expectError(() => restarted.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), 'steer_key_spent');
+    assert.deepEqual(steerRows(f.db), [{ client_turn_key: 'steer-1', status: 'unknown', native_uuid: null }]);
+    expectError(() => restarted.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), 'steer_outcome_unknown', 503);
+});
+
+test('restart marks every committed follow-up of the recovered turn delivery not confirmed', t => {
+    const f = streamingTurn(t);
+    f.steer('steer-1');
+    const committed = f.store.commitSteer('session-a', 'steer-1', 'follow-up', 'native-1');
+    const restarted = new CodeStore(f.db, { now: () => 5678 });
+    const events = restarted.recoverInterrupted();
+    const itemId = `${f.running.turnId}:steer:steer-1`;
+    const update = events.find(event => event.update?.itemId === itemId)?.update;
+    assert.deepEqual(update && { phase: update.phase, firstSequence: update.firstSequence },
+        { phase: 'unknown', firstSequence: committed.events[0]!.sequence });
+    assert.equal(events.at(-1)?.session?.status, 'failed');
+    const snapshot = restarted.snapshot('session-a');
+    assert.deepEqual(snapshot.items.filter(item => item.kind === 'user_message').map(item => [item.clientTurnKey, item.phase]),
+        [['key-a', undefined], ['steer-1', 'unknown']]);
+    assert.equal(replayItems(restarted.readEvents('session-a').events).find(item => item.itemId === itemId)?.phase, 'unknown');
+    assert.deepEqual(restarted.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), { ...committed.receipt, status: 'failed' });
 });
