@@ -50,7 +50,7 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                     sdkMode, sessionGrants: true, allowDangerouslySkipPermissions: true,
                     ...(effort === undefined ? {} : { effort }),
                     ...(options.nativeCursor === null ? {} : { resumeSessionId: options.nativeCursor }) },
-                signal: options.signal, registry: options.registry, promptTimeoutMs: CODE_PROMPT_TIMEOUT_MS,
+                signal: options.signal, registry: options.registry, promptTimeoutMs: CODE_PROMPT_TIMEOUT_MS, inBandSteer: true,
                 onSessionCreated(session) {
                     let closeConfirmed = false;
                     let closing: Promise<void> | undefined;
@@ -126,6 +126,16 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                         if (!runtime.nativeSessionId && options.nativeCursor === null) options.onNativeCursor(null, context);
                         return runtime.send({ text }, () => {});
                     },
+                    // The only busy-session input path; a refusal is returned, never turned into success.
+                    async steer(text) {
+                        if (closing || !runtime.alive) return { accepted: false, turnId: '', reason: 'not-current' };
+                        if (Buffer.byteLength(text) > 1024 * 1024) throw new Error('claude_prompt_limit');
+                        const result = await runtime.steer({ text });
+                        if (result.accepted) return { accepted: true, turnId: result.turnId, ...(result.nativeId ? { nativeId: result.nativeId } : {}) };
+                        const reason = result.reason === 'queue-full' || result.reason === 'not-ready' ? result.reason : 'not-current';
+                        return { accepted: false, turnId: result.turnId, reason };
+                    },
+                    unconsumedFollowUps: () => runtime.unconsumedFollowUps(),
                     cancel: () => close(), close,
                 };
             } catch (error) { await close(); throw error; }

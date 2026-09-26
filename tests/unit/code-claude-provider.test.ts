@@ -69,3 +69,34 @@ test('Claude Code provider refuses a reconfigure while the runtime is not idle, 
         (error: unknown) => error instanceof CodeStoreError && error.code === 'session_busy');
     assert.deepEqual(h.runtime.reconfigured, [], 'a closing runtime is not idle either');
 });
+
+test('Claude Code provider opens the in-band follow-up path and returns the runtime refusal unchanged', async () => {
+    const h = harness();
+    const steers: unknown[] = [];
+    let answer: Record<string, unknown> = { accepted: true, mode: 'queued', turnId: 'turn-1', nativeId: 'native-follow' };
+    Object.assign(h.runtime, { async steer(prompt: unknown) { steers.push(prompt); return answer; }, unconsumedFollowUps: () => ['native-follow'] });
+    const handle = await h.open();
+    assert.equal(h.captured()['inBandSteer'], true);
+    assert.deepEqual(await handle.steer!('more'), { accepted: true, turnId: 'turn-1', nativeId: 'native-follow' });
+    assert.deepEqual(steers, [{ text: 'more' }]);
+    assert.deepEqual(handle.unconsumedFollowUps!(), ['native-follow']);
+    for (const reason of ['queue-full', 'not-ready', 'not-current', 'Use the scoped follow-up policy']) {
+        answer = { accepted: false, mode: 'queued', turnId: 'turn-1', reason };
+        assert.deepEqual(await handle.steer!('more'), { accepted: false, turnId: 'turn-1',
+            reason: reason === 'queue-full' || reason === 'not-ready' ? reason : 'not-current' });
+    }
+    await assert.rejects(handle.steer!('x'.repeat(1024 * 1024 + 1)), /claude_prompt_limit/);
+    assert.equal(steers.length, 5, 'an oversized follow-up throws before dispatch');
+    await handle.close();
+    assert.deepEqual(await handle.steer!('late'), { accepted: false, turnId: '', reason: 'not-current' });
+    assert.equal(steers.length, 5);
+});
+
+test('only the Code Claude provider switches the runtime to in-band follow-ups', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry =>
+        entry.isDirectory() ? files(join(dir, entry.name)) : entry.name.endsWith('.ts') ? [join(dir, entry.name)] : []);
+    const users = files('src').filter(file => readFileSync(file, 'utf8').includes('inBandSteer')).sort();
+    assert.deepEqual(users, [join('src', 'agent', 'runtime', 'claude-sdk-session.ts'), join('src', 'code-mode', 'providers', 'claude.ts')]);
+});

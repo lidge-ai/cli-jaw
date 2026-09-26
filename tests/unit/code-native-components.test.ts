@@ -1097,3 +1097,63 @@ test('the Thinking menu shows only for Claude and switches the setting', bounded
         selection: { provider: 'codex-app', cwd: '/workspace', model: 'native-model', effort: null, permissionMode: 'ask' } }) }));
     assert.equal([...h.container.querySelectorAll('button')].some(b => b.getAttribute('aria-label')?.startsWith('Thinking')), false);
 });
+
+test('a follow-up turn renders Stop and Send follow-up side by side; Enter sends the follow-up', bounded, async t => {
+    const h = await surface(t); let sends = 0, stops = 0;
+    const props = { inputText: 'also the tests', canSend: true, busy: true, canStop: true, stopping: false, pending: false, followUp: true,
+        readOnly: false, onInputChange() {}, async onSubmit() { sends++; }, async onStop() { stops++; } };
+    await h.render(createElement(CodeComposer, props));
+    const input = h.container.querySelector('textarea'); assert.ok(input);
+    assert.match(input.placeholder, /follow-up/);
+    await click(button(h.container, 'Send follow-up')); assert.equal(sends, 1);
+    await key(input, 'Enter'); assert.equal(sends, 2);
+    await click(button(h.container, 'Stop current turn')); assert.equal(stops, 1);
+    await h.render(createElement(CodeComposer, { ...props, canSend: false, steering: true }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, true);
+    assert.equal(button(h.container, 'Stop current turn').disabled, false, 'Stop stays available while the follow-up is in flight');
+    assert.match(h.container.querySelector('.code-composer-status')?.textContent ?? '', /Sending follow-up…/);
+    await h.render(createElement(CodeComposer, { ...props, followUp: false }));
+    assert.equal([...h.container.querySelectorAll('button')].some(node => /Send/.test(node.getAttribute('aria-label') ?? '')), false,
+        'a busy turn without follow-ups offers Stop only');
+});
+
+test('the workbench offers Send follow-up only for a streaming Claude turn and closes it while stopping or sending', bounded, async t => {
+    const h = await surface(t);
+    const claude = session({ provider: 'claude', status: 'streaming', turnId: 'turn-a', thinking: true });
+    const busy = { session: claude, sessions: [claude], busy: true, working: true, input: 'more', synced: true,
+        selection: { provider: 'claude' as const, cwd: claude.cwd, model: claude.model, effort: null, permissionMode: claude.permissionMode } };
+    await h.render(createElement(CodeWorkbench, { controller: model({ ...busy, followUp: true, steering: false }), endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, false);
+    assert.equal(button(h.container, 'Stop current turn').disabled, false);
+    await h.render(createElement(CodeWorkbench, { controller: model({ ...busy, followUp: true, steering: true }), endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, true, 'one follow-up at a time');
+    await h.render(createElement(CodeWorkbench, { controller: model({ ...busy, followUp: true, operation: { kind: 'stopping', error: null } }), endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, true, 'closed while Stop is pending or unconfirmed');
+    const codex = session({ status: 'streaming', turnId: 'turn-a' });
+    await h.render(createElement(CodeWorkbench, { controller: model({ session: codex, sessions: [codex], busy: true, working: true,
+        input: 'more', followUp: false }), endpointKey: '43225' }));
+    assert.equal([...h.container.querySelectorAll('.code-composer-actions button')].some(node => /Send/.test(node.getAttribute('aria-label') ?? '')), false);
+    button(h.container, 'Stop current turn');
+});
+
+test('Send follow-up stays closed once the running turn has its follow-up', bounded, async t => {
+    const h = await surface(t);
+    const claude = session({ provider: 'claude', status: 'streaming', turnId: 'turn-a', thinking: true });
+    await h.render(createElement(CodeWorkbench, { controller: model({ session: claude, sessions: [claude], busy: true, working: true,
+        input: 'one more', synced: true, followUp: true, followUpSent: true, steering: false,
+        selection: { provider: 'claude' as const, cwd: claude.cwd, model: claude.model, effort: null, permissionMode: claude.permissionMode } }),
+    endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, true);
+    assert.equal(button(h.container, 'Stop current turn').disabled, false);
+    assert.match(h.container.querySelector('textarea')?.placeholder ?? '', /already has its follow-up/);
+});
+
+test('a follow-up the turn never consumed reads delivery not confirmed', bounded, async t => {
+    const h = await surface(t);
+    const item = { itemId: 'turn:steer:k', turnId: 'turn', kind: 'user_message', status: 'done', text: 'also the tests', clientTurnKey: 'k',
+        phase: 'unknown', createdAt: 1, updatedAt: 1, firstSequence: 4 } as CodeItem;
+    await h.render(createElement(CodeTranscriptItem, { item, provider: 'claude', sessionKey: 'k' }));
+    assert.match(h.container.textContent ?? '', /You · Delivery not confirmed/);
+    await h.render(createElement(CodeTranscriptItem, { item: { ...item, phase: undefined } as CodeItem, provider: 'claude', sessionKey: 'k' }));
+    assert.doesNotMatch(h.container.textContent ?? '', /not confirmed/);
+});

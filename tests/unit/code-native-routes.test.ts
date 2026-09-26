@@ -12,6 +12,7 @@ import { asyncHandler } from '../../src/http/async-handler.ts';
 import { httpStatus } from '../../src/routes/_http-error.ts';
 import { registerNativeCodeRoutes, type CodeRouteService } from '../../src/routes/code-native.ts';
 import { CodeStore, CodeStoreError } from '../../src/code-mode/store.ts';
+import { CodeServiceError } from '../../src/code-mode/session.ts';
 import type { CodeSessionInfo } from '../../src/code-mode/wire.ts';
 
 function fixture() {
@@ -35,6 +36,10 @@ function fixture() {
         prompt(id, input) {
             capture('prompt', id, input);
             return { duplicate, receipt: { turnId: 'turn-one', clientTurnKey: input.clientTurnKey, sequence: 8, status: 'accepted' } };
+        },
+        async steer(id, input) {
+            capture('steer', id, input);
+            return { duplicate, receipt: { turnId: input.turnId, clientTurnKey: input.clientTurnKey, sequence: 9, status: 'running' } };
         },
         async cancel(...args) { capture('cancel', ...args); return session; },
         async attach(id) { capture('attach', id); return session; },
@@ -474,5 +479,42 @@ test('POST and PATCH carry a boolean thinking switch and refuse anything else', 
         assert.equal((f.calls.at(-1)?.args[1] as { thinking?: boolean }).thinking, true);
         const badPatch = await request(`${url}/sessions/session-one`, 'PATCH', { expectedRevision: 2, thinking: 1 });
         assert.equal((await badPatch.json()).error, 'invalid_thinking');
+    });
+});
+
+test('steer admits a follow-up for the captured turn and keeps every refusal a refusal', async () => {
+    await server(async (url, f) => {
+        const input = { text: 'also run the tests\n', clientTurnKey: 'steer-one', turnId: 'turn-one', epoch: 4 };
+        let response = await request(`${url}/sessions/session-one/steer`, 'POST', input);
+        assert.equal(response.status, 202);
+        assert.deepEqual(await response.json(), { ok: true, turnId: 'turn-one', clientTurnKey: 'steer-one', sequence: 9, status: 'running' });
+        assert.deepEqual(f.calls.at(-1), { method: 'steer', args: ['session-one', input] });
+        f.duplicate();
+        response = await request(`${url}/sessions/session-one/steer`, 'POST', input);
+        assert.equal(response.status, 200);
+        const calls = f.calls.length;
+        for (const [body, code] of [
+            [{ ...input, epoch: undefined }, 'invalid_epoch'], [{ ...input, epoch: 1.5 }, 'invalid_epoch'],
+            [{ ...input, turnId: '' }, 'invalid_id'], [{ text: 'x', clientTurnKey: 'k', turnId: 't', epoch: 1, provider: 'grok' }, 'unknown_field'],
+            [{ ...input, text: '  /compact now' }, 'steer_command_unsupported'], [{ ...input, text: ' ' }, 'invalid_prompt'],
+            [{ ...input, text: 'é'.repeat(600_000) }, 'invalid_prompt'],
+        ] as const) {
+            const refused = await request(`${url}/sessions/session-one/steer`, 'POST', body);
+            assert.equal(refused.status, 400);
+            assert.equal((await refused.json()).error, code);
+        }
+        assert.equal(f.calls.length, calls, 'malformed follow-ups never reach the service');
+        for (const [error, status] of [
+            [new CodeStoreError('steer_queue_full', 'full', 409), 409], [new CodeStoreError('session_not_steerable', 'busy', 409), 409],
+            [new CodeStoreError('stale_owner', 'stale', 409), 409], [new CodeStoreError('steer_in_flight', 'in flight', 409), 409],
+            [new CodeStoreError('steer_key_spent', 'spent', 409), 409], [new CodeStoreError('turn_key_conflict', 'conflict', 409), 409],
+            [new CodeStoreError('unsupported_capability', 'unsupported', 400), 400],
+            [new CodeServiceError('steer_outcome_unknown', 'unknown'), 503], [new CodeServiceError('orphaned_turn', 'orphan'), 503],
+        ] as const) {
+            f.service.steer = async () => { throw error; };
+            const refused = await request(`${url}/sessions/session-one/steer`, 'POST', input);
+            assert.equal(refused.status, status);
+            assert.deepEqual(await refused.json(), { ok: false, error: error.code });
+        }
     });
 });

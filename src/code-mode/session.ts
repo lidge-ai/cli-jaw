@@ -7,7 +7,7 @@ import type { CodeLiveSettings, CodeOpenOptions, CodeProvider, CodeProviderSessi
 import { CodeStore, CodeStoreError, type CodeSessionRecord, type CodeStoreOwner } from './store.js';
 import type {
     CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionMode, CodePermissionRequest,
-    CodeSessionError, CodeWireEvent,
+    CodePromptReceipt, CodeSessionError, CodeSteerRequest, CodeWireEvent,
 } from './wire.js';
 
 const CLEANUP_TIMEOUT_MS = 2_000;
@@ -580,6 +580,8 @@ export class CodeSession {
         op.settled = true;
         op.registry.cancelRun(op.context.runId);
         op.permissions.clear();
+        // Read after cleanup: a Stop or failure retires the runtime before it can consume more input.
+        const undeliveredFollowUps = op.owner.turnId === null ? [] : this.unconsumedFollowUps(op);
         try {
             const status = op.failure || op.persistenceFailure || outcome?.status === 'error' ? 'failed'
                 : op.stopped || outcome?.status === 'stopped' ? 'cancelled' : 'completed';
@@ -587,7 +589,7 @@ export class CodeSession {
                 ? this.diagnostic('native_failed', 'Code provider turn failed') : null);
             const result = op.owner.turnId === null
                 ? this.options.store.setRuntimeState(op.owner, status === 'failed' ? 'failed' : 'idle', error)
-                : this.options.store.settleTurn(op.owner, { status, error });
+                : this.options.store.settleTurn(op.owner, { status, error, undeliveredFollowUps });
             // A durable failed terminal restores reads; the captured turn latch stays closed.
             if (op.persistenceFailure && result.session.status === 'failed' && this.operation === op) {
                 this.persistenceError = null;
@@ -596,6 +598,73 @@ export class CodeSession {
         } catch (error) { this.failPersistence(op, error); }
         this.lastUsedAt = this.options.now();
         this.options.changed();
+    }
+
+    private unconsumedFollowUps(op: Operation): readonly string[] {
+        try { return [...(op.binding.handle?.unconsumedFollowUps?.() ?? [])]; }
+        catch { console.warn('[code] follow_up_state_failed'); return []; }
+    }
+
+    /**
+     * Offer one follow-up to the running turn. The durable reservation comes first, the native
+     * offer only after it, and the transcript records the message only once the runtime accepted
+     * it: a refusal before that is definitive, a failure after it is an unknown outcome.
+     */
+    async steer(input: CodeSteerRequest): Promise<{ receipt: CodePromptReceipt; duplicate: boolean }> {
+        this.assertHealthy();
+        if (input.text.trimStart().startsWith('/')) {
+            throw new CodeStoreError('steer_command_unsupported', 'Slash commands cannot be sent as a follow-up', 400);
+        }
+        const op = this.operation;
+        if (!op || op.settled || op.owner.turnId !== input.turnId || op.owner.epoch !== input.epoch) {
+            throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
+        }
+        const { store, sessionId } = this.options;
+        // Expected refusals are CodeStoreErrors and never poison the session; storage faults do.
+        const storage = <T>(action: () => T): T => {
+            try { return action(); }
+            catch (error) {
+                if (error instanceof CodeStoreError) throw error;
+                this.failPersistence(op, error);
+                throw new CodeServiceError('persistence_failed', 'Code session persistence failed');
+            }
+        };
+        const reservation = storage(() => store.reserveSteer({ ...input, sessionId }));
+        if (reservation.receipt) return { receipt: reservation.receipt, duplicate: true };
+        const key = reservation.reservationId;
+        const refuse = (error: CodeStoreError): never => {
+            storage(() => store.rejectSteer(sessionId, key));
+            throw error;
+        };
+        const handle = op.binding.handle;
+        if (!handle || !this.current(op)) return refuse(new CodeStoreError('stale_owner', 'Code turn is no longer current', 409));
+        if (typeof handle.steer !== 'function') {
+            return refuse(new CodeStoreError('unsupported_capability', 'This Code runtime does not take in-band follow-ups', 400));
+        }
+        let offered: Awaited<ReturnType<NonNullable<CodeProviderSession['steer']>>>;
+        try { offered = await handle.steer(input.text); }
+        catch { return refuse(new CodeStoreError('session_not_steerable', 'The running turn did not take the follow-up', 409)); }
+        if (!offered.accepted) {
+            return refuse(offered.reason === 'queue-full' ? new CodeStoreError('steer_queue_full', 'The running turn already has its follow-up', 409)
+                : offered.reason === 'not-ready' ? new CodeStoreError('session_not_steerable', 'This turn does not take a follow-up yet', 409)
+                    : new CodeStoreError('stale_owner', 'Code turn is no longer current', 409));
+        }
+        // The input left this process: from here nothing may be retried as if it were unsent.
+        const unknown = (): CodeServiceError => {
+            try { store.markSteerUnknown(sessionId, key); } catch { console.warn('[code] steer_state_failed'); }
+            return new CodeServiceError('steer_outcome_unknown', 'Follow-up delivery could not be confirmed');
+        };
+        if (!this.current(op)) throw unknown();
+        try {
+            const committed = store.commitSteer(sessionId, key, input.text, offered.nativeId ?? null);
+            this.publish(committed.events);
+            return { receipt: committed.receipt, duplicate: false };
+        } catch (error) {
+            const failure = unknown();
+            // Text the transcript does not hold must not keep running under this turn.
+            if (!op.settled && this.current(op)) this.failPersistence(op, error);
+            throw failure;
+        }
     }
 
     private syncPermissions(op: Operation): void {

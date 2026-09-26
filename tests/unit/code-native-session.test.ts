@@ -1912,3 +1912,196 @@ test('with no live Claude runtime a thinking change is stored and read by the ne
     f.manager.prompt(row.sessionId, prompt);
     assert.equal((await f.providers.claude.opened()).thinking, false);
 });
+
+// Code in-band follow-ups (Claude only).
+class SteerHandle extends NativeHandle {
+    readonly steers: string[] = [];
+    steerResult: Awaited<ReturnType<NonNullable<CodeProviderSession['steer']>>> | Error = { accepted: true, turnId: 'native-turn', nativeId: 'native-follow' };
+    steerGate: Promise<void> | null = null;
+    unconsumed: string[] = [];
+    async steer(text: string) {
+        this.steers.push(text);
+        await this.steerGate;
+        if (this.steerResult instanceof Error) throw this.steerResult;
+        return this.steerResult;
+    }
+    unconsumedFollowUps(): readonly string[] { return this.unconsumed; }
+}
+async function runningClaude(t: TestContext, handle: NativeHandle = new SteerHandle()) {
+    const f = fixture(t);
+    f.providers.claude.handles[0] = handle;
+    const row = f.create('claude');
+    const { receipt } = f.manager.prompt(row.sessionId, prompt);
+    await handle.sent.promise;
+    const follow = (key: string, text = 'also check the tests', patch: Partial<{ turnId: string; epoch: number }> = {}) =>
+        f.manager.steer(row.sessionId, { text, clientTurnKey: key, turnId: receipt.turnId, epoch: 1, ...patch });
+    return { ...f, row, receipt, handle, follow };
+}
+const userItems = (f: { manager: CodeSessionManager }, id: string) =>
+    f.manager.snapshot(id).items.filter(item => item.kind === 'user_message');
+
+test('a follow-up joins the running Claude turn once and replays its receipt after the turn ends', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    const admitted = await f.follow('steer-1');
+    assert.equal(admitted.duplicate, false);
+    assert.deepEqual({ turnId: admitted.receipt.turnId, key: admitted.receipt.clientTurnKey, status: admitted.receipt.status },
+        { turnId: f.receipt.turnId, key: 'steer-1', status: 'running' });
+    assert.deepEqual(handle.steers, ['also check the tests']);
+    assert.deepEqual(handle.sends, ['hello'], 'a follow-up never starts another native send');
+    const session = f.manager.snapshot(f.row.sessionId).session;
+    assert.deepEqual({ epoch: session.epoch, turnId: session.turnId, status: session.status }, { epoch: 1, turnId: f.receipt.turnId, status: 'streaming' });
+    assert.deepEqual(userItems(f, f.row.sessionId).map(item => [item.turnId, item.clientTurnKey, item.status]),
+        [[f.receipt.turnId, 'key-one', 'done'], [f.receipt.turnId, 'steer-1', 'done']]);
+    await assert.rejects(f.follow('steer-2'), errorCode('steer_queue_full', 409));
+    assert.equal(handle.steers.length, 1, 'the durable quota refuses before any native offer');
+    const again = await f.follow('steer-1');
+    assert.deepEqual(again, { receipt: admitted.receipt, duplicate: true });
+    handle.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+    const replay = await f.follow('steer-1');
+    assert.deepEqual(replay, { receipt: { ...admitted.receipt, status: 'completed' }, duplicate: true });
+    assert.equal(handle.steers.length, 1);
+    const snapshot = f.manager.snapshot(f.row.sessionId);
+    assert.equal(snapshot.items.filter(item => item.kind === 'turn_completed').length, 1);
+    assert.equal(snapshot.items.find(item => item.clientTurnKey === 'steer-1')?.phase, undefined);
+});
+
+test('a native queue-full refusal is a 409 that spends the key, adds no transcript item and never interrupts', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    handle.steerResult = { accepted: false, turnId: 'native-turn', reason: 'queue-full' };
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_queue_full', 409));
+    assert.equal(userItems(f, f.row.sessionId).length, 1);
+    assert.deepEqual({ cancel: handle.cancellations, close: handle.closes }, { cancel: 0, close: 0 });
+    assert.equal(f.manager.snapshot(f.row.sessionId).session.status, 'streaming');
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_key_spent', 409));
+    handle.steerResult = { accepted: false, turnId: 'native-turn', reason: 'not-ready' };
+    await assert.rejects(f.follow('steer-2'), errorCode('session_not_steerable', 409));
+    handle.steerResult = { accepted: false, turnId: 'native-turn', reason: 'not-current' };
+    await assert.rejects(f.follow('steer-3'), errorCode('stale_owner', 409));
+    handle.steerResult = new Error('claude_prompt_limit');
+    await assert.rejects(f.follow('steer-4'), errorCode('session_not_steerable', 409));
+    assert.equal(handle.steers.length, 4);
+    assert.equal(f.manager.list()[0]?.sessionId, f.row.sessionId, 'expected refusals never poison the session');
+    handle.steerResult = { accepted: true, turnId: 'native-turn', nativeId: 'native-follow' };
+    assert.equal((await f.follow('steer-5')).duplicate, false, 'a refused offer left the slot free');
+    handle.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+});
+
+test('stale owners, starting turns, slash commands and other runtimes never reach native steer', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    await assert.rejects(f.follow('s1', 'x', { epoch: 2 }), errorCode('stale_owner', 409));
+    await assert.rejects(f.follow('s2', 'x', { turnId: 'other-turn' }), errorCode('stale_owner', 409));
+    const session = f.manager['sessions'].get(f.row.sessionId)!;
+    await assert.rejects(session.steer({ text: ' /compact', clientTurnKey: 's3', turnId: f.receipt.turnId, epoch: 1 }),
+        errorCode('steer_command_unsupported', 400));
+    const codex = f.create('codex-app');
+    await assert.rejects(f.manager.steer(codex.sessionId, { text: 'x', clientTurnKey: 's4', turnId: 't', epoch: 0 }),
+        errorCode('unsupported_capability', 400));
+    const starting = f.create('claude');
+    const gate = deferred<void>();
+    f.providers.claude.gate = gate.promise;
+    const second = f.manager.prompt(starting.sessionId, { text: 'hi', clientTurnKey: 'k2' });
+    await assert.rejects(f.manager.steer(starting.sessionId, { text: 'x', clientTurnKey: 's5', turnId: second.receipt.turnId, epoch: 1 }),
+        errorCode('session_not_steerable', 409));
+    assert.deepEqual(handle.steers, []);
+    gate.resolve();
+    handle.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+    await assert.rejects(f.follow('s6'), errorCode('stale_owner', 409), 'an idle session has no turn to follow');
+    await f.providers.claude.handles[1]!.sent.promise;
+    f.providers.claude.handles[1]!.outcome.resolve(done);
+    await f.terminal(starting.sessionId, 1);
+});
+
+test('a runtime without the optional steer answers unsupported_capability with no native input', async t => {
+    const plain = new NativeHandle();
+    const f = await runningClaude(t, plain);
+    await assert.rejects(f.follow('steer-1'), errorCode('unsupported_capability', 400));
+    assert.equal(userItems(f, f.row.sessionId).length, 1);
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_key_spent', 409));
+    plain.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+});
+
+test('a turn with no live owner answers orphaned_turn', async t => {
+    const f = await runningClaude(t);
+    const orphan = new CodeSessionManager({ store: f.store, providers: f.providers, publish() {} });
+    t.after(() => orphan.dispose());
+    await assert.rejects(orphan.steer(f.row.sessionId, { text: 'x', clientTurnKey: 's', turnId: f.receipt.turnId, epoch: 1 }),
+        errorCode('orphaned_turn', 503));
+    (f.handle as SteerHandle).outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+});
+
+test('Stop before the runtime consumed a follow-up leaves its item delivery unconfirmed; a consumed one stays plain', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    await f.follow('steer-1');
+    handle.unconsumed = ['native-follow'];
+    await f.manager.cancel(f.row.sessionId, { turnId: f.receipt.turnId, epoch: 1 });
+    const stopped = f.manager.snapshot(f.row.sessionId);
+    assert.equal(stopped.items.find(item => item.clientTurnKey === 'steer-1')?.phase, 'unknown');
+    assert.equal(stopped.items.find(item => item.clientTurnKey === 'steer-1')?.status, 'done');
+    assert.equal(stopped.items.filter(item => item.kind === 'turn_cancelled').length, 1);
+
+    const g = await runningClaude(t);
+    await g.follow('steer-1');
+    (g.handle as SteerHandle).unconsumed = [];
+    await g.manager.cancel(g.row.sessionId, { turnId: g.receipt.turnId, epoch: 1 });
+    assert.equal(g.manager.snapshot(g.row.sessionId).items.find(item => item.clientTurnKey === 'steer-1')?.phase, undefined,
+        'a follow-up folded before Stop was consumed');
+});
+
+test('a failure after native acceptance is an unknown outcome that is never replayed as unsent', async t => {
+    const f = await runningClaude(t);
+    const commit = f.store.commitSteer.bind(f.store);
+    f.store.commitSteer = () => { throw new Error('disk full'); };
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_outcome_unknown', 503));
+    f.store.commitSteer = commit;
+    assert.equal(f.db.prepare("SELECT status FROM code_steers WHERE client_turn_key = 'steer-1'").pluck().get(), 'unknown');
+    await f.terminal(f.row.sessionId, 1);
+    assert.equal(f.handle.cancellations + f.handle.closes > 0, true, 'unrecorded text cannot keep running');
+    const settled = f.manager.snapshot(f.row.sessionId);
+    assert.equal(settled.session.status, 'failed');
+    assert.equal(userItems(f, f.row.sessionId).length, 1);
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_outcome_unknown', 503));
+
+    // Stop that lands while the offer is in flight: the outcome is unknown, the session is not poisoned.
+    const g = await runningClaude(t);
+    const handle = g.handle as SteerHandle;
+    const gate = deferred<void>();
+    handle.steerGate = gate.promise;
+    const pending = g.follow('steer-1');
+    await yieldEventLoop();
+    const stopping = g.manager.cancel(g.row.sessionId, { turnId: g.receipt.turnId, epoch: 1 });
+    gate.resolve();
+    await assert.rejects(pending, errorCode('steer_outcome_unknown', 503));
+    await stopping;
+    assert.equal(g.db.prepare("SELECT status FROM code_steers WHERE client_turn_key = 'steer-1'").pluck().get(), 'unknown');
+    assert.equal(g.manager.snapshot(g.row.sessionId).session.status, 'idle');
+    assert.equal(userItems(g, g.row.sessionId).length, 1);
+});
+
+test('an offer in flight when the turn settles reads unknown until the runtime refuses it', async t => {
+    const f = await runningClaude(t);
+    const handle = f.handle as SteerHandle;
+    const gate = deferred<void>();
+    handle.steerGate = gate.promise;
+    handle.steerResult = { accepted: false, turnId: 'native-turn', reason: 'not-current' };
+    const pending = f.follow('steer-1');
+    await yieldEventLoop();
+    handle.outcome.resolve(done);
+    await f.terminal(f.row.sessionId, 1);
+    const status = () => f.db.prepare("SELECT status FROM code_steers WHERE client_turn_key = 'steer-1'").pluck().get();
+    assert.equal(status(), 'unknown', 'settlement cannot tell whether the offer happened');
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_outcome_unknown', 503));
+    gate.resolve();
+    await assert.rejects(pending, errorCode('stale_owner', 409));
+    assert.equal(status(), 'rejected', 'the refusal the runtime returned is definitive');
+    await assert.rejects(f.follow('steer-1'), errorCode('steer_key_spent', 409));
+    assert.equal(userItems(f, f.row.sessionId).length, 1);
+});

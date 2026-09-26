@@ -5,7 +5,7 @@ import { DEFAULT_CODE_SETTINGS } from './types.js';
 import type {
     CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
     CodeModelCatalog, CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt,
-    CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeSessionInfo, CodeSnapshot, CodeWireEvent,
+    CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeSessionInfo, CodeSnapshot, CodeSteerRequest, CodeWireEvent,
 } from './wire.js';
 
 export { CodeServiceError } from './session.js';
@@ -266,6 +266,30 @@ export class CodeSessionManager {
             this.publish(result.events);
             return { receipt: result.receipt, duplicate: result.duplicate };
         } catch (error) { this.changed(id, session); throw error; }
+    }
+
+    /**
+     * One Claude follow-up for the captured running turn. A committed key replays its receipt
+     * whatever the turn became since; a new key never reserves capacity, attaches or starts a turn.
+     */
+    async steer(id: string, input: CodeSteerRequest): Promise<{ receipt: CodePromptReceipt; duplicate: boolean }> {
+        this.ready();
+        this.sessions.get(id)?.assertHealthy();
+        const record = this.record(id);
+        if (record.provider !== 'claude') {
+            throw new CodeStoreError('unsupported_capability', 'This Code runtime does not take in-band follow-ups', 400);
+        }
+        const replay = this.storage(() => this.options.store.readSteer(id, input));
+        if (replay) return { receipt: replay, duplicate: true };
+        if (record.epoch !== input.epoch || record.turnId !== input.turnId) {
+            throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
+        }
+        if (record.archivedAt !== null || record.status !== 'streaming') {
+            throw new CodeStoreError('session_not_steerable', 'This turn does not take a follow-up right now', 409);
+        }
+        const session = this.sessions.get(id);
+        if (!session) throw new CodeServiceError('orphaned_turn', 'Code turn has no live owner; recovery is required');
+        return session.steer(input);
     }
 
     async cancel(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo> {

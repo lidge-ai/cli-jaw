@@ -472,3 +472,266 @@ test('a failed effort step puts the previous model and effort back; a failed rol
         error instanceof AggregateError && error.message === 'claude_reconfigure_inconsistent');
     assert.equal(g.session.alive, false);
 });
+
+// Code in-band follow-up. Probe (CLI 2.1.283): a follow-up offered while a tool runs folds
+// into the running turn (one result echoing both uuids); one offered during a plain answer
+// runs as a separate CLI turn after the first result (a result per uuid).
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+const echo = (...ids: string[]) => ({ user_message_uuid: ids.at(-1), user_message_uuids: ids });
+const started = (id: string, ...ids: string[]) => ({ type: 'stream_event', ...echo(...ids), event: { type: 'message_start', message: { id } } });
+const said = (id: string, text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { id, content: [{ type: 'text', text }] } });
+async function steering(t: TestContext, extra: Record<string, unknown> = {}) {
+    const f = await fixture({ inBandSteer: true, ...extra }); t.after(() => f.session.close());
+    let settled = false;
+    const turn = f.session.send({ text: 'primary' }, () => {}).then(value => { settled = true; return value; });
+    await tick();
+    const primary = (f.sent[0] as { uuid: string }).uuid;
+    return { f, turn, primary, get settled() { return settled; } };
+}
+
+test('without the Code switch an echoed turn still refuses a follow-up and offers nothing', async t => {
+    const f = await fixture(); t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    await tick();
+    const primary = (f.sent[0] as { uuid: string }).uuid;
+    f.output.push(started('m1', primary)); await tick();
+    const refusal = await f.session.steer({ text: 'more' });
+    assert.equal(refusal.accepted, false); assert.equal(refusal.reason, 'Use the scoped follow-up policy');
+    f.output.push(result()); await turn; await tick();
+    assert.equal(f.sent.length, 1);
+});
+
+test('a follow-up waits for the primary echo; a singular-only echo never opens it', async t => {
+    const s = await steering(t);
+    assert.equal((await s.f.session.steer({ text: 'early' })).reason, 'not-ready');
+    s.f.output.push({ type: 'stream_event', user_message_uuid: s.primary, event: { type: 'message_start', message: { id: 'm1' } } });
+    s.f.output.push({ type: 'assistant', parent_tool_use_id: null, user_message_uuid: s.primary, message: { id: 'm1', content: [{ type: 'text', text: 'hi' }] } });
+    await tick();
+    assert.equal((await s.f.session.steer({ text: 'still early' })).reason, 'not-ready', 'an older producer never echoes the array');
+    s.f.output.push(started('m2', s.primary)); await tick();
+    const accepted = await s.f.session.steer({ text: 'now' });
+    assert.equal(accepted.accepted, true); assert.equal(accepted.turnId, 'turn1');
+    await tick(); assert.equal(s.f.sent.length, 2);
+    s.f.output.push({ ...result('both'), ...echo(s.primary, accepted.nativeId!) });
+    assert.equal((await s.turn).finalText, 'both');
+});
+
+test('one follow-up per turn joins the live input without priority; a second is queue-full', async t => {
+    const s = await steering(t);
+    s.f.output.push(started('m1', s.primary)); await tick();
+    const first = await s.f.session.steer({ text: 'also this' });
+    assert.equal(first.accepted, true);
+    const second = await s.f.session.steer({ text: 'and this' });
+    assert.deepEqual({ accepted: second.accepted, reason: second.reason }, { accepted: false, reason: 'queue-full' });
+    await tick();
+    assert.equal(s.f.sent.length, 2);
+    const offered = s.f.sent[1] as Record<string, unknown>;
+    assert.equal(offered['uuid'], first.nativeId); assert.notEqual(offered['uuid'], s.primary);
+    assert.equal('priority' in offered, false, 'the CLI default `next`; `now` would abort the running turn');
+    assert.deepEqual((offered['message'] as { content: unknown }).content, [{ type: 'text', text: 'also this' }]);
+    s.f.output.push({ ...result('done'), ...echo(s.primary, first.nativeId!) });
+    await s.turn;
+    assert.equal((await s.f.session.steer({ text: 'late' })).reason, 'not-current');
+});
+
+test('a follow-up folded into the running turn settles on the one result that echoes both', async t => {
+    const s = await steering(t);
+    s.f.output.push(started('m1', s.primary)); await tick();
+    const follow = await s.f.session.steer({ text: 'fold me' });
+    s.f.output.push({ ...result('answered both'), num_turns: 2, ...echo(s.primary, follow.nativeId!) });
+    assert.deepEqual(await s.turn, { status: 'done', finalText: 'answered both', partialText: '' });
+    assert.deepEqual(s.f.session.unconsumedFollowUps(), []);
+    assert.equal(s.f.events.filter(event => (event as { kind: string }).kind === 'turn-end').length, 1);
+});
+
+test('a follow-up run as its own CLI turn continues the logical turn to the second result', async t => {
+    const transcript: unknown[][] = [];
+    const s = await steering(t, { transcript: () => ({
+        text: (...args: unknown[]) => transcript.push(['text', args[1], args[2], args[4]]),
+        tool: (ref: string, patch: { status?: string }) => transcript.push(['tool', ref, patch.status]),
+        close: (end: { status: string }) => transcript.push(['close', end.status]) }) });
+    s.f.output.push({ type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'default' });
+    s.f.output.push(started('m1', s.primary));
+    s.f.output.push(said('m1', 'story'));
+    await tick();
+    const follow = await s.f.session.steer({ text: 'now reply GAMMA' });
+    s.f.output.push({ ...result('story'), ...echo(s.primary) });
+    await tick();
+    assert.equal(s.settled, false, 'the first result only ends a segment');
+    assert.equal(s.f.session.idle, false);
+    assert.deepEqual(s.f.session.unconsumedFollowUps(), [follow.nativeId]);
+    s.f.output.push({ type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'default' });
+    s.f.output.push(started('m2', follow.nativeId!));
+    s.f.output.push({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm2', content: [{ type: 'tool_use', id: 'tool-2', name: 'Bash', input: { command: 'true' } }] } });
+    s.f.output.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-2', content: 'ok' }] } });
+    s.f.output.push(said('m3', 'GAMMA'));
+    s.f.output.push({ ...result('GAMMA'), usage: { input_tokens: 9, output_tokens: 1 }, ...echo(follow.nativeId!) });
+    assert.deepEqual(await s.turn, { status: 'done', finalText: 'GAMMA', partialText: 'GAMMA' });
+    assert.equal(s.f.session.lastError, null, 'no claude_correlation_stale on the follow-up result');
+    assert.deepEqual(s.f.session.unconsumedFollowUps(), []);
+    const kinds = s.f.events.map(event => (event as { kind: string }).kind);
+    assert.equal(kinds.filter(kind => kind === 'turn-end').length, 1);
+    assert.equal(kinds.filter(kind => kind === 'usage').length, 1, 'usage comes from the logical turn\'s last result');
+    assert.equal(s.f.metadata.length, 1);
+    assert.deepEqual((s.f.metadata[0] as { data: { tokens: unknown } }).data.tokens, { input: 9, output: 1 });
+    assert.deepEqual(transcript.filter(row => row[0] === 'close'), [['close', 'done']]);
+    const closeAt = transcript.findIndex(row => row[0] === 'close');
+    assert.ok(transcript.findIndex(row => row[0] === 'text' && row[1] === 'claude:message:m1' && row[3] === 'final') < closeAt,
+        'segment one\'s answer is recorded final without closing the transcript');
+    assert.ok(transcript.some(row => row[0] === 'tool' && row[1] === 'claude:tool:tool-2' && row[2] === 'done'));
+    assert.ok(transcript.findIndex(row => row[0] === 'text' && row[1] === 'claude:message:m3' && row[2] === 'GAMMA') < closeAt);
+    const next = s.f.session.send({ text: 'next' }, () => {});
+    await tick();
+    const third = (s.f.sent[2] as { uuid: string }).uuid;
+    s.f.output.push({ ...result('fine'), ...echo(third) });
+    assert.equal((await next).finalText, 'fine');
+});
+
+test('a segment-two permission request records under the same turn', async t => {
+    const registry = new (await import('../../src/agent/runtime/requests.ts')).RuntimeRequests();
+    let canUseTool!: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['canUseTool']>;
+    const output = stream(); const sent: Array<{ uuid: string }> = []; const events: Array<{ kind: string }> = [];
+    let seq = 0;
+    const session = await createClaudeSdkSession({ inBandSteer: true, registry, promptTimeoutMs: 3000, closeTimeoutMs: 100,
+        prepared: { cwd: process.cwd(), binary: process.execPath, env: {}, model: 'default', systemPrompt: '', permissions: 'safe', fastMode: false },
+        getTurnContext: () => ({ runId: 'run1', sessionId: 'chat', scope: 'scope', turnId: 'turn1', audience: 'internal', isCurrent: () => true }),
+        record: (owner, body) => { const event = { version: 1 as const, ...owner, ...body, seq: seq += 1 }; events.push(event); return event; },
+        queryFactory: ({ prompt, options }) => {
+            canUseTool = options.canUseTool!;
+            void (async () => { for await (const message of prompt) sent.push(message as { uuid: string }); })();
+            return { ...output, close() { output.close(); } };
+        } });
+    t.after(() => session.close());
+    const turn = session.send({ text: 'primary' }, () => {});
+    await tick();
+    output.push(started('m1', sent[0]!.uuid)); await tick();
+    const follow = await session.steer({ text: 'then run a command' });
+    output.push({ ...result('first'), ...echo(sent[0]!.uuid) });
+    output.push(started('m2', follow.nativeId!));
+    output.push({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm2', content: [{ type: 'tool_use', id: 'tool-2', name: 'Bash', input: { command: 'ls' } }] } });
+    await tick();
+    const answer = canUseTool('Bash', { command: 'ls' }, { signal: new AbortController().signal, toolUseID: 'tool-2', requestId: 'sdk-1' });
+    await tick(); await tick();
+    const pending = registry.list('chat')[0];
+    assert.ok(pending, 'the continuation still owns live permission requests');
+    registry.respond(pending.requestId, pending, { optionId: 'allow' });
+    assert.equal((await answer)?.behavior, 'allow');
+    output.push({ ...result('second'), ...echo(follow.nativeId!) });
+    assert.equal((await turn).finalText, 'second');
+    assert.equal(events.filter(event => event.kind === 'request').length, 1);
+    assert.equal(events.filter(event => event.kind === 'turn-end').length, 1);
+});
+
+test('a result with no echo while a follow-up waits fails closed instead of guessing', async t => {
+    const s = await steering(t);
+    s.f.output.push(started('m1', s.primary)); await tick();
+    assert.equal((await s.f.session.steer({ text: 'more' })).accepted, true);
+    s.f.output.push(result('which one?'));
+    assert.equal((await s.turn).status, 'error');
+    assert.equal(s.f.session.lastError, 'claude_followup_unconfirmed');
+    assert.equal(s.f.session.alive, false);
+});
+
+test('Stop before a follow-up is consumed settles stopped and reports it unconsumed until the next send', async t => {
+    const s = await steering(t);
+    s.f.output.push(started('m1', s.primary)); await tick();
+    const follow = await s.f.session.steer({ text: 'more' });
+    await s.f.session.cancel();
+    assert.equal((await s.turn).status, 'stopped');
+    assert.deepEqual(s.f.session.unconsumedFollowUps(), [follow.nativeId]);
+    const fresh = await steering(t);
+    fresh.f.output.push(started('m1', fresh.primary)); await tick();
+    const folded = await fresh.f.session.steer({ text: 'fold' });
+    fresh.f.output.push({ ...result('ok'), ...echo(fresh.primary, folded.nativeId!) }); await fresh.turn;
+    const next = fresh.f.session.send({ text: 'next' }, () => {});
+    assert.deepEqual(fresh.f.session.unconsumedFollowUps(), []);
+    fresh.f.output.push(result('fine')); await next;
+});
+
+test('the turn window re-arms at the segment boundary, so a follow-up\'s own CLI turn gets a full one', async t => {
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const s = await steering(t, { promptTimeoutMs: 500 });
+    s.f.output.push(started('m1', s.primary)); await tick();
+    const follow = await s.f.session.steer({ text: 'more' });
+    assert.equal(follow.accepted, true);
+    await sleep(300); // the primary keeps answering after the follow-up was accepted
+    s.f.output.push({ ...result('one'), ...echo(s.primary) }); await tick();
+    s.f.output.push(started('m2', follow.nativeId!));
+    await sleep(300); // the follow-up's CLI turn outlives a window that started at acceptance
+    assert.equal(s.settled, false, 'the second window started when the first segment ended');
+    s.f.output.push({ ...result('two'), ...echo(follow.nativeId!) });
+    assert.deepEqual({ status: (await s.turn).status, error: s.f.session.lastError }, { status: 'done', error: null });
+
+    // A closed input refuses the offer: the uuid leaves the turn and the window is not extended.
+    const output = stream(); let primary = '';
+    const g = await fixture({ inBandSteer: true, promptTimeoutMs: 300, queryFactory: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+        const reader = prompt[Symbol.asyncIterator]();
+        void reader.next().then(next => { primary = (next.value as { uuid: string }).uuid; void reader.return?.(); });
+        return { ...output, close() { output.close(); } };
+    } });
+    t.after(() => g.session.close());
+    const began = Date.now();
+    const turn = g.session.send({ text: 'primary' }, () => {});
+    await tick();
+    output.push(started('m1', primary)); await tick();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal((await g.session.steer({ text: 'lost' })).reason, 'not-current');
+    assert.equal((await g.session.steer({ text: 'lost again' })).reason, 'not-current', 'the refused uuid did not stay in the turn');
+    assert.equal((await turn).status, 'error');
+    assert.ok(Date.now() - began < 450, 'offering a follow-up never re-arms the timer');
+    assert.equal(g.session.lastError, 'claude_prompt_timeout');
+});
+
+test('a follow-up is refused when terminal dedupe cannot hold both of its results', async t => {
+    const idle = (output: ReturnType<typeof stream>, count: number) => {
+        for (let i = 0; i < count; i++) output.push({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, uuid: `idle-${i}` });
+    };
+    // 510 seen results leave room for the primary's result and the follow-up's.
+    const f = await fixture({ inBandSteer: true }); t.after(() => f.session.close());
+    idle(f.output, 510); await tick(); await tick();
+    const turn = f.session.send({ text: 'primary' }, () => {}); await tick();
+    const primary = (f.sent[0] as { uuid: string }).uuid;
+    f.output.push(started('m1', primary)); await tick();
+    const follow = await f.session.steer({ text: 'more' });
+    assert.equal(follow.accepted, true);
+    f.output.push({ ...result('one'), uuid: 'res-1', ...echo(primary) }); await tick();
+    f.output.push({ ...result('two'), uuid: 'res-2', ...echo(follow.nativeId!) });
+    assert.deepEqual({ status: (await turn).status, error: f.session.lastError }, { status: 'done', error: null });
+
+    const g = await fixture({ inBandSteer: true }); t.after(() => g.session.close());
+    idle(g.output, 511); await tick(); await tick();
+    assert.equal(g.session.alive, true);
+    const only = g.session.send({ text: 'primary' }, () => {}); await tick();
+    const first = (g.sent[0] as { uuid: string }).uuid;
+    g.output.push(started('m1', first)); await tick();
+    const refused = await g.session.steer({ text: 'more' });
+    assert.deepEqual({ accepted: refused.accepted, reason: refused.reason }, { accepted: false, reason: 'not-ready' });
+    assert.equal(g.sent.length, 1, 'nothing was offered');
+    g.output.push({ ...result('alone'), uuid: 'res-1', ...echo(first) });
+    assert.deepEqual({ ...(await only), error: g.session.lastError }, { status: 'done', finalText: 'alone', partialText: '', error: null });
+});
+
+test('a follow-up\'s own CLI turn gets the mapper\'s full budget; the retired segment\'s text survives a Stop', async t => {
+    // 120 primary messages plus 10 in the continuation exceed one turn's 128-message cap.
+    const s = await steering(t);
+    s.f.output.push(started('m0', s.primary)); await tick();
+    const follow = await s.f.session.steer({ text: 'more' });
+    for (let i = 1; i < 120; i++) s.f.output.push(started(`m${i}`, s.primary));
+    s.f.output.push(said('m119', 'long answer'));
+    s.f.output.push({ ...result('long answer'), ...echo(s.primary) });
+    for (let i = 0; i < 10; i++) s.f.output.push(started(`n${i}`, follow.nativeId!));
+    s.f.output.push(said('n9', 'short reply'));
+    s.f.output.push({ ...result('short reply'), ...echo(follow.nativeId!) });
+    assert.deepEqual({ ...(await s.turn), error: s.f.session.lastError, alive: s.f.session.alive },
+        { status: 'done', finalText: 'short reply', partialText: 'short reply', error: null, alive: true });
+
+    const g = await steering(t);
+    g.f.output.push(started('m1', g.primary)); g.f.output.push(said('m1', 'first answer')); await tick();
+    const next = await g.f.session.steer({ text: 'more' });
+    g.f.output.push({ ...result('first answer'), ...echo(g.primary) }); await tick();
+    assert.equal(g.settled, false);
+    g.f.output.push(started('m2', next.nativeId!)); await tick();
+    await g.f.session.cancel();
+    assert.deepEqual(await g.turn, { status: 'stopped', finalText: null, partialText: 'first answer' },
+        'Stop before the continuation says anything keeps the last answer the turn produced');
+});

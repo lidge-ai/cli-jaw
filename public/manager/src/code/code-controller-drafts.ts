@@ -25,6 +25,16 @@ export interface CodeDraft {
      * must not show a phantom spinner.
      */
     awaitingTurn: string | null;
+    /**
+     * A follow-up for the running Claude turn, captured with that turn's owner. In-memory only
+     * and never the send's `operation`/`retry`: it settles on its receipt or on its own
+     * `user_message`, and `unknown` means acceptance could not be confirmed (never resent).
+     */
+    steer: {
+        key: string; text: string; edit: number; turnId: string; epoch: number; state: 'sending' | 'unknown';
+        /** The server answered `steer_outcome_unknown`: Claude may have it, but the transcript never will. */
+        unrecorded?: boolean;
+    } | null;
 }
 export interface CodeDraftBook {
     endpoint: string;
@@ -44,7 +54,7 @@ const tabBooks = new WeakMap<Storage, Map<string, CodeDraftBook>>();
 export function createCodeDraft(selection: CodeCreateSessionRequest): CodeDraft {
     return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0,
         operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, requiredSequence: 0,
-        stopTarget: null, permissionOperations: {}, awaitingTurn: null };
+        stopTarget: null, permissionOperations: {}, awaitingTurn: null, steer: null };
 }
 function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     const draft = createCodeDraft(saved.selection);
@@ -100,6 +110,12 @@ export function catalogSelection(catalog: CodeModelCatalog, previous: CodeCreate
             : capabilities.permissions && capabilities.permissionModes.includes('ask') ? 'ask'
                 : capabilities.permissionModes.includes('auto') ? 'auto' : 'read-only',
     };
+}
+/** The follow-up is in the transcript: clear the input only if it was not edited since. */
+export function acknowledgeCodeSteer(draft: CodeDraft, key: string): void {
+    if (draft.steer?.key !== key) return;
+    if (draft.edit === draft.steer.edit) { draft.input = ''; draft.edit++; }
+    draft.steer = null;
 }
 export function acknowledgeCodeSend(draft: CodeDraft, key: string): void {
     if (draft.retry?.key !== key) return;

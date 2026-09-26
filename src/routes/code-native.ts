@@ -10,7 +10,7 @@ import { httpCode, httpStatus } from './_http-error.js';
 import { CODE_PROMPT_MAX_BYTES } from './code-body-parser.js';
 
 export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'list' | 'snapshot' | 'readEvents' | 'history'
-    | 'prompt' | 'cancel' | 'attach' | 'visit' | 'patch' | 'answerPermission' | 'models'>;
+    | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'answerPermission' | 'models'>;
 
 const PROVIDERS: readonly CodeProviderId[] = ['codex-app', 'claude', 'cursor', 'grok'];
 // Provider-agnostic parse; which provider accepts which mode is the manager's call.
@@ -188,6 +188,17 @@ export function registerNativeCodeRoutes(
         if (Buffer.byteLength(text) > CODE_PROMPT_MAX_BYTES) return invalid('invalid_prompt');
         const key = id(input['clientTurnKey']);
         const admitted = getService().prompt(sessionId, { text, clientTurnKey: key });
+        res.status(admitted.duplicate ? 200 : 202).json({ ok: true, ...admitted.receipt });
+    }));
+    router.post('/sessions/:id/steer', asyncHandler(async (req, res) => {
+        const sessionId = id(req.params['id']);
+        const input = body(req.body, ['text', 'clientTurnKey', 'turnId', 'epoch']);
+        const text = string(input['text'], 'prompt', CODE_PROMPT_MAX_BYTES);
+        if (Buffer.byteLength(text) > CODE_PROMPT_MAX_BYTES) return invalid('invalid_prompt');
+        // A follow-up joins a running turn as plain text; a command there would not run as one.
+        if (text.trimStart().startsWith('/')) return invalid('steer_command_unsupported');
+        const steer = { text, clientTurnKey: id(input['clientTurnKey']), turnId: id(input['turnId']), epoch: integer(input['epoch'], 'epoch') };
+        const admitted = await getService().steer(sessionId, steer);
         res.status(admitted.duplicate ? 200 : 202).json({ ok: true, ...admitted.receipt });
     }));
     router.post('/sessions/:id/cancel', asyncHandler(async (req, res) => {

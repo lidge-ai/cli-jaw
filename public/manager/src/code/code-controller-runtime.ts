@@ -6,7 +6,7 @@ import type { CodeControllerModel, CodeControllerOptions, CodeSessionFilter, Cod
 import { CodeClientError, codeBaseOrigin, createCodeSessionClient, type CodeGitInfo } from './code-session-client';
 import { emptyCodeSession, reduceCodeSession, codeSessionBusy, type CodeSessionState } from './code-session-state';
 import {
-    acknowledgeCodeSend, catalogSelection, codeDraftBook, createCodeDraft, persistCodeDraftBook, sessionSelection,
+    acknowledgeCodeSend, acknowledgeCodeSteer, catalogSelection, codeDraftBook, createCodeDraft, persistCodeDraftBook, sessionSelection,
     type CodeDraft, type CodeDraftBook,
 } from './code-controller-drafts';
 import { withPendingUserItem } from './pending-user-item';
@@ -19,6 +19,10 @@ const MAX_CATCHUP_PAGES = 32;
 const INDEX_DEBOUNCE_MS = 150;
 const message = (error: unknown) => error instanceof CodeClientError ? error.message : 'Connection lost. Refresh to check the current state.';
 const rejected = (error: unknown) => error instanceof CodeClientError && error.status >= 400 && error.status < 500;
+// A lost response may still be committed, so its message can arrive; a `steer_outcome_unknown` answer
+// means the server could not record it, so it never will.
+const FOLLOW_UP_UNCONFIRMED = 'Follow-up delivery not confirmed. It was not resent; it appears in the conversation if Claude received it.';
+const FOLLOW_UP_UNRECORDED = 'Follow-up delivery not confirmed. Claude may have received it, but it will not appear in the conversation. It was not resent.';
 const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !current
     || incoming.epoch > current.epoch || (incoming.epoch === current.epoch && (incoming.sequence > current.sequence
         || (incoming.sequence === current.sequence && incoming.revision >= current.revision)));
@@ -271,6 +275,9 @@ export class CodeController {
             if (deadSend(state, draft.retry.key)) this.requireNewKey(draft);
             else acknowledgeCodeSend(draft, draft.retry.key);
         }
+        if (draft?.steer && state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === draft.steer!.key)) {
+            acknowledgeCodeSteer(draft, draft.steer.key);
+        }
         if (draft?.awaitingTurn) {
             // Only this send's own turn ending clears the marker: a stale read receipt or
             // an older sequence must not switch a fresh send's spinner off.
@@ -317,6 +324,12 @@ export class CodeController {
         const persistenceWarning = this.book.storageWarning ?? this.book.recoveryWarning;
         const pending = ['creating', 'sending', 'stopping', 'resuming', 'patching'].includes(operation.kind) && !operation.error;
         const synced = id === null ? !!this.catalog : !!detail?.synced && (!session || session.sequence <= detail.cursor) && draft.requiredSequence <= (detail?.cursor ?? 0);
+        const followUp = !!session && synced && session.provider === 'claude' && session.status === 'streaming'
+            && !!session.turnId && session.archivedAt === null;
+        // The turn's one follow-up is already in the transcript.
+        const followUpSent = followUp && !!session && (detail?.items ?? []).some(item => item.kind === 'user_message'
+            && item.itemId.startsWith(`${session.turnId}:steer:`));
+        const unconfirmed = draft.steer?.state !== 'unknown' ? null : draft.steer.unrecorded ? FOLLOW_UP_UNRECORDED : FOLLOW_UP_UNCONFIRMED;
         return {
             catalog: this.catalog, sessions: this.rows.map(id => {
                 const row = this.info(id), detail = this.details.get(id);
@@ -331,8 +344,8 @@ export class CodeController {
             workingIds: new Set(this.rows.filter(rowId => {
                 const row = this.info(rowId);
                 return !!this.book.sessions.get(rowId)?.awaitingTurn || (!!row && codeSessionBusy(row));
-            })), synced, transport: this.transport, workspacePicking: this.workspacePicking,
-            error: [operation.error ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
+            })), followUp, followUpSent, steering: draft.steer?.state === 'sending', synced, transport: this.transport, workspacePicking: this.workspacePicking,
+            error: [operation.error ?? unconfirmed ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
             resendRequired: !!draft.retry?.resend,
@@ -470,6 +483,10 @@ export class CodeController {
         if (event.session?.sessionId === event.sessionId) this.accept(event.session);
         if (event.event === 'code_session' || event.item?.kind === 'permission_request' || event.update?.status) this.scheduleIndex();
         const draft = this.book.sessions.get(event.sessionId);
+        if (event.item?.kind === 'user_message' && event.item.clientTurnKey && draft?.steer?.key === event.item.clientTurnKey) {
+            draft.requiredSequence = Math.max(draft.requiredSequence, event.sequence);
+            acknowledgeCodeSteer(draft, event.item.clientTurnKey);
+        }
         if (event.item?.kind === 'user_message' && event.item.clientTurnKey && draft?.retry?.key === event.item.clientTurnKey) {
             draft.requiredSequence = Math.max(draft.requiredSequence, event.sequence);
             if (deadSend(this.details.get(event.sessionId), event.item.clientTurnKey)) this.requireNewKey(draft);
@@ -531,6 +548,7 @@ export class CodeController {
     clearError = (): void => {
         const draft = this.draft();
         if (draft.operation.kind === 'idle') draft.operation = { kind: 'idle', error: null };
+        if (draft.steer?.state === 'unknown') draft.steer = null;
         this.indexError = null;
         this.book.recoveryWarning = null;
         this.notify();
@@ -644,8 +662,14 @@ export class CodeController {
     send = async (): Promise<void> => {
         let id = this.book.selectedId;
         let draft = this.draft(id);
-        if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim()) return;
+        if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim() || draft.steer?.state === 'sending') return;
         let session = this.info(id);
+        // A running Claude turn takes the text as its follow-up; an idle session starts a new turn.
+        if (id && session && this.model.followUp) {
+            if (!this.model.followUpSent) await this.steer(id, draft, session);
+            return;
+        }
+        if (draft.steer?.state === 'unknown') draft.steer = null;
         // t3code continues a session on the next send; a suspended (or recoverably
         // failed) session attaches first instead of asking for a separate Resume.
         if (id && session && codeCanResume(session) && this.model.synced) {
@@ -716,6 +740,40 @@ export class CodeController {
                 draft.operation = { kind: rejected(error) ? 'idle' : 'unknown-send', error: rejected(error) ? message(error)
                     : 'Message acceptance is unknown. Refresh, or explicitly retry the original message with the same key.' };
                 if (rejected(error)) { draft.retry = null; draft.awaitingTurn = null; }
+            }
+        }
+        this.notify(); this.scheduleIndex();
+        if (this.active) await this.sync(id, true);
+    }
+    /**
+     * Post one follow-up for the captured turn. Only a matching receipt or the follow-up's own
+     * `user_message` clears the input; a refusal keeps it; an unconfirmed outcome is never resent.
+     * The send's operation is left alone, so a Stop in progress keeps its state.
+     */
+    private async steer(id: string, draft: CodeDraft, session: CodeSessionInfo): Promise<void> {
+        if (!session.turnId || (draft.stopTarget && draft.stopTarget.outcome !== 'retryable')) return;
+        const attempt: NonNullable<CodeDraft['steer']> = { key: crypto.randomUUID(), text: draft.input, edit: draft.edit,
+            turnId: session.turnId, epoch: session.epoch, state: 'sending' };
+        draft.steer = attempt;
+        if (draft.operation.error) draft.operation = { ...draft.operation, error: null };
+        this.notify();
+        try {
+            const receipt = await this.client.steerSession(id, { text: attempt.text, clientTurnKey: attempt.key,
+                turnId: attempt.turnId, epoch: attempt.epoch });
+            if (receipt.clientTurnKey !== attempt.key) throw new Error('Mismatched follow-up receipt');
+            draft.requiredSequence = Math.max(draft.requiredSequence, receipt.sequence);
+            const state = this.details.get(id);
+            if (state) this.details.set(id, reduceCodeSession(state, { type: 'stale' }));
+            acknowledgeCodeSteer(draft, attempt.key);
+        } catch (error) {
+            if (draft.steer === attempt) {
+                if (!rejected(error)) {
+                    attempt.state = 'unknown';
+                    attempt.unrecorded = error instanceof CodeClientError && error.code === 'steer_outcome_unknown';
+                } else {
+                    draft.steer = null;
+                    if (draft.operation.kind === 'idle') draft.operation = { kind: 'idle', error: message(error) };
+                }
             }
         }
         this.notify(); this.scheduleIndex();

@@ -68,7 +68,8 @@ export class ClaudeSdkEvents {
     get partialText(): string { return this.messages.partialText; }
     get interruptedText(): string { return this.messages.interruptedText; }
 
-    accept(raw: unknown): RuntimeTurnResult | undefined {
+    /** `segment`: this frame's result ends one CLI turn of a logical turn a Code follow-up continues. */
+    accept(raw: unknown, segment = false): RuntimeTurnResult | undefined {
         if (this.finished || this.outcome) return this.outcome;
         try {
             const frame = object(raw), type = string(frame['type']);
@@ -81,7 +82,7 @@ export class ClaudeSdkEvents {
             else if (type === 'tool_progress') this.progress(frame);
             else if (type === 'system') this.system(frame);
             else if (type === 'rate_limit_event') this.rateLimit(object(frame['rate_limit_info']));
-            else return this.result(frame);
+            else return this.result(frame, segment);
         } catch (error) {
             this.projection.report('malformed');
             // Never echo untrusted fields, JSON parser snippets or getter exceptions.
@@ -89,6 +90,21 @@ export class ClaudeSdkEvents {
             throw new Error('Malformed Claude SDK frame');
         }
         return undefined;
+    }
+
+    /**
+     * The next CLI turn continues this logical turn with the same transcript and notices.
+     * The finished segment's message and tool bookkeeping is retired, so the continuation
+     * gets this mapper's full per-turn caps instead of what the first segment left, and
+     * what a result settles is cleared.
+     */
+    continueAfterResult(): void {
+        this.messages.retire();
+        this.tools.clear();
+        this.outcome = undefined;
+        this.failureText = null;
+        this.lastUsage = null;
+        this.rateLimitShown = false;
     }
 
     finish(outcome: RuntimeTurnResult, end?: RuntimeEnd): void {
@@ -108,16 +124,22 @@ export class ClaudeSdkEvents {
         });
     }
 
-    private result(frame: Obj): RuntimeTurnResult | undefined {
+    private result(frame: Obj, segment: boolean): RuntimeTurnResult | undefined {
         const subtype = string(frame['subtype']);
         if (typeof frame['is_error'] !== 'boolean') malformed();
         if (frame['result'] !== undefined && frame['result'] !== null && typeof frame['result'] !== 'string') malformed();
-        this.usage(frame['usage']);
-        this.modelWindow(frame['modelUsage']);
         // Only a known success promotes a final: a future subtype fails the turn closed
         // rather than being guessed from is_error, and the turn still settles.
         const failed = !resultTypes.has(subtype) || subtype !== 'success' || frame['is_error'] === true;
         const reason = typeof frame['terminal_reason'] === 'string' ? frame['terminal_reason'] : null;
+        if (segment) {
+            // Usage and the outcome belong to the logical turn's last result; the transcript stays open.
+            if (failed) this.notice('segment:' + (++this.noticeSeq), 'Claude notice', 'error', describeClaudeFailure(subtype, reason));
+            else if (typeof frame['result'] === 'string') this.projection.text('message', this.messages.finalRef, frame['result'], 'replace', 'final');
+            return undefined;
+        }
+        this.usage(frame['usage']);
+        this.modelWindow(frame['modelUsage']);
         this.failureText = failed ? describeClaudeFailure(subtype, reason) : null;
         this.outcome = { status: failed ? 'error' : 'done',
             finalText: !failed && typeof frame['result'] === 'string' ? frame['result'] : null,

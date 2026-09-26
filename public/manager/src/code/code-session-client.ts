@@ -1,7 +1,7 @@
 import type {
     CodeCancelRequest, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeModelCatalog,
     CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt, CodePromptRequest,
-    CodeSessionInfo, CodeSessionPage, CodeSnapshot,
+    CodeSessionInfo, CodeSessionPage, CodeSnapshot, CodeSteerRequest,
 } from '../../../../src/code-mode/wire';
 
 export interface CodeGitInfo {
@@ -40,6 +40,8 @@ export interface CodeSessionClient {
     createSession(input: CodeCreateSessionRequest): Promise<CodeSessionInfo>;
     patchSession(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo>;
     sendPrompt(id: string, input: CodePromptRequest): Promise<CodePromptReceipt>;
+    /** A Claude follow-up for the captured running turn; never retried. */
+    steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
     cancelPrompt(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo>;
     attachSession(id: string): Promise<CodeSessionInfo>;
     visitSession(id: string): Promise<CodeSessionInfo>;
@@ -62,6 +64,12 @@ const ERROR_COPY: Record<string, string> = {
     unsupported_effort: 'This effort is not supported by the selected runtime.',
     unsupported_policy: 'This permission mode is not supported by the selected runtime.',
     unsupported_capability: 'This runtime does not support this action.',
+    session_not_steerable: 'This turn cannot take a follow-up right now. Your text is kept.',
+    steer_queue_full: 'This turn already has its follow-up. Send this after the turn finishes.',
+    steer_in_flight: 'This follow-up is still being delivered.',
+    steer_key_spent: 'This follow-up was not delivered. Your text is kept; send it again when ready.',
+    steer_outcome_unknown: 'Follow-up delivery not confirmed. It was not resent.',
+    steer_command_unsupported: 'A slash command cannot be sent as a follow-up. Send it after this turn finishes.',
     session_not_found: 'This session is no longer available. Its local draft is retained.',
     unauthorized: 'Authentication is required to access this instance.',
 };
@@ -107,6 +115,7 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         createSession: input => sessionRequest('POST', '/sessions', input),
         patchSession: (id, input) => sessionRequest('PATCH', sessionPath(id), input),
         sendPrompt: (id, input) => request('POST', `${sessionPath(id)}/prompt`, input),
+        steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),
         attachSession: id => sessionRequest('POST', `${sessionPath(id)}/attach`, {}),
         visitSession: id => sessionRequest('POST', `${sessionPath(id)}/visit`, {}),

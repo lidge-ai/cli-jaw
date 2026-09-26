@@ -51,6 +51,14 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     /** True only when owned native resources have actually exited/drained. */
     readonly closed: boolean;
     send(text: string): Promise<RuntimeTurnOutcome>;
+    /**
+     * Optional (Claude): offer one follow-up to the running turn. It throws only before
+     * dispatch; `nativeId` names the offered input for `unconsumedFollowUps`.
+     */
+    steer?(text: string): Promise<{ accepted: boolean; turnId: string; nativeId?: string;
+        reason?: 'queue-full' | 'not-current' | 'not-ready' }>;
+    /** Optional (Claude): accepted follow-ups of the current or last turn that no native result consumed. */
+    unconsumedFollowUps?(): readonly string[];
     /** Optional: the specific reason the last turn failed, when the runtime names one. */
     readonly lastTurnFailureText?: string | null;
     /** Optional: switch the resident runtime's permission mode without restarting it (Claude). */

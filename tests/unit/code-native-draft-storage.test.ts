@@ -153,3 +153,18 @@ test('a Claude thinking switch round-trips in a stored draft; a non-boolean drop
     saveCodeDraftStorage(store, draftBook.endpoint, draftBook);
     assert.equal('thinking' in loadCodeDraftStorage(store, draftBook.endpoint).data!.fresh.selection, false);
 });
+
+test('an in-flight follow-up is never checkpointed: a reload cannot resend it or resurrect its owner', () => {
+    const store = storage(), draftBook = book(store);
+    const draft = createCodeDraft(draftBook.fresh.selection);
+    assert.equal(draft.steer, null);
+    draft.input = 'kept draft'; draft.edit = 3;
+    draft.steer = { key: 'steer-key', text: 'follow-up text', edit: 3, turnId: 'turn-steer', epoch: 7, state: 'unknown' };
+    draftBook.sessions.set('s', draft); draftBook.selectedId = 's';
+    assert.equal(saveCodeDraftStorage(store, draftBook.endpoint, draftBook), null);
+    const serialized = store.getItem('cli-jaw:code-drafts:v1')!;
+    for (const excluded of ['steer', 'follow-up text', 'turn-steer']) assert.equal(serialized.includes(excluded), false);
+    const loaded = loadCodeDraftStorage(store, draftBook.endpoint).data!;
+    assert.equal(loaded.sessions[0]!.draft.input, 'kept draft');
+    assert.equal(loaded.sessions[0]!.draft.retry, null);
+});

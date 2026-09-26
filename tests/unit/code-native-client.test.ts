@@ -94,3 +94,29 @@ test('duplicate prompt 200 returns the existing receipt without creating another
         assert.equal(requests, 1);
     } finally { globalThis.fetch = original; }
 });
+
+test('steerSession posts the captured follow-up once and names every refusal', async () => {
+    const original = globalThis.fetch;
+    const calls: { url: string; init: RequestInit }[] = [];
+    let answer = reply({ ok: true, turnId: 'turn', clientTurnKey: 'steer-key', sequence: 21, status: 'running' }, 202);
+    globalThis.fetch = async (url, init = {}) => { calls.push({ url: String(url), init }); return answer; };
+    try {
+        const client = createCodeSessionClient(4567);
+        const input = { text: 'also the tests', clientTurnKey: 'steer-key', turnId: 'turn', epoch: 9 };
+        assert.deepEqual(await client.steerSession('s/a', input), { ok: true, turnId: 'turn', clientTurnKey: 'steer-key', sequence: 21, status: 'running' });
+        assert.equal(calls[0]!.url, 'http://127.0.0.1:4567/api/code/sessions/s%2Fa/steer');
+        assert.equal(calls[0]!.init.method, 'POST');
+        assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), input);
+        for (const [code, status] of [['session_not_steerable', 409], ['steer_queue_full', 409], ['steer_in_flight', 409],
+            ['steer_key_spent', 409], ['steer_command_unsupported', 400], ['steer_outcome_unknown', 503]] as const) {
+            answer = reply({ ok: false, error: code }, status);
+            await assert.rejects(client.steerSession('s', input), (error: unknown) => {
+                assert.ok(error instanceof CodeClientError);
+                assert.equal(error.code, code); assert.equal(error.status, status);
+                assert.doesNotMatch(error.message, /could not be completed/, `${code} has its own copy`);
+                return true;
+            });
+        }
+        assert.equal(calls.length, 7, 'no request is retried');
+    } finally { globalThis.fetch = original; }
+});

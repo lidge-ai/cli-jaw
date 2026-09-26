@@ -41,9 +41,27 @@ export class ClaudeSdkMessages {
     private blocks = 0;
     private snapshotCount = 0;
     private latestId: string | undefined;
+    /** What a retired segment read as partial and interrupted text, for a turn that says nothing more. */
+    private retiredPartial = '';
+    private retiredText = '';
     currentId: string | undefined;
 
     constructor(private readonly report: (reason: 'capacity') => void) {}
+
+    /**
+     * A Code follow-up runs as its own CLI turn after a result: the finished segment's
+     * messages take no more frames, so their bookkeeping is released and the continuation
+     * gets the full message, block, snapshot and byte budget. The projection keeps its
+     * items; `latestId` and the retired text keep the final ref and partial/interrupted
+     * text as they were until the continuation starts a message.
+     */
+    retire(): void {
+        this.retiredPartial = this.partialText;
+        this.retiredText = this.interruptedText;
+        this.messages.clear();
+        this.bytes = 0; this.blocks = 0; this.snapshotCount = 0;
+        this.currentId = undefined;
+    }
 
     message(id: string): Message {
         let message = this.messages.get(id);
@@ -125,13 +143,16 @@ export class ClaudeSdkMessages {
             .filter(([, block]) => block.type === 'text').map(([, block]) => block.text).join('');
     }
 
-    get partialText(): string { return this.latestId === undefined ? '' : this.text(this.latestId); }
+    get partialText(): string {
+        if (this.latestId === undefined) return '';
+        return this.messages.has(this.latestId) ? this.text(this.latestId) : this.retiredPartial;
+    }
     /** Interruption only: a tool-only boundary cannot erase this turn's last plaintext. */
     get interruptedText(): string {
         for (const [id, message] of [...this.messages].reverse()) {
             if ([...message.blocks.values()].some(block => block.type === 'text')) return this.text(id);
         }
-        return '';
+        return this.retiredText;
     }
     get finalRef(): string { return this.latestId === undefined ? 'claude:final' : 'claude:message:' + this.latestId; }
 }
