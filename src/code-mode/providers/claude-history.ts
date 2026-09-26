@@ -39,10 +39,11 @@ async function discard(history: ClaudeHistoryHelpers, dir: string, source: strin
 
 /**
  * Where the fork ends: just before the prompt of the first later turn whose boundary is in
- * history, or after the last entry when none is. A later boundary that is absent (a prompt
- * stopped before Claude wrote it) is passed over only while no human turn started after the
- * target's prompt: the entries passed over must all belong to the target's own turn. Any other
- * absence means the history moved, and the rollback fails closed.
+ * history, or after the last entry when none is. A later turn without a boundary (a prompt
+ * that never reached Claude) and one whose boundary is absent (a prompt stopped before Claude
+ * wrote it) are both passed over, but only while no human turn started after the target's
+ * prompt: the entries passed over must all belong to the target's own turn. Any other absence
+ * means the history moved, and the rollback fails closed.
  */
 function forkPoint(messages: SessionMessage[], target: number, later: CodeRollbackInput['later']): number {
     let skipped = false;
@@ -54,7 +55,7 @@ function forkPoint(messages: SessionMessage[], target: number, later: CodeRollba
         if (skipped) assertOnlyTargetTurn(messages, target, next);
         return next;
     }
-    if (!skipped) throw noBoundary('No later turn has a recorded boundary');
+    // No later boundary is in history: the fork keeps everything, which must be the target's turn.
     assertOnlyTargetTurn(messages, target, messages.length);
     return messages.length;
 }

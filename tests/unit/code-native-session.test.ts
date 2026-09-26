@@ -2354,6 +2354,53 @@ test('send, Stop before Claude recorded the prompt, send again: rolling back to 
         'kept turns are remapped onto the fork');
 });
 
+test('sends that never reached Claude do not block rolling back past them; a turn Code does not know about still does', async t => {
+    const f = fixture(t);
+    const history = injectedHistory(f);
+    const id = f.create('claude').sessionId;
+    const turns: string[] = [];
+    for (const [index, text] of ['prompt 1', 'prompt 2'].entries()) {
+        const { receipt } = f.manager.prompt(id, { text, clientTurnKey: `key-${index + 1}` });
+        const epoch = f.store.read(id)!.epoch;
+        await f.providers.claude.opened();
+        const handle = f.providers.claude.handles[0]!;
+        await handle.waitSent(index);
+        history.record(handle.sendOptions[index]!.promptUuid!, text);
+        handle.outcome.resolve(done);
+        await f.terminal(id, epoch);
+        turns.push(receipt.turnId);
+    }
+    // The runtime exits, and reopening it fails for the next two sends: neither prompt leaves this process.
+    f.providers.claude.handles[0]!.alive = false;
+    f.providers.claude.beforeOpen = () => { throw new Error('spawn failed'); };
+    for (const key of ['key-3', 'key-4']) {
+        const { receipt } = f.manager.prompt(id, { text: key, clientTurnKey: key });
+        await f.terminal(id, f.store.read(id)!.epoch);
+        assert.equal(f.store.readTurn(id, key)?.status, 'failed');
+        turns.push(receipt.turnId);
+    }
+    const boundary = (turnId: string) => (f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?').get(turnId) as { native_prompt_uuid: string | null }).native_prompt_uuid;
+    assert.deepEqual(turns.slice(2).map(boundary), [null, null], 'an undispatched send keeps no boundary');
+
+    // Claude history also holds a turn Code never sent (typed in `claude --resume`): the fork would keep it, so no fork.
+    const source = history.sessions.get('private-native-cursor')!;
+    const before = f.store.snapshot(id);
+    history.record('00000000-0000-4000-8000-00000000abcd', 'typed elsewhere');
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[1]!)), errorCode('rollback_boundary_unavailable', 409));
+    assert.equal(history.sessions.size, 1, 'nothing was forked');
+    assert.deepEqual(f.store.snapshot(id), before);
+    source.splice(-2);
+
+    const session = await f.manager.rollback(id, request(f, id, turns[1]!));
+    assert.equal(session.historyGeneration, 1);
+    assert.deepEqual([...new Set(f.manager.snapshot(id).items.map(item => item.turnId))], turns.slice(0, 2));
+    const fork = f.store.readRecord(id)!.nativeCursor!;
+    assert.notEqual(fork, 'private-native-cursor');
+    assert.deepEqual(history.sessions.get(fork)!.map(row => JSON.stringify(row.message)), source.map(row => JSON.stringify(row.message)),
+        'the fork keeps the whole history: only the target turn followed its prompt');
+    assert.equal(f.store.readTurn(id, 'key-3')?.status, 'cancelled', 'the removed sends read cancelled');
+});
+
 test('rollback checks provider, archive, history, client revision and epoch, and busy before any fork', async t => {
     const f = fixture(t);
     const { id, turns } = await claudeConversation(f, 2);

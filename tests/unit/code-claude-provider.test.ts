@@ -201,7 +201,8 @@ test('Claude rollback skips an undispatched later turn, passes a missing one onl
     await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: uuid() } })), codeError('rollback_boundary_unavailable'));
     await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: h.toolResult.uuid } })), codeError('rollback_boundary_unavailable'),
         'a tool result is not a human turn start');
-    await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: null }] })), codeError('rollback_boundary_unavailable'));
+    await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: null }] })), codeError('rollback_boundary_unavailable'),
+        'no later boundary: the fork would keep turns 2 and 3, which Code is removing');
     await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-0', promptUuid: h.t1.uuid }], target: { turnId: 'turn-2', promptUuid: h.t2.uuid } })),
         codeError('rollback_boundary_unavailable'), 'a later boundary before the target is out of order');
     sessions.set(SOURCE, []);
@@ -256,6 +257,39 @@ test('a later prompt Claude never recorded is passed over while only the target 
     sessions.set(SOURCE, [t1, a1, t4, a4, t2, a2]);
     await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
         codeError('rollback_boundary_unavailable'));
+    assert.equal(forks(), before);
+});
+
+test('later turns that never reached Claude fork to the end of history while only the target turn follows its prompt', async () => {
+    // Two sends after turn 2 failed before dispatch: neither has a boundary, and neither is in history.
+    const t1 = msg('user', [{ type: 'text', text: 'first' }]), a1 = msg('assistant', [{ type: 'text', text: 'one' }]);
+    const t2 = msg('user', [{ type: 'text', text: 'second' }]);
+    const toolUse = msg('assistant', [{ type: 'tool_use', id: 'toolu_3', name: 'Bash', input: {} }]);
+    const toolResult = msg('user', [{ type: 'tool_result', tool_use_id: 'toolu_3', content: 'ok' }]);
+    const a2 = msg('assistant', [{ type: 'text', text: 'two' }]);
+    const kept = [{ turnId: 'turn-1', promptUuid: t1.uuid }, { turnId: 'turn-2', promptUuid: t2.uuid }];
+    const request = { cwd: '/work', nativeCursor: SOURCE, title: null, target: { turnId: 'turn-2', promptUuid: t2.uuid }, kept,
+        later: [{ turnId: 'turn-3', promptUuid: null }, { turnId: 'turn-4', promptUuid: null }] };
+
+    const sessions = new Map([[SOURCE, [t1, a1, t2, toolUse, toolResult, a2]]]);
+    const fake = fakeHistory(sessions);
+    const { provider } = rollbackProvider(fake.helpers);
+    const whole = await provider.rollback!(request);
+    assert.deepEqual(fake.calls.find(call => call[0] === 'fork'), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }],
+        'the fork keeps the whole history, the target turn and its tool loop');
+    const fork = sessions.get(whole.forkCursor)!;
+    assert.deepEqual(fork.map(entry => entry.message), [t1, a1, t2, toolUse, toolResult, a2].map(entry => entry.message));
+    assert.deepEqual(whole.remapped, [{ turnId: 'turn-1', promptUuid: fork[0]!.uuid }, { turnId: 'turn-2', promptUuid: fork[2]!.uuid }]);
+
+    // A human turn start after the target is a turn the rollback would keep without meaning to: fail closed, before any fork.
+    const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
+    const before = forks();
+    const outside = msg('user', 'typed in claude --resume'), outsideAnswer = msg('assistant', [{ type: 'text', text: 'elsewhere' }]);
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer]);
+    await assert.rejects(provider.rollback!(request), codeError('rollback_boundary_unavailable'));
+    const followUp = msg('user', [{ type: 'text', text: 'also run the tests' }]);
+    sessions.set(SOURCE, [t1, a1, t2, followUp, a2]);
+    await assert.rejects(provider.rollback!(request), codeError('rollback_boundary_unavailable'), 'a follow-up is a human turn start too');
     assert.equal(forks(), before);
 });
 

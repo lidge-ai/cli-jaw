@@ -1298,7 +1298,7 @@ test('rollback availability names why it is off and where recorded boundaries st
     assert.equal(store.read('session-a')!.rollback.reason, 'archived');
 });
 
-test('a rollback plan targets only a settled user row with a boundary and a later turn with one', t => {
+test('a rollback plan targets only a settled user row with a boundary that has a later turn', t => {
     const { store, db } = fixture(t);
     for (const key of ['k1', 'k2', 'k3']) settled(store, key);
     const ids = boundaries(db);
@@ -1316,7 +1316,8 @@ test('a rollback plan targets only a settled user row with a boundary and a late
     assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later.map(turn => turn.promptUuid), [null, ids['turn-3']],
         'an undispatched later turn is carried for the provider to skip');
     db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-3'").run();
-    expectError(() => store.readRollbackPlan('session-a', 'turn-1:user'), 'rollback_boundary_unavailable');
+    assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later, [{ turnId: 'turn-2', promptUuid: null }, { turnId: 'turn-3', promptUuid: null }],
+        'later turns that never reached Claude do not block the plan; the provider forks to the end of history if only the target turn is there');
     db.prepare("UPDATE code_turns SET native_prompt_uuid = ? WHERE turn_id = 'turn-3'").run(ids['turn-3']);
     db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-1'").run();
     expectError(() => store.readRollbackPlan('session-a', 'turn-1:user'), 'rollback_boundary_unavailable');

@@ -599,6 +599,9 @@ sent, and the source native session is never modified or deleted.
   UUID that is absent (a prompt stopped before Claude wrote it) is passed over, to the
   next present one or to the end of history, only when no human-turn-start entry lies
   between the target's prompt and that point; otherwise `rollback_boundary_unavailable`.
+  When no later UUID is present at all, including when every later turn is NULL, the
+  fork runs to the end of history under that same check. The store plan requires only
+  the target's boundary.
   A follow-up reads as a human turn start, so a target turn that took one stays
   fail-closed there. `forkSession` receives `upToMessageId` = the entry just before that
   prompt, or the last entry (inclusive), and the session title when there is one.

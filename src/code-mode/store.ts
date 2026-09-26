@@ -1143,9 +1143,9 @@ export class CodeStore {
     }
 
     /**
-     * Validate a rollback to the item's turn without writing anything. The target and the
-     * first later turn that carries a boundary must both have one; the provider then proves
-     * both are present in native history before any fork.
+     * Validate a rollback to the item's turn without writing anything. The target must carry a
+     * boundary; later turns are passed as they are, boundary or not, and the provider proves
+     * where the fork ends (see `forkClaudeHistory`) before any fork.
      */
     readRollbackPlan(sessionId: string, upToItemId: string): CodeRollbackPlan {
         return this.database.transaction(() => {
@@ -1155,7 +1155,7 @@ export class CodeStore {
             const { kept, later } = this.rollbackTurns(record, upToItemId);
             const target = kept.at(-1)!;
             if (!later.length) throw new CodeStoreError('rollback_noop', 'The target is already the latest turn', 409);
-            if (target.native_prompt_uuid === null || !later.some(turn => turn.native_prompt_uuid !== null)) {
+            if (target.native_prompt_uuid === null) {
                 throw new CodeStoreError('rollback_boundary_unavailable', 'This turn has no recorded conversation boundary', 409);
             }
             const turn = (row: PlanTurnRow): CodeRollbackTurn => ({ turnId: row.turn_id, promptUuid: row.native_prompt_uuid });
