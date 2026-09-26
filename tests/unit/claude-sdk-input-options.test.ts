@@ -228,3 +228,16 @@ test('Code sessions pin an exact SDK permission mode; jaw-shaped input keeps aut
     assert.throws(() => buildClaudeSdkOptions(prepared({ permissions: 'auto', sdkMode: 'plan' })), 'the auto gate needs bypass');
     assert.throws(() => buildClaudeSdkOptions(prepared({ sdkMode: 'yolo' as never })));
 });
+
+test('thinking: on is adaptive with summaries, off is disabled, unset leaves the CLI default', () => {
+    const on = buildClaudeSdkOptions(prepared({ thinking: true }));
+    assert.deepEqual(on.thinking, { type: 'adaptive', display: 'summarized' });
+    assert.deepEqual(on.settings, { alwaysThinkingEnabled: true, showThinkingSummaries: true });
+    const off = buildClaudeSdkOptions(prepared({ thinking: false, fastMode: true }));
+    assert.deepEqual(off.thinking, { type: 'disabled' });
+    assert.deepEqual(off.settings, { fastMode: true, alwaysThinkingEnabled: false, showThinkingSummaries: false });
+    const unset = buildClaudeSdkOptions(prepared());
+    assert.equal(unset.thinking, undefined);
+    assert.equal(unset.settings, undefined);
+    assert.throws(() => buildClaudeSdkOptions(prepared({ thinking: 'yes' as never })));
+});
