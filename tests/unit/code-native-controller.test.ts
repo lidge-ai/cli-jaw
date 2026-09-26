@@ -14,7 +14,8 @@ function session(id: string, patch: Partial<CodeSessionInfo> = {}): CodeSessionI
     return { sessionId: id, provider: 'codex-app', cwd: `/workspace/${id}`, title: id, model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
         resume: { available: true, reason: null }, capabilities: { resume: true, interrupt: true, permissions: true,
-            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, ...patch };
+            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null,
+        pinnedAt: null, markedUnread: false, ...patch };
 }
 function snap(info: CodeSessionInfo, items: CodeItem[] = [], pendingPermissions: CodePermissionRequest[] = []): CodeSnapshot {
     return { session: info, items, sequence: info.sequence, pendingPermissions, truncated: false };
@@ -259,6 +260,57 @@ test('rename and archive reject row failures after recording the target error', 
     await assert.rejects(f.controller.archive('a', true), /busy/);
     assert.equal(f.controller.getModel().session?.archivedAt, null);
     assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 2);
+});
+
+test('pin and mark-unread still PATCH a busy session; rename and archive stay gated', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(session('a', { status: 'streaming', turnId: 't', revision: 4 })));
+    await f.controller.refresh(); await f.controller.selectSession('b');
+    let stored = session('a', { status: 'streaming', turnId: 't', revision: 4 });
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        // The store only touches the fields the patch names.
+        stored = { ...stored, revision: stored.revision + 1,
+            ...('pinned' in call.body ? { pinnedAt: call.body['pinned'] === true ? 7 : null } : {}),
+            ...('unread' in call.body ? { markedUnread: call.body['unread'] === true } : {}) };
+        return response({ ok: true, session: stored });
+    });
+    await f.controller.pin('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 4, pinned: true });
+    await f.controller.markUnread('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 5, unread: true });
+    const row = f.controller.getModel().sessions.find(item => item.sessionId === 'a')!;
+    assert.equal(row.pinnedAt, 7);
+    assert.equal(row.markedUnread, true);
+    await assert.rejects(f.controller.rename('a', 'renamed'), /busy|finish/);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 2, 'rename never reached the wire');
+    f.intercept(call => call.method === 'PATCH' ? response({ ok: false, error: 'revision_conflict', session: session('a', { revision: 9 }) }, 409) : undefined);
+    await assert.rejects(f.controller.pin('a', false), /changed|conflict/i);
+    assert.equal(f.controller.getModel().sessions.find(item => item.sessionId === 'a')!.revision, 9, 'a conflict accepts the answered revision');
+});
+
+test('pin and mark-unread share the mutation slot: they wait out an in-flight rename', async t => {
+    const f = fixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('b');
+    let patchSeen = false;
+    let release: (value: Response) => void = () => {};
+    f.intercept(call => {
+        if (call.method !== 'PATCH' || !call.path.endsWith('/a')) return undefined;
+        if ('title' in call.body) {
+            patchSeen = true;
+            return new Promise<Response>(yes => { release = yes; });
+        }
+        return response({ ok: true, session: session('a', { title: 'later', revision: 4, pinnedAt: 7 }) });
+    });
+    const renaming = f.controller.rename('a', 'later');
+    while (!patchSeen) await new Promise(yes => setImmediate(yes));
+    await assert.rejects(f.controller.pin('a', true), /finish/);
+    await assert.rejects(f.controller.markUnread('a', true), /finish/);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1, 'the sidebar patches never reached the wire');
+    release(response({ ok: true, session: session('a', { title: 'later', revision: 3 }) }));
+    await renaming;
+    await f.controller.pin('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 3, pinned: true });
 });
 
 test('unknown creation remains frozen and is never automatically retried', async t => {

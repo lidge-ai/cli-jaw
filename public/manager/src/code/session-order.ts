@@ -24,6 +24,14 @@ export function compareCodeSessions(left: CodeSessionInfo, right: CodeSessionInf
     return right.createdAt - left.createdAt || left.sessionId.localeCompare(right.sessionId);
 }
 
+/**
+ * Pinned rows leave their workspace or activity group and sit together on top,
+ * most recently pinned first. `null` sorts below any real pin.
+ */
+export function comparePinnedCodeSessions(left: CodeSessionInfo, right: CodeSessionInfo): number {
+    return (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0) || compareCodeSessions(left, right);
+}
+
 export type CodeSessionGroup = {
     section: CodeSessionSection;
     sessions: CodeSessionInfo[];
@@ -77,6 +85,7 @@ export function codeSessionAttentionLabel(attention: CodeSessionAttention): stri
  */
 export function codeSessionUnread(session: CodeSessionInfo): boolean {
     if (session.archivedAt !== null) return false;
+    if (session.markedUnread) return true;
     const completed = session.lastTurnCompletedAt;
     const visited = session.lastVisitedAt;
     if (completed === null || visited === null) return false;

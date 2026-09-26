@@ -101,7 +101,8 @@ function bool(value: unknown, code: string): boolean {
 }
 
 function patchInput(value: unknown): CodePatchSessionRequest {
-    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived']);
+    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived',
+        'pinned', 'unread']);
     const patch: CodePatchSessionRequest = { expectedRevision: integer(input['expectedRevision'], 'revision') };
     if ('title' in input) {
         if (input['title'] !== null && (typeof input['title'] !== 'string' || input['title'].length > 240 || input['title'].includes('\0'))) return invalid('invalid_title');
@@ -115,6 +116,8 @@ function patchInput(value: unknown): CodePatchSessionRequest {
         if (typeof input['archived'] !== 'boolean') return invalid('invalid_archived');
         patch.archived = input['archived'];
     }
+    if ('pinned' in input) patch.pinned = bool(input['pinned'], 'invalid_pinned');
+    if ('unread' in input) patch.unread = bool(input['unread'], 'invalid_unread');
     if (Object.keys(patch).length === 1) return invalid('empty_patch');
     return patch;
 }
