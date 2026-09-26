@@ -1,8 +1,6 @@
-import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { SidebarResizeHandle } from './SidebarResizeHandle';
 import { SIDEBAR_COLLAPSED_WIDTH } from '../hooks/useSidebarWidth';
-
-const TITLEBAR_RAIL_MIN_WIDTH = 296;
 
 type WorkspaceLayoutProps = {
     navigator: ReactNode;
@@ -76,12 +74,6 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps) {
     const rightPanelWidth = props.rightPanelOpen
         ? clampRightPanelRenderWidth(props.rightPanelWidth, sidebarRenderWidth, viewportWidth)
         : 0;
-
-    useLayoutEffect(() => {
-        const root = document.documentElement;
-        root.style.setProperty('--manager-sidebar-width', `${sidebarRenderWidth}px`);
-        root.dataset['managerTitlebarRail'] = String(!props.sidebarCollapsed && sidebarRenderWidth >= TITLEBAR_RAIL_MIN_WIDTH);
-    }, [sidebarRenderWidth, props.sidebarCollapsed]);
 
     const style: WorkspaceLayoutStyle = {
         '--activity-dock-height': `${props.inspectorHeight}px`,

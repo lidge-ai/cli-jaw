@@ -1,70 +1,88 @@
-/* Desktop (Electron) titlebar row: traffic lights, sidebar toggle, and workspace rail share
-   one row, like Codex / ima2. Traffic lights sit at x=16 (3 x 12px + 2 x 8px gaps). */
+/* Desktop (Electron): traffic lights and the sidebar toggle share the titlebar row (lights at
+   x=16, 3 x 12px + 2 x 8px gaps); workspace buttons stay in a fixed left column, like Codex. */
 @media (min-width: 1024px) {
     :root[data-cli-jaw-desktop="true"] {
         --desktop-traffic-light-reserve: 76px;
         --desktop-titlebar-control: 26px;
+        --desktop-rail-width: 44px;
+        --desktop-rail-button: 32px;
     }
 
     :root[data-cli-jaw-desktop="true"][data-window-fullscreen="true"] {
         --desktop-traffic-light-reserve: 8px;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail {
-        position: fixed;
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .manager-sidebar {
+        padding-left: var(--desktop-rail-width);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .manager-sidebar {
+        padding-left: 0;
+    }
+
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .sidebar-rail,
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail {
+        position: absolute;
         top: 0;
+        bottom: 0;
         left: 0;
-        z-index: 30;
         box-sizing: border-box;
-        width: var(--manager-sidebar-width, 300px);
-        height: var(--workspace-topbar-height);
+        width: var(--desktop-rail-width);
+        height: auto;
         min-height: 0;
+        flex-direction: column;
         flex-wrap: nowrap;
         align-items: center;
-        column-gap: 0;
-        overflow: hidden;
+        justify-content: flex-start;
+        gap: 4px;
+        overflow: visible;
         border-bottom: 0;
         border-right: 1px solid var(--border-subtle);
-        background: var(--canvas-deep);
-        padding: 0 8px 0 var(--desktop-traffic-light-reserve);
-        -webkit-app-region: drag;
+        padding: 8px 0;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail :is(.rail-button, .rail-collapse-button) {
-        width: var(--desktop-titlebar-control);
-        min-width: var(--desktop-titlebar-control);
-        height: var(--desktop-titlebar-control);
-        min-height: var(--desktop-titlebar-control);
-        -webkit-app-region: no-drag;
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .sidebar-rail {
+        border-right: 0;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-collapse-button {
-        margin: 0 4px 0 0;
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .sidebar-rail .rail-button,
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail .rail-button {
+        width: var(--desktop-rail-button);
+        min-width: var(--desktop-rail-button);
+        height: var(--desktop-rail-button);
+        min-height: var(--desktop-rail-button);
+        margin: 0;
+        padding: 0;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-help-button {
-        margin-bottom: 0;
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .sidebar-rail .rail-spacer,
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail .rail-spacer {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 4px;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-status-dot {
-        display: none;
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .sidebar-rail .rail-status-dot,
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail .rail-status-dot {
+        margin: 4px 0 2px;
     }
 
-    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .command-center.command-bar {
-        --electron-titlebar-left-reserve: calc(var(--manager-sidebar-width, 300px) + 12px);
-    }
-
-    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .rail-collapse-button {
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .rail-collapse-button,
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-collapse-button {
         position: fixed;
         top: calc((var(--workspace-topbar-height) - var(--desktop-titlebar-control)) / 2);
         left: var(--desktop-traffic-light-reserve);
         z-index: 30;
+        width: var(--desktop-titlebar-control);
+        min-width: var(--desktop-titlebar-control);
+        height: var(--desktop-titlebar-control);
+        min-height: var(--desktop-titlebar-control);
         margin: 0;
         -webkit-app-region: no-drag;
     }
 
-    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .command-center.command-bar {
-        --electron-titlebar-left-reserve: calc(var(--desktop-traffic-light-reserve) + 36px);
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell .command-center.command-bar {
+        --electron-titlebar-left-reserve: calc(var(--desktop-traffic-light-reserve) + var(--desktop-titlebar-control) + 12px);
     }
 
     :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.command-primary, .command-actions, .command-panel-controls, .theme-switch) {
