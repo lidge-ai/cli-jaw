@@ -584,18 +584,24 @@ sent, and the source native session is never modified or deleted.
   (`code_turns.native_prompt_uuid`), and `ClaudeSdkSession.send` offers the prompt under
   it as the `SDKUserMessage.uuid`. It never reaches the wire. Turns admitted before the
   column existed stay NULL and are never targets (`rollback.sinceSequence` is the first
-  user row that has one). A turn that settles before its prompt was handed to the
-  runtime loses its boundary. When the native identity is replaced, every older turn
+  user row that has one; it is stored on the session row and recomputed, from a partial
+  index of boundary turns, only where boundaries or user rows change). A turn that
+  settles before its prompt was handed to the runtime loses its boundary, and so does a
+  turn restart recovery finds still `starting`, because a turn is marked streaming before
+  its prompt is sent. When the native identity is replaced, every older turn
   loses its boundary; the first identity and the active turn, whose prompt goes to the
   new identity, keep theirs. The rollback commit itself is exempt.
 - Fork point: the target's prompt UUID must be in
   `getSessionMessages(nativeCursor, {dir: cwd, includeSystemMessages: true})` and pass the
   human-turn-start check (so the last compaction precedes it), otherwise
-  `rollback_boundary_unavailable`. The first later turn with a non-NULL UUID bounds the
-  fork, and undispatched later turns are skipped. If that UUID is absent the rollback
-  fails with `rollback_boundary_unavailable` rather than advancing to a later present
-  turn. `forkSession` receives `upToMessageId` = the entry just before that prompt
-  (inclusive), and the session title when there is one.
+  `rollback_boundary_unavailable`. The first later turn with a non-NULL UUID present in
+  that history bounds the fork, and undispatched (NULL) later turns are skipped. A later
+  UUID that is absent (a prompt stopped before Claude wrote it) is passed over, to the
+  next present one or to the end of history, only when no human-turn-start entry lies
+  between the target's prompt and that point; otherwise `rollback_boundary_unavailable`.
+  A follow-up reads as a human turn start, so a target turn that took one stays
+  fail-closed there. `forkSession` receives `upToMessageId` = the entry just before that
+  prompt, or the last entry (inclusive), and the session title when there is one.
 - Verification and remap: the fork's user/assistant bodies must deep-equal every
   retained source body, aligned from the end, or the fork is deleted and the answer is
   `rollback_unavailable`. Forks re-identify messages, but folded follow-ups keep their
@@ -612,14 +618,17 @@ sent, and the source native session is never modified or deleted.
   cap.
 - Ownership: the manager checks provider, archive, cursor, the client's revision and
   epoch, health and busy, then reads the store plan and fences the session before its
-  first await. Prompt (after the duplicate-receipt lookup), attach, patch and a second
-  rollback answer `session_busy` until it ends. Inside the fence the idle resident
+  first await. Prompt (after the duplicate-receipt lookup), follow-up (after its
+  committed-key replay), attach, patch and a second rollback answer `session_busy` until
+  it ends. Inside the fence the idle resident
   runtime is disposed and its cleanup required, because the resident query would keep
   the source session. Nothing is persisted before the fork, so a crash needs no
   recovery. `commitRollback` is one transaction that compares and swaps revision, epoch
   and native cursor. It deletes the later items and their events, keeps their turn rows
-  marked `removed_generation` (their receipts read `cancelled`), rewrites kept
-  boundaries, moves the cursor to the fork, bumps revision, epoch and
+  marked `removed_generation` (their receipts, and their follow-ups' receipts, read
+  `cancelled`), leaves `code_steers` rows unchanged (keys stay spent, native ids are
+  not remapped; follow-up items of removed turns leave with the other later items and
+  follow-up rows are never targets), rewrites kept boundaries, moves the cursor to the fork, bumps revision, epoch and
   `historyGeneration`, sets the session idle with no error, and raises a replay floor.
   A failed commit, or a manager disposed after the fork, deletes the fork (only a fresh
   UUID other than the source), and `dispose()` waits for in-flight rollbacks.

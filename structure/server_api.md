@@ -494,7 +494,7 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | POST `/sessions/:id/steer` | Code-only Claude follow-up: `text`, `clientTurnKey` and the captured `turnId` and `epoch`; one follow-up joins the streaming turn with no new turn, epoch or Stop;202 new admission,200 committed receipt whose status is the owning turn's, even after it ended.400 `steer_command_unsupported` (text starting with `/`) or `unsupported_capability` (non-Claude runtime, or a runtime without steer);409 `stale_owner`, `session_not_steerable` (not streaming, or the runtime has not started the turn), `steer_queue_full` (the turn's one follow-up is taken, durably or in the native queue), `steer_in_flight`, `steer_key_spent` (refused key), `turn_key_conflict` and `transcript_limit`;503 `steer_outcome_unknown` (native acceptance could not be recorded, or the turn ended or the server restarted while the offer was in flight; the slot stays spent) and `orphaned_turn`. None is retried |
 | POST `/sessions/:id/cancel` | Captured `turnId` and `epoch`; never cancels a successor |
 | POST `/sessions/:id/attach` | Explicit native resume; selecting or reading a session does not attach |
-| POST `/sessions/:id/rollback` | Claude only (other providers:400 `unsupported_capability`). `expectedRevision`, `expectedEpoch` and `upToItemId`, which must be an opaque `${turnId}:user` row (400 `invalid_rollback_target`; a native message id is never accepted). Forks the native conversation through that settled turn and removes later turns in one commit; conversation only — workspace files are not reverted and no prompt is sent. 409 `revision_conflict` (with the current `session`), `session_busy` (also for prompt/attach/patch/another rollback while one runs), `session_archived`, `rollback_noop` (latest turn), `rollback_boundary_unavailable` (turn compacted away or recorded before boundaries), `rollback_unavailable` (no readable history, compaction, size cap); 404 `rollback_target_not_found`. Returns the session with a new `historyGeneration` |
+| POST `/sessions/:id/rollback` | Claude only (other providers:400 `unsupported_capability`). `expectedRevision`, `expectedEpoch` and `upToItemId`, which must be an opaque `${turnId}:user` row (400 `invalid_rollback_target`; a native message id is never accepted). Forks the native conversation through that settled turn and removes later turns in one commit; conversation only — workspace files are not reverted and no prompt is sent. 409 `revision_conflict` (with the current `session`), `session_busy` (also for prompt/steer/attach/patch/another rollback while one runs; committed prompt and follow-up keys still replay), `session_archived`, `rollback_noop` (latest turn), `rollback_boundary_unavailable` (the turn, or a later turn a human turn follows, never reached Claude's history, or it was compacted away or recorded before boundaries), `rollback_unavailable` (no readable history, compaction, size cap); 404 `rollback_target_not_found`. Returns the session with a new `historyGeneration` |
 | POST `/sessions/:id/visit` | Manager read receipt: stamps `lastVisitedAt` (no revision change) and emits `code_session`; never attaches or starts a runtime |
 | POST `/permissions/:id` | Captured session/turn/epoch and opaque optionId; stale or unknown decisions fail |
 
@@ -507,8 +507,9 @@ Session rows carry `historyGeneration` and `rollback: {available, reason, sinceS
 removed items and their events, sets a replay floor at its own `code_session` event
 and raises `historyGeneration`: `GET /sessions/:id/events` with an `afterSequence`
 below the floor answers409 `invalid_sequence`, and a reader seeing a higher
-generation takes a new snapshot. Prompt keys of removed turns keep answering, with
-status `cancelled`.
+generation takes a new snapshot. Prompt and follow-up keys of removed turns keep
+answering, with status `cancelled`; follow-up rows are unchanged, so their keys stay
+spent, and a follow-up row is never a rollback target.
 
 Snapshots contain complete items. Replay may contain `code_item_update` append
 suffixes and status/phase changes; apply only once in contiguous sequence to the

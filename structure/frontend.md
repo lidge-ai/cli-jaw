@@ -731,15 +731,20 @@ Effort; it is hidden for other runtimes, and a draft that leaves Claude drops th
 A Claude session whose server reports `rollback.available` shows "Roll back
 conversation to here" under each settled `${turnId}:user` row at or after
 `rollback.sinceSequence` that has a later turn, while the session is idle or failed,
-synchronized, not archived and no other operation runs; the unsent row and follow-up
-rows never get it, and an older server without the field reads as unavailable. It
+synchronized, not archived and no other operation or follow-up POST is in flight; the
+unsent row and follow-up rows never get it, and an older server without the field reads
+as unavailable. It
 asks first ("Later turns are removed from this conversation. Workspace files are not
 changed. No prompt is sent."), posts only the opaque row id with the revision and
 epoch it saw, shows "Rolling back conversation…" and then takes a fresh snapshot; a
-refusal keeps the transcript and names the reason. A `code_session` event with a
-higher `historyGeneration` makes the reducer take a new snapshot, and a rollback seen
-from elsewhere retires an awaited send whose own row it removed and makes Retry use
-a new key ("The conversation was rolled back").
+refusal keeps the transcript and names the reason (a revision conflict reads "The
+conversation changed since you chose this point", a missing boundary names a turn that
+never reached Claude or a compaction). A `code_session` event with a higher
+`historyGeneration` makes the reducer take a new snapshot. A rollback, including one seen
+from elsewhere, retires an awaited send whose own row it removed and makes Retry use a
+new key; its recovery strip, kept across reload, reads "This message's turn was removed
+by a rollback. Files it changed were not reverted. Retry sends it as a new message.", and
+an unconfirmed follow-up of a removed turn stops being reported as unconfirmed.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
