@@ -87,7 +87,7 @@ export function createCodeProviders(factories: CodeProviderFactories = {}): Code
                     models: [...entry.models], defaultModel: entry.defaultModel,
                     defaultEffort: entry.defaultEffort || null, modelSource: 'registry',
                     capabilities: { resume: true, interrupt: true, permissions: true,
-                        setModelMidSession: false, efforts: [...entry.efforts], permissionModes: [...MODES[id]] } };
+                        setModelMidSession: id === 'claude', efforts: [...entry.efforts], permissionModes: [...MODES[id]] } };
                 if (providerLive) {
                     return { ...base, models: [...providerLive.models], modelSource: 'live',
                         ...(providerLive.effortsByModel

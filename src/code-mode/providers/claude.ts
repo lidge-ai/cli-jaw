@@ -1,7 +1,7 @@
 import { createClaudeSdkSession, type ClaudeSdkSession } from '../../agent/runtime/claude-sdk-session.js';
 import type { PreparedClaudeOptions } from '../../agent/runtime/claude-sdk-options.js';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import type { CodeProvider } from '../provider.js';
+import type { CodeLiveSettings, CodeProvider } from '../provider.js';
 import type { CodePermissionMode } from '../wire.js';
 import { claudeModelGateMessage } from '../../cli/claude-default-model-boot.js';
 import { admitCodeOpen, captureCodeContext, CODE_PROMPT_TIMEOUT_MS, type CodeProviderDependencies } from './acp.js';
@@ -43,6 +43,7 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
             try { runtime = await create({
                 prepared: { cwd: options.cwd, binary: dependencies.binary(), env: dependencies.environment(),
                     model: options.model, systemPrompt: '', fastMode: false,
+                    ...(options.thinking === null ? {} : { thinking: options.thinking }),
                     permissions: sdkMode === 'bypassPermissions' ? 'auto' : 'safe',
                     // Every Code process may later switch live, including to bypass.
                     sdkMode, sessionGrants: true, allowDangerouslySkipPermissions: true,
@@ -104,6 +105,14 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                     get nativeSessionId() { return runtime.nativeSessionId; },
                     get lastTurnFailureText() { return runtime.lastTurnFailureText; },
                     setPermissionMode: (mode: CodePermissionMode) => runtime.setPermissionMode(claudeCodePermissionMode(mode)),
+                    reconfigure: (next: CodeLiveSettings, previous: CodeLiveSettings) => {
+                        if (closing) throw new Error('code_claude_not_idle');
+                        const refusal = claudeModelGateMessage(dependencies.binary(), next.model);
+                        if (refusal) throw new Error(refusal);
+                        const tuple = (value: CodeLiveSettings) => ({ model: value.model,
+                            effort: claudeEffort(value.effort) ?? null, thinking: value.thinking });
+                        return runtime.reconfigure(tuple(next), tuple(previous));
+                    },
                     get alive() { return !closing && runtime.alive; },
                     get closed() { return !runtime.alive && runtime.activeProcessCount === 0; },
                     send(text) {

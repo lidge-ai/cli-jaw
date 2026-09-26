@@ -72,7 +72,7 @@ function sessionCursor(value: unknown): CodeSessionCursor {
 }
 
 function createInput(value: unknown): CodeCreateSessionRequest {
-    const input = body(value, ['provider', 'cwd', 'model', 'effort', 'permissionMode']);
+    const input = body(value, ['provider', 'cwd', 'model', 'effort', 'permissionMode', 'thinking']);
     if (!PROVIDERS.includes(input['provider'] as CodeProviderId)) return invalid('invalid_provider');
     let directory: string;
     try {
@@ -88,11 +88,16 @@ function createInput(value: unknown): CodeCreateSessionRequest {
         model: string(input['model'], 'model'),
         effort: input['effort'] == null ? null : string(input['effort'], 'effort', 80),
         permissionMode: permission(input['permissionMode']),
+        ...('thinking' in input ? { thinking: bool(input['thinking'], 'invalid_thinking') } : {}),
     };
 }
 
+function bool(value: unknown, code: string): boolean {
+    return typeof value === 'boolean' ? value : invalid(code);
+}
+
 function patchInput(value: unknown): CodePatchSessionRequest {
-    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'archived']);
+    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived']);
     const patch: CodePatchSessionRequest = { expectedRevision: integer(input['expectedRevision'], 'revision') };
     if ('title' in input) {
         if (input['title'] !== null && (typeof input['title'] !== 'string' || input['title'].length > 240 || input['title'].includes('\0'))) return invalid('invalid_title');
@@ -101,6 +106,7 @@ function patchInput(value: unknown): CodePatchSessionRequest {
     if ('model' in input) patch.model = string(input['model'], 'model');
     if ('effort' in input) patch.effort = input['effort'] === null ? null : string(input['effort'], 'effort', 80);
     if ('permissionMode' in input) patch.permissionMode = permission(input['permissionMode']);
+    if ('thinking' in input) patch.thinking = bool(input['thinking'], 'invalid_thinking');
     if ('archived' in input) {
         if (typeof input['archived'] !== 'boolean') return invalid('invalid_archived');
         patch.archived = input['archived'];

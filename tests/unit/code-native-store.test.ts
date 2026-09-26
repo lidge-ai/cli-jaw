@@ -20,7 +20,7 @@ const creation: CodeSessionCreate = {
 const dtoKeys = [
     'sessionId', 'provider', 'cwd', 'title', 'model', 'effort', 'permissionMode', 'status',
     'turnId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
-    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt',
+    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'thinking',
 ].sort();
 
 function fixture(t: { after(fn: () => void): void }, options: CodeStoreOptions = {}) {
@@ -399,7 +399,7 @@ test('full row mapping includes every field and public surfaces exclude private 
         model: 'stored-model', effort: 'low', permissionMode: 'auto', status: 'suspended', turnId: null,
         archivedAt: null, error: { code: 'stored_error', message: 'diagnostic', at: 56, recoverable: true },
         resume: { available: true, reason: null }, capabilities, epoch: 7, sequence: 1, revision: 8,
-        createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null,
+        createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: true,
     };
     assert.deepEqual(store.read('session-a'), expected);
     const record = store.readRecord('session-a')!;
@@ -419,7 +419,7 @@ test('public mapper also strips future private properties nested in capabilities
     const record: CodeSessionRecord = {
         ...creation, sessionId: 's', title: null, status: 'idle', turnId: null,
         archivedAt: null, error: null, epoch: 0, sequence: 0, revision: 0, createdAt: 1, lastUsedAt: 2,
-        lastTurnCompletedAt: null, lastVisitedAt: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
+        lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
     };
     const extra = { ...record, privateFutureField: 'private', capabilities: { ...capabilities, nativeCursor: 'hidden' } };
     assert.deepEqual(Object.keys(toCodeSessionInfo(extra)).sort(), dtoKeys);
@@ -1010,12 +1010,34 @@ test('activity clocks start null and move only on completed/failed turns and on 
 test('databases created before the activity clocks gain both columns as null', t => {
     const db = new Database(':memory:');
     t.after(() => db.close());
-    db.exec(CREATE_CODE_SCHEMA_SQL.replace(',\n    last_turn_completed_at INTEGER, last_visited_at INTEGER', ''));
+    db.exec(CREATE_CODE_SCHEMA_SQL.replace(',\n    last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER', ''));
     const legacyColumns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
     assert.equal(legacyColumns.includes('last_visited_at'), false);
     const store = new CodeStore(db, { now: () => 1234, newId: () => 'turn-x' });
     store.create(creation);
     const columns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
-    assert.ok(columns.includes('last_turn_completed_at') && columns.includes('last_visited_at'));
+    assert.ok(columns.includes('last_turn_completed_at') && columns.includes('last_visited_at') && columns.includes('thinking'));
     assert.equal(store.read('session-a').lastVisitedAt, null);
+});
+
+test('thinking: Claude rows read on when unset, persist a switch, and fence the old owner', t => {
+    const { store } = fixture(t);
+    assert.equal(store.read('session-a').thinking, true);
+    const before = store.read('session-a');
+    const off = store.patchSession('session-a', { expectedRevision: before.revision, thinking: false });
+    assert.equal(off.session.thinking, false);
+    assert.equal(store.read('session-a').thinking, false);
+    assert.ok(off.session.epoch > before.epoch, 'a thinking change is a policy change');
+});
+
+test('thinking chosen at creation is stored as given', t => {
+    const { store } = fixture(t);
+    store.create({ ...creation, sessionId: 'session-off', thinking: false });
+    assert.equal(store.read('session-off').thinking, false);
+});
+
+test('a non-Claude session reads thinking as null', t => {
+    const { store } = fixture(t);
+    store.create({ ...creation, sessionId: 'session-codex', provider: 'codex-app' });
+    assert.equal(store.read('session-codex').thinking, null);
 });

@@ -1,6 +1,6 @@
 import { CodeSession, CodeServiceError } from './session.js';
 import { CodeStore, CodeStoreError, type CodeSessionListOptions, type CodeSessionRecord } from './store.js';
-import type { CodeProviders } from './provider.js';
+import type { CodeLiveSettings, CodeProviders } from './provider.js';
 import { DEFAULT_CODE_SETTINGS } from './types.js';
 import type {
     CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
@@ -85,7 +85,8 @@ export class CodeSessionManager {
      * a reason the user can neither see nor act on. A value the caller is
      * newly choosing is always checked against what the runtime serves today.
      */
-    private validate(input: CodeCreateSessionRequest, fixed?: CodeCapabilities,
+    private validate(input: Pick<CodeCreateSessionRequest, 'provider' | 'model' | 'effort' | 'permissionMode'>
+        & { thinking?: boolean | null }, fixed?: CodeCapabilities,
         accepted?: Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>): CodeProviderCatalog {
         const catalog = this.catalog(input.provider);
         if (!catalog.available) throw new CodeServiceError('provider_unavailable', 'Code provider is unavailable');
@@ -94,6 +95,9 @@ export class CodeSessionManager {
             throw new CodeStoreError('unsupported_model', 'Code model is unsupported', 400);
         }
         const keptEffort = keptModel && accepted !== undefined && accepted.effort === input.effort;
+        if (input.provider !== 'claude' && typeof input.thinking === 'boolean') {
+            throw new CodeStoreError('unsupported_capability', 'Thinking is only switchable for Claude sessions', 400);
+        }
         if (input.provider === 'claude') {
             // Claude modes switch live, so a newly chosen mode answers to the live catalog
             // alone; the mode a session already runs with may also stand on its snapshot.
@@ -311,38 +315,48 @@ export class CodeSessionManager {
         const record = this.record(id);
         const session = this.sessions.get(id);
         session?.assertHealthy();
-        const policy = input.model !== undefined || input.effort !== undefined || input.permissionMode !== undefined;
-        const policyChanged = (input.model !== undefined && input.model !== record.model)
-            || (input.effort !== undefined && input.effort !== record.effort)
-            || (input.permissionMode !== undefined && input.permissionMode !== record.permissionMode);
+        const policy = input.model !== undefined || input.effort !== undefined || input.permissionMode !== undefined
+            || input.thinking !== undefined;
+        const modelChanged = input.model !== undefined && input.model !== record.model;
+        const effortChanged = input.effort !== undefined && input.effort !== record.effort;
+        const thinkingChanged = input.thinking !== undefined && input.thinking !== record.thinking;
+        const permissionChanged = input.permissionMode !== undefined && input.permissionMode !== record.permissionMode;
+        const policyChanged = modelChanged || effortChanged || thinkingChanged || permissionChanged;
         if (policy) {
             this.validate({ ...record, ...input }, record.capabilities, record);
             if (policyChanged && record.nativeStarted && (!record.nativeCursor || !record.capabilities.resume)) {
                 throw new CodeStoreError('resume_unavailable', 'Code policy change requires resumable native history', 409);
             }
         }
-        // A Claude permission-only change switches the resident query instead of restarting it.
-        const permissionOnly = record.provider === 'claude' && input.permissionMode !== undefined
-            && input.permissionMode !== record.permissionMode
-            && (input.model === undefined || input.model === record.model)
-            && (input.effort === undefined || input.effort === record.effort) && input.archived === undefined;
-        let switched = false;
-        if (permissionOnly && session) {
-            if (session.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing permissions', 409);
-            switched = await session.applyPermissionMode(input.permissionMode!) === 'applied';
+        // Claude switches model, effort, thinking and permission mode on the resident query
+        // instead of restarting it. Other providers, and archiving, still retire the runtime.
+        const live = record.provider === 'claude' && input.archived === undefined;
+        const tupleChanged = modelChanged || effortChanged || thinkingChanged;
+        const previous: CodeLiveSettings = { model: record.model, effort: record.effort, thinking: record.thinking ?? true };
+        const next: CodeLiveSettings = { model: input.model ?? record.model,
+            effort: input.effort !== undefined ? input.effort : record.effort, thinking: input.thinking ?? previous.thinking };
+        let tupleApplied = false;
+        let permissionApplied = false;
+        const rollback = async () => {
+            if (!session) return;
+            // Put the runtime back where the stored row still is; if that fails, retire it.
+            try {
+                if (permissionApplied) await session.applyPermissionMode(record.permissionMode);
+                if (tupleApplied) await session.reconfigure(previous);
+            } catch { await session.dispose(); }
+        };
+        if (live && session && (tupleChanged || permissionChanged)) {
+            if (session.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing session settings', 409);
+            try {
+                if (tupleChanged) tupleApplied = await session.reconfigure(next) === 'applied';
+                if (permissionChanged) permissionApplied = await session.applyPermissionMode(input.permissionMode!) === 'applied';
+            } catch (error) { await rollback(); throw error; }
         }
         let result: ReturnType<CodeStore['patchSession']>;
         try { result = this.storage(() => this.options.store.patchSession(id, input)); }
-        catch (error) {
-            if (switched && session) {
-                // Put the runtime back where the stored row still is; if that fails, retire it.
-                try { await session.applyPermissionMode(record.permissionMode); }
-                catch { await session.dispose(); }
-            }
-            throw error;
-        }
+        catch (error) { await rollback(); throw error; }
         // Invalidate residency before exposing the new metadata to subscribers.
-        const closing = session && ((policyChanged && !permissionOnly) || input.archived === true)
+        const closing = session && ((policyChanged && !live) || input.archived === true)
             ? session.dispose() : null;
         this.publish(result.events);
         if (closing) await closing;

@@ -460,3 +460,19 @@ test('POST and PATCH accept every Claude permission mode; provider fit is the ma
         }
     });
 });
+
+test('POST and PATCH carry a boolean thinking switch and refuse anything else', async () => {
+    await server(async (url, f) => {
+        const created = await request(`${url}/sessions`, 'POST', { provider: 'claude', cwd: tmpdir(), model: 'default', permissionMode: 'ask', thinking: false });
+        assert.equal(created.status, 201);
+        assert.equal((f.calls.at(-1)?.args[0] as { thinking?: boolean }).thinking, false);
+        const bad = await request(`${url}/sessions`, 'POST', { provider: 'claude', cwd: tmpdir(), model: 'default', permissionMode: 'ask', thinking: 'on' });
+        assert.equal(bad.status, 400);
+        assert.equal((await bad.json()).error, 'invalid_thinking');
+        const patched = await request(`${url}/sessions/session-one`, 'PATCH', { expectedRevision: 2, thinking: true });
+        assert.equal(patched.status, 200);
+        assert.equal((f.calls.at(-1)?.args[1] as { thinking?: boolean }).thinking, true);
+        const badPatch = await request(`${url}/sessions/session-one`, 'PATCH', { expectedRevision: 2, thinking: 1 });
+        assert.equal((await badPatch.json()).error, 'invalid_thinking');
+    });
+});

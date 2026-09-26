@@ -1730,3 +1730,90 @@ test('a newly chosen Claude mode must be in the live catalog; other providers ke
     const codex = f.create('codex-app');
     await assert.rejects(f.manager.patch(codex.sessionId, { expectedRevision: 0, permissionMode: 'plan' }), errorCode('unsupported_policy'));
 });
+
+// ─── Claude model, effort and thinking switch the resident query too ───
+
+function liveTunable(handle: object) {
+    const calls: Array<{ next: unknown; previous: unknown }> = [];
+    let fail = false;
+    Object.assign(handle, { async reconfigure(next: unknown, previous: unknown) {
+        if (fail) { fail = false; throw new Error('reconfigure_failed'); }
+        calls.push({ next, previous });
+    } });
+    return { calls, failNext() { fail = true; } };
+}
+
+test('Claude sessions default thinking on; other providers refuse the switch', async t => {
+    const f = fixture(t);
+    assert.equal(f.create('claude').thinking, true);
+    assert.equal(f.create('claude', { thinking: false }).thinking, false);
+    assert.equal(f.create('codex-app').thinking, null);
+    assert.throws(() => f.create('codex-app', { thinking: true }), errorCode('unsupported_capability'));
+    const codex = f.create('cursor');
+    await assert.rejects(f.manager.patch(codex.sessionId, { expectedRevision: 0, thinking: false }), errorCode('unsupported_capability'));
+});
+
+test('Claude model, effort and thinking patch reconfigures the idle runtime without a restart', async t => {
+    const f = fixture(t);
+    const row = f.create('claude');
+    f.manager.prompt(row.sessionId, prompt);
+    const options = await f.providers.claude.opened();
+    assert.equal(options.thinking, true, 'the stored switch reaches the open');
+    const handle = f.providers.claude.handles[0]!;
+    const live = liveTunable(handle);
+    await handle.sent.promise; handle.outcome.resolve(done); await f.terminal(row.sessionId, 1);
+    const patched = await f.manager.patch(row.sessionId, { expectedRevision: 0, model: 'model-b', effort: 'high', thinking: false });
+    assert.equal(patched.model, 'model-b');
+    assert.equal(patched.thinking, false);
+    assert.deepEqual(live.calls, [{ next: { model: 'model-b', effort: 'high', thinking: false },
+        previous: { model: 'model-a', effort: 'low', thinking: true } }]);
+    assert.equal(handle.closes, 0, 'no restart for a live change');
+    f.manager.prompt(row.sessionId, { ...prompt, clientTurnKey: 'second-key' });
+    await handle.waitSent(1);
+    assert.equal(f.providers.claude.calls.length, 1, 'the next prompt reuses the same runtime');
+});
+
+test('a combined Claude change keeps the permission mode and rolls both back when persistence fails', async t => {
+    const f = fixture(t); claudeModes(f);
+    const row = f.create('claude');
+    f.manager.prompt(row.sessionId, prompt);
+    await f.providers.claude.opened();
+    const handle = f.providers.claude.handles[0]!;
+    const live = liveTunable(handle);
+    const sw = switchable(handle);
+    await handle.sent.promise; handle.outcome.resolve(done); await f.terminal(row.sessionId, 1);
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 99, thinking: false, permissionMode: 'plan' }),
+        errorCode('revision_conflict'));
+    assert.deepEqual(live.calls.map(call => call.next), [{ model: 'model-a', effort: 'low', thinking: false },
+        { model: 'model-a', effort: 'low', thinking: true }], 'the stored tuple is put back');
+    assert.deepEqual(sw.modes, ['plan', 'ask']);
+    assert.equal(handle.closes, 0);
+    const patched = await f.manager.patch(row.sessionId, { expectedRevision: 0, thinking: false });
+    assert.equal(patched.permissionMode, 'ask', 'a thinking change leaves the permission mode alone');
+    f.manager.prompt(row.sessionId, { ...prompt, clientTurnKey: 'third-key' });
+    await handle.waitSent(1);
+    assert.equal(f.providers.claude.calls.length, 1, 'the binding still matches the stored row');
+});
+
+test('a refused Claude reconfigure is reported and leaves the stored row unchanged', async t => {
+    const f = fixture(t);
+    const row = f.create('claude');
+    f.manager.prompt(row.sessionId, prompt);
+    await f.providers.claude.opened();
+    const handle = f.providers.claude.handles[0]!;
+    const live = liveTunable(handle);
+    await handle.sent.promise;
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 0, thinking: false }), errorCode('session_busy'));
+    handle.outcome.resolve(done); await f.terminal(row.sessionId, 1);
+    live.failNext();
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 0, thinking: false }), /reconfigure_failed/);
+    assert.equal(f.manager.list().find(s => s.sessionId === row.sessionId)?.thinking, true);
+});
+
+test('with no live Claude runtime a thinking change is stored and read by the next open', async t => {
+    const f = fixture(t);
+    const row = f.create('claude');
+    await f.manager.patch(row.sessionId, { expectedRevision: 0, thinking: false });
+    f.manager.prompt(row.sessionId, prompt);
+    assert.equal((await f.providers.claude.opened()).thinking, false);
+});
