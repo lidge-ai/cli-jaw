@@ -51,6 +51,8 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
     const count = active && c.synced ? c.permissions.length : s.pendingPermissionCount;
     const attention = codeSessionAttention(count);
     const unread = !active && codeSessionUnread(s);
+    const working = c.workingIds?.has(s.sessionId) ?? false;
+    const waiting = working && s.status === 'idle';
     async function action(run: () => Promise<void>, after?: () => void) {
         if (guard.current) return;
         guard.current = true; setPending(true); setError(null);
@@ -72,8 +74,10 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
             {/* Ready is the common case and stays silent. A status on every row
                 is a status on no row, and it costs the one session that is
                 actually doing something its visibility. */}
-            <span className={`code-session-status code-session-status-${s.status}`}
-                data-quiet={s.status === 'idle' ? 'true' : undefined}>{CODE_SESSION_LABELS[s.status]}</span>
+            <span className={`code-session-status code-session-status-${waiting ? 'starting' : s.status}`}
+                data-quiet={s.status === 'idle' && !working ? 'true' : undefined}>
+                {working && <span className="code-session-spinner" aria-hidden="true" />}
+                {waiting ? CODE_SESSION_LABELS.starting : CODE_SESSION_LABELS[s.status]}</span>
             <span className={`code-session-attention code-session-attention-${attention.kind}`}
                 data-quiet={attention.kind === 'none' ? 'true' : undefined}>{codeSessionAttentionLabel(attention)}</span>
         </button>

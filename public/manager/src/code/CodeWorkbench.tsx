@@ -27,12 +27,13 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const dismiss = useCallback((id: string) => setToasts(current => dismissCodeToast(current, id)), []);
     const archived = c.session?.archivedAt != null;
     const stopping = c.session?.status === 'stopping' || c.operation.kind === 'stopping';
-    const busy = c.busy || stopping || c.session?.status === 'starting' || c.session?.status === 'streaming';
+    const busy = c.busy || c.working || stopping || c.session?.status === 'starting' || c.session?.status === 'streaming';
     const provider = c.catalog?.providers.find(p => p.id === c.selection.provider);
     const unknownSend = c.operation.kind === 'unknown-send';
     const canSend = !busy && !c.pending && !c.creationUnknown && !archived && c.operation.kind === 'idle' && !!provider?.available
         && !!c.selection.cwd.trim() && !!c.selection.model.trim()
-        && (c.selectedId === null || (c.synced && c.session?.status === 'idle'));
+        // A suspended or recoverably failed session can be sent to: send attaches it first.
+        && (c.selectedId === null || (c.synced && (c.session?.status === 'idle' || (!!c.session && codeCanResume(c.session)))));
     const canStop = !!c.session?.turnId && c.session.capabilities.interrupt && busy && !stopping;
     const canResume = !!c.session && codeCanResume(c.session) && c.synced && !c.pending && !unknownSend;
     const error = c.operation.error || c.error || (actionError?.key === sessionKey ? actionError.message : null);
@@ -95,7 +96,8 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             ? <CodeDraftEmptyState controller={c} />
             : <CodeTranscript items={c.items} provider={c.session?.provider ?? c.selection.provider} sessionKey={sessionKey}
                 workingDir={c.session?.cwd ?? c.selection.cwd} loading={c.loading} hasOlderHistory={c.hasOlderHistory}
-                loadOlderHistory={c.loadOlderHistory} permissionCount={c.permissions.length} onOpenLocalFile={onOpenLocalFile} />}
+                loadOlderHistory={c.loadOlderHistory} permissionCount={c.permissions.length} onOpenLocalFile={onOpenLocalFile}
+                working={c.working} />}
         <CodePermissionQueue permissions={c.permissions} operations={c.permissionOperations} session={c.session} synced={c.synced} onAnswer={c.answer} />
         <div className="code-composer-dock">
             {failedInput !== undefined && !busy && !archived && <div className="code-input-recovery">

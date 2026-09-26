@@ -22,3 +22,17 @@
     display: inline-block; flex: none; width: 7px; height: 7px; margin-right: 6px;
     border-radius: 50%; background: var(--accent); vertical-align: 1px;
 }
+
+/* Working indicator: sidebar rows and the transcript tail, from Send until the turn ends. */
+.code-session-spinner {
+    display: inline-block; flex: none; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px;
+    border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+    .code-session-spinner { animation: code-session-spin 0.8s linear infinite; }
+}
+@keyframes code-session-spin { to { transform: rotate(360deg); } }
+.code-transcript-working {
+    display: flex; align-items: center; gap: 6px; padding: 8px 12px 12px;
+    color: var(--text-dim); font-size: 12px;
+}
