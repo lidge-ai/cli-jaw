@@ -37,9 +37,11 @@ test('FCC-002: employees normalizeEmployeeModel is trim-only (passthrough policy
         'render call site must still use the helper');
 });
 
-test('FCC-003: employees use Opus 4.8 as Claude default on CLI switch', () => {
+test('FCC-003: employees use Opus 5.5 as Claude default on CLI switch, then Opus 4.8', () => {
     assert.ok(employeesSrc.includes('function getDefaultEmployeeModel'));
-    assert.ok(employeesSrc.includes("if (models.includes('claude-opus-4-8')) return 'claude-opus-4-8';"));
+    const five = employeesSrc.indexOf("if (models.includes('claude-opus-5-5')) return 'claude-opus-5-5';");
+    const four = employeesSrc.indexOf("if (models.includes('claude-opus-4-8')) return 'claude-opus-4-8';");
+    assert.ok(five >= 0 && four > five, 'Opus 5.5 is preferred, Opus 4.8 is the fallback');
     assert.ok(employeesSrc.includes('updateEmployee(id, { cli, model: nextModel });'));
 });
 

@@ -297,3 +297,19 @@ test('EG-015: clearCopilotTokenCache resets _keychainFailed flag', () => {
     assert.ok(clearFn.includes('_cachedToken = null'), 'should clear in-memory token');
     assert.ok(clearFn.includes('unlink'), 'should delete cache file');
 });
+
+// ─── EG-CM: Claude model preflight shares the CLI preflight's failure shape ───
+
+test('EG-CM-001: spawnAgent refuses a Claude model the cached catalog rejects, before either transport', () => {
+    const spawnAgentIdx = spawnSrc.indexOf('export function spawnAgent');
+    const detectIdx = spawnSrc.indexOf('detectCli(cli)', spawnAgentIdx);
+    const gateIdx = spawnSrc.indexOf("claudeModelGateMessage(detected.path, runtimeModel)", detectIdx);
+    assert.ok(gateIdx > detectIdx, 'the model gate runs after CLI detection and reads the resolved runtime model');
+    const nativeIdx = spawnSrc.indexOf("if (runtimeTransport === 'native' && cli === 'claude') {", gateIdx);
+    const stdSpawnIdx = spawnSrc.indexOf('spawn(launchCommand, launchArgs', spawnAgentIdx);
+    assert.ok(nativeIdx > gateIdx && stdSpawnIdx > gateIdx, 'the gate precedes the native and print launches');
+    const block = spawnSrc.slice(gateIdx, nativeIdx);
+    assert.match(block, /resolve!\(\{ text: '', code: 1 \}\)/);
+    assert.match(block, /releaseMainRun\(scopeKey, null, ownerGeneration\)/);
+    assert.match(block, /cleanupEmployeeTmpDir\(spawnCwd/);
+});

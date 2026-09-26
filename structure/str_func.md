@@ -279,6 +279,7 @@ cli-jaw/
 │   │   ├── handlers-project.ts ← `/project` 커맨드 핸들러 (projectDirs 관리) ✨
 │   │   ├── api-auth.ts       ← CLI→server Bearer token bootstrap (`getCliAuthToken`, `authHeaders`, `cliFetch`)
 │   │   ├── claude-models.ts  ← Claude 정규 모델셋 (CLAUDE_CANONICAL_MODELS, CLAUDE_LEGACY_VALUE_MAP) + migration/validation helpers
+│   │   ├── claude-default-model-boot.ts ← 설치된 Claude Code 카탈로그 기준 모델 지원 판정, 부트 마이그레이션 입력, spawn/Code 사전 점검 문구
 │   │   ├── compact.ts        ← /compact 슬래시 커맨드 핸들러 (Claude native + managed 경로 분기) + working_dir scoped
 │   │   ├── registry.ts       ← 10개 CLI/모델 단일 소스 + canonical defaults + top-level `pi`/`agy`/`cursor`/`kiro-code`
 │   │   ├── registry-live.ts  ← buildLiveCliRegistry — Kiro/Cursor/Grok/Claude/AGY/OpenCode/Copilot inventory + ocx 모델/모델별 effort 동적 병합 (effortsByModel/defaultEffortByModel)

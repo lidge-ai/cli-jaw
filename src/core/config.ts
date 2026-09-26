@@ -10,7 +10,7 @@ import { SWITCHABLE_NATIVE_CLIS, resolveRuntimeTransport } from '../agent/runtim
 import { presentationMode } from '../shared/presentation.js';
 import type { MessengerChannel } from '../messaging/types.js';
 import { pickFirstReadyCli } from '../cli/readiness.js';
-import { migrateLegacyClaudeValue } from '../cli/claude-models.js';
+import { PREVIOUS_DEFAULT_CLAUDE_MODEL, getDefaultClaudeModel, migrateLegacyClaudeValue } from '../cli/claude-models.js';
 import { resolveHomePath } from './path-expand.js';
 import {
     cloneAckDefaults,
@@ -227,6 +227,9 @@ export const MULTI_SESSION_DEFAULT_MIGRATION_ID = 'multi-session-default-v3' as 
 export const NATIVE_TRANSPORT_MIGRATION_ID = 'native-transport-default-v2' as const;
 export const LEGACY_NATIVE_TRANSPORT_MIGRATION_IDS = ['native-transport-default-v1'] as const;
 export const MAX_CONCURRENT_DEFAULT_MIGRATION_ID = 'max-concurrent-default-v1' as const;
+// Moves a home still on the shipped Claude default (claude-opus-4-8) to claude-opus-5-5,
+// once, after boot has read the installed Claude Code catalog (see server.ts).
+export const CLAUDE_DEFAULT_MODEL_MIGRATION_ID = 'claude-default-model-opus-5-5-v1' as const;
 // The schema version that introduced the session-default flip. Its migration marker is
 // keyed to this boundary, not to SETTINGS_SCHEMA_VERSION, so later schema bumps do not
 // re-ask a question the user has already answered.
@@ -260,6 +263,13 @@ export type MaxConcurrentDefaultMigration = {
     to?: number;
 };
 
+export type ClaudeDefaultModelMigration = {
+    id: typeof CLAUDE_DEFAULT_MODEL_MIGRATION_ID;
+    state: 'applied' | 'already-at-target' | 'left-in-place';
+    from?: string;
+    to?: string;
+};
+
 // What multiSession meant before this flip. A document written by a schema that predates
 // the new defaults must resolve absent keys to these, not to the new ones — otherwise the
 // upgrade turns sessions on for someone who never asked (110 §4b-1).
@@ -280,6 +290,7 @@ function createDefaultSettings() {
         multiSessionDefaultMigration: null as MultiSessionDefaultMigration | null,
         nativeTransportMigration: null as NativeTransportMigration | null,
         maxConcurrentDefaultMigration: null as MaxConcurrentDefaultMigration | null,
+        claudeDefaultModelMigration: null as ClaudeDefaultModelMigration | null,
         port: '',  // persisted by server on startup; CLI commands use as fallback
         cli: isRetiredCliSelection(environmentDefaultCli) ? environmentDefaultCli : DEFAULT_CLI,
         fallbackOrder: [],
@@ -496,6 +507,7 @@ export function freshInstallSchemaFields(): {
     multiSessionDefaultMigration: MultiSessionDefaultMigration | null;
     nativeTransportMigration: NativeTransportMigration | null;
     maxConcurrentDefaultMigration: MaxConcurrentDefaultMigration | null;
+    claudeDefaultModelMigration: ClaudeDefaultModelMigration | null;
 } {
     // Same question as the loader asks, answered the same way: `init` running against a
     // home that already has a database is re-initialising, not installing.
@@ -508,6 +520,7 @@ export function freshInstallSchemaFields(): {
         multiSessionDefaultMigration: defaults.multiSessionDefaultMigration,
         nativeTransportMigration: defaults.nativeTransportMigration,
         maxConcurrentDefaultMigration: defaults.maxConcurrentDefaultMigration,
+        claudeDefaultModelMigration: defaults.claudeDefaultModelMigration,
     };
 }
 
@@ -566,6 +579,7 @@ export function settingsForHomeWithoutSettingsFile(): ReturnType<typeof createDe
             from: next.multiSession.maxConcurrent,
             to: next.multiSession.maxConcurrent,
         };
+        next.claudeDefaultModelMigration = claudeDefaultModelStampForDefaults();
         return next;
     }
     // Transports are not pinned to print here: an established home gets native like any
@@ -584,7 +598,14 @@ export function settingsForHomeWithoutSettingsFile(): ReturnType<typeof createDe
         state: 'left-in-place',
         from: 1,
     };
+    // perCli.claude.model comes from createDefaultSettings(), so there is no prior value.
+    next.claudeDefaultModelMigration = claudeDefaultModelStampForDefaults();
     return next;
+}
+
+function claudeDefaultModelStampForDefaults(): ClaudeDefaultModelMigration {
+    const target = getDefaultClaudeModel();
+    return { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'already-at-target', from: target, to: target };
 }
 
 export function normalizeModelForCli(cli: string, model: unknown): unknown {
@@ -690,6 +711,7 @@ export function migrateSettings(s: Record<string, any>, sourceVersion = readSett
     }
     validateNativeTransportMigration(s["nativeTransportMigration"]);
     validateMaxConcurrentDefaultMigration(s["maxConcurrentDefaultMigration"]);
+    validateClaudeDefaultModelMigration(s["claudeDefaultModelMigration"]);
 
     // A pending marker means the user has not answered yet, so sessions being on
     // contradicts it. The dedicated accept route moves both together, but it is not the
@@ -1213,6 +1235,7 @@ function validateMultiSessionDefaultMigration(value: unknown): void {
 
 const NATIVE_TRANSPORT_MIGRATION_STATES = ['applied', 'already-native', 'partial', 'left-in-place'] as const;
 const MAX_CONCURRENT_DEFAULT_MIGRATION_STATES = ['applied', 'already-at-target', 'left-in-place'] as const;
+const CLAUDE_DEFAULT_MODEL_MIGRATION_STATES = ['applied', 'already-at-target', 'left-in-place'] as const;
 
 function validateNativeTransportMigration(value: unknown): void {
     if (value === null || value === undefined) return;
@@ -1275,6 +1298,21 @@ function validateMaxConcurrentDefaultMigration(value: unknown): void {
     }
     if ('to' in migration && !Number.isInteger(migration['to'])) {
         throw new Error('invalid_max_concurrent_default_migration');
+    }
+}
+
+function validateClaudeDefaultModelMigration(value: unknown): void {
+    if (value === null || value === undefined) return;
+    if (!isPlainRecord(value)) throw new Error('invalid_claude_default_model_migration');
+    const allowed = new Set(['id', 'state', 'from', 'to']);
+    const keys = Object.keys(value);
+    const validState = CLAUDE_DEFAULT_MODEL_MIGRATION_STATES.includes(
+        value['state'] as (typeof CLAUDE_DEFAULT_MODEL_MIGRATION_STATES)[number],
+    );
+    if (keys.some((key) => !allowed.has(key)) || value['id'] !== CLAUDE_DEFAULT_MODEL_MIGRATION_ID || !validState
+        || ('from' in value && typeof value['from'] !== 'string')
+        || ('to' in value && typeof value['to'] !== 'string')) {
+        throw new Error('invalid_claude_default_model_migration');
     }
 }
 
@@ -1426,6 +1464,33 @@ export function applyNativeTransportDefaultMigration(s: Record<string, any>): Se
 }
 
 /** Boot-only. Rewrites stored 2 to the product default; leaves 1 and every other integer. */
+/**
+ * Post-boot, once the installed Claude Code catalog is known (server.ts). `supportsTarget`
+ * null (catalog unreadable) or false (CLI too old) leaves no stamp, so a later boot after a
+ * CLI update still migrates. Only the exact previous default moves; explicit choices,
+ * activeOverrides and employee models are left alone.
+ */
+export function applyClaudeDefaultModelMigration(
+    s: Record<string, unknown>, supportsTarget: boolean | null,
+): SettingsDefaultMigrationResult {
+    if (hasNamedMigrationStamp(s['claudeDefaultModelMigration'], CLAUDE_DEFAULT_MODEL_MIGRATION_ID)) return { didChange: false };
+    if (supportsTarget !== true) return { didChange: false };
+    const perCli: Record<string, unknown> = isPlainRecord(s['perCli']) ? s['perCli'] : {};
+    s['perCli'] = perCli;
+    const block = isPlainRecord(perCli['claude']) ? perCli['claude'] : {};
+    const current = typeof block['model'] === 'string' ? block['model'] : '';
+    const target = getDefaultClaudeModel();
+    if (current === PREVIOUS_DEFAULT_CLAUDE_MODEL) {
+        perCli['claude'] = { ...block, model: target };
+        s['claudeDefaultModelMigration'] = { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'applied', from: current, to: target };
+    } else if (current === target) {
+        s['claudeDefaultModelMigration'] = { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'already-at-target', from: target, to: target };
+    } else {
+        s['claudeDefaultModelMigration'] = { id: CLAUDE_DEFAULT_MODEL_MIGRATION_ID, state: 'left-in-place', ...(current ? { from: current } : {}) };
+    }
+    return { didChange: true };
+}
+
 export function applyMaxConcurrentDefaultMigration(s: Record<string, any>): SettingsDefaultMigrationResult {
     if (hasNamedMigrationStamp(s['maxConcurrentDefaultMigration'], MAX_CONCURRENT_DEFAULT_MIGRATION_ID)) {
         return { didChange: false };

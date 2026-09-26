@@ -69,6 +69,7 @@ const SERVER_OWNED_SETTINGS_KEYS = [
     'multiSessionDefaultMigration',
     'nativeTransportMigration',
     'maxConcurrentDefaultMigration',
+    'claudeDefaultModelMigration',
     'slackEnvironmentVariables',
     'telegramEnvironmentVariables',
     'discordEnvironmentVariables',

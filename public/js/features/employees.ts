@@ -54,6 +54,7 @@ function normalizeEmployeeModel(_cli: string, model?: string): string {
 
 function getDefaultEmployeeModel(cli: string, models: string[]): string {
     if (cli === 'claude') {
+        if (models.includes('claude-opus-5-5')) return 'claude-opus-5-5';
         if (models.includes('claude-opus-4-8')) return 'claude-opus-4-8';
         if (models.includes('opus')) return 'opus';
     }
