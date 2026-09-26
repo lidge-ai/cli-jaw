@@ -1104,6 +1104,7 @@ test('a refused rollback keeps the transcript and names why; an unavailable sess
 });
 
 test('a rollback seen from elsewhere retires a send whose turn it removed and requires a new key', async t => {
+    const browser = browserDraftStorage(t);
     const f = rolledBackFixture(t);
     await f.controller.refresh(); await f.controller.selectSession('a');
     const pending = deferred<Response>();
@@ -1119,11 +1120,22 @@ test('a rollback seen from elsewhere retires a send whose turn it removed and re
     await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
     const model = f.controller.getModel();
     assert.equal(model.resendRequired, true);
-    assert.match(model.operation.error ?? '', /rolled back/);
+    assert.equal(model.resendReason, 'rolled-back', 'the rollback, not the server, retired the key');
+    assert.equal(model.operation.error, "This message's turn was removed by a rollback. The message was not resent; Retry will submit it as a new message.");
     assert.equal(model.retryText, 'third prompt');
+    // The reason survives a reload.
+    const saved = browser.checkpoint();
+    assert.equal(browser.saved(`http://127.0.0.1:${f.options.port}`).sessions[0]!.draft.retry!.resendReason, 'rolled-back');
+    f.cleanups[0]!(); f.cleanups[0] = () => {}; browser.reload(saved);
+    const restored = new CodeController(f.options);
+    f.cleanups.push(restored.mount());
+    assert.equal(restored.getModel().operation.error, model.operation.error);
     f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't3', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
-    await f.controller.retrySameSend();
+    await restored.refresh(); await restored.selectSession('a');
+    assert.equal(restored.getModel().resendReason, 'rolled-back');
+    await restored.retrySameSend();
     assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original);
+    assert.equal(restored.getModel().resendReason, null);
 });
 
 test('a rollback refused for a revision conflict says the conversation changed, not the session settings', async t => {

@@ -10,7 +10,7 @@ import {
     type CodeDraft, type CodeDraftBook,
 } from './code-controller-drafts';
 import { withPendingUserItem } from './pending-user-item';
-import { codeCanResume, codeCanRollback } from './code-types';
+import { codeCanResume, codeCanRollback, codeResendCopy, type CodeResendReason } from './code-types';
 
 const MAX_DETAILS = 6;
 const MAX_INDEX = 1000;
@@ -308,10 +308,11 @@ export class CodeController {
      * can actually be admitted, and it also stops the settled turn's own
      * `user_message` from matching, so this fires once rather than on every read.
      */
-    private requireNewKey(draft: CodeDraft, reason = 'The original attempt ended on the server without running.'): void {
+    private requireNewKey(draft: CodeDraft, reason?: CodeResendReason): void {
         if (!draft.retry) return;
-        draft.retry = { ...draft.retry, key: crypto.randomUUID(), resend: true };
-        draft.operation = { kind: 'unknown-send', error: `${reason} The message was not resent; Retry will submit it as a new message.` };
+        const { resendReason: _previous, ...retry } = draft.retry;
+        draft.retry = { ...retry, key: crypto.randomUUID(), resend: true, ...(reason ? { resendReason: reason } : {}) };
+        draft.operation = { kind: 'unknown-send', error: codeResendCopy(reason).error };
     }
     /**
      * A rollback removed turns, possibly the one this draft is waiting on. A send whose own
@@ -323,7 +324,7 @@ export class CodeController {
         const kept = (key: string) => state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === key);
         if (draft.awaitingTurn && !kept(draft.awaitingTurn)) draft.awaitingTurn = null;
         if (draft.retry && !kept(draft.retry.key) && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
-            this.requireNewKey(draft, 'The conversation was rolled back.');
+            this.requireNewKey(draft, 'rolled-back');
         }
         const steer = draft.steer;
         if (steer?.state === 'unknown' && !state.items.some(item => item.turnId === steer.turnId)) draft.steer = null;
@@ -368,7 +369,7 @@ export class CodeController {
             error: [operation.error ?? unconfirmed ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
-            resendRequired: !!draft.retry?.resend,
+            resendRequired: !!draft.retry?.resend, resendReason: draft.retry?.resend ? draft.retry.resendReason ?? null : null,
             permissionOperations: { ...draft.permissionOperations }, hasMoreSessions: this.moreSessions,
             hasOlderHistory: detail?.hasOlder ?? false, filter: this.filter,
             creationUnknown: id === null && draft.createUnknown, startAnotherSession: this.startAnotherSession,

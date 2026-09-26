@@ -8,7 +8,7 @@ import { CodeTranscript } from './CodeTranscript';
 import { CodeToastHost } from './CodeToastHost';
 import { applyCodeNotice, dismissCodeToast, type CodeNotice, type CodeToast } from './code-toasts';
 import { CodeWorkspaceHeader } from './CodeWorkspaceHeader';
-import { codeCanResume, codeCanRollback, codeRollbackRows } from './code-types';
+import { codeCanResume, codeCanRollback, codeResendCopy, codeRollbackRows } from './code-types';
 
 type Props = { controller: CodeControllerModel; endpointKey: string; onOpenLocalFile?: ((path: string) => void) | undefined };
 export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: Props) {
@@ -73,12 +73,12 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             <button type="button" onClick={c.startAnotherSession}>Start another session</button>
         </section>}
         {unknownSend && <section className="code-recovery-strip"
-            aria-label={c.resendRequired ? 'Send not started' : 'Unconfirmed send'}>
-            <strong>{c.resendRequired ? 'Send did not start' : 'Send outcome not confirmed'}</strong>
+            aria-label={c.resendRequired ? (c.resendReason === 'rolled-back' ? 'Send rolled back' : 'Send not started') : 'Unconfirmed send'}>
+            <strong>{c.resendRequired ? codeResendCopy(c.resendReason ?? undefined).heading : 'Send outcome not confirmed'}</strong>
             {/* Once the server has spent the key, acceptance is no longer unknown,
                 so this must stop offering the weaker, hedged explanation. */}
             <p>{c.resendRequired
-                ? 'The original attempt ended on the server without running. Retry sends this as a new message.'
+                ? codeResendCopy(c.resendReason ?? undefined).detail
                 : 'Retry uses the original request. It may submit it if the server has not already accepted it.'}</p>
             <pre className="code-retry-preview" aria-label="Original prompt">{c.retryText}</pre>
             <button type="button" disabled={!c.canRetrySameSend || retrying === sessionKey} onClick={() => void retry()}>

@@ -2,6 +2,7 @@ import type {
     CodeCreateSessionRequest, CodeItem, CodeModelCatalog, CodePermissionRequest, CodeSessionInfo,
 } from '../../../../src/code-mode/wire';
 import type { CodeGitInfo } from './code-session-client';
+import type { CodeResendReason } from './code-types';
 
 export type CodeTransportState = 'connected' | 'reconnecting' | 'disconnected';
 export type CodeSessionFilter = { scope: 'all' | 'cwd'; archived: boolean };
@@ -42,6 +43,8 @@ export interface CodeControllerModel {
     canRetrySameSend: boolean;
     /** The previous key is spent: Retry sends a new message rather than reusing it. */
     resendRequired?: boolean;
+    /** Why the key was spent, when a rollback removed its turn rather than the server settling it. */
+    resendReason?: CodeResendReason | null;
     permissionOperations: Record<string, { pending: boolean; error: string | null }>;
     hasMoreSessions: boolean;
     hasOlderHistory: boolean;

@@ -22,6 +22,20 @@ export const CODE_SESSION_LABELS: Record<CodeSessionStatus, string> = {
 export function codeSessionBusy(session: CodeSessionInfo): boolean {
     return session.status === 'starting' || session.status === 'streaming' || session.status === 'stopping';
 }
+/** Why a send's key was retired: the server spent it without running, or a rollback removed its turn. */
+export type CodeResendReason = 'rolled-back';
+/** What the composer says about a retired send: `error` in the alert, `heading`/`detail` in its recovery strip. */
+export function codeResendCopy(reason: CodeResendReason | undefined): { heading: string; detail: string; error: string } {
+    return reason === 'rolled-back' ? {
+        heading: 'Turn rolled back',
+        detail: "This message's turn was removed by a rollback. Files it changed were not reverted. Retry sends it as a new message.",
+        error: "This message's turn was removed by a rollback. The message was not resent; Retry will submit it as a new message.",
+    } : {
+        heading: 'Send did not start',
+        detail: 'The original attempt ended on the server without running. Retry sends this as a new message.',
+        error: 'The original attempt ended on the server without running. The message was not resent; Retry will submit it as a new message.',
+    };
+}
 export function codeCanResume(session: CodeSessionInfo): boolean {
     return session.archivedAt === null && session.capabilities.resume && session.resume.available
         && (session.status === 'suspended' || (session.status === 'failed' && session.error?.recoverable === true));

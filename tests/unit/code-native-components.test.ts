@@ -332,6 +332,26 @@ test('unknown-send retry previews original text and never submits the edited dra
     await click(button(h.container, 'Retry same send')); assert.equal(retries, 1); assert.equal(sends, 0);
 });
 
+test('a retired send says why: the server never ran it, or a rollback removed its turn', bounded, async t => {
+    const h = await surface(t);
+    const strip = async (patch: Partial<CodeControllerModel>) => {
+        await h.render(createElement(CodeWorkbench, { endpointKey: '43225', controller: model({ operation: { kind: 'unknown-send', error: null },
+            retryText: 'third prompt', canRetrySameSend: true, resendRequired: true, ...patch }) }));
+        const node = h.container.querySelector('.code-recovery-strip[aria-label]:not([aria-label="Unconfirmed session creation"])');
+        return { label: node?.getAttribute('aria-label'), text: node?.textContent ?? '' };
+    };
+    const rolled = await strip({ resendReason: 'rolled-back' });
+    assert.equal(rolled.label, 'Send rolled back');
+    assert.match(rolled.text, /^Turn rolled back/);
+    assert.ok(rolled.text.includes("This message's turn was removed by a rollback. Files it changed were not reverted. Retry sends it as a new message."));
+    assert.doesNotMatch(rolled.text, /without running/);
+    assert.equal(button(h.container, 'Send as a new message').disabled, false);
+    const spent = await strip({ resendReason: null });
+    assert.equal(spent.label, 'Send not started');
+    assert.ok(spent.text.includes('Send did not start') && spent.text.includes('The original attempt ended on the server without running. Retry sends this as a new message.'));
+    assert.doesNotMatch(spent.text, /rollback/);
+});
+
 function item(patch: Partial<CodeItem>): CodeItem { return { itemId: 'item-a', turnId: 't-a', kind: 'user_message', status: 'done', createdAt: 1, updatedAt: 1, ...patch }; }
 test('timeline retains stable item ID, escaped tool output, truncation and distinct stopped/failed states', bounded, async t => {
     const h = await surface(t);
