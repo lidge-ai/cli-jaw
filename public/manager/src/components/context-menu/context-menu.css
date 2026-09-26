@@ -1,0 +1,65 @@
+.jaw-context-menu {
+    position: fixed;
+    /* Above floating composer menus (1000), below the panel resize overlay. */
+    z-index: 1100;
+    min-width: 200px;
+    max-width: min(320px, calc(100vw - 16px));
+    padding: 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+    font-family: var(--font-sans);
+    font-size: 13px;
+}
+.jaw-context-menu-item {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 6px 9px;
+    border-radius: 6px;
+    color: var(--text-base);
+    line-height: 1.25;
+    cursor: default;
+}
+.jaw-context-menu-item:hover:not(:disabled),
+.jaw-context-menu-item:focus-visible {
+    background: var(--bg-hover);
+}
+.jaw-context-menu-item:disabled {
+    color: var(--text-dim);
+    opacity: 0.45;
+}
+.jaw-context-menu-item.is-danger { color: var(--danger, #e5484d); }
+.jaw-context-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    color: var(--text-secondary);
+}
+.jaw-context-menu-item.is-danger .jaw-context-menu-icon { color: inherit; }
+.jaw-context-menu-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.jaw-context-menu-shortcut {
+    flex: none;
+    margin-left: 16px;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 12px;
+}
+.jaw-context-menu-separator {
+    height: 1px;
+    margin: 5px 4px;
+    background: var(--border-subtle);
+}
