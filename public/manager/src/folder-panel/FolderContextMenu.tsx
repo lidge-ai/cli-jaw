@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { ContextMenu, type ContextMenuEntry, type ContextMenuState } from '../components/context-menu/ContextMenu';
 import { CopyGlyph, DocGlyph, FolderGlyph, PencilGlyph, RestartGlyph } from '../components/context-menu/icons';
-import { isMacLikePlatform } from '../client-platform';
+import { currentClientPlatform, isMacLikePlatform } from '../client-platform';
 import type { FolderPanelEntry } from './folder-sources';
 
 type FolderContextMenuProps = {
@@ -31,7 +31,7 @@ export function FolderContextMenu(props: FolderContextMenuProps) {
         { kind: 'separator', id: 'sep-reveal' },
         {
             id: 'reveal',
-            label: props.entry.kind === 'directory' ? 'Open Folder' : 'Reveal in Finder',
+            label: props.entry.kind === 'directory' ? 'Open Folder' : revealLabel(mac),
             icon: <FolderGlyph />,
             shortcut: mac ? '⌥⌘R' : 'Ctrl+Alt+R',
             disabled: !props.canReveal,
@@ -57,4 +57,9 @@ export function FolderContextMenu(props: FolderContextMenuProps) {
             onClose={props.onClose}
         />
     );
+}
+
+function revealLabel(mac: boolean): string {
+    if (mac) return 'Reveal in Finder';
+    return /win/i.test(currentClientPlatform()) ? 'Show in Explorer' : 'Show in File Manager';
 }

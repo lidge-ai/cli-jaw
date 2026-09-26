@@ -72,11 +72,19 @@
     gap: 2px;
     align-items: center;
     opacity: 0;
+    pointer-events: none;
 }
 .jaw-row-hover-actions:focus-within,
 *:hover > .jaw-row-hover-actions,
 *:focus-within > .jaw-row-hover-actions {
     opacity: 1;
+    pointer-events: auto;
+}
+@media (hover: none) {
+    .jaw-row-hover-actions {
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 .jaw-row-icon-btn {
     all: unset;

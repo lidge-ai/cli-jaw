@@ -243,6 +243,7 @@ function ActivityGroup(props: {
                                 key={entry.id}
                                 className={`jaw-ceo-activity-row tone-${tone}${activityIsError(entry) ? ' is-error' : ''}`}
                                 tabIndex={completion ? 0 : undefined}
+                                aria-label={completion ? `${activityTitle(entry)}: worker :${completion.port} result. Shift+F10 for actions` : undefined}
                                 onContextMenu={completion ? event => openResultMenu(event, completion) : undefined}
                                 onKeyDown={completion ? event => { if (isContextMenuKey(event)) openResultMenu(event, completion); } : undefined}
                             >
