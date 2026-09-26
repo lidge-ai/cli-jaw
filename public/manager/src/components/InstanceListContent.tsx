@@ -34,6 +34,7 @@ type InstanceListContentProps = {
     onPreview: (instance: DashboardInstance) => void;
     onMarkActivitySeen: (port: number) => void;
     onInstanceLabelSave: (port: number, label: string | null) => Promise<void>;
+    onToggleFavorite?: (instance: DashboardInstance) => void;
     onLifecycle: (action: DashboardLifecycleAction, instance: DashboardInstance) => void;
 };
 
@@ -92,6 +93,7 @@ export function InstanceListContent(props: InstanceListContentProps) {
                     onPreview={props.onPreview}
                     onMarkActivitySeen={props.onMarkActivitySeen}
                     onInstanceLabelSave={props.onInstanceLabelSave}
+                    {...(props.onToggleFavorite !== undefined ? { onToggleFavorite: props.onToggleFavorite } : {})}
                     onLifecycle={props.onLifecycle}
                 />
             )}

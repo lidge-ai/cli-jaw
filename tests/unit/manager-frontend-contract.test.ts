@@ -349,7 +349,7 @@ test('manager instance rows support custom labels and latest activity titles', (
     assert.ok(list.includes('onInstanceLabelSave'), 'InstanceListContent must accept custom label save callback');
     assert.ok(groups.includes('latestActivityTitle={props.latestTitleByPort?.[instance.port] || null}'), 'InstanceGroups must attach titles to matching ports');
     assert.ok(groups.includes('onInstanceLabelSave={props.onInstanceLabelSave}'), 'InstanceGroups must forward label save callback');
-    assert.ok(row.includes('instance-label-edit-button'), 'InstanceRow must expose a rename affordance');
+    assert.ok(row.includes("id: 'rename'"), 'InstanceRow must expose a rename context-menu entry');
     assert.ok(row.includes('instance-label-edit-form'), 'InstanceRow must render inline label edit form');
     assert.ok(row.includes('props.instance.label || props.profile?.label || props.label'), 'explicit instance labels must override profile/generated labels');
     assert.ok(row.includes('instance-row-activity-title'), 'InstanceRow must render a one-line latest activity title');
@@ -435,7 +435,7 @@ test('manager frontend keeps rows compact while preserving model visibility', ()
         'dashboard settings CSS may layer after compact row polish',
     );
     assert.ok(compact.includes('.manager-sidebar .instance-row-version'), 'sidebar polish must hide secondary row metadata in compact mode');
-    assert.ok(compact.includes('.manager-sidebar .instance-actions'), 'sidebar polish must control action-row density');
+    assert.equal(compact.includes('.manager-sidebar .instance-actions'), false, 'sidebar polish must not restyle the removed action strip');
     // 260902 t3 shell (wp2): width lives in useSidebarWidth (default 300,
     // min 220, collapsed 44) and WorkspaceLayout writes the variable.
     const sidebarWidthHook = read('public/manager/src/hooks/useSidebarWidth.ts');
@@ -455,10 +455,17 @@ test('manager sidebar actions stay compact and active-group owned', () => {
 
     assert.ok(groups.includes("group.id === 'active' ? 'active' : 'normal'"), 'only the synthetic Active group should mark rows priority-active');
     assert.ok(groups.includes('priority={priority}'), 'InstanceGroups must pass row priority into InstanceRow');
-    assert.ok(row.includes('aria-label="Preview"'), 'compact Prev label must preserve full Preview accessibility text');
-    assert.ok(row.includes('Prev'), 'row actions must use compact Prev label');
-    assert.ok(row.includes('aria-label="Restart"'), 'compact Res label must preserve full Restart accessibility text');
-    assert.ok(row.includes('Res'), 'row actions must use compact Res label');
+    assert.ok(row.includes('useContextMenu('), 'row must open the shared context menu');
+    assert.ok(row.includes('<ContextMenu'), 'row must render the shared context menu');
+    for (const label of ['Rename', 'Preview', 'Open in new tab', 'Start', 'Restart', 'Register as persistent service', 'Stop', 'Copy URL', 'Copy port']) {
+        assert.ok(row.includes(`label: '${label}'`), `context menu must include ${label}`);
+    }
+    assert.ok(row.includes("label: props.instance.favorite ? 'Unpin' : 'Pin'"), 'context menu must toggle pin state');
+    assert.ok(row.includes('danger: true'), 'Stop must stay the destructive action');
+    assert.ok(row.includes('commandPreview'), 'Start must keep the command preview tooltip');
+    assert.ok(row.includes('onToggleFavorite'), 'InstanceRow must accept a favorite toggle callback');
+    assert.equal(row.includes('instance-actions'), false, 'row must not render the removed actions strip');
+    assert.equal(row.includes('instance-label-edit-button'), false, 'row must not render the removed pencil button');
     assert.ok(components.includes('.instance-row.priority-active.is-selected,'), 'selected tint must cover the top Active row');
     assert.ok(components.includes('.instance-row:not(.priority-active).is-selected {'), 'ordinary selected rows must get a readable selected affordance');
     assert.ok(components.includes('background: var(--accent-soft);'), 'selected rows must use the quiet accent-soft surface');
@@ -467,16 +474,14 @@ test('manager sidebar actions stay compact and active-group owned', () => {
     assert.equal(components.includes('.instance-row.priority-active.is-selected::before'), false, 'selected Active rows must not render an overlay edge stripe');
     assert.equal(components.includes('.instance-row.is-selected::before'), false, 'ordinary selected rows must not receive the Active-group overlay stripe');
     for (const css of [polish, compact]) {
-        assert.ok(css.includes('.manager-sidebar .instance-row.priority-active .instance-actions'), 'Active group rows must always expose compact actions');
-        assert.equal(css.includes('.manager-sidebar .instance-row:not(.priority-active).is-selected .instance-actions'), false, 'normal selected rows must keep the three-line text state until hover or focus');
-        assert.ok(css.includes('.manager-sidebar .instance-row:not(.priority-active):hover .instance-actions'), 'normal hovered rows must show compact actions');
-        assert.ok(css.includes('.manager-sidebar .instance-row:not(.priority-active):focus-within .instance-actions'), 'normal focused rows must show compact actions');
-        assert.equal(css.includes('.manager-sidebar .instance-row:not(.priority-active).is-selected .instance-row-meta'), false, 'normal selected rows must keep activity/runtime metadata visible');
-        assert.ok(css.includes('.manager-sidebar .instance-row:not(.priority-active):hover .instance-row-meta'), 'normal hovered rows must hide metadata when actions are shown');
-        assert.ok(css.includes('.manager-sidebar .instance-row:not(.priority-active):focus-within .instance-row-meta'), 'normal focused rows must hide metadata when actions are shown');
-        assert.ok(css.includes('min-height: 24px'), 'sidebar action buttons must use compact button height');
-        assert.ok(css.includes('font-size: 10.5px'), 'sidebar action buttons must use compact text size');
+        assert.equal(css.includes('.instance-actions'), false, 'sidebar CSS must not restyle the removed action strip');
+        assert.equal(css.includes('.instance-label-edit-button'), false, 'sidebar CSS must not restyle the removed pencil button');
+        assert.equal(css.includes('.manager-sidebar .instance-row:not(.priority-active):hover .instance-row-meta'), false, 'hovered rows keep metadata now that no strip replaces it');
+        assert.ok(css.includes('min-height: 24px'), 'sidebar controls must keep compact height');
     }
+    assert.ok(components.includes('.instance-row:hover .instance-row-quick .quick-btn:not(:disabled):not(.is-disabled)'), 'hover must reveal the quick icons');
+    assert.ok(components.includes('.instance-row:focus-within .instance-row-quick .quick-btn:not(:disabled):not(.is-disabled)'), 'focus-within must reveal the quick icons');
+    assert.ok(components.includes('.instance-row.is-selected .instance-row-quick .quick-btn:not(:disabled):not(.is-disabled)'), 'selected row must keep quick icons visible');
 });
 
 test('manager dashboard settings workspace controls sidebar display preferences', () => {

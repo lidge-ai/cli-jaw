@@ -50,11 +50,11 @@ test('manager sidebar wires per-instance labels and latest activity titles', () 
     assert.ok(groups.includes('latestActivityTitle={props.latestTitleByPort?.[instance.port] || null}'), 'InstanceGroups must map titles by instance port');
     assert.ok(groups.includes('onInstanceLabelSave={props.onInstanceLabelSave}'), 'InstanceGroups must forward label save');
     assert.ok(row.includes('props.instance.label || props.profile?.label || props.label'), 'InstanceRow must prefer explicit label over profile/generated label');
-    assert.ok(row.includes('instance-label-edit-button'), 'InstanceRow must expose the rename affordance');
+    assert.ok(row.includes("id: 'rename'"), 'InstanceRow must expose the rename affordance in the context menu');
     assert.ok(row.includes('instance-label-edit-form'), 'InstanceRow must expose inline edit controls');
     assert.ok(row.includes('instance-row-activity-title'), 'InstanceRow must render the latest activity title line');
     assert.ok(hook.includes("instances: { [String(port)]: { label: nextLabel } }"), 'label editor must persist labels through the registry');
     assert.ok(hook.includes('label?.trim() || null'), 'label editor must clear blank labels back to fallback');
     assert.ok(compactCss.includes('.manager-sidebar .instance-row-activity-title'), 'final compact CSS must not hide latest activity titles');
-    assert.ok(compactCss.includes('.manager-sidebar .instance-label-edit-button'), 'final compact CSS must style the rename affordance');
+    assert.ok(compactCss.includes('.manager-sidebar .instance-label-input'), 'final compact CSS must style the inline rename editor');
 });
