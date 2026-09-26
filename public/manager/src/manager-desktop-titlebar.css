@@ -1,0 +1,67 @@
+/* Desktop (Electron) titlebar row: traffic lights, sidebar toggle, and workspace rail share
+   one row, like Codex / ima2. Traffic lights sit at x=16 (3 x 12px + 2 x 8px gaps). */
+@media (min-width: 1024px) {
+    :root[data-cli-jaw-desktop="true"] {
+        --desktop-traffic-light-reserve: 76px;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-window-fullscreen="true"] {
+        --desktop-traffic-light-reserve: 8px;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 30;
+        box-sizing: border-box;
+        width: var(--manager-sidebar-width, 300px);
+        height: var(--workspace-topbar-height);
+        min-height: 0;
+        flex-wrap: nowrap;
+        column-gap: 2px;
+        overflow: hidden;
+        border-bottom: 0;
+        border-right: 1px solid var(--border-subtle);
+        background: var(--canvas-deep);
+        padding: 0 8px 0 var(--desktop-traffic-light-reserve);
+        -webkit-app-region: drag;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail :is(.rail-button, .rail-collapse-button) {
+        width: 24px;
+        min-width: 24px;
+        height: 24px;
+        min-height: 24px;
+        -webkit-app-region: no-drag;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-collapse-button {
+        margin: 0 6px 0 0;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-help-button {
+        margin-bottom: 0;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-status-dot {
+        display: none;
+    }
+
+    :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .command-center.command-bar {
+        --electron-titlebar-left-reserve: calc(var(--manager-sidebar-width, 300px) + 12px);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .rail-collapse-button {
+        position: fixed;
+        top: calc((var(--workspace-topbar-height) - 24px) / 2);
+        left: var(--desktop-traffic-light-reserve);
+        z-index: 30;
+        margin: 0;
+        -webkit-app-region: no-drag;
+    }
+
+    :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .command-center.command-bar {
+        --electron-titlebar-left-reserve: calc(var(--desktop-traffic-light-reserve) + 36px);
+    }
+}

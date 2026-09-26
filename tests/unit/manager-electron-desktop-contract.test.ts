@@ -797,3 +797,18 @@ test('workspace polish keeps current center/right/bottom grid areas intact', () 
     assert.ok(layout.includes('height: auto;'), 'mobile right panel overlay must stretch between top and bottom insets instead of collapsing to its toolbar');
     assert.ok(layout.includes('justify-self: end;'), 'mobile right panel overlay must anchor to the right edge without creating implicit grid columns');
 });
+
+test('Electron titlebar row hosts traffic lights, sidebar toggle, and workspace rail', () => {
+    const css = read('public/manager/src/manager-desktop-titlebar.css');
+    const main = read('public/manager/src/main.tsx');
+    const layout = read('public/manager/src/components/WorkspaceLayout.tsx');
+    const chrome = read('electron/src/main/lib/window/chrome-options.ts');
+    assert.ok(main.includes("import './manager-desktop-titlebar.css';"), 'desktop titlebar styles must be loaded');
+    assert.ok(chrome.includes('TRAFFIC_LIGHT_POSITION = { x: 16, y: 20 }'), 'titlebar reserve assumes lights at x=16');
+    assert.ok(css.includes('--desktop-traffic-light-reserve: 76px'), 'rail must start right of the traffic lights');
+    assert.ok(css.includes('height: var(--workspace-topbar-height)'), 'expanded rail must share the titlebar row height');
+    assert.ok(css.includes('calc(var(--manager-sidebar-width, 300px) + 12px)'), 'command bar must start after the titlebar rail');
+    assert.ok(css.includes('.is-sidebar-collapsed .rail-collapse-button'), 'collapsed toggle must stay in the titlebar row');
+    assert.ok(layout.includes("root.style.setProperty('--manager-sidebar-width'"), 'layout must publish the rendered sidebar width');
+    assert.ok(layout.includes('managerTitlebarRail'), 'narrow sidebars must fall back to the in-sidebar rail');
+});
