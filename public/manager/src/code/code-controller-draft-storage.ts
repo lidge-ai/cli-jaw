@@ -41,7 +41,7 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
     if (!object(selection) || !['codex-app', 'claude', 'cursor', 'grok'].includes(String(selection['provider']))
         || !text(selection['cwd'], 4096) || !text(selection['model'], 1024)
         || !(selection['effort'] === null || text(selection['effort'], 80))
-        || !['ask', 'auto', 'read-only'].includes(String(selection['permissionMode']))) return null;
+        || !['ask', 'auto', 'read-only', 'plan', 'accept-edits', 'dont-ask', 'auto-review'].includes(String(selection['permissionMode']))) return null;
     const retry = value['retry'], stop = value['stop'];
     if (retry !== null && (!object(retry) || !text(retry['text'], MAX_TEXT_CHARS)
         || !text(retry['key'], 240) || !retry['key'] || !count(retry['edit']) || retry['edit'] > value['edit'])) return null;

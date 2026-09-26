@@ -1063,3 +1063,21 @@ test('Send is enabled on a resumable suspended session and not on a non-recovera
     await h.render(createElement(CodeWorkbench, { controller: model({ session: failed, sessions: [failed], input: 'continue', synced: true }), endpointKey: '43225' }));
     assert.equal(button(h.container, 'Send prompt').disabled, true);
 });
+
+test('the Claude permission menu lists today\'s catalog modes, not the session snapshot', bounded, async t => {
+    const h = await surface(t);
+    const base = model();
+    const claudeModes = ['ask', 'accept-edits', 'plan', 'auto-review', 'dont-ask', 'auto'] as const;
+    const catalog = { ...base.catalog!, providers: base.catalog!.providers.map(entry => entry.id === 'claude'
+        ? { ...entry, capabilities: { ...entry.capabilities, permissions: true, permissionModes: [...claudeModes] } } : entry) };
+    const snapshot = session({ provider: 'claude', permissionMode: 'ask',
+        capabilities: { ...session().capabilities, permissions: true, permissionModes: ['ask', 'auto'] } });
+    const changes: unknown[] = [];
+    const c = model({ catalog, session: snapshot, sessions: [snapshot],
+        selection: { provider: 'claude', cwd: snapshot.cwd, model: snapshot.model, effort: null, permissionMode: 'ask' },
+        async setSelection(patch) { changes.push(patch); } });
+    await h.render(createElement(ComposerFooter, { controller: c }));
+    await click(button(h.container, 'Permission: Ask first'));
+    assert.deepEqual([...document.querySelectorAll('[role="option"]')].map(o => o.textContent?.match(/^[^A-Z]*([A-Z][^A-Z]*?(?:\([^)]*\))?)(?=[A-Z]|$)/)?.[1]?.trim() ?? ''),
+        ['Ask first', 'Accept edits', 'Plan', 'Auto review', "Don't ask", 'Auto (YOLO)']);
+});

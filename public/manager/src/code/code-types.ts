@@ -5,11 +5,16 @@ export const CODE_RUNTIME_LABELS: Record<CodeProviderId, string> = {
 };
 export const CODE_POLICY_LABELS: Record<CodePermissionMode, string> = {
     ask: 'Ask first', auto: 'Auto (YOLO)', 'read-only': 'Read only',
+    plan: 'Plan', 'accept-edits': 'Accept edits', 'dont-ask': "Don't ask", 'auto-review': 'Auto review',
 };
 export const CODE_POLICY_DETAILS: Record<CodePermissionMode, string> = {
     ask: 'Review native permission requests before allowing actions.',
     auto: 'The native runtime may execute actions without asking for approval.',
     'read-only': 'The native runtime restricts actions to read-only access.',
+    plan: 'Claude plans without applying edits.',
+    'accept-edits': 'File edits proceed; other actions still ask.',
+    'dont-ask': 'Actions not already allowed for this session are denied without asking.',
+    'auto-review': 'A classifier approves or denies each action; unsure calls still ask.',
 };
 export const CODE_SESSION_LABELS: Record<CodeSessionStatus, string> = {
     idle: 'Ready', starting: 'Starting', streaming: 'Running', stopping: 'Stopping', suspended: 'Suspended', failed: 'Runtime failed',
