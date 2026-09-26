@@ -1208,8 +1208,11 @@ export class CodeStore {
                 const record = rowToRecord(row);
                 record.epoch += 1;
                 const error: CodeSessionError = { code: 'orphaned_turn', message: 'Code turn interrupted by server restart', at: this.now(), recoverable: true };
-                if (record.turnId !== null) events.push(...this.finish(record, { status: 'failed', error }, true).events);
-                else {
+                // A turn is marked streaming before its prompt is handed to the runtime, so one still
+                // starting never sent it: its boundary cannot be in native history.
+                if (record.turnId !== null) {
+                    events.push(...this.finish(record, { status: 'failed', error, ...(row.status === 'starting' ? { dispatched: false } : {}) }, true).events);
+                } else {
                     record.status = 'failed';
                     record.error = error;
                     events.push(this.event(record));

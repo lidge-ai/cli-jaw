@@ -12,7 +12,10 @@ const unavailable = (message: string) => new CodeStoreError('rollback_unavailabl
 const noBoundary = (message: string) => new CodeStoreError('rollback_boundary_unavailable', message, 409);
 const conversation = (message: SessionMessage) => message.type === 'user' || message.type === 'assistant';
 
-/** Sanity check at a stored boundary only (t3code isClaudeHumanTurnStart); never used to count turns. */
+/**
+ * t3code isClaudeHumanTurnStart: a sanity check at a stored boundary, and the proof that no human
+ * turn started in a span a missing boundary is passed over. Never used to count turns.
+ */
 export function isClaudeHumanTurnStart(message: SessionMessage | undefined): boolean {
     if (message?.type !== 'user' || message.parent_tool_use_id !== null) return false;
     const body = message.message;
@@ -35,10 +38,37 @@ async function discard(history: ClaudeHistoryHelpers, dir: string, source: strin
 }
 
 /**
- * Fork the Claude conversation through the target turn. The fork point is the entry just
- * before the prompt of the first later turn that has a boundary; that prompt and the target's
- * must both be in the history the source resumes from (a compaction after the target fails
- * closed). The fork must then reproduce every retained user/assistant body aligned from the
+ * Where the fork ends: just before the prompt of the first later turn whose boundary is in
+ * history, or after the last entry when none is. A later boundary that is absent (a prompt
+ * stopped before Claude wrote it) is passed over only while no human turn started after the
+ * target's prompt: the entries passed over must all belong to the target's own turn. Any other
+ * absence means the history moved, and the rollback fails closed.
+ */
+function forkPoint(messages: SessionMessage[], target: number, later: CodeRollbackInput['later']): number {
+    let skipped = false;
+    for (const turn of later) {
+        if (turn.promptUuid === null) continue;
+        const next = messages.findIndex(message => message.uuid === turn.promptUuid);
+        if (next < 0) { skipped = true; continue; }
+        if (next <= target || !isClaudeHumanTurnStart(messages[next])) throw noBoundary('The next turn is not in the resumable history');
+        if (skipped) assertOnlyTargetTurn(messages, target, next);
+        return next;
+    }
+    if (!skipped) throw noBoundary('No later turn has a recorded boundary');
+    assertOnlyTargetTurn(messages, target, messages.length);
+    return messages.length;
+}
+
+function assertOnlyTargetTurn(messages: SessionMessage[], target: number, end: number): void {
+    if (messages.slice(target + 1, end).some(isClaudeHumanTurnStart)) {
+        throw noBoundary('A later turn is missing from the resumable history');
+    }
+}
+
+/**
+ * Fork the Claude conversation through the target turn, which must be in the history the
+ * source resumes from (a compaction after the target fails closed); see `forkPoint` for where
+ * it ends. The fork must then reproduce every retained user/assistant body aligned from the
  * end, and kept boundaries are remapped by that aligned position. Any failure after the fork
  * deletes it.
  */
@@ -54,10 +84,7 @@ export async function forkClaudeHistory(history: ClaudeHistoryHelpers, input: Co
     if (target < 0 || !isClaudeHumanTurnStart(messages[target])) {
         throw noBoundary('The target turn is no longer in the resumable history, for example after compaction');
     }
-    // Never skip past a later turn that has a boundary: its absence means the history moved.
-    const removed = input.later.find(turn => turn.promptUuid !== null);
-    const next = removed?.promptUuid ? at(removed.promptUuid) : -1;
-    if (next <= target || !isClaudeHumanTurnStart(messages[next])) throw noBoundary('The next turn is not in the resumable history');
+    const next = forkPoint(messages, target, input.later);
     const upToMessageId = messages[next - 1]!.uuid;
     const fork = await read(() => history.forkSession(source, { dir, upToMessageId, ...(input.title ? { title: input.title } : {}) }),
         'Claude history could not be forked');

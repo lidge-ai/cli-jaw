@@ -127,7 +127,7 @@ test('rollback to the first of three turns forks through its tool result and que
     assert.equal(w.files().length, 3, 'source, first fork and second fork');
 });
 
-test('the fork point never skips a later boundary that is missing from history', async () => {
+test('the fork point passes a missing later boundary only up to its own turn', async () => {
     const w = workspace();
     const { t, t1, t3 } = twoTurnsWithTool(w.cwd);
     t.write(w.dir);
@@ -140,6 +140,34 @@ test('the fork point never skips a later boundary that is missing from history',
     await assert.rejects(rollback(w.cwd, randomUUID(), [{ turnId: 'turn-1', promptUuid: t1 }], [{ turnId: 'turn-2', promptUuid: t3 }]),
         rejects('rollback_unavailable'), 'a missing session has no history');
     assert.equal(w.files().length, 2);
+});
+
+test('a prompt stopped before Claude recorded it is passed over, up to the next recorded prompt or the end of history', async () => {
+    const w = workspace();
+    const t = transcript(w.cwd);
+    const t1 = t.user('one'); t.assistant(t.text('A1'));
+    const t2 = t.user('two'); t.assistant([{ type: 'tool_use', id: 'toolu_2', name: 'Bash', input: { command: 'true' } }]);
+    t.toolResult('toolu_2', ''); t.assistant(t.text('A2'));
+    const t4 = t.user('four SECRET-FOUR'); t.assistant(t.text('A4'));
+    t.write(w.dir);
+    const stopped = { turnId: 'turn-3', promptUuid: randomUUID() };
+    const kept = [{ turnId: 'turn-1', promptUuid: t1 }, { turnId: 'turn-2', promptUuid: t2 }];
+    const passed = await rollback(w.cwd, t.sessionId, kept, [stopped, { turnId: 'turn-4', promptUuid: t4 }]);
+    const body = await texts(w.cwd, passed.forkCursor);
+    assert.ok(body.some(text => text.includes('A2')) && !body.some(text => text.includes('SECRET-FOUR')));
+    assert.deepEqual(passed.remapped.map(turn => turn.turnId), ['turn-1', 'turn-2']);
+    // Rolled back again from the fork, where turn 4 never happened: the whole history is kept.
+    const whole = await rollback(w.cwd, passed.forkCursor, [{ turnId: 'turn-1', promptUuid: passed.remapped[0]!.promptUuid },
+        { turnId: 'turn-2', promptUuid: passed.remapped[1]!.promptUuid }], [stopped]);
+    assert.deepEqual(await texts(w.cwd, whole.forkCursor), await texts(w.cwd, passed.forkCursor));
+    // A turn typed elsewhere after the target is a human turn start: fail closed, no fork.
+    const outside = transcript(w.cwd);
+    const o1 = outside.user('one'); outside.assistant(outside.text('A1'));
+    outside.user('typed in claude --resume'); outside.assistant(outside.text('elsewhere'));
+    outside.write(w.dir);
+    const files = w.files().length;
+    await assert.rejects(rollback(w.cwd, outside.sessionId, [{ turnId: 'turn-1', promptUuid: o1 }], [stopped]), rejects('rollback_boundary_unavailable'));
+    assert.equal(w.files().length, files);
 });
 
 for (const preserved of [false, true]) {

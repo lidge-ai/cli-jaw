@@ -1389,11 +1389,18 @@ test('a turn that settles before its prompt was dispatched is not a boundary; an
     settled(store, 'k2', { status: 'failed', dispatched: false });
     settled(store, 'k3', { status: 'failed' });
     const interrupted = admit(store, 'k4', 'session-a', 'prompt k4');
+    store.setRuntimeState(owner(interrupted.session), 'streaming');
+    store.create({ ...creation, sessionId: 'session-b' });
+    const starting = admit(store, 'k5', 'session-b', 'prompt k5');
+    assert.match(boundaries(db)[starting.receipt.turnId]!, UUID);
     store.recoverInterrupted();
     const ids = boundaries(db);
     assert.equal(ids['turn-2'], null);
     assert.match(ids['turn-3']!, UUID);
-    assert.match(ids[interrupted.receipt.turnId]!, UUID, 'a restart cannot prove the prompt stayed local');
+    assert.match(ids[interrupted.receipt.turnId]!, UUID, 'a restart cannot prove a streaming prompt stayed local');
+    assert.equal(ids[starting.receipt.turnId], null, 'a turn still starting at restart never handed its prompt to the runtime');
+    assert.equal(store.readTurn('session-b', 'k5')?.status, 'failed');
+    assert.equal(store.read('session-b')!.rollback.sinceSequence, null);
     assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later.map(turn => turn.promptUuid === null), [true, false, false]);
 });
 

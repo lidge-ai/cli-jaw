@@ -6,6 +6,7 @@ import { CodeSessionManager, CodeServiceError } from '../../src/code-mode/manage
 import { CodeSession } from '../../src/code-mode/session.js';
 import { CodeStore, CodeStoreError, type CodeStoreLimits } from '../../src/code-mode/store.js';
 import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource } from '../../src/code-mode/provider.js';
+import { forkClaudeHistory } from '../../src/code-mode/providers/claude-history.js';
 import type { RuntimeEventContext } from '../../src/agent/runtime/events.js';
 import type { RuntimeTurnOutcome } from '../../src/shared/runtime-contract.js';
 import type { CodeCreateSessionRequest, CodeProviderCatalog, CodeProviderId, CodeWireEvent } from '../../src/code-mode/wire.js';
@@ -2283,6 +2284,74 @@ test('a rollback never targets a follow-up row, keeps follow-up rows unchanged a
     }
     assert.throws(() => f.manager.prompt(id, { text: 'follow-up 2', clientTurnKey: 'steer-2' }), errorCode('turn_key_conflict', 409));
     assert.equal(f.manager.prompt(id, { text: 'after', clientTurnKey: 'key-after' }).duplicate, false, 'the session takes new work');
+});
+
+/**
+ * Native history as the Claude CLI writes it, behind the real fork-point and verification code:
+ * a prompt appears only once its turn ran. `record` adds a turn under the prompt UUID Code sent.
+ */
+function injectedHistory(f: ReturnType<typeof fixture>, source = 'private-native-cursor') {
+    type Entry = { type: 'user' | 'assistant'; uuid: string; session_id: string; message: unknown; parent_tool_use_id: null; parent_agent_id: null };
+    let next = 0;
+    const fresh = () => `00000000-0000-4000-8000-${String(++next).padStart(12, '0')}`;
+    const entry = (sessionId: string, type: Entry['type'], text: string, uuid = fresh()): Entry =>
+        ({ type, uuid, session_id: sessionId, message: { role: type, content: [{ type: 'text', text }] }, parent_tool_use_id: null, parent_agent_id: null });
+    const sessions = new Map<string, Entry[]>([[source, []]]);
+    const helpers = {
+        async getSessionInfo(id: string) { return sessions.has(id) ? { sessionId: id, summary: '', lastModified: 0, fileSize: 1024 } : undefined; },
+        async getSessionMessages(id: string) { return structuredClone(sessions.get(id) ?? []); },
+        async forkSession(id: string, options: { upToMessageId?: string }) {
+            const from = sessions.get(id)!, forkId = fresh();
+            sessions.set(forkId, from.slice(0, from.findIndex(row => row.uuid === options.upToMessageId) + 1)
+                .map(row => ({ ...structuredClone(row), uuid: fresh(), session_id: forkId })));
+            return { sessionId: forkId };
+        },
+        async deleteSession(id: string) { sessions.delete(id); },
+    };
+    f.providers.claude.rollback = input => forkClaudeHistory(helpers as never, input);
+    return {
+        sessions,
+        record(promptUuid: string, text: string) { sessions.get(source)!.push(entry(source, 'user', text, promptUuid), entry(source, 'assistant', `answer to ${text}`)); },
+    };
+}
+
+test('send, Stop before Claude recorded the prompt, send again: rolling back to the turn before it still works', async t => {
+    const f = fixture(t);
+    const history = injectedHistory(f);
+    const row = f.create('claude');
+    const id = row.sessionId;
+    const turns: string[] = [];
+    const run = async (text: string, key: string, handleIndex: number, sendIndex: number, stop = false) => {
+        const { receipt } = f.manager.prompt(id, { text, clientTurnKey: key });
+        const epoch = f.store.read(id)!.epoch;
+        await f.providers.claude.opened(handleIndex);
+        const handle = f.providers.claude.handles[handleIndex]!;
+        await handle.waitSent(sendIndex);
+        const promptUuid = handle.sendOptions[sendIndex]!.promptUuid!;
+        if (stop) await f.manager.cancel(id, { turnId: receipt.turnId, epoch });
+        else { history.record(promptUuid, text); handle.outcome.resolve(done); }
+        await f.terminal(id, epoch);
+        turns.push(receipt.turnId);
+        return promptUuid;
+    };
+    await run('prompt 1', 'key-1', 0, 0);
+    await run('prompt 2', 'key-2', 0, 1);
+    const stopped = await run('prompt 3', 'key-3', 0, 2, true);
+    assert.equal(f.store.readTurn(id, 'key-3')?.status, 'cancelled');
+    assert.equal((f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?').get(turns[2]) as { native_prompt_uuid: string }).native_prompt_uuid,
+        stopped, 'the prompt was handed to the runtime, so its boundary stays');
+    await run('prompt 4', 'key-4', 1, 0);
+    assert.equal(f.providers.claude.calls[1]!.nativeCursor, 'private-native-cursor', 'the next send resumed the same native session');
+    const session = await f.manager.rollback(id, request(f, id, turns[1]!));
+    assert.equal(session.historyGeneration, 1);
+    assert.deepEqual([...new Set(f.manager.snapshot(id).items.map(item => item.turnId))], turns.slice(0, 2));
+    const fork = f.store.readRecord(id)!.nativeCursor!;
+    assert.notEqual(fork, 'private-native-cursor');
+    assert.deepEqual(history.sessions.get(fork)!.map(row => JSON.stringify(row.message)).filter(text => text.includes('"user"')),
+        ['prompt 1', 'prompt 2'].map(text => JSON.stringify({ role: 'user', content: [{ type: 'text', text }] })));
+    const kept = f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id IN (?, ?) ORDER BY accepted_sequence').all(turns[0], turns[1]) as Array<{ native_prompt_uuid: string }>;
+    assert.deepEqual(kept.map(row => row.native_prompt_uuid), [history.sessions.get(fork)![0]!.uuid, history.sessions.get(fork)![2]!.uuid],
+        'kept turns are remapped onto the fork');
 });
 
 test('rollback checks provider, archive, history, client revision and epoch, and busy before any fork', async t => {

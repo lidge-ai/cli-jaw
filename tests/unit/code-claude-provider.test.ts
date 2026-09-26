@@ -185,7 +185,7 @@ test('Claude rollback forks the stored cursor through the entry before the next 
     assert.deepEqual(fake.calls.at(-1), ['delete', result.forkCursor, { dir: '/work' }]);
 });
 
-test('Claude rollback skips an undispatched later turn, never a missing one, and fails closed without the target', async () => {
+test('Claude rollback skips an undispatched later turn, passes a missing one only up to its own turn, and fails closed without the target', async () => {
     const h = transcript();
     const sessions = new Map([[SOURCE, h.all]]);
     const fake = fakeHistory(sessions);
@@ -197,7 +197,7 @@ test('Claude rollback skips an undispatched later turn, never a missing one, and
     const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
     const before = forks();
     await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: uuid() }, { turnId: 'turn-3', promptUuid: h.t3.uuid }] })),
-        codeError('rollback_boundary_unavailable'), 'a later boundary missing from history is never skipped');
+        codeError('rollback_boundary_unavailable'), 'a missing later boundary is not passed over once a human turn started after the target');
     await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: uuid() } })), codeError('rollback_boundary_unavailable'));
     await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: h.toolResult.uuid } })), codeError('rollback_boundary_unavailable'),
         'a tool result is not a human turn start');
@@ -206,6 +206,56 @@ test('Claude rollback skips an undispatched later turn, never a missing one, and
         codeError('rollback_boundary_unavailable'), 'a later boundary before the target is out of order');
     sessions.set(SOURCE, []);
     await assert.rejects(provider.rollback!(input(h)), codeError('rollback_unavailable'));
+    assert.equal(forks(), before);
+});
+
+test('a later prompt Claude never recorded is passed over while only the target turn lies before the next boundary', async () => {
+    // Send, Stop before Claude wrote the prompt, send again: turn 3 has a boundary that is not in history.
+    const t1 = msg('user', [{ type: 'text', text: 'first' }]), a1 = msg('assistant', [{ type: 'text', text: 'one' }]);
+    const t2 = msg('user', [{ type: 'text', text: 'second' }]);
+    const toolUse = msg('assistant', [{ type: 'tool_use', id: 'toolu_2', name: 'Bash', input: {} }]);
+    const toolResult = msg('user', [{ type: 'tool_result', tool_use_id: 'toolu_2', content: 'ok' }]);
+    const a2 = msg('assistant', [{ type: 'text', text: 'two' }]);
+    const t4 = msg('user', [{ type: 'text', text: 'fourth' }]), a4 = msg('assistant', [{ type: 'text', text: 'four' }]);
+    const stopped = uuid();
+    const kept = [{ turnId: 'turn-1', promptUuid: t1.uuid }, { turnId: 'turn-2', promptUuid: t2.uuid }];
+    const request = (later: Array<{ turnId: string; promptUuid: string | null }>) => ({ cwd: '/work', nativeCursor: SOURCE, title: null,
+        target: { turnId: 'turn-2', promptUuid: t2.uuid }, kept, later });
+
+    const sessions = new Map([[SOURCE, [t1, a1, t2, toolUse, toolResult, a2, t4, a4]]]);
+    const fake = fakeHistory(sessions);
+    const { provider } = rollbackProvider(fake.helpers);
+    const passed = await provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }]));
+    assert.deepEqual(fake.calls.find(call => call[0] === 'fork'), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }],
+        'the fork ends before the next recorded prompt; the target turn keeps its tool loop');
+    const fork = sessions.get(passed.forkCursor)!;
+    assert.deepEqual(fork.map(entry => entry.message), [t1, a1, t2, toolUse, toolResult, a2].map(entry => entry.message));
+    assert.deepEqual(passed.remapped, [{ turnId: 'turn-1', promptUuid: fork[0]!.uuid }, { turnId: 'turn-2', promptUuid: fork[2]!.uuid }]);
+
+    // With no later turn in history at all, the fork keeps the whole history.
+    sessions.set(SOURCE, [t1, a1, t2, toolUse, toolResult, a2]);
+    const whole = await provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: null }]));
+    assert.equal(sessions.get(whole.forkCursor)!.length, 6);
+    assert.deepEqual(fake.calls.filter(call => call[0] === 'fork').at(-1), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }]);
+
+    // Any human turn start after the target means the history moved: fail closed, before any fork.
+    const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
+    const before = forks();
+    const outside = msg('user', 'typed in claude --resume'), outsideAnswer = msg('assistant', [{ type: 'text', text: 'elsewhere' }]);
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer, t4, a4]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }])), codeError('rollback_boundary_unavailable'));
+    // A follow-up is a human turn start too, so a target turn that took one stays fail-closed here.
+    const followUp = msg('user', [{ type: 'text', text: 'also run the tests' }]);
+    sessions.set(SOURCE, [t1, a1, t2, followUp, a2, t4, a4]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
+    // A later recorded prompt that is present but out of order is never passed.
+    sessions.set(SOURCE, [t1, a1, t4, a4, t2, a2]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
     assert.equal(forks(), before);
 });
 
