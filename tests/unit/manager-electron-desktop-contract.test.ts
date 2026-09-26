@@ -797,3 +797,20 @@ test('workspace polish keeps current center/right/bottom grid areas intact', () 
     assert.ok(layout.includes('height: auto;'), 'mobile right panel overlay must stretch between top and bottom insets instead of collapsing to its toolbar');
     assert.ok(layout.includes('justify-self: end;'), 'mobile right panel overlay must anchor to the right edge without creating implicit grid columns');
 });
+
+test('Electron titlebar row keeps only the sidebar toggle beside traffic lights; workspace buttons stay in a fixed left column', () => {
+    const css = read('public/manager/src/manager-desktop-titlebar.css');
+    const main = read('public/manager/src/main.tsx');
+    const chrome = read('electron/src/main/lib/window/chrome-options.ts');
+    assert.ok(main.includes("import './manager-desktop-titlebar.css';"), 'desktop titlebar styles must be loaded');
+    assert.ok(chrome.includes('TRAFFIC_LIGHT_POSITION = { x: 16, y: 20 }'), 'titlebar reserve assumes lights at x=16');
+    const preload = read('electron/src/preload/index.ts');
+    assert.ok(preload.includes('dataset.cliJawPlatform = process.platform'), 'preload must expose the host platform');
+    assert.ok(/data-cli-jaw-platform="darwin"\] \{\s*--desktop-traffic-light-reserve: 76px/.test(css), 'traffic-light reserve applies on macOS only');
+    assert.ok(/:root\[data-cli-jaw-desktop="true"\] \{\s*--desktop-traffic-light-reserve: 12px/.test(css), 'non-macOS desktops keep a small left inset');
+    assert.ok(css.includes('left: var(--desktop-traffic-light-reserve)'), 'sidebar toggle must sit in the titlebar row');
+    assert.ok(css.includes('width: var(--desktop-rail-width)'), 'workspace rail must be a fixed-width left column');
+    assert.ok(css.includes('flex-direction: column'), 'workspace rail buttons must stack vertically');
+    assert.ok(css.includes('padding-left: var(--desktop-rail-width)'), 'sidebar content must clear the fixed rail');
+    assert.ok(css.includes('calc(var(--desktop-traffic-light-reserve) + var(--desktop-titlebar-control) + 12px)'), 'command bar must start after lights and toggle');
+});

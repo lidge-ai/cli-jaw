@@ -12,12 +12,11 @@ type SidebarRailProps = {
     onToggleHelp: () => void;
 };
 
-function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
-    const points = direction === 'left' ? '11 4 5 10 11 16' : '5 4 11 10 5 16';
+function SidebarToggleIcon({ expanded }: { expanded: boolean }) {
     return (
         <svg
             className="rail-collapse-chevron"
-            viewBox="0 0 16 20"
+            viewBox="0 0 20 20"
             width="18"
             height="18"
             fill="none"
@@ -28,7 +27,9 @@ function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
             aria-hidden="true"
             focusable="false"
         >
-            <polyline points={points} />
+            <rect x="3" y="4" width="14" height="12" rx="2.5" />
+            <path d="M8 4v12" />
+            {expanded && <rect x="4.5" y="5.5" width="2" height="9" rx="0.5" fill="currentColor" stroke="none" />}
         </svg>
     );
 }
@@ -112,7 +113,7 @@ export function SidebarRail(props: SidebarRailProps) {
                 aria-controls="manager-sidebar-list"
                 title={toggleLabel}
             >
-                <ChevronIcon direction={expanded ? 'left' : 'right'} />
+                <SidebarToggleIcon expanded={expanded} />
             </button>
             <button
                 className={`rail-button rail-workspace-button${props.mode === 'instances' ? ' is-active' : ''}`}
