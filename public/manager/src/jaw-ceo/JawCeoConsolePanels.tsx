@@ -1,4 +1,6 @@
-import { useCallback, useMemo, type ReactElement } from 'react';
+import { useCallback, useMemo, useState, type ReactElement, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { ContextMenu, useContextMenu, type ContextMenuEntry } from '../components/context-menu/ContextMenu';
+import { CheckGlyph, DocGlyph, ExternalGlyph, PlayGlyph, SpeakerGlyph } from '../components/context-menu/icons';
 import type { JawCeoController } from './useJawCeo';
 import type { JawCeoVoiceController } from './useJawCeoVoice';
 import type { JawCeoAuditRecord, JawCeoCompletion, JawCeoResponseMode, JawCeoWatch } from './types';
@@ -184,6 +186,30 @@ function ActivityIcon(props: { tone: ActivityTone }) {
     );
 }
 
+function resultMenuEntries(
+    completion: JawCeoCompletion,
+    props: {
+        model: JawCeoConsoleModel;
+        ceo: JawCeoController;
+        voice: JawCeoVoiceController;
+        onOpenWorker: (port: number, messageId?: number) => void;
+    },
+): ContextMenuEntry[] {
+    return [
+        { id: 'open', label: `Open worker :${completion.port}`, icon: <ExternalGlyph />, onSelect: () => props.onOpenWorker(completion.port, completion.messageId) },
+        { kind: 'separator', id: 'sep-result-actions' },
+        { id: 'summary', label: 'Summarize result', icon: <DocGlyph />, onSelect: () => void props.model.summarize(completion) },
+        { id: 'continue', label: 'Continue', icon: <PlayGlyph />, onSelect: () => void props.model.continueCompletion(completion) },
+        { id: 'speak', label: 'Speak result', icon: <SpeakerGlyph />, onSelect: () => void props.voice.speakCompletion(completion) },
+        { kind: 'separator', id: 'sep-result-ack' },
+        { id: 'ack', label: 'Acknowledge', icon: <CheckGlyph />, onSelect: () => void props.ceo.ackCompletion(completion.completionKey) },
+    ];
+}
+
+function isContextMenuKey(event: ReactKeyboardEvent<HTMLElement>): boolean {
+    return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10');
+}
+
 function ActivityGroup(props: {
     entries: ActivityEntry[];
     model: JawCeoConsoleModel;
@@ -191,6 +217,15 @@ function ActivityGroup(props: {
     voice: JawCeoVoiceController;
     onOpenWorker: (port: number, messageId?: number) => void;
 }) {
+    const menu = useContextMenu();
+    const [menuCompletion, setMenuCompletion] = useState<JawCeoCompletion | null>(null);
+    const openResultMenu = useCallback(
+        (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, completion: JawCeoCompletion) => {
+            setMenuCompletion(completion);
+            menu.openAt(event);
+        },
+        [menu],
+    );
     return (
         <section className="jaw-ceo-activity-shell" aria-label="CEO activity">
             <span className="jaw-ceo-activity-avatar" aria-hidden="true">CEO</span>
@@ -202,8 +237,15 @@ function ActivityGroup(props: {
                 <div className="jaw-ceo-activity-list">
                     {props.entries.map(entry => {
                         const tone = activityTone(entry);
+                        const completion = entry.kind === 'result' ? entry.completion : null;
                         return (
-                            <article key={entry.id} className={`jaw-ceo-activity-row tone-${tone}${activityIsError(entry) ? ' is-error' : ''}`}>
+                            <article
+                                key={entry.id}
+                                className={`jaw-ceo-activity-row tone-${tone}${activityIsError(entry) ? ' is-error' : ''}`}
+                                tabIndex={completion ? 0 : undefined}
+                                onContextMenu={completion ? event => openResultMenu(event, completion) : undefined}
+                                onKeyDown={completion ? event => { if (isContextMenuKey(event)) openResultMenu(event, completion); } : undefined}
+                            >
                                 <span className="jaw-ceo-activity-dot" aria-hidden="true" />
                                 <span className="jaw-ceo-activity-icon"><ActivityIcon tone={tone} /></span>
                                 <span className="jaw-ceo-activity-badge">{tone}</span>
@@ -212,13 +254,26 @@ function ActivityGroup(props: {
                                     <p>{activityPreview(entry)}</p>
                                     <small>{formatTime(activityTime(entry))}</small>
                                 </div>
-                                {entry.kind === 'result' ? (
-                                    <div className="jaw-ceo-activity-actions">
-                                        <button type="button" onClick={() => props.onOpenWorker(entry.completion.port, entry.completion.messageId)}>Open</button>
-                                        <button type="button" onClick={() => void props.model.summarize(entry.completion)}>Summary</button>
-                                        <button type="button" onClick={() => void props.model.continueCompletion(entry.completion)}>Continue</button>
-                                        <button type="button" onClick={() => void props.voice.speakCompletion(entry.completion)}>Speak</button>
-                                        <button type="button" onClick={() => void props.ceo.ackCompletion(entry.completion.completionKey)}>Ack</button>
+                                {completion ? (
+                                    <div className="jaw-ceo-activity-actions jaw-row-hover-actions">
+                                        <button
+                                            type="button"
+                                            className="jaw-row-icon-btn"
+                                            title={`Open worker :${completion.port}`}
+                                            aria-label={`Open worker :${completion.port}`}
+                                            onClick={() => props.onOpenWorker(completion.port, completion.messageId)}
+                                        >
+                                            <ExternalGlyph />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jaw-row-icon-btn"
+                                            title="Acknowledge result"
+                                            aria-label={`Acknowledge worker :${completion.port} result`}
+                                            onClick={() => void props.ceo.ackCompletion(completion.completionKey)}
+                                        >
+                                            <CheckGlyph />
+                                        </button>
                                     </div>
                                 ) : <span className="jaw-ceo-trace-chip">Trace</span>}
                             </article>
@@ -226,6 +281,12 @@ function ActivityGroup(props: {
                     })}
                 </div>
             </details>
+            <ContextMenu
+                state={menu.state}
+                entries={menuCompletion ? resultMenuEntries(menuCompletion, props) : []}
+                label={menuCompletion ? `Worker :${menuCompletion.port} result` : 'Worker result'}
+                onClose={menu.close}
+            />
         </section>
     );
 }

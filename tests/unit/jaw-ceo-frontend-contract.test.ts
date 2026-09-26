@@ -199,3 +199,16 @@ test('jaw-ceo frontend renders realtime voice overlay and silent state without i
     assert.ok(consoleCss.includes('.jaw-ceo-activity-group'), 'modern console CSS must style activity groups');
     assert.ok(css.includes('prefers-reduced-motion'), 'CSS must reduce waveform motion when requested');
 });
+
+test('jaw-ceo activity result rows use the shared context menu with hover icon actions', () => {
+    const panels = read('public/manager/src/jaw-ceo/JawCeoConsolePanels.tsx');
+    const consoleCss = read('public/manager/src/jaw-ceo/jaw-ceo-console.css');
+
+    assert.ok(panels.includes('useContextMenu'), 'result rows must open the shared context menu');
+    assert.ok(panels.includes('jaw-ceo-activity-actions jaw-row-hover-actions'), 'row actions must be hover/focus-revealed icon buttons');
+    for (const label of ['Open worker', 'Summarize result', 'Continue', 'Speak result', 'Acknowledge']) {
+        assert.ok(panels.includes(label), `result context menu must include ${label}`);
+    }
+    assert.ok(panels.includes("event.key === 'ContextMenu'"), 'result rows must open the menu from the keyboard ContextMenu key');
+    assert.equal(consoleCss.includes('.jaw-ceo-activity-actions button'), false, 'result rows must not keep always-visible text action buttons');
+});
