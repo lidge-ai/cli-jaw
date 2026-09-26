@@ -23,6 +23,7 @@ export function ThemeSwitch(props: ThemeSwitchProps) {
     const trigger = useRef<HTMLButtonElement>(null);
     const menu = useContextMenu();
     const closedAt = useRef(0);
+    const suppressClick = useRef(false);
     const closeMenu = () => { closedAt.current = performance.now(); menu.close(); };
     const current = OPTIONS.find(option => option.value === props.theme) ?? OPTIONS[0]!;
     const entries: ContextMenuEntry[] = OPTIONS.map(option => ({
@@ -30,6 +31,7 @@ export function ThemeSwitch(props: ThemeSwitchProps) {
         label: option.label,
         title: option.hint,
         icon: option.value === props.theme ? <CheckGlyph /> : undefined,
+        checked: option.value === props.theme,
         onSelect: () => props.onChange(option.value),
     }));
     return (
@@ -38,13 +40,14 @@ export function ThemeSwitch(props: ThemeSwitchProps) {
                 ref={trigger}
                 type="button"
                 className={`command-icon-button theme-switch${menu.open ? ' is-open' : ''}`}
-                aria-label="Theme"
+                aria-label={`Theme: ${current.label}`}
                 aria-haspopup="menu"
                 aria-expanded={menu.open}
                 title={`Theme: ${current.label}`}
+                onPointerDown={() => { suppressClick.current = performance.now() - closedAt.current < 50; }}
                 onClick={() => {
                     if (menu.open) { menu.close(); return; }
-                    if (performance.now() - closedAt.current < 250) return;
+                    if (suppressClick.current) { suppressClick.current = false; return; }
                     if (trigger.current) menu.openAtElement(trigger.current);
                 }}
             >

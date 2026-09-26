@@ -10,6 +10,8 @@ export type ContextMenuAction = {
     shortcut?: string;
     disabled?: boolean;
     danger?: boolean;
+    /** When set, the item renders as a `menuitemradio` with this checked state. */
+    checked?: boolean;
     title?: string;
     onSelect: () => void;
 };
@@ -119,7 +121,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         cancelPendingRestore();
         const onClose = () => onCloseRef.current();
         restoreOnClose.current = true;
-        const first = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+        const first = menu.current?.querySelector<HTMLButtonElement>(':is([role="menuitem"], [role="menuitemradio"]):not(:disabled)');
         first?.focus({ preventScroll: true });
         const onPointerDown = (event: PointerEvent) => {
             if (menu.current && event.target instanceof Node && menu.current.contains(event.target)) return;
@@ -149,7 +151,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     if (!state) return null;
 
     function moveFocus(step: 1 | -1 | 'first' | 'last') {
-        const items = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+        const items = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>(':is([role="menuitem"], [role="menuitemradio"]):not(:disabled)') ?? []);
         if (!items.length) return;
         const index = items.indexOf(document.activeElement as HTMLButtonElement);
         const next = step === 'first' ? 0 : step === 'last' ? items.length - 1
@@ -177,7 +179,8 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         style={{ left: shown.x, top: shown.y, visibility: position ? 'visible' : 'hidden' }}
         onKeyDown={onKeyDown} onContextMenu={event => event.preventDefault()}>
         {entries.map(entry => isAction(entry)
-            ? <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled} title={entry.title}
+            ? <button key={entry.id} type="button" role={entry.checked === undefined ? 'menuitem' : 'menuitemradio'}
+                aria-checked={entry.checked} disabled={entry.disabled} title={entry.title}
                 className={`jaw-context-menu-item${entry.danger ? ' is-danger' : ''}`}
                 onClick={() => {
                     const previousMenu = menu.current;
