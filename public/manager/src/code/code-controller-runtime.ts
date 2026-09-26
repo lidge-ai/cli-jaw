@@ -704,13 +704,23 @@ export class CodeController {
     // Other actions report handled failures through the controller model.
     rename = async (id: string, title: string): Promise<void> => { await this.patch(id, { title }, true); };
     archive = async (id: string, archived: boolean): Promise<void> => { await this.patch(id, { archived }, true); };
-    // Sidebar metadata is allowed while a session is busy, so it bypasses the operation gate.
+    // Sidebar metadata is allowed while a session is busy, but it still shares
+    // the per-session operation slot: two PATCHes would race on the same
+    // expectedRevision and one would lose.
     private async sidebarPatch(id: string, input: { pinned?: boolean; unread?: boolean }): Promise<void> {
+        const draft = this.draft(id);
         const session = this.info(id);
-        if (!session) throw new Error('Refresh this session before changing it.');
+        if (!session || draft.operation.kind !== 'idle') {
+            const error = new Error(!session ? 'Refresh this session before changing it.'
+                : 'Wait for the current session action to finish before changing it.');
+            draft.operation.error = error.message; this.notify();
+            throw error;
+        }
         let failure: Error | null = null;
+        draft.operation = { kind: 'patching', error: null }; this.notify();
         try {
             this.accept(await this.client.patchSession(id, { ...input, expectedRevision: session.revision }));
+            draft.operation = { kind: 'idle', error: null };
         } catch (error) {
             if (error instanceof CodeClientError && error.session?.sessionId === id) {
                 // A revision conflict answers with the snapshot session, overlay included.
@@ -718,6 +728,7 @@ export class CodeController {
                 this.accept(error.session);
             }
             failure = error instanceof CodeClientError ? error : new Error(message(error));
+            draft.operation = { kind: 'idle', error: failure.message };
         }
         this.notify(); this.scheduleIndex();
         if (failure) throw failure;

@@ -319,6 +319,24 @@ test('a session row has no Actions disclosure; its menu opens on right-click and
     assert.ok(rowMenu(), 'Shift+F10 opens the row menu');
     await key(document.activeElement!, 'Escape');
     assert.equal(rowMenu(), null, 'Escape closes the keyboard-opened menu too');
+    // The menu key also works from the row's hover icon buttons.
+    const pinButton = h.container.querySelector<HTMLButtonElement>('.code-session-hover-btn'); assert.ok(pinButton);
+    await act(async () => pinButton.focus());
+    await key(pinButton, 'ContextMenu');
+    assert.ok(rowMenu(), 'ContextMenu key on a hover icon opens the row menu');
+    await key(document.activeElement!, 'Escape');
+    assert.equal(rowMenu(), null);
+});
+
+test('an archived session that was marked unread can be marked read again', bounded, async t => {
+    const h = await surface(t); const calls: unknown[] = [];
+    const archived = session({ archivedAt: 9, markedUnread: true });
+    const c = model({ selectedId: null, session: null, sessions: [archived], filter: { scope: 'all', archived: true },
+        async markUnread(id, unread) { calls.push([id, unread]); } });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const menu = await openRowMenu(h);
+    await click(button(menu, 'Mark as read'));
+    assert.deepEqual(calls, [['s-a', false]]);
 });
 
 test('hover buttons pin and archive the row without an extra click target on the surface', bounded, async t => {

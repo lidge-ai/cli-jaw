@@ -289,6 +289,30 @@ test('pin and mark-unread still PATCH a busy session; rename and archive stay ga
     assert.equal(f.controller.getModel().sessions.find(item => item.sessionId === 'a')!.revision, 9, 'a conflict accepts the answered revision');
 });
 
+test('pin and mark-unread share the mutation slot: they wait out an in-flight rename', async t => {
+    const f = fixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('b');
+    let patchSeen = false;
+    let release: (value: Response) => void = () => {};
+    f.intercept(call => {
+        if (call.method !== 'PATCH' || !call.path.endsWith('/a')) return undefined;
+        if ('title' in call.body) {
+            patchSeen = true;
+            return new Promise<Response>(yes => { release = yes; });
+        }
+        return response({ ok: true, session: session('a', { title: 'later', revision: 4, pinnedAt: 7 }) });
+    });
+    const renaming = f.controller.rename('a', 'later');
+    while (!patchSeen) await new Promise(yes => setImmediate(yes));
+    await assert.rejects(f.controller.pin('a', true), /finish/);
+    await assert.rejects(f.controller.markUnread('a', true), /finish/);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1, 'the sidebar patches never reached the wire');
+    release(response({ ok: true, session: session('a', { title: 'later', revision: 3 }) }));
+    await renaming;
+    await f.controller.pin('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 3, pinned: true });
+});
+
 test('unknown creation remains frozen and is never automatically retried', async t => {
     const f = fixture(t); await f.controller.refresh();
     f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? Promise.reject(new TypeError('lost create response')) : undefined);

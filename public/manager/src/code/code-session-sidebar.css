@@ -57,7 +57,7 @@
 .code-session-hover-btn.is-on { color: var(--accent); }
 .code-session-row:hover .code-session-item,
 .code-session-row:focus-within .code-session-item { padding-right: 56px; }
+/* Only the status text yields to the hover icons; a pending-approval marker
+   stays on screen — hovering to pin must not hide the thing asking for input. */
 .code-session-row:hover .code-session-status,
-.code-session-row:focus-within .code-session-status,
-.code-session-row:hover .code-session-attention,
-.code-session-row:focus-within .code-session-attention { visibility: hidden; }
+.code-session-row:focus-within .code-session-status { visibility: hidden; }
