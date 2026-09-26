@@ -114,8 +114,9 @@ export class ClaudeSdkEvents {
         if (frame['result'] !== undefined && frame['result'] !== null && typeof frame['result'] !== 'string') malformed();
         this.usage(frame['usage']);
         this.modelWindow(frame['modelUsage']);
-        // A future subtype is judged by is_error instead of leaving the turn hanging.
-        const failed = (resultTypes.has(subtype) && subtype !== 'success') || frame['is_error'] === true;
+        // Only a known success promotes a final: a future subtype fails the turn closed
+        // rather than being guessed from is_error, and the turn still settles.
+        const failed = !resultTypes.has(subtype) || subtype !== 'success' || frame['is_error'] === true;
         const reason = typeof frame['terminal_reason'] === 'string' ? frame['terminal_reason'] : null;
         this.failureText = failed ? describeClaudeFailure(subtype, reason) : null;
         this.outcome = { status: failed ? 'error' : 'done',

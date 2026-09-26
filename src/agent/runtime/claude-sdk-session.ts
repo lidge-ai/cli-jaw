@@ -365,9 +365,9 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
             if (typeof raw['subtype'] !== 'string' || typeof raw['is_error'] !== 'boolean') {
                 throw new Error('claude_invalid_result');
             }
-            // A subtype this build does not know is judged by is_error, as the mapper does.
-            const known = RESULT_TYPES.has(raw['subtype']);
-            const status = (known ? raw['subtype'] === 'success' : true) && raw['is_error'] === false ? 'done' : 'error';
+            // A subtype this build does not know settles the turn as failed, as the mapper does,
+            // instead of failing the reader: only a known success may promote a final.
+            const status = raw['subtype'] === 'success' && raw['is_error'] === false ? 'done' : 'error';
             const value = raw['result'];
             if (status === 'done' && value !== undefined && value !== null && typeof value !== 'string') {
                 throw new Error('claude_invalid_final');

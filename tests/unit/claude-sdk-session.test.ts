@@ -350,10 +350,15 @@ test('a failed turn exposes its stop reason, a later success clears it, and occu
     assert.deepEqual({ ...(usage[0] as Record<string, unknown>), updatedAt: 0 }, { totalTokens: 1000, modelContextWindow: 200000, updatedAt: 0 });
 });
 
-test('an unknown result subtype settles the turn instead of failing the reader', async t => {
+test('an unknown result subtype fails the turn closed without failing the reader', async t => {
     const f = await fixture(); t.after(() => f.session.close());
     const turn = f.session.send({ text: 'one' }, () => {});
-    f.output.push({ type: 'result', subtype: 'future_result', is_error: false, result: 'still fine', session_id: 'native' });
-    assert.equal((await turn).finalText, 'still fine');
+    f.output.push({ type: 'result', subtype: 'future_result', is_error: false, result: 'not promoted', session_id: 'native' });
+    const outcome = await turn;
+    assert.equal(outcome.status, 'error');
+    assert.equal(outcome.finalText, null);
     assert.equal(f.session.lastError, null);
+    const next = f.session.send({ text: 'two' }, () => {});
+    f.output.push(result('fine'));
+    assert.equal((await next).finalText, 'fine');
 });

@@ -454,9 +454,9 @@ test('failed results name the stop reason from closed vocabularies only', () => 
     assert.equal(u.mapper.failureText, 'Claude turn failed: during execution');
 });
 
-test('an unknown future result subtype resolves by is_error instead of hanging', () => {
+test('an unknown future result subtype settles the turn as failed and never promotes its text', () => {
     const h = harness();
-    assert.deepEqual(h.mapper.accept({ type: 'result', subtype: 'future_x', is_error: false, result: 'ok' }), { status: 'done', finalText: 'ok', partialText: '' });
+    assert.deepEqual(h.mapper.accept({ type: 'result', subtype: 'future_x', is_error: false, result: 'ok' }), { status: 'error', finalText: null, partialText: '' });
     const e = harness();
     assert.equal(e.mapper.accept({ type: 'result', subtype: 'future_x', is_error: true })?.status, 'error');
 });
