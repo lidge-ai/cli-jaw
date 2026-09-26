@@ -332,3 +332,33 @@ test('usage observer revocation cannot return a successful stale final', async (
     assert.deepEqual(await turn, { status: 'error', finalText: null, partialText: '' });
     await f.session.close(); assert.equal(f.session.alive, false);
 });
+
+test('a failed turn exposes its stop reason, a later success clears it, and occupancy is reported', async t => {
+    const usage: unknown[] = [];
+    const f = await fixture({ onContextUsage: (value: unknown) => usage.push(value) }); t.after(() => f.session.close());
+    const first = f.session.send({ text: 'one' }, () => {});
+    f.output.push({ type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'default' });
+    f.output.push({ type: 'result', subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', session_id: 'native' });
+    assert.equal((await first).status, 'error');
+    assert.equal(f.session.lastTurnFailureText, 'Claude turn failed: reached the turn limit');
+    const second = f.session.send({ text: 'two' }, () => {});
+    f.output.push({ ...result('fine'), usage: { input_tokens: 900, output_tokens: 5, cache_read_input_tokens: 100 },
+        modelUsage: { 'claude-opus-5-5': { contextWindow: 200000 } } });
+    assert.equal((await second).finalText, 'fine');
+    assert.equal(f.session.lastTurnFailureText, null);
+    assert.equal(usage.length, 1);
+    assert.deepEqual({ ...(usage[0] as Record<string, unknown>), updatedAt: 0 }, { totalTokens: 1000, modelContextWindow: 200000, updatedAt: 0 });
+});
+
+test('an unknown result subtype fails the turn closed without failing the reader', async t => {
+    const f = await fixture(); t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    f.output.push({ type: 'result', subtype: 'future_result', is_error: false, result: 'not promoted', session_id: 'native' });
+    const outcome = await turn;
+    assert.equal(outcome.status, 'error');
+    assert.equal(outcome.finalText, null);
+    assert.equal(f.session.lastError, null);
+    const next = f.session.send({ text: 'two' }, () => {});
+    f.output.push(result('fine'));
+    assert.equal((await next).finalText, 'fine');
+});

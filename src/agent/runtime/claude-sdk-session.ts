@@ -34,6 +34,8 @@ export interface ClaudeSessionOptions {
     deferTurnEnd?: boolean;
     onMetadata?(context: Readonly<ClaudeTurnContext>, metadata: ClaudeResultMetadata): void;
     onNativeSessionId?(context: Readonly<ClaudeTurnContext> | null, id: string): void;
+    /** Context occupancy a finished turn reported (compaction or result usage). */
+    onContextUsage?(usage: { totalTokens: number; modelContextWindow: number | null; updatedAt: number }): void;
     onSessionCreated?(session: ClaudeSdkSession): void;
     queryFactory?(input: { prompt: AsyncIterable<SDKUserMessage>; options: Options }): ClaudeQuery;
     record?(context: RuntimeEventContext, body: RuntimeEventBody): RuntimeEvent | null;
@@ -50,8 +52,6 @@ type Turn = {
     passiveFinalizing: boolean;
 };
 const MAX_PROMPT_BYTES = 1024 * 1024;
-const RESULT_TYPES = new Set(['success', 'error_during_execution', 'error_max_turns',
-    'error_max_budget_usd', 'error_max_structured_output_retries']);
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('claude_invalid_frame');
     return value as Record<string, unknown>;
@@ -79,6 +79,7 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private closeOperation: (() => Promise<void>) | undefined;
     private failure = false;
     private failureCode: string | null = null;
+    private turnFailureText: string | null = null;
     private exited = false;
     private readonly registry: RuntimeRequests;
     private readonly terminalIds = new Set<string>();
@@ -120,6 +121,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     get activeProcessCount(): number { return this.processes.activeCount; }
     get stderrBytes(): number { return this.processes.stderrBytes; }
     get lastError(): string | null { return this.failureCode; }
+    /** The specific reason the last turn failed (terminal_reason, subtype, first error), if it did. */
+    get lastTurnFailureText(): string | null { return this.turnFailureText; }
     get primaryChild() { return this.processes.primaryChild; }
     get rootProcessState() { return this.processes.rootProcessState; }
     waitForPrimaryChild(options?: ClaudeRootWaitOptions) { return this.processes.waitForPrimaryChild(options); }
@@ -234,6 +237,12 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         if (outcome.status !== 'done' && !outcome.partialText) outcome = { ...outcome, partialText: turn.mapper.interruptedText };
         this.finishing = true;
         this.turn = null; clearTimeout(turn.timer);
+        this.turnFailureText = outcome.status === 'error' ? turn.mapper.failureText : null;
+        const usage = turn.mapper.contextUsage;
+        if (usage) {
+            try { this.options.onContextUsage?.({ ...usage, updatedAt: Date.now() }); }
+            catch { console.warn('[claude-native] context_usage_failed'); }
+        }
         try {
             try { this.registry.cancelRun(turn.context.runId); }
             catch {
@@ -351,9 +360,11 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     }
     private accept(raw: Record<string, unknown>, turn: Turn): void {
         if (raw['type'] === 'result') {
-            if (typeof raw['subtype'] !== 'string' || !RESULT_TYPES.has(raw['subtype']) || typeof raw['is_error'] !== 'boolean') {
+            if (typeof raw['subtype'] !== 'string' || typeof raw['is_error'] !== 'boolean') {
                 throw new Error('claude_invalid_result');
             }
+            // A subtype this build does not know settles the turn as failed, as the mapper does,
+            // instead of failing the reader: only a known success may promote a final.
             const status = raw['subtype'] === 'success' && raw['is_error'] === false ? 'done' : 'error';
             const value = raw['result'];
             if (status === 'done' && value !== undefined && value !== null && typeof value !== 'string') {

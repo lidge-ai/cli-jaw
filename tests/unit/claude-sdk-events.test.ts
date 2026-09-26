@@ -373,3 +373,98 @@ test('empty tool input is authoritative in assistant snapshots and after stream 
     const tools = h.events.filter(e => e.kind === 'tool' && e.input === '{}');
     assert.equal(tools.length, 2); assert.ok(tools.every(e => e.status === 'done'));
 });
+
+// ─── Native parity: compaction, status, retries, hooks, notices, rate limits, stop reasons ───
+
+const toolRows = (h: ReturnType<typeof harness>) => h.events.filter(event => event.kind === 'tool') as Array<RuntimeEvent & { name: string; status: string; detail?: string }>;
+const lastRow = (h: ReturnType<typeof harness>, name: string) => toolRows(h).filter(row => row.name === name).at(-1);
+
+test('compaction boundary becomes a done row and reports post-compaction occupancy', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 150000, post_tokens: 20000 } });
+    assert.equal(lastRow(h, 'Context compacted')?.status, 'done');
+    assert.match(lastRow(h, 'Context compacted')?.detail ?? '', /Manual · 150000 tokens → 20000/);
+    assert.deepEqual(h.mapper.contextUsage, { totalTokens: 20000, modelContextWindow: null });
+    assert.throws(() => h.mapper.accept({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: -1 } }));
+});
+
+test('compaction status runs, then succeeds or fails on the same row', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'system', subtype: 'status', status: 'compacting' });
+    assert.equal(lastRow(h, 'Compacting context')?.status, 'running');
+    h.mapper.accept({ type: 'system', subtype: 'status', status: null, compact_result: 'success' });
+    assert.equal(lastRow(h, 'Compacting context')?.status, 'done');
+    const f = harness();
+    f.mapper.accept({ type: 'system', subtype: 'status', status: 'compacting' });
+    f.mapper.accept({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'too small' });
+    assert.equal(lastRow(f, 'Compacting context')?.status, 'error');
+    assert.equal(lastRow(f, 'Compacting context')?.detail, 'too small');
+});
+
+test('API retries, hooks and warnings map onto rows; malformed retries and unknown subtypes do not', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 5, retry_delay_ms: 3100, error_status: 529, error: 'overloaded' });
+    assert.match(lastRow(h, 'Retrying Claude API')?.detail ?? '', /Attempt 2\/5, next in 4s/);
+    assert.throws(() => h.mapper.accept({ type: 'system', subtype: 'api_retry', attempt: 'x', max_retries: 5, retry_delay_ms: 1 }));
+    const g = harness();
+    g.mapper.accept({ type: 'system', subtype: 'hook_started', hook_id: 'h1', hook_name: 'lint', hook_event: 'PostToolUse' });
+    assert.equal(lastRow(g, 'Hook: lint')?.status, 'running');
+    g.mapper.accept({ type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'lint', hook_event: 'PostToolUse', output: '', stdout: '', stderr: 'failed lint', outcome: 'error' });
+    assert.equal(lastRow(g, 'Hook: lint')?.status, 'error');
+    assert.equal(lastRow(g, 'Hook: lint')?.detail, 'failed lint');
+    g.mapper.accept({ type: 'system', subtype: 'hook_started', hook_id: 'h2', hook_name: 'fmt', hook_event: 'Stop' });
+    g.mapper.accept({ type: 'system', subtype: 'hook_response', hook_id: 'h2', hook_name: 'fmt', hook_event: 'Stop', output: '', stdout: '', stderr: '', outcome: 'cancelled' });
+    assert.equal(lastRow(g, 'Hook: fmt')?.status, 'error');
+    g.mapper.accept({ type: 'system', subtype: 'informational', content: 'Consider /compact', level: 'warning' });
+    assert.equal(lastRow(g, 'Claude notice')?.detail, 'Consider /compact');
+    const before = toolRows(g).length;
+    g.mapper.accept({ type: 'system', subtype: 'informational', content: 'quiet', level: 'info' });
+    g.mapper.accept({ type: 'system', subtype: 'something_new', value: 1 });
+    assert.equal(toolRows(g).length, before, 'info level and unknown subtypes stay silent');
+});
+
+test('an ordinary allowed rate-limit report adds no row', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' }, uuid: 'u', session_id: 's' });
+    assert.equal(lastRow(h, 'Claude rate limit'), undefined);
+});
+
+test('rate limits: rejected runs, warning and allowed are done; malformed status throws', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1790400000, rateLimitType: 'five_hour' }, uuid: 'u', session_id: 's' });
+    assert.equal(lastRow(h, 'Claude rate limit')?.status, 'running');
+    assert.match(lastRow(h, 'Claude rate limit')?.detail ?? '', /Limit reached \(five hour\), resets /);
+    h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'seven_day' }, uuid: 'u2', session_id: 's' });
+    assert.match(lastRow(h, 'Claude rate limit')?.detail ?? '', /Approaching limit \(seven day\)/);
+    h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, uuid: 'u3', session_id: 's' });
+    assert.equal(lastRow(h, 'Claude rate limit')?.status, 'done');
+    assert.throws(() => h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'nope' }, uuid: 'u4', session_id: 's' }));
+});
+
+test('failed results name the stop reason from closed vocabularies only', () => {
+    const h = harness();
+    const outcome = h.mapper.accept({ type: 'result', subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', errors: ['secret-canary'] });
+    assert.equal(outcome?.status, 'error');
+    assert.equal(h.mapper.failureText, 'Claude turn failed: reached the turn limit');
+    h.mapper.finish(outcome!);
+    assert.ok(!JSON.stringify(h.events).includes('secret-canary'));
+    assert.equal(harness().mapper.failureText, null);
+    const u = harness();
+    u.mapper.accept({ type: 'result', subtype: 'error_during_execution', is_error: true });
+    assert.equal(u.mapper.failureText, 'Claude turn failed: during execution');
+});
+
+test('an unknown future result subtype settles the turn as failed and never promotes its text', () => {
+    const h = harness();
+    assert.deepEqual(h.mapper.accept({ type: 'result', subtype: 'future_x', is_error: false, result: 'ok' }), { status: 'error', finalText: null, partialText: '' });
+    const e = harness();
+    assert.equal(e.mapper.accept({ type: 'result', subtype: 'future_x', is_error: true })?.status, 'error');
+});
+
+test('result usage plus modelUsage reports occupancy with the context window', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'result', subtype: 'success', is_error: false, result: 'ok',
+        usage: { input_tokens: 1200, output_tokens: 30, cache_read_input_tokens: 800 },
+        modelUsage: { 'claude-opus-5-5': { contextWindow: 200000 } } });
+    assert.deepEqual(h.mapper.contextUsage, { totalTokens: 2000, modelContextWindow: 200000 });
+});
