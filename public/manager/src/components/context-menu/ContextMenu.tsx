@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import './context-menu.css';
+import { createPortal } from 'react-dom';
 
 export type ContextMenuAction = {
     kind?: 'action';
@@ -58,6 +58,8 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
 }) {
     const menu = useRef<HTMLDivElement>(null);
     const restoreFocus = useRef<Element | null>(null);
+    /** Dismissal hands focus back to the opener; choosing an item leaves focus to the action. */
+    const restoreOnClose = useRef(true);
     const [position, setPosition] = useState<ContextMenuState | null>(null);
 
     useLayoutEffect(() => {
@@ -69,15 +71,16 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         const maxY = window.innerHeight - height - VIEWPORT_MARGIN;
         setPosition({
             x: Math.max(VIEWPORT_MARGIN, Math.min(state.x, maxX)),
-            y: Math.max(VIEWPORT_MARGIN, state.y > maxY ? Math.max(VIEWPORT_MARGIN, state.y - height) : state.y),
+            y: Math.max(VIEWPORT_MARGIN, Math.min(state.y > maxY ? state.y - height : state.y, maxY)),
         });
     }, [state]);
 
     useEffect(() => {
         if (!state) return;
         restoreFocus.current = document.activeElement;
+        restoreOnClose.current = true;
         const first = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
-        first?.focus();
+        first?.focus({ preventScroll: true });
         const onPointerDown = (event: PointerEvent) => {
             if (menu.current && event.target instanceof Node && menu.current.contains(event.target)) return;
             onClose();
@@ -96,7 +99,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
             window.removeEventListener('resize', onDismiss);
             window.removeEventListener('scroll', onDismiss, true);
             const previous = restoreFocus.current;
-            if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+            if (restoreOnClose.current && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
         };
     }, [state, onClose]);
 
@@ -108,7 +111,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         const index = items.indexOf(document.activeElement as HTMLButtonElement);
         const next = step === 'first' ? 0 : step === 'last' ? items.length - 1
             : (index + step + items.length) % items.length;
-        items[next]?.focus();
+        items[next]?.focus({ preventScroll: true });
     }
 
     function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -120,17 +123,17 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     }
 
     const shown = position ?? state;
-    return <div ref={menu} className={`jaw-context-menu${className ? ` ${className}` : ''}`} role="menu" aria-label={label}
+    return createPortal(<div ref={menu} className={`jaw-context-menu${className ? ` ${className}` : ''}`} role="menu" aria-label={label}
         style={{ left: shown.x, top: shown.y, visibility: position ? 'visible' : 'hidden' }}
         onKeyDown={onKeyDown} onContextMenu={event => event.preventDefault()}>
         {entries.map(entry => isAction(entry)
             ? <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled} title={entry.title}
                 className={`jaw-context-menu-item${entry.danger ? ' is-danger' : ''}`}
-                onClick={() => { onClose(); entry.onSelect(); }}>
+                onClick={() => { restoreOnClose.current = false; onClose(); entry.onSelect(); }}>
                 <span className="jaw-context-menu-icon" aria-hidden="true">{entry.icon}</span>
                 <span className="jaw-context-menu-label">{entry.label}</span>
                 {entry.shortcut && <kbd className="jaw-context-menu-shortcut" aria-hidden="true">{entry.shortcut}</kbd>}
             </button>
             : <div key={entry.id} className="jaw-context-menu-separator" role="separator" />)}
-    </div>;
+    </div>, document.body);
 }
