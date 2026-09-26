@@ -177,6 +177,25 @@ test('one reader and query serve sequential turns with captured jaw identity', a
     assert.equal(f.closed, 0); assert.equal(f.session.idle, true);
     assert.deepEqual(f.metadata[1].data.tokens, { input: 3, output: 4 });
 });
+test('a caller-chosen prompt UUID is the offered message uuid and the correlation key', async t => {
+    const f = await fixture(); t.after(() => f.session.close());
+    const uuid = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    await assert.rejects(f.session.send({ text: 'one' }, () => {}, { uuid: 'not-a-uuid' }), /claude_invalid_prompt_uuid/);
+    assert.equal(f.sent.length, 0);
+    const turn = f.session.send({ text: 'one' }, () => {}, { uuid });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((f.sent[0] as { uuid: string }).uuid, uuid);
+    f.output.push({ ...result('foreign'), user_message_uuids: ['11111111-1111-4111-8111-111111111111'] });
+    assert.equal((await turn).status, 'error', 'a result for another input UUID is not this turn');
+    const g = await fixture(); t.after(() => g.session.close());
+    const own = g.session.send({ text: 'two' }, () => {}, { uuid });
+    g.output.push({ ...result('mine'), user_message_uuids: [uuid] });
+    assert.equal((await own).finalText, 'mine');
+    const minted = g.session.send({ text: 'three' }, () => {});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.notEqual((g.sent[1] as { uuid: string }).uuid, uuid, 'without an option the session mints its own');
+    g.output.push(result('minted')); await minted;
+});
 test('concurrent input rejects without extra offer; unsupported steer never offers', async t => {
     const f = await fixture(); t.after(() => f.session.close());
     const turn = f.session.send({ text: 'one' }, () => {});
