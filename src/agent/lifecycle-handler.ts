@@ -403,6 +403,9 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         ? legacyUnattributedStop ? 'interrupted' : code === 0 ? 'done' : wasKilled ? 'interrupted' : 'error'
         : nativeOutcome.status === 'stopped' ? 'interrupted' : nativeOutcome.status;
     let runtimeFinalText: string | null = null;
+    // What the projection terminal shows. Differs from runtimeFinalText only when a
+    // public native final carried the interview tracker, which is stripped here.
+    let runtimeDisplayText: string | null = null;
     let runtimeEnded = false;
     const finalizeRun = (status: Exclude<TraceRunStatus, 'running'>, error?: string | null): void => {
         if (!runtimeEnded) {
@@ -414,7 +417,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                     status: nativeOutcome === undefined
                         ? stopped ? 'stopped' : status === 'error' ? 'error' : 'done'
                         : nativeOutcome.status,
-                    finalText: runtimeFinalText,
+                    finalText: runtimeDisplayText,
                     ...(error ? { error } : {}),
                 });
             } catch { console.warn('[runtime:projection] lifecycle observer failed'); }
@@ -707,13 +710,21 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const outputText = nativeOutcome === undefined ? resolveSpawnOutputText(ctx) : '';
     if (nativeOutcome !== undefined) {
         let finalContent = nativeOutcome.finalText;
+        // `finalContent` is what a reader sees and history stores; the interview
+        // tracker never reaches either. The raw text still goes back through
+        // resolve(), because the orchestrator pipeline parses the tracker from it.
+        let rawFinalContent = finalContent;
         if (mainManaged && !opts.internal) {
             const safeTools = sanitizeToolLogForDurableStorage(
                 mergeLatestTools(ctx.toolLog, ownsLiveRun() ? getLiveRun(liveScope).toolLog : [], nativeTraceRunId || ''),
             );
             if (finalContent !== null) {
                 finalContent = applyOutputPolicy(finalContent, { scope: 'main' }).text;
-                evaluateRecordPending(ctx.toolLog, finalContent);
+                rawFinalContent = finalContent;
+                // The sanitizer also trims; a final with no tracker keeps its exact text.
+                const withoutTracker = stripInterviewTracker(finalContent);
+                if (withoutTracker !== finalContent.trim()) finalContent = withoutTracker;
+                evaluateRecordPending(ctx.toolLog, rawFinalContent);
                 const structuredFence = scanStructuredFence(finalContent);
                 if (structuredFence.status === 'incomplete') {
                     console.warn('[lifecycle] assistant output contains incomplete structured fence before durable insert', {
@@ -749,7 +760,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 : undefined;
             // Even absent/empty finals must terminate existing UI/collectors.
             // Only compatibility text collapses whitespace; never the outcome.
-            handoffRuntimeOutcome(ctx, { ...nativeOutcome, finalText: finalContent });
+            handoffRuntimeOutcome(ctx, { ...nativeOutcome, finalText: rawFinalContent });
             ctx.runtimeTerminalAttempted = true;
             const compatibilityText = runtimeCompatibilityText(finalContent);
             // A failed native turn with nothing to show reached the user as the
@@ -782,7 +793,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 }
             }
         }
-        runtimeFinalText = finalContent;
+        runtimeFinalText = rawFinalContent;
+        runtimeDisplayText = finalContent;
     } else if (outputText || (code === 0 && ctx.toolLog.length > 0)) {
         const cleaned = (outputText || ctx.fullText.trim())
             .replace(/<\/?tool_call>/g, '')
@@ -895,6 +907,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             }
         }
         runtimeFinalText = finalContent;
+        runtimeDisplayText = finalContent;
     } else if (code !== 0 && wasKilled && !wasSteer && ctx.stallReason) {
         // Watchdog kills carry a useful reason, but `wasKilled` intentionally
         // bypasses the generic retry/fallback path below. Surface that reason
