@@ -681,7 +681,16 @@ updates append once to stable item IDs. Older materialized history adds missing
 rows without overwriting current content or advancing the live cursor.
 
 The composer stays editable while a turn runs. Stop targets the captured turn
-and epoch. An uncertain prompt acknowledgement offers explicit retry of the
+and epoch. While a synchronized Claude session streams, `Send follow-up` sits beside Stop
+and posts `/steer` with that turn's captured `turnId`, `epoch` and a fresh key; an idle
+session still sends `/prompt`, and any other busy runtime offers Stop only. The attempt
+lives in the draft's in-memory `steer` field, never in `operation`, `retry`, `awaitingTurn`
+or sessionStorage, so its completion cannot overwrite a Stop in progress. Both Send buttons
+close while it is in flight (`Sending follow-up…`), and Send follow-up closes while Stop is
+pending or unconfirmed. The input clears only on a matching receipt or the follow-up's own
+`user_message`, and only if it was not edited since; a 4xx keeps the text with its reason,
+and a 503 or lost response reads `Follow-up delivery not confirmed` and is never resent. A
+follow-up the turn never consumed reads `You · Delivery not confirmed`. An uncertain prompt acknowledgement offers explicit retry of the
 original key and text; reconnect never resends automatically. Each approval has
 its own pending/error state and forwards the native opaque choice. Session rows
 support rename, archive/restore, current-workspace filtering and paging.

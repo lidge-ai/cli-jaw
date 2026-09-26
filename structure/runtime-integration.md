@@ -194,7 +194,7 @@ dev Electron or packaged-sidecar QA.
 
 ## Internal Claude SDK session core
 
-`runtime/claude-sdk-session.ts` owns one persistent query from the optional, exact-pinned `@anthropic-ai/claude-agent-sdk@0.3.282`. One reader consumes sequential parent-text turns; explicit resume is passed to a new query. The factory captures prepared options, environment and cancellation before lazy loading. The input stream has one unconsumed text slot (at most1MiB) and one active turn; this does not bound the SDK's internal buffers or provide in-band steer.
+`runtime/claude-sdk-session.ts` owns one persistent query from the optional, exact-pinned `@anthropic-ai/claude-agent-sdk@0.3.282`. One reader consumes sequential parent-text turns; explicit resume is passed to a new query. The factory captures prepared options, environment and cancellation before lazy loading. The input stream has one unconsumed text slot (at most1MiB) and one active turn; this does not bound the SDK's internal buffers. Jaw sessions have no in-band steer; only a Code session (`inBandSteer`, set by `src/code-mode/providers/claude.ts` alone) accepts one follow-up per turn, described under [Native Code sessions](#native-code-sessions).
 
 Turn bindings separate jaw IDs from the provider session ID. Bounded terminal dedupe, explicit user-message UUID checks and owner rechecks prevent stale identified results from completing a replacement turn. Anonymous output still relies on the SDK's single-query ordering contract. Final text remains authoritative, including empty versus absent; partial text is never promoted after error or Stop. Cleanup fences admission immediately and succeeds only after reader completion and observed owned-process closure. Native Windows launch is covered by resolver simulations, not installed-provider proof.
 
@@ -210,7 +210,7 @@ Plain release also fences a request query immediately. Failed or timed-out close
 never authorizes reuse; the existing SDK cleanup owner retains its fence. The
 default pooled lifetime and its idle reuse remain unchanged.
 
-Stop hard-closes the query, and the existing default steer policy resumes with interrupted context after MESSAGE persistence and exit-settle. Explicit followup/collect queues; there is no native-input hook. No-start failure and Stop-before-acquisition use one cached fallback projection, started before compatibility completion and closed once. Exceptional trace finalization updates only a still-running header, preserving a prior lifecycle's status/timestamp/error.
+Stop hard-closes the query, and the existing default steer policy resumes with interrupted context after MESSAGE persistence and exit-settle. Explicit followup/collect queues; jaw has no native-input hook (Code's in-band follow-up is a separate, Code-only path). No-start failure and Stop-before-acquisition use one cached fallback projection, started before compatibility completion and closed once. Exceptional trace finalization updates only a still-running header, preserving a prior lifecycle's status/timestamp/error.
 
 Current-message partial text still resets on a new assistant message. Interruption
 uses a separate bounded view of the latest parent message containing a text block:
@@ -497,6 +497,32 @@ Thinking is fixed when the query opens (on: `thinking: {type: 'adaptive', displa
 or effort change, or a handle without live reconfiguration retires the runtime and the next
 turn reopens with the new options. A Claude row without a stored value reads as on. Other
 providers keep the restart-on-change rule.
+Code Claude takes one in-band follow-up per streaming turn (`POST /sessions/:id/steer`);
+jaw main and worker turns keep kill/resume steering. The follow-up is another `SDKUserMessage`
+on the live input, never with `priority` (the CLI default `next`; `now` would abort the turn),
+offered only after a top-level frame echoed a `user_message_uuids` array containing the
+primary uuid; a singular-only or absent echo keeps it `not-ready`. The CLI (probed on
+2.1.283) folds a follow-up offered during a tool run into the running agent loop, so one
+result echoes both uuids, and runs one offered during a plain answer as its own CLI turn
+after the first result, a result per uuid. The runtime keeps the turn's accepted uuids and
+settles the logical turn only when results have echoed every one. An intermediate result
+records that segment's answer as final text and leaves the transcript, mapper, tools and
+notices open; it emits no usage or metadata, and the next `system:init` continues the same
+turn, so the last result carries the outcome and usage. A result with no echo while a
+follow-up waits fails the session `claude_followup_unconfirmed` rather than guessing.
+Acceptance re-arms the turn timer once, bounding a logical turn by two prompt windows.
+The store reserves the turn's one follow-up in `code_steers` (`reserved`, `committed`,
+`rejected`, `unknown`; a partial unique index over the three live states) before the native
+offer, refuses what the turn budget could not store, and commits the same-turn `user_message`
+(`<turnId>:steer:<key>`) only after native acceptance. A refusal before acceptance spends the
+key without an event; a failure after it marks the row `unknown` and fails the turn through
+the persistence path, or only answers `steer_outcome_unknown` when the turn had already
+ended. At settlement, read after cleanup, the runtime names accepted follow-ups no result
+consumed and their items gain `phase: 'unknown'`; a fold is echoed only on its result, so
+this means delivery not confirmed rather than undelivered. Known limitation: a follow-up's
+own CLI turn still passes the exact permission-mode check on its `system:init`, so if the CLI
+changed its own mode in the first segment (ExitPlanMode, a `setMode` session-grant
+suggestion) the logical turn fails `claude_permission_mode_not_confirmed`.
 Provider live-model inventory (the Cursor and Grok CLI probes) is owned by host
 activation — `CodeHost.prime()`, called once at server startup — never by a
 catalog read or lazy `host.get()`.
