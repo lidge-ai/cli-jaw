@@ -23,6 +23,8 @@ const rejected = (error: unknown) => error instanceof CodeClientError && error.s
 // means the server could not record it, so it never will.
 const FOLLOW_UP_UNCONFIRMED = 'Follow-up delivery not confirmed. It was not resent; it appears in the conversation if Claude received it.';
 const FOLLOW_UP_UNRECORDED = 'Follow-up delivery not confirmed. Claude may have received it, but it will not appear in the conversation. It was not resent.';
+// A rollback posts the revision and epoch the user chose the row at; PATCH's settings copy does not fit its conflict.
+const ROLLBACK_CONFLICT = 'The conversation changed since you chose this point. Review it and try again.';
 const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !current
     || incoming.epoch > current.epoch || (incoming.epoch === current.epoch && (incoming.sequence > current.sequence
         || (incoming.sequence === current.sequence && incoming.revision >= current.revision)));
@@ -866,7 +868,7 @@ export class CodeController {
             draft.operation = { kind: 'idle', error: null };
         } catch (error) {
             if (error instanceof CodeClientError && error.session?.sessionId === id) { this.observe(error.session); this.accept(error.session); }
-            draft.operation = { kind: 'idle', error: message(error) };
+            draft.operation = { kind: 'idle', error: error instanceof CodeClientError && error.code === 'revision_conflict' ? ROLLBACK_CONFLICT : message(error) };
         }
         this.notify(); this.scheduleIndex();
         if (this.active) await this.sync(id, true);

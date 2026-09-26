@@ -73,7 +73,7 @@ const ERROR_COPY: Record<string, string> = {
     steer_command_unsupported: 'A slash command cannot be sent as a follow-up. Send it after this turn finishes.',
     session_not_found: 'This session is no longer available. Its local draft is retained.',
     rollback_unavailable: 'Rollback is unavailable after this conversation was compacted, or while its history cannot be read.',
-    rollback_boundary_unavailable: 'This turn can no longer be a rollback point: its history was compacted or predates rollback.',
+    rollback_boundary_unavailable: "This turn can't be a rollback point: it or a later turn never reached Claude, or the conversation was compacted.",
     rollback_noop: 'This is already the latest turn, so there is nothing to roll back.',
     rollback_target_not_found: 'This message is no longer in the conversation. Refreshing the session.',
     cleanup_pending: 'The previous runtime is still closing. Try again in a moment.',

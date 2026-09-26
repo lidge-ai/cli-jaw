@@ -1126,6 +1126,24 @@ test('a rollback seen from elsewhere retires a send whose turn it removed and re
     assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original);
 });
 
+test('a rollback refused for a revision conflict says the conversation changed, not the session settings', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const moved = { ...f.claude, revision: 5 };
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'revision_conflict', session: moved }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.controller.getModel().operation.error, 'The conversation changed since you chose this point. Review it and try again.');
+    assert.equal(f.controller.getModel().session?.revision, 5, 'the current session is taken from the refusal');
+    assert.equal(f.controller.getModel().items.length, 4, 'the transcript is kept');
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'rollback_boundary_unavailable' }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.match(f.controller.getModel().operation.error ?? '', /never reached Claude, or the conversation was compacted/);
+    f.intercept(call => call.path === '/sessions/a' && call.method === 'PATCH' ? response({ ok: false, error: 'revision_conflict', session: moved }, 409) : undefined);
+    await assert.rejects(f.controller.rename('a', 'renamed'));
+    assert.equal(f.controller.getModel().operation.error, 'Session settings changed elsewhere. Review the updated values and try again.',
+        'PATCH keeps its own copy');
+});
+
 test('a follow-up in flight holds a rollback back, and an unconfirmed one leaves with the turn a rollback removed', async t => {
     const f = fixture(t);
     const rollback = { available: true, reason: null, sinceSequence: 1 };

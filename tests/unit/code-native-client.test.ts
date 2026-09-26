@@ -136,7 +136,7 @@ test('rollback posts only the opaque row, revision and epoch, and a refusal carr
         assert.equal(calls[0]!.url, 'http://127.0.0.1:4567/api/code/sessions/s%2Fa/rollback');
         assert.equal(calls[0]!.init.method, 'POST');
         assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { expectedRevision: 3, expectedEpoch: 9, upToItemId: 'turn:user' });
-        for (const [code, copy] of [['rollback_unavailable', /compacted/], ['rollback_boundary_unavailable', /no longer be a rollback point/],
+        for (const [code, copy] of [['rollback_unavailable', /compacted/], ['rollback_boundary_unavailable', /can't be a rollback point: it or a later turn never reached Claude, or the conversation was compacted/],
             ['rollback_noop', /latest turn/]] as const) {
             refuse = { error: code };
             await assert.rejects(client.rollbackSession('s', { expectedRevision: 3, expectedEpoch: 9, upToItemId: 'turn:user' }),
