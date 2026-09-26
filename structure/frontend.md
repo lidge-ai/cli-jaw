@@ -696,7 +696,13 @@ while a 503 `steer_outcome_unknown` says Claude may have received it but it will
 follow-up the turn never consumed reads `You · Delivery not confirmed`. An uncertain prompt acknowledgement offers explicit retry of the
 original key and text; reconnect never resends automatically. Each approval has
 its own pending/error state and forwards the native opaque choice. Session rows
-support rename, archive/restore, current-workspace filtering and paging.
+have no visible actions button: right-click (or Shift+F10 / the ContextMenu key on
+the focused row) opens a menu with Rename, Pin/Unpin, Mark as unread/read,
+Archive/Restore, Resume and Copy session ID / working directory; hover or
+focus-within instead shows small Pin and Archive icon buttons at the row's right
+edge, replacing the status text. Rows also support current-workspace filtering and paging.
+A **Pinned** section sits above every group in both views, newest pin first;
+pinned rows leave their workspace or day group rather than duplicating.
 
 The session list has two views, modeled on the Codex desktop sidebar. **Projects**
 (the default) groups sessions under their workspace folder, newest session first
@@ -709,8 +715,10 @@ status instead. The **bell** in the header switches to **Recent activity**, the 
 the reader chose to see movement in: a **Priority** section with unread sessions
 (newest completion first), then Today, Yesterday and Earlier by last activity at
 local midnight, each row showing its workspace name. A session is unread when
+`markedUnread` is set (the reader marked it from the row menu) or
 `lastTurnCompletedAt > lastVisitedAt`; never-opened, archived and the currently open
-session are never unread. Unread rows and the bell (when anything is unread) carry
+session are never unread. Marking read through the menu or visiting the session
+clears both. Unread rows and the bell (when anything is unread) carry
 a blue dot. The chosen view persists in `localStorage` (`jaw.code.sidebarView`). There is no All / This cwd toggle (Projects already
 scopes by workspace); a search icon left of the bell opens the search field together
 with an Archived switch, and closing it clears the query so nothing stays filtered

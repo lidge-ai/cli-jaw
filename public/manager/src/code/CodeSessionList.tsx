@@ -1,12 +1,16 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { CodeSessionInfo } from '../../../../src/code-mode/wire';
 import type { CodeControllerModel } from './code-controller-types';
 import { CODE_RUNTIME_LABELS, CODE_SESSION_LABELS, codeCanResume, codeSessionBusy } from './code-types';
 import {
     CODE_ACTIVITY_BUCKET_LABELS, codeSessionAttention, codeSessionAttentionLabel, codeSessionUnread, codeWorkspaceName,
-    groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace,
+    comparePinnedCodeSessions, groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace,
 } from './session-order';
 import { DEFAULT_MANAGER_SHORTCUT_KEYMAP, formatShortcut } from '../manager-shortcuts';
+import { ContextMenu, useContextMenu, type ContextMenuEntry } from '../components/context-menu/ContextMenu';
+import { ArchiveGlyph, CopyGlyph, EyeGlyph, PencilGlyph, PinGlyph, PlayGlyph } from '../components/context-menu/icons';
+import { copyText } from '../clipboard/copy-text';
 
 const NEW_SESSION_SHORTCUT = DEFAULT_MANAGER_SHORTCUT_KEYMAP.newCodeSession;
 
@@ -43,16 +47,20 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
     const [title, setTitle] = useState(s.title ?? '');
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const menu = useContextMenu();
     const guard = useRef(false);
     const selectButton = useRef<HTMLButtonElement>(null);
     const errorId = useId();
     const active = c.selectedId === s.sessionId;
     const busy = codeSessionBusy(s);
+    const archived = s.archivedAt !== null;
+    const pinned = s.pinnedAt !== null;
     const count = active && c.synced ? c.permissions.length : s.pendingPermissionCount;
     const attention = codeSessionAttention(count);
     const unread = !active && codeSessionUnread(s);
     const working = c.workingIds?.has(s.sessionId) ?? false;
     const waiting = working && s.status === 'idle';
+    const name = s.title || 'Untitled session';
     async function action(run: () => Promise<void>, after?: () => void) {
         if (guard.current) return;
         guard.current = true; setPending(true); setError(null);
@@ -61,27 +69,77 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
         finally { guard.current = false; setPending(false); }
     }
     function finishRename() { setRenaming(false); selectButton.current?.focus(); }
-    return <li className="code-session-row">
-        <button ref={selectButton} type="button" className={`code-session-item${active ? ' active' : ''}`}
-            aria-current={active ? 'true' : undefined} onClick={() => void action(() => c.selectSession(s.sessionId))}>
-            <span className="code-session-cwd">
-                {unread && <span className="code-session-unread-dot" role="img" aria-label="Unread" />}
-                {s.title || 'Untitled session'}
+    async function copy(value: string) {
+        const result = await copyText(value);
+        if (!result.ok) throw new Error(result.error ?? 'Copy failed.');
+    }
+    const entries: ContextMenuEntry[] = [
+        { id: 'rename', label: 'Rename', icon: <PencilGlyph />, disabled: pending || busy,
+            ...(busy ? { title: 'Stop before renaming' } : {}),
+            onSelect: () => { setTitle(s.title ?? ''); setRenaming(true); } },
+        { id: 'pin', label: pinned ? 'Unpin' : 'Pin', icon: <PinGlyph />, disabled: pending,
+            onSelect: () => void action(() => c.pin(s.sessionId, !pinned)) },
+        { id: 'unread', label: unread ? 'Mark as read' : 'Mark as unread', icon: <EyeGlyph />, disabled: pending || active,
+            ...(active ? { title: 'The open session is already read' } : {}),
+            onSelect: () => void action(() => c.markUnread(s.sessionId, !unread)) },
+        { id: 'archive', label: archived ? 'Restore' : 'Archive', icon: <ArchiveGlyph />, disabled: pending || busy,
+            ...(busy ? { title: 'Stop before archiving' } : {}),
+            onSelect: () => void action(() => c.archive(s.sessionId, !archived)) },
+        ...(codeCanResume(s) ? [
+            { kind: 'separator', id: 'resume-sep' } as const,
+            { id: 'resume', label: 'Resume', icon: <PlayGlyph />, disabled: pending || !active || !c.synced || c.pending,
+                title: !active ? 'Select this session to resume it' : 'Resume without resending a prompt',
+                onSelect: () => void action(c.resume) },
+        ] : []),
+        { kind: 'separator', id: 'copy-sep' },
+        { id: 'copy-id', label: 'Copy session ID', icon: <CopyGlyph />,
+            onSelect: () => void action(() => copy(s.sessionId)) },
+        { id: 'copy-cwd', label: 'Copy working directory', icon: <CopyGlyph />,
+            onSelect: () => void action(() => copy(s.cwd)) },
+    ];
+    function openMenuFromKey(event: ReactKeyboardEvent<HTMLElement>) {
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) menu.openAt(event);
+    }
+    return <li className="code-session-row" onContextMenu={menu.openAt}>
+        <div className="code-session-item-wrap">
+            <button ref={selectButton} type="button" className={`code-session-item${active ? ' active' : ''}`}
+                aria-current={active ? 'true' : undefined} onKeyDown={openMenuFromKey}
+                onClick={() => void action(() => c.selectSession(s.sessionId))}>
+                <span className="code-session-cwd">
+                    {unread && <span className="code-session-unread-dot" role="img" aria-label="Unread" />}
+                    {name}
+                </span>
+                {/* Projects view already names the workspace in the group heading. */}
+                <span className="code-session-meta" title={s.cwd}>{view === 'activity'
+                    ? `${codeWorkspaceName(s.cwd)} · ${CODE_RUNTIME_LABELS[s.provider]}` : CODE_RUNTIME_LABELS[s.provider]}</span>
+                {/* Ready is the common case and stays silent. A status on every row
+                    is a status on no row, and it costs the one session that is
+                    actually doing something its visibility. */}
+                <span className={`code-session-status code-session-status-${waiting ? 'starting' : s.status}`}
+                    data-quiet={s.status === 'idle' && !working ? 'true' : undefined}>
+                    {working && <span className="code-session-spinner" aria-hidden="true" />}
+                    {waiting ? CODE_SESSION_LABELS.starting : CODE_SESSION_LABELS[s.status]}</span>
+                <span className={`code-session-attention code-session-attention-${attention.kind}`}
+                    data-quiet={attention.kind === 'none' ? 'true' : undefined}>{codeSessionAttentionLabel(attention)}</span>
+            </button>
+            {/* Pin and archive replace the status text on hover or keyboard focus,
+                Codex-style; opacity keeps them tabbable instead of display:none. */}
+            <span className="code-session-hover-actions">
+                <button type="button" className={`code-session-hover-btn${pinned ? ' is-on' : ''}`}
+                    aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`} aria-pressed={pinned}
+                    title={pinned ? 'Unpin' : 'Pin'} disabled={pending}
+                    onClick={event => { event.stopPropagation(); void action(() => c.pin(s.sessionId, !pinned)); }}>
+                    <PinGlyph />
+                </button>
+                <button type="button" className="code-session-hover-btn"
+                    aria-label={archived ? `Restore ${name}` : `Archive ${name}`}
+                    title={busy ? 'Stop before archiving' : archived ? 'Restore' : 'Archive'} disabled={pending || busy}
+                    onClick={event => { event.stopPropagation(); void action(() => c.archive(s.sessionId, !archived)); }}>
+                    <ArchiveGlyph />
+                </button>
             </span>
-            {/* Projects view already names the workspace in the group heading. */}
-            <span className="code-session-meta" title={s.cwd}>{view === 'activity'
-                ? `${codeWorkspaceName(s.cwd)} · ${CODE_RUNTIME_LABELS[s.provider]}` : CODE_RUNTIME_LABELS[s.provider]}</span>
-            {/* Ready is the common case and stays silent. A status on every row
-                is a status on no row, and it costs the one session that is
-                actually doing something its visibility. */}
-            <span className={`code-session-status code-session-status-${waiting ? 'starting' : s.status}`}
-                data-quiet={s.status === 'idle' && !working ? 'true' : undefined}>
-                {working && <span className="code-session-spinner" aria-hidden="true" />}
-                {waiting ? CODE_SESSION_LABELS.starting : CODE_SESSION_LABELS[s.status]}</span>
-            <span className={`code-session-attention code-session-attention-${attention.kind}`}
-                data-quiet={attention.kind === 'none' ? 'true' : undefined}>{codeSessionAttentionLabel(attention)}</span>
-        </button>
-        {renaming ? <form className="code-session-rename" onSubmit={event => {
+        </div>
+        {renaming && <form className="code-session-rename" onSubmit={event => {
             event.preventDefault(); if (title.trim()) void action(() => c.rename(s.sessionId, title.trim()), finishRename);
         }}>
             <input autoFocus aria-label="Session title" aria-describedby={error ? errorId : undefined} value={title} disabled={pending}
@@ -90,18 +148,8 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
                 }} />
             <button type="submit" disabled={pending || !title.trim()}>Save</button>
             <button type="button" disabled={pending} onClick={finishRename}>Cancel</button>
-        </form> : <details className="code-session-actions" key={`${c.selectedId}:${s.sessionId}`}>
-            <summary aria-label={`Actions for ${s.title || 'Untitled session'}`}>Actions</summary>
-            <div>
-                <button type="button" disabled={pending || busy} onClick={() => { setTitle(s.title ?? ''); setRenaming(true); }}>Rename</button>
-                <button type="button" disabled={pending || busy} title={busy ? 'Stop before archiving' : undefined}
-                    onClick={() => void action(() => c.archive(s.sessionId, s.archivedAt === null))}>{s.archivedAt === null ? 'Archive' : 'Restore'}</button>
-                {codeCanResume(s) && <button type="button" disabled={pending || !active || !c.synced || c.pending}
-                    title={!active ? 'Select this session to resume it' : 'Resume without resending a prompt'}
-                    onClick={() => void action(c.resume)}>Resume</button>}
-                {busy && <small>Stop before changing session metadata.</small>}
-            </div>
-        </details>}
+        </form>}
+        <ContextMenu state={menu.state} entries={entries} label={`Actions for ${name}`} onClose={menu.close} />
         {pending && <span className="code-session-view-hint" role="status">Updating session…</span>}
         {error && <div id={errorId} className="code-session-list-error" role="alert">{error}</div>}
     </li>;
@@ -131,12 +179,14 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
     // answering a prompt never moves a row under the reader's cursor. Activity is the
     // reader's explicit choice: unread first, then last activity by day.
     const anyUnread = c.sessions.some(row => row.sessionId !== c.selectedId && codeSessionUnread(row));
-    const live = visible.filter(row => row.archivedAt === null);
+    const pinned = visible.filter(row => row.archivedAt === null && row.pinnedAt !== null).sort(comparePinnedCodeSessions);
+    const live = visible.filter(row => row.archivedAt === null && row.pinnedAt === null);
     const archived = visible.filter(row => row.archivedAt !== null);
     const groups: { key: string; title: string; cwd: string | null; sessions: CodeSessionInfo[] }[] = view === 'activity'
         ? groupCodeSessionsByActivity(live, Date.now(), c.selectedId).map(group => ({
             key: group.bucket, title: CODE_ACTIVITY_BUCKET_LABELS[group.bucket], cwd: null, sessions: group.sessions }))
         : groupCodeSessionsByWorkspace(live).map(group => ({ key: group.cwd, title: group.cwd, cwd: group.cwd, sessions: group.sessions }));
+    if (pinned.length) groups.unshift({ key: 'pinned', title: 'Pinned', cwd: null, sessions: pinned });
     if (archived.length) groups.push({ key: 'archived', title: 'Archived', cwd: null, sessions: groupCodeSessions(archived).flatMap(group => group.sessions) });
     // The chord resolves through the manager shortcut system (rebindable in
     // Settings); the runner re-broadcasts it here so Code mode can be absent

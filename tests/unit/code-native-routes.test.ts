@@ -483,6 +483,26 @@ test('POST and PATCH carry a boolean thinking switch and refuse anything else', 
     });
 });
 
+test('PATCH carries boolean pinned and unread sidebar flags and refuses anything else', async () => {
+    await server(async (url, f) => {
+        for (const flag of [{ pinned: true }, { pinned: false }, { unread: true }, { unread: false }]) {
+            const input = { expectedRevision: 2, ...flag };
+            const response = await request(`${url}/sessions/session-one`, 'PATCH', input);
+            assert.equal(response.status, 200);
+            assert.deepEqual(f.calls.at(-1), { method: 'patch', args: ['session-one', input] });
+        }
+        for (const [body, code] of [
+            [{ expectedRevision: 2, pinned: 'yes' }, 'invalid_pinned'],
+            [{ expectedRevision: 2, unread: 1 }, 'invalid_unread'],
+            [{ expectedRevision: 2, pinned: true, extra: 1 }, 'unknown_field'],
+        ] as const) {
+            const refused = await request(`${url}/sessions/session-one`, 'PATCH', body);
+            assert.equal(refused.status, 400);
+            assert.equal((await refused.json()).error, code);
+        }
+    });
+});
+
 test('steer admits a follow-up for the captured turn and keeps every refusal a refusal', async () => {
     await server(async (url, f) => {
         const input = { text: 'also run the tests\n', clientTurnKey: 'steer-one', turnId: 'turn-one', epoch: 4 };

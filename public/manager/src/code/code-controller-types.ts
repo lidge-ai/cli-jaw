@@ -64,6 +64,10 @@ export interface CodeControllerModel {
     rollbackSession(itemId: string): Promise<void>;
     rename(id: string, title: string): Promise<void>;
     archive(id: string, archived: boolean): Promise<void>;
+    /** Sidebar pin/unpin; allowed while the session is busy. */
+    pin(id: string, pinned: boolean): Promise<void>;
+    /** Sidebar mark unread/read; allowed while the session is busy. */
+    markUnread(id: string, unread: boolean): Promise<void>;
     answer(permission: CodePermissionRequest, optionId: string): Promise<void>;
     refresh(): Promise<void>;
     loadMoreSessions(): Promise<void>;

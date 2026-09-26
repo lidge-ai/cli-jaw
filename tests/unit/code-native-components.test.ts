@@ -43,7 +43,8 @@ function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return { sessionId: 's-a', provider: 'codex-app', cwd: '/work/alpha', title: 'Alpha', model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false, efforts: ['low', 'high'], permissionModes: ['ask', 'auto'] },
-        epoch: 2, sequence: 10, revision: 4, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch };
+        epoch: 2, sequence: 10, revision: 4, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
+        pinnedAt: null, markedUnread: false, ...patch };
 }
 function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
     const s = session();
@@ -56,7 +57,7 @@ function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
     operation: { kind: 'idle', error: null }, retryText: null, canRetrySameSend: false, permissionOperations: {},
     hasMoreSessions: false, hasOlderHistory: false, filter: { scope: 'all', archived: false },
     creationUnknown: false, startAnotherSession() {}, newSession() {}, async selectSession() {}, setInput() {}, async setSelection() {}, async pickWorkspace() {},
-    async send() {}, async stop() {}, async resume() {}, async rename() {}, async archive() {}, async answer() {},
+    async send() {}, async stop() {}, async resume() {}, async rename() {}, async archive() {}, async pin() {}, async markUnread() {}, async answer() {},
     async refresh() {}, async loadMoreSessions() {}, async loadOlderHistory() {}, setFilter() {}, clearError() {}, async retrySameSend() {}, ...patch };
 }
 function button(container: ParentNode, name: string) {
@@ -276,16 +277,84 @@ test('stale permission ownership renders choices disabled without answering', bo
     await click(button(h.container, 'Read this file')); assert.equal(answers, 0); assert.equal(button(h.container, 'Read this file').disabled, true);
 });
 
+// The row menu portals to document.body, so queries target the document, not the harness container.
+async function openRowMenu(h: { container: HTMLElement }) {
+    const row = h.container.querySelector('.code-session-row'); assert.ok(row, 'a session row exists');
+    await act(async () => row.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 8 })));
+    const menu = document.querySelector('.jaw-context-menu'); assert.ok(menu, 'right-click opens the row menu');
+    return menu;
+}
+const rowMenu = () => document.querySelector('.jaw-context-menu');
 test('list reports unknown attention, preserves row on failed archive, and supports Escape rename', bounded, async t => {
     const h = await surface(t); const calls: unknown[] = [];
     const c = model({ synced: false, async archive(id, archived) { calls.push([id, archived]); throw Error('Revision changed. Refresh session.'); } });
     await h.render(createElement(CodeSessionList, { controller: c }));
     assert.match(h.container.textContent ?? '', /Approval status unknown/);
-    await click(button(h.container, 'Rename'));
+    await openRowMenu(h);
+    await click(button(rowMenu()!, 'Rename'));
     const title = h.container.querySelector('input[aria-label="Session title"]'); assert.ok(title);
     await key(title, 'Escape'); assert.equal(h.container.querySelector('input[aria-label="Session title"]'), null);
-    await click(button(h.container, 'Archive')); assert.deepEqual(calls, [['s-a', true]]);
+    await openRowMenu(h);
+    await click(button(rowMenu()!, 'Archive')); assert.deepEqual(calls, [['s-a', true]]);
     assert.match(h.container.textContent ?? '', /Revision changed/); assert.match(h.container.textContent ?? '', /Alpha/);
+});
+
+test('a session row has no Actions disclosure; its menu opens on right-click and the menu key', bounded, async t => {
+    const h = await surface(t);
+    // A suspended session is the resumable state: Resume joins the menu.
+    const suspended = session({ status: 'suspended' });
+    await h.render(createElement(CodeSessionList, { controller: model({ sessions: [suspended], session: suspended }) }));
+    assert.equal(h.container.querySelector('summary'), null, 'no disclosure button is rendered on a row');
+    assert.equal(rowMenu(), null);
+    const menu = await openRowMenu(h);
+    const labels = [...menu.querySelectorAll('[role="menuitem"]')].map(node => node.textContent?.trim());
+    assert.deepEqual(labels, ['Rename', 'Pin', 'Mark as unread', 'Archive', 'Resume', 'Copy session ID', 'Copy working directory']);
+    assert.ok(menu.querySelectorAll('[role="separator"]').length >= 1);
+    await key(document.activeElement!, 'Escape');
+    assert.equal(rowMenu(), null, 'Escape closes the menu');
+    // Shift+F10 on the focused row opens the same menu for keyboard users.
+    const rowButton = h.container.querySelector<HTMLButtonElement>('.code-session-item'); assert.ok(rowButton);
+    await act(async () => rowButton.focus());
+    await key(rowButton, 'F10', { shiftKey: true });
+    assert.ok(rowMenu(), 'Shift+F10 opens the row menu');
+    await key(document.activeElement!, 'Escape');
+    assert.equal(rowMenu(), null, 'Escape closes the keyboard-opened menu too');
+});
+
+test('hover buttons pin and archive the row without an extra click target on the surface', bounded, async t => {
+    const h = await surface(t); const calls: unknown[] = [];
+    const s = session();
+    const c = model({ sessions: [s], async pin(id, pinned) { calls.push(['pin', id, pinned]); }, async archive(id, archived) { calls.push(['archive', id, archived]); } });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const actions = h.container.querySelector('.code-session-hover-actions'); assert.ok(actions);
+    await click(button(actions, 'Pin Alpha')); assert.deepEqual(calls, [['pin', 's-a', true]]);
+    await click(button(actions, 'Archive Alpha')); assert.deepEqual(calls, [['pin', 's-a', true], ['archive', 's-a', true]]);
+    const pinned = session({ pinnedAt: 7 });
+    await h.render(createElement(CodeSessionList, { controller: { ...c, sessions: [pinned] } }));
+    const pin = button(h.container.querySelector('.code-session-hover-actions')!, 'Unpin Alpha');
+    assert.equal(pin.getAttribute('aria-pressed'), 'true', 'a pinned row shows the pressed pin state');
+    const archived = session({ archivedAt: 9 });
+    await h.render(createElement(CodeSessionList, { controller: { ...c, sessions: [archived], filter: { scope: 'all', archived: true } } }));
+    await click(button(h.container.querySelector('.code-session-hover-actions')!, 'Restore Alpha'));
+    assert.deepEqual(calls.at(-1), ['archive', 's-a', false]);
+});
+
+test('pinned rows lead both views under one Pinned group, newest pin first and never duplicated', bounded, async t => {
+    const h = await surface(t);
+    const now = Date.now();
+    const c = model({ selectedId: null, session: null, sessions: [
+        session({ sessionId: 's-plain', title: 'Plain', cwd: '/work/alpha', createdAt: now - 10, lastUsedAt: now }),
+        session({ sessionId: 's-old-pin', title: 'OldPin', cwd: '/work/beta', pinnedAt: 100, createdAt: now - 20, lastUsedAt: now - 1 }),
+        session({ sessionId: 's-new-pin', title: 'NewPin', cwd: '/work/alpha', pinnedAt: 200, createdAt: now - 30, lastUsedAt: now - 2 }),
+    ] });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const titles = () => [...h.container.querySelectorAll('.code-session-group-title')].map(node => node.textContent);
+    const order = () => [...h.container.querySelectorAll('.code-session-cwd')].map(node => node.textContent);
+    assert.equal(titles()[0], 'Pinned');
+    assert.deepEqual(order(), ['NewPin', 'OldPin', 'Plain']);
+    await click(button(h.container, 'Recent activity'));
+    assert.equal(titles()[0], 'Pinned');
+    assert.deepEqual(order(), ['NewPin', 'OldPin', 'Plain'], 'Activity keeps the same pinned group without duplication');
 });
 
 test('workbench sibling identities stay unique through rerenders and selected-session changes', bounded, async t => {
@@ -511,7 +580,8 @@ test('failed rename keeps the edited title and inline error until explicit cance
     await h.render(createElement(CodeSessionList, { controller: model({ async rename(id, title) {
         calls.push([id, title]); throw Error('Title update rejected');
     } }) }));
-    await click(button(h.container, 'Rename'));
+    await openRowMenu(h);
+    await click(button(rowMenu()!, 'Rename'));
     const input = h.container.querySelector<HTMLInputElement>('[aria-label="Session title"]'); assert.ok(input);
     await act(async () => {
         Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!.call(input, 'My edited title');

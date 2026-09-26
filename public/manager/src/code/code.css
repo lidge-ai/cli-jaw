@@ -775,9 +775,7 @@
     white-space: nowrap;
 }
 .code-session-row { margin-bottom: 6px; }
-.code-session-actions { font-size: 11px; color: var(--text-secondary); margin: 0 8px; }
-.code-session-actions summary { cursor: pointer; min-height: 24px; }
-.code-session-actions > div, .code-session-rename { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.code-session-rename { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
 .code-session-rename input { min-width: 0; width: 100%; padding: 5px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-base); color: var(--text-primary); font: inherit; }
 .code-session-archive-filter { display: flex; align-items: center; gap: 5px; margin: 4px 8px 8px; color: var(--text-secondary); font-size: 11px; }
 .code-session-search { box-sizing: border-box; }
@@ -792,7 +790,7 @@
 .code-message-text { overflow-wrap: anywhere; }
 .code-transcript-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 16px; }
 .code-transcript-controls:empty { display: none; }
-.code-transcript-controls button, .code-inline-action, .code-session-actions button,
+.code-transcript-controls button, .code-inline-action,
 .code-session-rename button, .code-input-recovery button, .code-transport-status button,
 .code-recovery-strip button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-panel); color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer; }
 .code-canvas button:disabled, .code-session-list button:disabled { opacity: .6; cursor: not-allowed; }
