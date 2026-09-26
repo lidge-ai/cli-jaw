@@ -19,7 +19,10 @@ const MAX_CATCHUP_PAGES = 32;
 const INDEX_DEBOUNCE_MS = 150;
 const message = (error: unknown) => error instanceof CodeClientError ? error.message : 'Connection lost. Refresh to check the current state.';
 const rejected = (error: unknown) => error instanceof CodeClientError && error.status >= 400 && error.status < 500;
+// A lost response may still be committed, so its message can arrive; a `steer_outcome_unknown` answer
+// means the server could not record it, so it never will.
 const FOLLOW_UP_UNCONFIRMED = 'Follow-up delivery not confirmed. It was not resent; it appears in the conversation if Claude received it.';
+const FOLLOW_UP_UNRECORDED = 'Follow-up delivery not confirmed. Claude may have received it, but it will not appear in the conversation. It was not resent.';
 const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !current
     || incoming.epoch > current.epoch || (incoming.epoch === current.epoch && (incoming.sequence > current.sequence
         || (incoming.sequence === current.sequence && incoming.revision >= current.revision)));
@@ -323,7 +326,10 @@ export class CodeController {
         const synced = id === null ? !!this.catalog : !!detail?.synced && (!session || session.sequence <= detail.cursor) && draft.requiredSequence <= (detail?.cursor ?? 0);
         const followUp = !!session && synced && session.provider === 'claude' && session.status === 'streaming'
             && !!session.turnId && session.archivedAt === null;
-        const unconfirmed = draft.steer?.state === 'unknown' ? FOLLOW_UP_UNCONFIRMED : null;
+        // The turn's one follow-up is already in the transcript.
+        const followUpSent = followUp && !!session && (detail?.items ?? []).some(item => item.kind === 'user_message'
+            && item.itemId.startsWith(`${session.turnId}:steer:`));
+        const unconfirmed = draft.steer?.state !== 'unknown' ? null : draft.steer.unrecorded ? FOLLOW_UP_UNRECORDED : FOLLOW_UP_UNCONFIRMED;
         return {
             catalog: this.catalog, sessions: this.rows.map(id => {
                 const row = this.info(id), detail = this.details.get(id);
@@ -338,7 +344,7 @@ export class CodeController {
             workingIds: new Set(this.rows.filter(rowId => {
                 const row = this.info(rowId);
                 return !!this.book.sessions.get(rowId)?.awaitingTurn || (!!row && codeSessionBusy(row));
-            })), followUp, steering: draft.steer?.state === 'sending', synced, transport: this.transport, workspacePicking: this.workspacePicking,
+            })), followUp, followUpSent, steering: draft.steer?.state === 'sending', synced, transport: this.transport, workspacePicking: this.workspacePicking,
             error: [operation.error ?? unconfirmed ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
@@ -659,7 +665,10 @@ export class CodeController {
         if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim() || draft.steer?.state === 'sending') return;
         let session = this.info(id);
         // A running Claude turn takes the text as its follow-up; an idle session starts a new turn.
-        if (id && session && this.model.followUp) { await this.steer(id, draft, session); return; }
+        if (id && session && this.model.followUp) {
+            if (!this.model.followUpSent) await this.steer(id, draft, session);
+            return;
+        }
         if (draft.steer?.state === 'unknown') draft.steer = null;
         // t3code continues a session on the next send; a suspended (or recoverably
         // failed) session attaches first instead of asking for a separate Resume.
@@ -758,8 +767,10 @@ export class CodeController {
             acknowledgeCodeSteer(draft, attempt.key);
         } catch (error) {
             if (draft.steer === attempt) {
-                if (!rejected(error)) attempt.state = 'unknown';
-                else {
+                if (!rejected(error)) {
+                    attempt.state = 'unknown';
+                    attempt.unrecorded = error instanceof CodeClientError && error.code === 'steer_outcome_unknown';
+                } else {
                     draft.steer = null;
                     if (draft.operation.kind === 'idle') draft.operation = { kind: 'idle', error: message(error) };
                 }

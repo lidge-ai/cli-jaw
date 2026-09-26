@@ -29,6 +29,8 @@ export interface CodeControllerModel {
     workingIds: ReadonlySet<string>;
     /** The selected, synchronized Claude session is streaming a turn that takes a follow-up. */
     followUp: boolean;
+    /** That turn's one follow-up is already in the transcript, so Send follow-up stays closed. */
+    followUpSent: boolean;
     /** A follow-up for the selected session is in flight. */
     steering: boolean;
     workspacePicking: boolean;

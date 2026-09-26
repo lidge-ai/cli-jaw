@@ -980,6 +980,8 @@ test('an unconfirmed follow-up is not resent and settles when its own message ar
     f.controller.setInput('did this arrive?');
     await f.controller.send();
     assert.match(f.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    assert.match(f.controller.getModel().error ?? '', /Claude may have received it, but it will not appear in the conversation/);
+    assert.doesNotMatch(f.controller.getModel().error ?? '', /appears in the conversation if/, 'the server could not record it');
     assert.equal(f.controller.getModel().input, 'did this arrive?');
     f.controller.onTransport('connected'); await f.controller.refresh();
     assert.equal(f.posts().length, 1, 'no automatic resend after reconnect');
@@ -994,8 +996,24 @@ test('an unconfirmed follow-up is not resent and settles when its own message ar
     g.intercept(call => call.path.endsWith('/steer') ? Promise.reject(new TypeError('connection dropped')) : undefined);
     g.controller.setInput('lost in transit');
     await g.controller.send();
-    assert.match(g.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    assert.match(g.controller.getModel().error ?? '', /Follow-up delivery not confirmed.*appears in the conversation if Claude received it/);
     assert.equal(g.posts().length, 1);
+});
+
+test('Send follow-up closes once the running turn\'s follow-up is in the transcript', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 4 }), [steerItem('earlier', 4)]));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const model = f.controller.getModel();
+    assert.deepEqual({ followUp: model.followUp, followUpSent: model.followUpSent }, { followUp: true, followUpSent: true });
+    f.controller.setInput('a second follow-up');
+    await f.controller.send();
+    assert.equal(f.posts().length, 0, 'the turn took its one follow-up; nothing is posted');
+    assert.equal(f.controller.getModel().input, 'a second follow-up');
+    // Only the current turn's follow-up counts.
+    f.snapshots.set('a', snap(streamingClaude({ turnId: 'turn-b', sequence: 6 }), [steerItem('earlier', 4)]));
+    await f.controller.refresh();
+    assert.deepEqual({ followUp: f.controller.getModel().followUp, followUpSent: f.controller.getModel().followUpSent }, { followUp: true, followUpSent: false });
 });
 
 test('a follow-up outcome never overwrites a Stop in progress', async t => {

@@ -1136,6 +1136,18 @@ test('the workbench offers Send follow-up only for a streaming Claude turn and c
     button(h.container, 'Stop current turn');
 });
 
+test('Send follow-up stays closed once the running turn has its follow-up', bounded, async t => {
+    const h = await surface(t);
+    const claude = session({ provider: 'claude', status: 'streaming', turnId: 'turn-a', thinking: true });
+    await h.render(createElement(CodeWorkbench, { controller: model({ session: claude, sessions: [claude], busy: true, working: true,
+        input: 'one more', synced: true, followUp: true, followUpSent: true, steering: false,
+        selection: { provider: 'claude' as const, cwd: claude.cwd, model: claude.model, effort: null, permissionMode: claude.permissionMode } }),
+    endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send follow-up').disabled, true);
+    assert.equal(button(h.container, 'Stop current turn').disabled, false);
+    assert.match(h.container.querySelector('textarea')?.placeholder ?? '', /already has its follow-up/);
+});
+
 test('a follow-up the turn never consumed reads delivery not confirmed', bounded, async t => {
     const h = await surface(t);
     const item = { itemId: 'turn:steer:k', turnId: 'turn', kind: 'user_message', status: 'done', text: 'also the tests', clientTurnKey: 'k',

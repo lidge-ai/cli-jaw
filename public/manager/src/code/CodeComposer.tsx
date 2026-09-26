@@ -11,6 +11,8 @@ type CodeComposerProps = {
     pending: boolean;
     /** A busy Claude turn takes a follow-up: Send follow-up renders beside Stop. */
     followUp?: boolean;
+    /** The running turn already has its one follow-up. */
+    followUpSent?: boolean;
     /** A follow-up is in flight. */
     steering?: boolean;
     readOnly: boolean;
@@ -60,7 +62,8 @@ export function CodeComposer(props: CodeComposerProps) {
                 autoFocus={props.autoFocus}
                 onChange={event => props.onInputChange(event.target.value)} onKeyDown={handleKeyDown}
                 onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
-                placeholder={props.followUp ? 'Send a follow-up while this turn runs…'
+                placeholder={props.followUpSent ? 'This turn already has its follow-up. Draft the next message…'
+                    : props.followUp ? 'Send a follow-up while this turn runs…'
                     : props.busy ? 'Draft a follow-up while this turn runs…' : 'Describe a task or ask a question…'}
                 rows={2} readOnly={props.readOnly} />
             <span className="code-composer-hint">Enter to send · Shift+Enter for a new line</span>

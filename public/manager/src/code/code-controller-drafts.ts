@@ -30,7 +30,11 @@ export interface CodeDraft {
      * and never the send's `operation`/`retry`: it settles on its receipt or on its own
      * `user_message`, and `unknown` means acceptance could not be confirmed (never resent).
      */
-    steer: { key: string; text: string; edit: number; turnId: string; epoch: number; state: 'sending' | 'unknown' } | null;
+    steer: {
+        key: string; text: string; edit: number; turnId: string; epoch: number; state: 'sending' | 'unknown';
+        /** The server answered `steer_outcome_unknown`: Claude may have it, but the transcript never will. */
+        unrecorded?: boolean;
+    } | null;
 }
 export interface CodeDraftBook {
     endpoint: string;
