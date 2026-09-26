@@ -489,7 +489,7 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | GET `/sessions/:id/items` | Byte-bounded older materialized items before `beforeSequence`; never advances the live replay cursor |
 | GET `/sessions/:id/events` | Contiguous replay after `afterSequence`; byte/row-bounded page with `nextSequence`, `throughSequence`, `hasMore` |
 | POST `/sessions` | Explicit provider, existing absolute cwd, model, effort and permissionMode;201 metadata creation |
-| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/archive;409 on conflict or busy policy/archive change |
+| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/archive;409 on conflict or busy policy/archive change. `permissionMode` also accepts the Claude-only `plan`, `accept-edits`, `dont-ask`, `auto-review`; a Claude permission-only change switches the resident query without retiring it |
 | POST `/sessions/:id/prompt` | `text` and `clientTurnKey`;202 new admission,200 existing receipt,409 mismatched key/busy |
 | POST `/sessions/:id/cancel` | Captured `turnId` and `epoch`; never cancels a successor |
 | POST `/sessions/:id/attach` | Explicit native resume; selecting or reading a session does not attach |

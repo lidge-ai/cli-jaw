@@ -711,7 +711,10 @@ reports the turn busy, the turn's own terminal item arrives, or the send is reje
 a newer idle snapshot alone (such as a read-receipt echo) does not clear it, and it is
 never persisted. Sending to a suspended or recoverably failed session attaches it
 first and then sends, as t3code continues a thread on the next message; the Resume
-action remains for attaching without sending.
+action remains for attaching without sending. The Claude permission menu lists the live catalog's six modes (Ask first, Accept
+edits, Plan, Auto review, Don't ask, Auto (YOLO)) rather than the session snapshot; the
+standing warning stays on Auto (YOLO). Claude approval cards may offer "Allow for this
+session".
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs

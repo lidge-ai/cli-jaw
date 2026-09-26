@@ -472,6 +472,14 @@ an executable was found; catalog reads do not start a native session or login.
 Sessions also persist two sidebar clocks: `last_turn_completed_at` (a completed or failed
 turn; a cancelled one does not move it) and `last_visited_at` (the Manager's read receipt).
 Neither affects runtime ownership or replay.
+Code Claude maps its permission picker onto the six SDK modes (`ask`→`default`,
+`accept-edits`→`acceptEdits`, `plan`, `auto-review`→`auto`, `dont-ask`→`dontAsk`,
+`auto`→`bypassPermissions`); init must confirm the exact mode. A permission-only change
+on an idle resident Claude session calls `setPermissionMode` on the live query and moves
+the approval gate instead of restarting; with no live runtime it is stored and applied
+on the next open. Code Claude approval cards add "Allow for this session", which returns
+session-scoped `updatedPermissions` only (never a settings file). Jaw main turns keep
+Auto/Safe and two-option cards.
 Provider live-model inventory (the Cursor and Grok CLI probes) is owned by host
 activation — `CodeHost.prime()`, called once at server startup — never by a
 catalog read or lazy `host.get()`.
