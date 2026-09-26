@@ -270,7 +270,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
             // already names the cause, so hand it to lifecycle instead of letting
             // the turn reach the user as a bare "no response" (#757 follow-up).
             if (problem) ctx.stderrBuf = problem;
-            if (outcome.status === 'error') ctx.runtimeDiagnostic = problem || diagnostic();
+            if (outcome.status === 'error') ctx.runtimeDiagnostic = problem || facade?.lastTurnFailureText || diagnostic();
             if (lease) ctx.sessionId = lease.session.nativeSessionId || null;
             if (worker && lease) { await lease.retire(new Error('Claude worker assignment complete')); cleanupSafe = true; }
             const recordedReason = consumeCapturedKillReason(lease?.child.pid);
