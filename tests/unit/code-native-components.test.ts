@@ -999,7 +999,10 @@ test('the bell switches to Recent activity with unread sessions under Priority a
 test('the open session never shows as unread, even before its receipt lands', bounded, async t => {
     const h = await surface(t);
     const now = Date.now();
-    const c = model({ sessions: [session({ sessionId: 's-a', lastTurnCompletedAt: now, lastVisitedAt: now - 1 })], selectedId: 's-a' });
+    const c = model({ sessions: [session({ sessionId: 's-a', lastUsedAt: now, lastTurnCompletedAt: now, lastVisitedAt: now - 1 })], selectedId: 's-a' });
     await h.render(createElement(CodeSessionList, { controller: c }));
     assert.equal(h.container.querySelector('.code-session-unread-dot'), null);
+    await click(button(h.container, 'Recent activity'));
+    assert.equal(h.container.querySelector('.code-session-group-priority'), null, 'nor is it listed under Priority');
+    assert.deepEqual([...h.container.querySelectorAll('.code-session-group-title')].map(node => node.textContent), ['Today']);
 });

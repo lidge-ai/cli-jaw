@@ -117,14 +117,16 @@ function startOfLocalDay(ms: number): number {
 
 /**
  * Activity view, which the reader opts into: unread sessions first (newest
- * completion first), then the rest by last activity in local-day buckets.
+ * completion first), then the rest by last activity in local-day buckets. The
+ * open session is never in Priority, even before its read receipt lands.
  */
-export function groupCodeSessionsByActivity(sessions: readonly CodeSessionInfo[], now = Date.now()): CodeActivityGroup[] {
+export function groupCodeSessionsByActivity(sessions: readonly CodeSessionInfo[], now = Date.now(),
+    openSessionId: string | null = null): CodeActivityGroup[] {
     const today = startOfLocalDay(now);
     const yesterday = startOfLocalDay(today - 1);
     const byBucket = new Map<CodeActivityBucket, CodeSessionInfo[]>();
     for (const session of sessions) {
-        const bucket: CodeActivityBucket = codeSessionUnread(session) ? 'priority'
+        const bucket: CodeActivityBucket = session.sessionId !== openSessionId && codeSessionUnread(session) ? 'priority'
             : session.lastUsedAt >= today ? 'today'
                 : session.lastUsedAt >= yesterday ? 'yesterday' : 'earlier';
         const rows = byBucket.get(bucket) ?? [];

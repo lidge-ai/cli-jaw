@@ -92,6 +92,8 @@ test('activity view: Priority by completion, then Today / Yesterday / Earlier by
     assert.deepEqual(groupCodeSessionsByActivity(rows, now).map(g => [g.bucket, g.sessions.map(s => s.sessionId)]),
         [['priority', ['p-new', 'p-old']], ['today', ['t']], ['yesterday', ['y']], ['earlier', ['e']]]);
     assert.deepEqual(groupCodeSessionsByActivity([], now), [], 'empty buckets are omitted');
+    assert.deepEqual(groupCodeSessionsByActivity(rows, now, 'p-new').map(g => [g.bucket, g.sessions.map(s => s.sessionId)])[0],
+        ['priority', ['p-old']], 'the open session leaves Priority before its receipt lands');
 });
 
 test('workspace names are the last path segment', () => {

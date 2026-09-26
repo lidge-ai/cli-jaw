@@ -115,7 +115,7 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
     const live = visible.filter(row => row.archivedAt === null);
     const archived = visible.filter(row => row.archivedAt !== null);
     const groups: { key: string; title: string; cwd: string | null; sessions: CodeSessionInfo[] }[] = view === 'activity'
-        ? groupCodeSessionsByActivity(live).map(group => ({
+        ? groupCodeSessionsByActivity(live, Date.now(), c.selectedId).map(group => ({
             key: group.bucket, title: CODE_ACTIVITY_BUCKET_LABELS[group.bucket], cwd: null, sessions: group.sessions }))
         : groupCodeSessionsByWorkspace(live).map(group => ({ key: group.cwd, title: group.cwd, cwd: group.cwd, sessions: group.sessions }));
     if (archived.length) groups.push({ key: 'archived', title: 'Archived', cwd: null, sessions: groupCodeSessions(archived).flatMap(group => group.sessions) });
