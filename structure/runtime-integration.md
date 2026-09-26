@@ -510,7 +510,14 @@ records that segment's answer as final text and leaves the transcript, mapper, t
 notices open; it emits no usage or metadata, and the next `system:init` continues the same
 turn, so the last result carries the outcome and usage. A result with no echo while a
 follow-up waits fails the session `claude_followup_unconfirmed` rather than guessing.
-Acceptance re-arms the turn timer once, bounding a logical turn by two prompt windows.
+The turn timer re-arms once, when an intermediate result ends the first segment, so the
+follow-up's own CLI turn gets a full prompt window and a logical turn is bounded by two; a
+folded follow-up runs inside the window of the CLI turn it joined. At that boundary the
+mapper also retires the finished segment's message, block, snapshot, byte and tool
+bookkeeping, so the continuation gets the full per-turn caps (the projection keeps its items,
+and the last answer stays the partial text until the continuation says something); the
+per-turn tool-owner bound still spans the logical turn. `steer()` answers `not-ready` once
+511 result ids are recorded, so terminal dedupe always holds both results.
 The store reserves the turn's one follow-up in `code_steers` (`reserved`, `committed`,
 `rejected`, `unknown`; a partial unique index over the three live states) before the native
 offer, refuses what the turn budget could not store, and commits the same-turn `user_message`
@@ -519,7 +526,11 @@ key without an event; a failure after it marks the row `unknown` and fails the t
 the persistence path, or only answers `steer_outcome_unknown` when the turn had already
 ended. At settlement, read after cleanup, the runtime names accepted follow-ups no result
 consumed and their items gain `phase: 'unknown'`; a fold is echoed only on its result, so
-this means delivery not confirmed rather than undelivered. Known limitation: a follow-up's
+this means delivery not confirmed rather than undelivered. Restart recovery cannot ask the
+lost runtime, so every committed follow-up of a recovered turn reads the same way. A
+reservation still open when its turn settles or is recovered may already have been offered,
+so it becomes `unknown` (replay answers `steer_outcome_unknown`, never `steer_key_spent`);
+only the in-flight call that then receives the runtime's refusal records `rejected`. Known limitation: a follow-up's
 own CLI turn still passes the exact permission-mode check on its `system:init`, so if the CLI
 changed its own mode in the first segment (ExitPlanMode, a `setMode` session-grant
 suggestion) the logical turn fails `claude_permission_mode_not_confirmed`.
