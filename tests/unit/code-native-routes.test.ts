@@ -45,6 +45,7 @@ function fixture() {
         async attach(id) { capture('attach', id); return session; },
         visit(id) { capture('visit', id); return { ...session, lastVisitedAt: 99 }; },
         async patch(id, input) { capture('patch', id, input); return { ...session, title: input.title ?? session.title }; },
+        async rollback(id, input) { capture('rollback', id, input); return { ...session, historyGeneration: 1 }; },
         answerPermission(...args) { capture('permission', ...args); },
         models() { capture('models'); return { providers: [], defaultProvider: 'codex-app' }; },
     };
@@ -516,5 +517,48 @@ test('steer admits a follow-up for the captured turn and keeps every refusal a r
             assert.equal(refused.status, status);
             assert.deepEqual(await refused.json(), { ok: false, error: error.code });
         }
+    });
+});
+
+test('rollback accepts only an opaque user-row target with the client revision and epoch', async () => {
+    await server(async (url, f, reads) => {
+        const path = `${url}/sessions/session-one/rollback`;
+        const valid = { expectedRevision: 2, expectedEpoch: 4, upToItemId: 'turn-one:user' };
+        assert.equal((await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(valid) })).status, 401);
+        const cases: Array<[unknown, string]> = [
+            [{ expectedEpoch: 4, upToItemId: 'turn-one:user' }, 'invalid_revision'],
+            [{ ...valid, expectedRevision: '2' }, 'invalid_revision'],
+            [{ ...valid, expectedRevision: 1.5 }, 'invalid_revision'],
+            [{ expectedRevision: 2, upToItemId: 'turn-one:user' }, 'invalid_epoch'],
+            [{ ...valid, upToMessageId: '0f8fad5b-d9cb-469f-a165-70867728950e' }, 'unknown_field'],
+            [{ ...valid, upToItemId: '0f8fad5b-d9cb-469f-a165-70867728950e' }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: 'turn-one:answer' }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: 'turn-one:steer:1:user' }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: 'turn one:user' }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: `${'x'.repeat(201)}:user` }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: 42 }, 'invalid_rollback_target'],
+        ];
+        for (const [input, code] of cases) {
+            const response = await request(path, 'POST', input);
+            assert.equal(response.status, 400, code);
+            assert.equal((await response.json()).error, code);
+        }
+        assert.equal(reads(), 0, 'nothing reaches the lazy Code host before the input parses');
+        const accepted = await request(path, 'POST', valid);
+        assert.equal(accepted.status, 200);
+        assert.deepEqual(await accepted.json(), { ok: true, session: { ...f.session, historyGeneration: 1 } });
+        assert.deepEqual(f.calls.at(-1), { method: 'rollback', args: ['session-one', valid] });
+        f.service.rollback = async () => { throw new CodeStoreError('session_busy', 'Busy', 409); };
+        const busy = await request(path, 'POST', valid);
+        assert.deepEqual([busy.status, (await busy.json()).error], [409, 'session_busy']);
+        f.service.rollback = async () => { throw new CodeStoreError('rollback_boundary_unavailable', 'Compacted', 409); };
+        const compacted = await request(path, 'POST', valid);
+        assert.deepEqual([compacted.status, await compacted.json()], [409, { ok: false, error: 'rollback_boundary_unavailable' }]);
+        f.service.rollback = async () => { throw new CodeStoreError('revision_conflict', 'Changed', 409); };
+        const conflict = await request(path, 'POST', valid);
+        assert.equal(conflict.status, 409);
+        assert.deepEqual(await conflict.json(), { ok: false, error: 'revision_conflict', session: f.session }, 'a conflict answers the current session, like PATCH');
+        const retired = await request(`${url}/sessions/session-one/fork`, 'POST', {});
+        assert.equal(retired.status, 410);
     });
 });

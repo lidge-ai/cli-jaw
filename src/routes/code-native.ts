@@ -3,14 +3,18 @@ import { isAbsolute, resolve } from 'node:path';
 import { realpathSync, statSync } from 'node:fs';
 import type { CodeSessionManager } from '../code-mode/manager.js';
 import { CodeStoreError } from '../code-mode/store.js';
-import type { CodeCreateSessionRequest, CodePatchSessionRequest, CodePermissionMode, CodeProviderId, CodeSessionCursor } from '../code-mode/wire.js';
+import type {
+    CodeCreateSessionRequest, CodePatchSessionRequest, CodePermissionMode, CodeProviderId, CodeRollbackRequest, CodeSessionCursor,
+} from '../code-mode/wire.js';
 import { asyncHandler } from '../http/async-handler.js';
 import { fail } from '../http/response.js';
 import { httpCode, httpStatus } from './_http-error.js';
 import { CODE_PROMPT_MAX_BYTES } from './code-body-parser.js';
 
 export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'list' | 'snapshot' | 'readEvents' | 'history'
-    | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'answerPermission' | 'models'>;
+    | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'rollback' | 'answerPermission' | 'models'>;
+/** Only an opaque Code user row is a rollback target; native message identities are never accepted. */
+const ROLLBACK_TARGET = /^[^:\s]{1,200}:user$/;
 
 const PROVIDERS: readonly CodeProviderId[] = ['codex-app', 'claude', 'cursor', 'grok'];
 // Provider-agnostic parse; which provider accepts which mode is the manager's call.
@@ -115,6 +119,14 @@ function patchInput(value: unknown): CodePatchSessionRequest {
     return patch;
 }
 
+function rollbackInput(value: unknown): CodeRollbackRequest {
+    const input = body(value, ['expectedRevision', 'expectedEpoch', 'upToItemId']);
+    const target = input['upToItemId'];
+    if (typeof target !== 'string' || !ROLLBACK_TARGET.test(target)) return invalid('invalid_rollback_target');
+    return { expectedRevision: integer(input['expectedRevision'], 'revision'),
+        expectedEpoch: integer(input['expectedEpoch'], 'epoch'), upToItemId: target };
+}
+
 /** The service getter is invoked after authentication and input parsing. */
 export function registerNativeCodeRoutes(
     app: Router,
@@ -211,6 +223,16 @@ export function registerNativeCodeRoutes(
         const sessionId = id(req.params['id']);
         body(req.body ?? {}, []);
         res.json({ ok: true, session: await getService().attach(sessionId) });
+    }));
+    router.post('/sessions/:id/rollback', asyncHandler(async (req, res) => {
+        const sessionId = id(req.params['id']);
+        const input = rollbackInput(req.body);
+        const service = getService();
+        try { res.json({ ok: true, session: await service.rollback(sessionId, input) }); }
+        catch (error) {
+            if (httpCode(error) !== 'revision_conflict') throw error;
+            fail(res, 409, 'revision_conflict', { session: service.snapshot(sessionId).session });
+        }
     }));
     router.post('/sessions/:id/visit', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);

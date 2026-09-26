@@ -1,11 +1,12 @@
 import { CodeSession, CodeServiceError } from './session.js';
-import { CodeStore, CodeStoreError, type CodeSessionListOptions, type CodeSessionRecord } from './store.js';
+import { CodeStore, CodeStoreError, isBusy, type CodeSessionListOptions, type CodeSessionRecord } from './store.js';
 import type { CodeProviders } from './provider.js';
 import { DEFAULT_CODE_SETTINGS } from './types.js';
 import type {
     CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
     CodeModelCatalog, CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt,
-    CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeSessionInfo, CodeSnapshot, CodeSteerRequest, CodeWireEvent,
+    CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeRollbackRequest, CodeSessionInfo, CodeSnapshot, CodeSteerRequest,
+    CodeWireEvent,
 } from './wire.js';
 
 export { CodeServiceError } from './session.js';
@@ -26,6 +27,8 @@ export interface CodeSessionManagerOptions {
 export class CodeSessionManager {
     private readonly sessions = new Map<string, CodeSession>();
     private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /** Sessions with a rollback in flight; set before its first await, awaited by dispose(). */
+    private readonly rollbacks = new Map<string, Promise<void>>();
     private readonly maxConcurrentSessions: number;
     private readonly idleReapMs: number;
     private readonly now: () => number;
@@ -61,6 +64,10 @@ export class CodeSessionManager {
         const record = this.storage(() => this.options.store.readRecord(id));
         if (!record) throw new CodeStoreError('session_not_found', 'Code session not found', 404);
         return record;
+    }
+
+    private fenced(id: string): void {
+        if (this.rollbacks.has(id)) throw new CodeStoreError('session_busy', 'Code session is rolling back its conversation', 409);
     }
 
     private publish(events: CodeWireEvent[]): void {
@@ -254,6 +261,7 @@ export class CodeSessionManager {
             const duplicate = this.storage(() => this.options.store.admitTurn({ ...input, sessionId: id }));
             return { receipt: duplicate.receipt, duplicate: true };
         }
+        this.fenced(id);
         this.validate(record, record.capabilities, record);
         const session = this.reserve(record);
         try {
@@ -321,6 +329,7 @@ export class CodeSessionManager {
     async attach(id: string): Promise<CodeSessionInfo> {
         this.ready();
         const record = this.record(id);
+        this.fenced(id);
         this.validate(record, record.capabilities, record);
         const session = this.reserve(record);
         try {
@@ -337,6 +346,7 @@ export class CodeSessionManager {
     async patch(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo> {
         this.ready();
         const record = this.record(id);
+        this.fenced(id);
         const session = this.sessions.get(id);
         session?.assertHealthy();
         if (session?.reconfiguring) throw new CodeStoreError('session_busy', 'Code session settings are already changing', 409);
@@ -396,6 +406,63 @@ export class CodeSessionManager {
         return { ...result.session, cleanupPending: this.cleanupReadout(id, session) };
     }
 
+    /**
+     * Roll the Claude conversation back to a completed turn: fork the native history through
+     * it, then swap the transcript in one store transaction. Nothing is written before the
+     * fork, and a fork that is not committed is deleted. Workspace files are not reverted and
+     * no prompt is sent.
+     */
+    async rollback(id: string, input: CodeRollbackRequest): Promise<CodeSessionInfo> {
+        this.ready();
+        const record = this.record(id);
+        const provider = this.options.providers[record.provider];
+        const forkHistory = provider.rollback?.bind(provider);
+        if (record.provider !== 'claude' || !forkHistory) {
+            throw new CodeStoreError('unsupported_capability', 'Conversation rollback is only available for Claude sessions', 400);
+        }
+        if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
+        if (!record.nativeCursor) throw new CodeStoreError('rollback_unavailable', 'Conversation history is unavailable', 409);
+        if (record.revision !== input.expectedRevision || record.epoch !== input.expectedEpoch) {
+            throw new CodeStoreError('revision_conflict', 'Code session changed', 409);
+        }
+        const session = this.sessions.get(id);
+        session?.assertHealthy();
+        if (session?.busy || isBusy(record.status)) throw new CodeStoreError('session_busy', 'Stop the current turn before rolling back', 409);
+        const plan = this.storage(() => this.options.store.readRollbackPlan(id, input.upToItemId));
+        this.fenced(id);
+        let release!: () => void;
+        const entry = new Promise<void>(resolve => { release = resolve; });
+        this.rollbacks.set(id, entry);
+        try {
+            if (session) {
+                // A resident query keeps the source session open; retire it before the fork.
+                await session.dispose();
+                if (session.cleanupPending) throw new CodeServiceError('cleanup_pending', 'Previous Code runtime has not closed');
+            }
+            if (this.disposed) throw new CodeServiceError('manager_disposed', 'Code session manager is disposed');
+            const fork = await Promise.resolve().then(() => forkHistory({ cwd: record.cwd, nativeCursor: plan.nativeCursor,
+                title: plan.title, target: plan.target, kept: plan.kept, later: plan.later })).catch((error: unknown) => {
+                if (error instanceof CodeStoreError || error instanceof CodeServiceError) throw error;
+                throw new CodeStoreError('rollback_unavailable', 'Conversation history could not be rolled back', 409);
+            });
+            let committed: ReturnType<CodeStore['commitRollback']>;
+            try {
+                if (this.disposed) throw new CodeServiceError('manager_disposed', 'Code session manager is disposed');
+                committed = this.storage(() => this.options.store.commitRollback({ sessionId: id, upToItemId: input.upToItemId,
+                    expectedRevision: plan.revision, expectedEpoch: plan.epoch, expectedCursor: plan.nativeCursor,
+                    forkCursor: fork.forkCursor, remapped: fork.remapped, cleared: fork.cleared }));
+            } catch (error) {
+                await Promise.resolve().then(() => fork.discard()).catch(() => console.warn('[code] rollback_fork_cleanup_failed'));
+                throw error;
+            }
+            this.publish(committed.events);
+            return { ...committed.session, cleanupPending: this.cleanupReadout(id, this.sessions.get(id)) };
+        } finally {
+            if (this.rollbacks.get(id) === entry) this.rollbacks.delete(id);
+            release();
+        }
+    }
+
     answerPermission(permissionId: string, input: CodePermissionAnswer): void {
         this.ready();
         this.record(input.sessionId);
@@ -422,7 +489,9 @@ export class CodeSessionManager {
         if (this.disposePromise) return this.disposePromise;
         this.disposed = true;
         for (const id of this.idleTimers.keys()) this.clearIdle(id);
-        this.disposePromise = Promise.all([...this.sessions.values()].map(session => session.dispose())).then(() => undefined);
+        // In-flight rollbacks finish first: one that forked after disposal deletes its fork.
+        this.disposePromise = Promise.all([...this.sessions.values()].map(session => session.dispose())
+            .concat([...this.rollbacks.values()])).then(() => undefined);
         return this.disposePromise;
     }
 }
