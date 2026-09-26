@@ -8,6 +8,26 @@ const knownBlocks = new Set(['text', 'thinking', 'redacted_thinking', 'tool_use'
 const resultTypes = new Set(['success', 'error_during_execution', 'error_max_turns',
     'error_max_budget_usd', 'error_max_structured_output_retries']);
 function malformed(): never { throw new Error('Malformed Claude SDK frame'); }
+
+const FAILURE_REASONS: Partial<Record<string, string>> = {
+    max_turns: 'reached the turn limit', budget_exhausted: 'reached the budget limit',
+    prompt_too_long: 'the prompt is too long for the model context', blocking_limit: 'hit a usage limit',
+    rapid_refill_breaker: 'hit a usage limit', model_error: 'the model returned an error',
+    api_error: 'the Claude API returned an error', image_error: 'an image could not be processed',
+    hook_stopped: 'a hook stopped the turn', stop_hook_prevented: 'a stop hook prevented completion',
+    malformed_tool_use_exhausted: 'repeated malformed tool calls', turn_setup_failed: 'the turn could not be set up',
+};
+
+/**
+ * A failed turn's reason in words, from the SDK's closed vocabularies only
+ * (terminal_reason, then the result subtype). Raw `errors` / result text never
+ * reach events: they can carry provider or credential detail.
+ */
+export function describeClaudeFailure(subtype: string, reason: string | null): string {
+    const why = (reason && FAILURE_REASONS[reason])
+        || (/^error_[a-z_]+$/.test(subtype) ? subtype.slice('error_'.length).replace(/_/g, ' ') : null);
+    return `Claude turn failed${why ? `: ${why}` : ''}`;
+}
 function object(value: unknown): Obj {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return malformed();
     return value as Obj;
@@ -32,6 +52,12 @@ export class ClaudeSdkEvents {
     private readonly tools = new Set<string>();
     private outcome: RuntimeTurnResult | undefined;
     private finished = false;
+    private noticeSeq = 0;
+    private lastUsage: Record<string, number> | null = null;
+    /** Set by result() for a failed turn; the session hands it to the terminal diagnostic. */
+    failureText: string | null = null;
+    /** Latest context occupancy this turn reported (compaction or result); read after the result. */
+    contextUsage: { totalTokens: number; modelContextWindow: number | null } | null = null;
 
     constructor(private readonly projection: RuntimeProjection) {
         this.messages = new ClaudeSdkMessages(reason => projection.report(reason));
@@ -44,13 +70,15 @@ export class ClaudeSdkEvents {
         if (this.finished || this.outcome) return this.outcome;
         try {
             const frame = object(raw), type = string(frame['type']);
-            if (!['assistant', 'stream_event', 'user', 'result', 'tool_progress'].includes(type)) return;
+            if (!['assistant', 'stream_event', 'user', 'result', 'tool_progress', 'system', 'rate_limit_event'].includes(type)) return;
             const parent = frame['parent_tool_use_id'];
             if (parent !== undefined && parent !== null) { identity(parent); return; }
             if (type === 'assistant') this.assistant(frame);
             else if (type === 'stream_event') this.stream(object(frame['event']));
             else if (type === 'user') this.user(frame);
             else if (type === 'tool_progress') this.progress(frame);
+            else if (type === 'system') this.system(frame);
+            else if (type === 'rate_limit_event') this.rateLimit(object(frame['rate_limit_info']));
             else return this.result(frame);
         } catch (error) {
             this.projection.report('malformed');
@@ -67,7 +95,7 @@ export class ClaudeSdkEvents {
         this.outcome = outcome;
         if (outcome.finalText !== null) this.projection.text('message', this.messages.finalRef, outcome.finalText, 'replace', 'final');
         this.projection.close(end ?? { kind: 'turn-end', status: outcome.status, finalText: outcome.finalText,
-            ...(outcome.status === 'error' ? { error: 'Claude turn failed' } : {}) });
+            ...(outcome.status === 'error' ? { error: this.failureText ?? 'Claude turn failed' } : {}) });
     }
 
     finishChild(status: 'done' | 'error' | 'stopped'): void {
@@ -80,11 +108,14 @@ export class ClaudeSdkEvents {
 
     private result(frame: Obj): RuntimeTurnResult | undefined {
         const subtype = string(frame['subtype']);
-        if (!resultTypes.has(subtype)) return; // Future SDK result extensions are not guessed.
         if (typeof frame['is_error'] !== 'boolean') malformed();
         if (frame['result'] !== undefined && frame['result'] !== null && typeof frame['result'] !== 'string') malformed();
         this.usage(frame['usage']);
-        const failed = subtype !== 'success' || frame['is_error'] === true;
+        this.modelWindow(frame['modelUsage']);
+        // A future subtype is judged by is_error instead of leaving the turn hanging.
+        const failed = (resultTypes.has(subtype) && subtype !== 'success') || frame['is_error'] === true;
+        const reason = typeof frame['terminal_reason'] === 'string' ? frame['terminal_reason'] : null;
+        this.failureText = failed ? describeClaudeFailure(subtype, reason) : null;
         this.outcome = { status: failed ? 'error' : 'done',
             finalText: !failed && typeof frame['result'] === 'string' ? frame['result'] : null,
             partialText: this.partialText };
@@ -106,7 +137,70 @@ export class ClaudeSdkEvents {
         }
         // Cache creation and monetary metadata remain session-owned; this is the
         // canonical per-turn usage snapshot, never a sum of assistant frames.
-        if (Object.keys(tokens).length) this.projection.usage(tokens);
+        if (Object.keys(tokens).length) {
+            this.lastUsage = tokens;
+            this.projection.usage(tokens);
+        }
+    }
+
+    private modelWindow(raw: unknown): void {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+        const first = Object.values(raw as Obj)[0];
+        const window = first && typeof first === 'object' ? (first as Obj)['contextWindow'] : undefined;
+        const modelContextWindow = typeof window === 'number' && Number.isSafeInteger(window) && window > 0 ? window : null;
+        const used = this.lastUsage ? (this.lastUsage['input_tokens'] ?? 0) + (this.lastUsage['cached_input_tokens'] ?? 0) : null;
+        if (used !== null && used > 0) this.contextUsage = { totalTokens: used, modelContextWindow };
+    }
+
+    private notice(key: string, name: string, status: 'running' | 'done' | 'error', detail?: string): void {
+        this.projection.tool('claude:notice:' + key, { name, status, ...(detail ? { detail: detail.slice(0, 500) } : {}) },
+            { allowTerminalUpdates: true });
+    }
+
+    /** Compaction, API retries, hooks and warnings, mapped onto tool rows the transcript already renders. */
+    private system(frame: Obj): void {
+        const subtype = typeof frame['subtype'] === 'string' ? frame['subtype'] : '';
+        if (subtype === 'compact_boundary') {
+            const meta = object(frame['compact_metadata']);
+            const pre = meta['pre_tokens'], post = meta['post_tokens'];
+            if (typeof pre !== 'number' || !Number.isSafeInteger(pre) || pre < 0) malformed();
+            const after = typeof post === 'number' && Number.isSafeInteger(post) && post >= 0 ? post : null;
+            this.notice('compact:' + (++this.noticeSeq), 'Context compacted', 'done',
+                `${meta['trigger'] === 'manual' ? 'Manual' : 'Automatic'} · ${pre} tokens${after === null ? '' : ` → ${after}`}`);
+            if (after !== null) this.contextUsage = { totalTokens: after, modelContextWindow: this.contextUsage?.modelContextWindow ?? null };
+        } else if (subtype === 'status') {
+            if (frame['status'] === 'compacting') this.notice('compacting', 'Compacting context', 'running');
+            else if (frame['compact_result'] === 'failed') this.notice('compacting', 'Compacting context', 'error',
+                typeof frame['compact_error'] === 'string' ? frame['compact_error'] : undefined);
+            else if (frame['compact_result'] === 'success') this.notice('compacting', 'Compacting context', 'done');
+        } else if (subtype === 'api_retry') {
+            const attempt = frame['attempt'], max = frame['max_retries'], delay = frame['retry_delay_ms'];
+            if (![attempt, max, delay].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) malformed();
+            this.notice('api-retry', 'Retrying Claude API', 'running',
+                `Attempt ${attempt as number}/${max as number}, next in ${Math.ceil((delay as number) / 1000)}s`);
+        } else if (subtype === 'hook_started' || subtype === 'hook_response') {
+            const id = identity(frame['hook_id']);
+            const name = typeof frame['hook_name'] === 'string' ? frame['hook_name'].slice(0, 120) : 'hook';
+            const status = subtype === 'hook_started' ? 'running' : frame['outcome'] === 'success' ? 'done' : 'error';
+            const stderr = subtype === 'hook_response' && typeof frame['stderr'] === 'string' && frame['stderr'] ? frame['stderr'] : undefined;
+            this.notice('hook:' + id, 'Hook: ' + name, status, stderr);
+        } else if (subtype === 'informational' && (frame['level'] === 'warning' || frame['level'] === 'suggestion')
+            && typeof frame['content'] === 'string') {
+            this.notice('info:' + (++this.noticeSeq), 'Claude notice', 'done', frame['content']);
+        }
+        // task_* stay with claude-sdk-session.ts (background fail-closed) and the children tracker.
+    }
+
+    private rateLimit(info: Obj): void {
+        const status = info['status'];
+        if (status !== 'allowed' && status !== 'allowed_warning' && status !== 'rejected') malformed();
+        const at = typeof info['resetsAt'] === 'number' && Number.isFinite(info['resetsAt']) ? info['resetsAt'] : 0;
+        const resetMs = at > 1_000_000_000_000 ? at : at * 1000;
+        const resets = resetMs > 0 ? new Date(resetMs).toLocaleTimeString() : null;
+        const kind = typeof info['rateLimitType'] === 'string' ? info['rateLimitType'].replace(/_/g, ' ') : 'usage';
+        this.notice('rate-limit', 'Claude rate limit', status === 'rejected' ? 'running' : 'done',
+            status === 'allowed' ? 'Available again'
+                : `${status === 'rejected' ? 'Limit reached' : 'Approaching limit'} (${kind})${resets ? `, resets ${resets}` : ''}`);
     }
 
     private stream(event: Obj): void {
