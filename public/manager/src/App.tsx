@@ -21,8 +21,7 @@ import { type ScheduleGroup } from './dashboard-schedule/DashboardScheduleSideba
 import { normalizeSidebarModeForBuild, REMINDERS_WORKSPACE_ENABLED } from './dashboard-features';
 import { readInitialSelectedPort, readInitialSidebarMode, readTrayRemindersMode } from './dashboard-url-state';
 import { TrayRemindersApp } from './dashboard-reminders/TrayRemindersApp';
-import { useDashboardRegistry } from './hooks/useDashboardRegistry';
-import { useFavoriteToggle } from './hooks/useFavoriteToggle';
+import { useDashboardRegistry, useFavoriteToggle } from './hooks/useDashboardRegistry';
 import { useDashboardView, hydrateInstanceSettings, createInstanceSettingsNavigation, useSettingsDirtyState } from './hooks/useDashboardView';
 import { useActivityUnread } from './hooks/useActivityUnread';
 import { useTheme } from './hooks/useTheme';
