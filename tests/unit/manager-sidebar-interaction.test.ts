@@ -170,7 +170,7 @@ test('row navigation moves focus only, while rename and action controls retain H
         assert.equal(dom.window.document.activeElement, to);
     }
     await key(first, 'F10', { shiftKey: true });
-    const renameItem = [...view.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    const renameItem = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.jaw-context-menu [role="menuitem"]')]
         .find(el => el.textContent === 'Rename');
     assert.ok(renameItem, 'context menu must expose Rename');
     await act(async () => renameItem.click());
