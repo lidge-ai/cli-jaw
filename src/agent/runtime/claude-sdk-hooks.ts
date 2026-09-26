@@ -15,11 +15,17 @@ const foregroundOnly: HookCallback = async (input, _toolUseID, { signal }) => {
     if (signal.aborted) return deny('Native runtime tool request was aborted.');
 
     const args = input.tool_input;
-    const background = args !== null && typeof args === 'object' && !Array.isArray(args)
-        && 'run_in_background' in args ? args.run_in_background : undefined;
+    const record = args !== null && typeof args === 'object' && !Array.isArray(args)
+        ? args as Record<string, unknown> : null;
+    const hasFlag = record !== null && Object.prototype.hasOwnProperty.call(record, 'run_in_background');
+    const background = hasFlag ? record['run_in_background'] : undefined;
 
-    // SDK 0.3.261 defaults Agent to background when this option is omitted.
-    if ((input.tool_name === 'Agent' || input.tool_name === 'Task') && background !== false) {
+    // The pool seeds CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1, which removes the option
+    // from the Agent schema: an omitted flag runs in the foreground. Only a present,
+    // non-false flag (or a malformed input) is refused here; a task that is backgrounded
+    // anyway still fails the turn in claude-sdk-session.ts.
+    if ((input.tool_name === 'Agent' || input.tool_name === 'Task')
+        && (record === null || (hasFlag && background !== false))) {
         return deny('Native runtime supports foreground Agent/Task only; set run_in_background:false.');
     }
     if (input.tool_name === 'Bash' && background === true) {

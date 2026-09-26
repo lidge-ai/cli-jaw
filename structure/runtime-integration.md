@@ -86,7 +86,9 @@ turn. The PreToolUse hook only refuses an EXPLICIT `run_in_background: true`, an
 moves a long foreground Bash command to the background by itself, which killed turns
 whose command then completed normally. `claude-runtime-pool.ts` therefore seeds
 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` into the prepared environment when the caller
-left it unset; an explicit value is preserved and stays part of the pooled profile.
+left it unset; an explicit value is preserved and stays part of the pooled profile. With that switch Claude Code drops `run_in_background` from the Agent tool schema, so
+the hook treats an Agent/Task call without the flag as foreground and refuses only a flag
+that is present and not `false` (or a non-object input).
 
 ## Transport selection and session identity
 

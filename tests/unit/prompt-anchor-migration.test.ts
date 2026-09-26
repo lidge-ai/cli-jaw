@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import {
     findAnchorTopology,
     hashAnchorBlock,
+    KNOWN_SESSION_POLL_ANCHOR_HASHES,
     upsertKnownAnchorBlock,
 } from '../../src/prompt/builder.ts';
 
@@ -104,4 +105,26 @@ test('ANCHOR-007: the shipped v2.2.19 block is in the committed allowlist', asyn
         'the previously shipped desktop-control block must stay in the allowlist');
     assert.notEqual(hashAnchorBlock(currentBlock()), '0a819e06ac3e0b7f5b10eae6bc388eef',
         'the current block must differ from the shipped one, or nothing needs migrating');
+});
+
+// The session-poll block told the model to always pass run_in_background:false.
+// Once background tasks were disabled at the source the Agent schema no longer
+// had that field, so the stock block has to be replaced on existing installs.
+const SP_OPEN = '<!-- anchor:session-poll -->';
+const SP_CLOSE = '<!-- /anchor:session-poll -->';
+const PRE_FOREGROUND_FIX = fs.readFileSync(
+    path.resolve(here, '../fixtures/prompt/session-poll-anchor-pre-wp0.md'), 'utf8').trimEnd();
+
+test('ANCHOR-SP-01: the block shipped before the foreground fix is a known stock block', () => {
+    assert.equal(hashAnchorBlock(PRE_FOREGROUND_FIX), 'b1169a69917f314d92cc8f93e3b65ec9');
+    assert.ok(KNOWN_SESSION_POLL_ANCHOR_HASHES.has(hashAnchorBlock(PRE_FOREGROUND_FIX)));
+});
+
+test('ANCHOR-SP-02: an install carrying that block receives the new wording and keeps user text', () => {
+    const result = upsertKnownAnchorBlock(`user notes\n${PRE_FOREGROUND_FIX}\n`, RENDERED, SP_OPEN, SP_CLOSE,
+        KNOWN_SESSION_POLL_ANCHOR_HASHES);
+    assert.equal(result.action, 'replaced');
+    assert.ok(result.action === 'replaced' && result.content.includes('omit it when the tool schema has no such field'));
+    assert.ok(result.action === 'replaced' && result.content.startsWith('user notes\n'));
+    assert.ok(result.action === 'replaced' && !result.content.includes('Omitting the option is NOT the same as foreground'));
 });
