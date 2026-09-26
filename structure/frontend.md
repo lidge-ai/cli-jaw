@@ -743,8 +743,11 @@ never reached Claude or a compaction). A `code_session` event with a higher
 `historyGeneration` makes the reducer take a new snapshot. A rollback, including one seen
 from elsewhere, retires an awaited send whose own row it removed and makes Retry use a
 new key; its recovery strip, kept across reload, reads "This message's turn was removed
-by a rollback. Files it changed were not reverted. Retry sends it as a new message.", and
-an unconfirmed follow-up of a removed turn stops being reported as unconfirmed.
+by a rollback. Files it changed were not reverted. Retry sends it as a new message.". A
+same-key retry the server answers `cancelled` for a turn absent from the post-rollback
+transcript reads the same, which is all a reloaded page can go by. An unconfirmed follow-up
+whose turn is absent after a rollback stops being reported as unconfirmed, also when the
+page had dropped that session's transcript.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs

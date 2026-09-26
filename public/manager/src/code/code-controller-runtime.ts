@@ -270,12 +270,20 @@ export class CodeController {
         }
     }
     private update(id: string, state: CodeSessionState): void {
-        const before = this.details.get(id)?.session;
+        // A trimmed or reloaded detail holds no session of its own; the index copy, read before
+        // accept() below can replace it, is then the last generation this page saw.
+        const before = this.details.get(id)?.session ?? this.summaries.get(id);
         this.details.set(id, state);
         if (state.session) this.accept(state.session);
         const draft = this.book.sessions.get(id);
-        if (draft && before && state.session && state.hydrated && !state.needsSnapshot
-            && (state.session.historyGeneration ?? 0) > (before.historyGeneration ?? 0)) this.rolledBack(draft, state);
+        if (draft && state.session && state.hydrated && !state.needsSnapshot) {
+            const generation = state.session.historyGeneration ?? 0;
+            if (before && generation > (before.historyGeneration ?? 0)) this.rolledBack(draft, state);
+            // Also without that copy: once any rollback happened, a follow-up whose turn is gone
+            // can no longer appear, so its unconfirmed notice goes.
+            const steer = draft.steer;
+            if (generation > 0 && steer?.state === 'unknown' && !state.items.some(item => item.turnId === steer.turnId)) draft.steer = null;
+        }
         if (draft?.retry && state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === draft.retry!.key)) {
             if (deadSend(state, draft.retry.key)) this.requireNewKey(draft);
             else acknowledgeCodeSend(draft, draft.retry.key);
@@ -317,8 +325,8 @@ export class CodeController {
     /**
      * A rollback removed turns, possibly the one this draft is waiting on. A send whose own
      * row is gone no longer has a turn to wait for, and its key may now be a removed turn's.
-     * An unconfirmed follow-up of a removed turn can no longer appear, so its notice goes too;
-     * one still in flight settles on its own answer.
+     * (An unconfirmed follow-up of a removed turn is dropped by update(); one still in flight
+     * settles on its own answer.)
      */
     private rolledBack(draft: CodeDraft, state: CodeSessionState): void {
         const kept = (key: string) => state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === key);
@@ -326,8 +334,19 @@ export class CodeController {
         if (draft.retry && !kept(draft.retry.key) && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
             this.requireNewKey(draft, 'rolled-back');
         }
-        const steer = draft.steer;
-        if (steer?.state === 'unknown' && !state.items.some(item => item.turnId === steer.turnId)) draft.steer = null;
+    }
+    /**
+     * A spent key answers `cancelled` both for a turn that was stopped and for one a rollback
+     * removed. Every turn this detail has read past (its cursor is at or after the receipt), in
+     * a window that reaches back to it, still has items unless a rollback deleted them, so the
+     * turn's absence there says which. The HTTP receipt is all a reloaded page has: the
+     * transcript that held the turn is gone with the rollback.
+     */
+    private removedByRollback(id: string, receipt: CodePromptReceipt): boolean {
+        const state = this.details.get(id);
+        return receipt.status === 'cancelled' && !!state?.hydrated && (state.session?.historyGeneration ?? 0) > 0
+            && receipt.sequence <= state.cursor && (!state.hasOlder || (state.beforeSequence ?? Infinity) <= receipt.sequence)
+            && !state.items.some(item => item.turnId === receipt.turnId);
     }
     private makeModel(): CodeControllerModel {
         const id = this.book.selectedId;
@@ -753,7 +772,10 @@ export class CodeController {
             if (state) this.details.set(id, reduceCodeSession(state, { type: 'stale' }));
             // A duplicate receipt for a spent key is a report about a turn that is
             // already over, not an admission of this one.
-            if (spent(receipt.status)) { this.requireNewKey(draft); draft.awaitingTurn = null; }
+            if (spent(receipt.status)) {
+                this.requireNewKey(draft, this.removedByRollback(id, receipt) ? 'rolled-back' : undefined);
+                draft.awaitingTurn = null;
+            }
             else acknowledgeCodeSend(draft, attempt.key);
         } catch (error) {
             // The committed user event may already have acknowledged a lost HTTP response.
