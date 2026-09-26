@@ -1050,7 +1050,8 @@ test('the transcript shows Working… while the session works, unless a running 
     await h.render(createElement(CodeWorkbench, { controller: model({ items: [done, running], working: true, busy: true }), endpointKey: '43225' }));
     assert.equal(h.container.querySelector('.code-transcript-working'), null);
     await h.render(createElement(CodeWorkbench, { controller: model({ items: [done], working: false }), endpointKey: '43225' }));
-    assert.equal(h.container.querySelector('.code-transcript-working'), null);
+    assert.equal(h.container.querySelector('.code-transcript-working'), null);    await h.render(createElement(CodeWorkbench, { controller: model({ items: [], working: true, busy: true }), endpointKey: '43225' }));
+    assert.match(h.container.querySelector('.code-transcript-working')?.textContent ?? '', /Working/, 'an empty transcript still shows the session working');
 });
 
 test('Send is enabled on a resumable suspended session and not on a non-recoverable failure', bounded, async t => {

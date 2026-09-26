@@ -286,7 +286,7 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
                 </div>}
             {/* From Send until the turn ends. A running tool or reasoning row already
                 animates, so the line would only repeat it. */}
-            {working && visible.length > 0 && visible[visible.length - 1]?.status !== 'running'
+            {working && visible[visible.length - 1]?.status !== 'running'
                 && <div className="code-transcript-working" role="status" aria-live="polite">
                     <span className="code-session-spinner" aria-hidden="true" />Working…</div>}
         </div>
