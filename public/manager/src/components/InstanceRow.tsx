@@ -246,6 +246,7 @@ export function InstanceRow(props: InstanceRowProps) {
             title={composeInstanceRowTitle(props.instance)}
             aria-current={props.selected ? 'true' : undefined}
             onContextMenu={rowMenu.openAt}
+            onKeyDown={openMenuFromKey}
         >
             <div className="instance-row-body">
                 <button
@@ -256,7 +257,6 @@ export function InstanceRow(props: InstanceRowProps) {
                     onClick={() => {
                         props.onSelect(props.instance);
                     }}
-                    onKeyDown={openMenuFromKey}
                 >
                     <span className="instance-row-main">
                         <span className={dotClass} aria-label={props.instance.status} />
