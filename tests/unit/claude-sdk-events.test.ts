@@ -423,6 +423,12 @@ test('API retries, hooks and warnings map onto rows; malformed retries and unkno
     assert.equal(toolRows(g).length, before, 'info level and unknown subtypes stay silent');
 });
 
+test('an ordinary allowed rate-limit report adds no row', () => {
+    const h = harness();
+    h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' }, uuid: 'u', session_id: 's' });
+    assert.equal(lastRow(h, 'Claude rate limit'), undefined);
+});
+
 test('rate limits: rejected runs, warning and allowed are done; malformed status throws', () => {
     const h = harness();
     h.mapper.accept({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1790400000, rateLimitType: 'five_hour' }, uuid: 'u', session_id: 's' });

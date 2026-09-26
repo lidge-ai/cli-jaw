@@ -53,6 +53,8 @@ export class ClaudeSdkEvents {
     private outcome: RuntimeTurnResult | undefined;
     private finished = false;
     private noticeSeq = 0;
+    /** A limit row is open this turn; only then is "allowed" news worth a row. */
+    private rateLimitShown = false;
     private lastUsage: Record<string, number> | null = null;
     /** Set by result() for a failed turn; the session hands it to the terminal diagnostic. */
     failureText: string | null = null;
@@ -194,6 +196,10 @@ export class ClaudeSdkEvents {
     private rateLimit(info: Obj): void {
         const status = info['status'];
         if (status !== 'allowed' && status !== 'allowed_warning' && status !== 'rejected') malformed();
+        // Claude reports "allowed" on ordinary turns; a row for that is noise unless it
+        // closes a warning or rejection shown earlier in this turn.
+        if (status === 'allowed' && !this.rateLimitShown) return;
+        this.rateLimitShown = status !== 'allowed';
         const at = typeof info['resetsAt'] === 'number' && Number.isFinite(info['resetsAt']) ? info['resetsAt'] : 0;
         const resetMs = at > 1_000_000_000_000 ? at : at * 1000;
         const resets = resetMs > 0 ? new Date(resetMs).toLocaleTimeString() : null;
