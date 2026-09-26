@@ -822,3 +822,71 @@ test('opening a session sends one read receipt and a visit failure never surface
     await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(f.controller.getModel().error, null);
 });
+
+// ─── Working marker: from Send until this send's own turn ends ───
+
+test('a send reads as working from the click until its own turn ends, not before', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const pending = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/prompt') ? pending.promise : undefined);
+    f.controller.setInput('do the thing');
+    const sending = f.controller.send();
+    assert.equal(f.controller.getModel().working, true, 'working before the HTTP receipt');
+    assert.ok(f.controller.getModel().workingIds.has('a'));
+    const key = String(f.posts()[0]!.body['clientTurnKey']);
+    pending.resolve(response({ ok: true, turnId: 't1', clientTurnKey: key, sequence: 4, status: 'accepted' }));
+    await sending;
+    assert.equal(f.controller.getModel().working, true, 'still working while the server has not reported the turn');
+
+    // A later idle snapshot without this turn's end (e.g. a read-receipt echo) must not clear it.
+    f.snapshots.set('a', snap(session('a', { sequence: 9, lastVisitedAt: 5 })));
+    await f.controller.selectSession('a');
+    assert.equal(f.controller.getModel().working, true, 'an unrelated newer snapshot does not end the send');
+
+    // The turn's own terminal item ends it.
+    f.snapshots.set('a', snap(session('a', { sequence: 12 }), [
+        { itemId: 'u1', turnId: 't1', kind: 'user_message', status: 'done', text: 'do the thing', clientTurnKey: key, createdAt: 1, updatedAt: 1, firstSequence: 10 },
+        { itemId: 't1:terminal', turnId: 't1', kind: 'turn_completed', status: 'done', createdAt: 2, updatedAt: 2, firstSequence: 11 },
+    ] as CodeItem[]));
+    await f.controller.selectSession('a');
+    assert.equal(f.controller.getModel().working, false);
+    assert.equal(f.controller.getModel().workingIds.has('a'), false);
+});
+
+test('a rejected send stops reading as working and keeps the text', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: false, error: 'session_busy' }, 409) : undefined);
+    f.controller.setInput('keep me');
+    await f.controller.send();
+    assert.equal(f.controller.getModel().working, false);
+    assert.equal(f.controller.getModel().input, 'keep me');
+});
+
+test('sending to a suspended session attaches it first, then sends', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) {
+            f.snapshots.set('a', snap(session('a', { status: 'idle', sequence: 5 })));
+            return response({ ok: true, session: session('a', { status: 'idle', sequence: 5 }) });
+        }
+        if (call.path.endsWith('/prompt')) return response({ ok: true, turnId: 't', clientTurnKey: call.body['clientTurnKey'], sequence: 6, status: 'accepted' });
+        return undefined;
+    });
+    f.controller.setInput('continue please');
+    await f.controller.send();
+    assert.deepEqual(f.posts().map(call => call.path), ['/sessions/a/attach', '/sessions/a/prompt']);
+});
+
+test('a failed attach sends nothing, surfaces the error and keeps the draft', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/attach') ? response({ ok: false, error: 'resume_unavailable' }, 409) : undefined);
+    f.controller.setInput('continue please');
+    await f.controller.send();
+    assert.deepEqual(f.posts().map(call => call.path), ['/sessions/a/attach']);
+    assert.ok(f.controller.getModel().operation.error);
+    assert.equal(f.controller.getModel().input, 'continue please');
+});
