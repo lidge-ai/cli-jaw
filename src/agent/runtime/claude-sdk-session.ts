@@ -52,8 +52,6 @@ type Turn = {
     passiveFinalizing: boolean;
 };
 const MAX_PROMPT_BYTES = 1024 * 1024;
-const RESULT_TYPES = new Set(['success', 'error_during_execution', 'error_max_turns',
-    'error_max_budget_usd', 'error_max_structured_output_retries']);
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('claude_invalid_frame');
     return value as Record<string, unknown>;
