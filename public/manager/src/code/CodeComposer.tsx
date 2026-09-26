@@ -9,6 +9,10 @@ type CodeComposerProps = {
     canStop: boolean;
     stopping: boolean;
     pending: boolean;
+    /** A busy Claude turn takes a follow-up: Send follow-up renders beside Stop. */
+    followUp?: boolean;
+    /** A follow-up is in flight. */
+    steering?: boolean;
     readOnly: boolean;
     autoFocus?: boolean;
     onInputChange: (text: string) => void;
@@ -56,7 +60,8 @@ export function CodeComposer(props: CodeComposerProps) {
                 autoFocus={props.autoFocus}
                 onChange={event => props.onInputChange(event.target.value)} onKeyDown={handleKeyDown}
                 onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
-                placeholder={props.busy ? 'Draft a follow-up while this turn runs…' : 'Describe a task or ask a question…'}
+                placeholder={props.followUp ? 'Send a follow-up while this turn runs…'
+                    : props.busy ? 'Draft a follow-up while this turn runs…' : 'Describe a task or ask a question…'}
                 rows={2} readOnly={props.readOnly} />
             <span className="code-composer-hint">Enter to send · Shift+Enter for a new line</span>
         </div>
@@ -68,18 +73,18 @@ export function CodeComposer(props: CodeComposerProps) {
                 title={dictation.reason} onClick={dictation.toggle}>
                 <MicGlyph muted={dictation.status === 'unsupported'} />
             </button>
-            {props.busy
-                ? <button type="button" className="code-composer-send code-composer-stop" aria-label="Stop current turn"
-                    title={props.stopping ? 'Stopping' : 'Stop current turn'}
-                    disabled={!props.canStop || props.stopping} onClick={() => void stop()}><StopGlyph /></button>
-                : <button type="button" className="code-composer-send" aria-label="Send prompt"
-                    title={props.pending ? 'Sending' : 'Send prompt'}
-                    disabled={!props.canSend || !props.inputText.trim()} onClick={() => void submit()}><SendGlyph /></button>}
+            {props.busy && <button type="button" className="code-composer-send code-composer-stop" aria-label="Stop current turn"
+                title={props.stopping ? 'Stopping' : 'Stop current turn'}
+                disabled={!props.canStop || props.stopping} onClick={() => void stop()}><StopGlyph /></button>}
+            {(!props.busy || props.followUp) && <button type="button" className="code-composer-send"
+                aria-label={props.busy ? 'Send follow-up' : 'Send prompt'}
+                title={props.steering ? 'Sending follow-up' : props.pending ? 'Sending' : props.busy ? 'Send follow-up' : 'Send prompt'}
+                disabled={!props.canSend || !props.inputText.trim()} onClick={() => void submit()}><SendGlyph /></button>}
         </div>
         {/* An icon button cannot announce progress on its own. */}
-        {(props.stopping || props.pending || dictation.status === 'recording' || dictation.status === 'transcribing') &&
+        {(props.stopping || props.steering || props.pending || dictation.status === 'recording' || dictation.status === 'transcribing') &&
             <span className="code-composer-status" role="status">
-                {props.stopping ? 'Stopping…' : props.pending ? 'Sending…'
+                {props.stopping ? 'Stopping…' : props.steering ? 'Sending follow-up…' : props.pending ? 'Sending…'
                     : dictation.status === 'recording' ? 'Recording…' : 'Transcribing…'}</span>}
         {(error || dictation.error) && <div className="code-action-error" role="alert">{error ?? dictation.error}</div>}
     </div>;

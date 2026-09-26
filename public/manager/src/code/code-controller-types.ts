@@ -27,6 +27,10 @@ export interface CodeControllerModel {
     working: boolean;
     /** Rows that are working, by session id. */
     workingIds: ReadonlySet<string>;
+    /** The selected, synchronized Claude session is streaming a turn that takes a follow-up. */
+    followUp: boolean;
+    /** A follow-up for the selected session is in flight. */
+    steering: boolean;
     workspacePicking: boolean;
     synced: boolean;
     error: string | null;

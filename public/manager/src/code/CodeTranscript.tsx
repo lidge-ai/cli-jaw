@@ -173,7 +173,9 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
             {open && <div className="code-thinking-text">{item.text}</div>}
         </details> : <>
             <span className="code-message-role">{label}{assistant && item.phase === 'commentary' ? ' · Commentary' : ''}
-                {note && ` · ${unsent ? 'Sending' : note}`}</span>
+                {note && ` · ${unsent ? 'Sending' : note}`}
+                {/* A follow-up no native result consumed before the turn ended. */}
+                {user && !unsent && item.phase === 'unknown' && ' · Delivery not confirmed'}</span>
             <div className="code-message-text">{assistant ? <ItemMarkdown item={item} identity={`${sessionKey}:${item.itemId}`} onOpenLocalFile={onOpenLocalFile} />
                 : <span className="code-plain-text">{item.text ?? item.permission?.title ?? ''}</span>}</div>
             {item.permission?.detail && <p className="code-plain-text">{item.permission.detail}</p>}

@@ -910,3 +910,110 @@ test('a Claude session PATCHes its thinking switch; a draft leaving Claude drops
     await f.controller.setSelection({ provider: 'codex-app' });
     assert.equal('thinking' in f.controller.getModel().selection, false);
 });
+
+// Claude in-band follow-ups: a streaming Claude turn takes Send as a follow-up for its captured owner.
+const streamingClaude = (patch: Partial<CodeSessionInfo> = {}) =>
+    session('a', { provider: 'claude', status: 'streaming', turnId: 'turn-a', epoch: 4, thinking: true, ...patch });
+const steerItem = (key: string, sequence: number): CodeItem => ({ itemId: `turn-a:steer:${key}`, turnId: 'turn-a', kind: 'user_message',
+    status: 'done', text: 'also run the tests', clientTurnKey: key, createdAt: 1, updatedAt: 1, firstSequence: sequence });
+
+test('busy Claude sends /steer for the captured turn; idle Claude sends /prompt; busy Codex sends neither', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude()));
+    f.snapshots.set('b', snap(session('b', { status: 'streaming', turnId: 'turn-b' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    assert.equal(f.controller.getModel().followUp, true);
+    const pending = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/steer') ? pending.promise : undefined);
+    f.controller.setInput('also run the tests');
+    const sending = f.controller.send();
+    assert.equal(f.controller.getModel().steering, true);
+    await f.controller.send();
+    assert.equal(f.posts().length, 1, 'Send is closed while the follow-up is in flight');
+    f.controller.setInput('also run the tests, then lint');
+    const posted = f.posts()[0]!;
+    assert.equal(posted.path, '/sessions/a/steer');
+    const key = String(posted.body['clientTurnKey']);
+    assert.deepEqual(posted.body, { text: 'also run the tests', clientTurnKey: key, turnId: 'turn-a', epoch: 4 });
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 4 }), [steerItem(key, 4)]));
+    pending.resolve(response({ ok: true, turnId: 'turn-a', clientTurnKey: key, sequence: 4, status: 'running' }, 202));
+    await sending;
+    assert.equal(f.controller.getModel().steering, false);
+    assert.equal(f.controller.getModel().input, 'also run the tests, then lint', 'an edit made after capture survives the receipt');
+    assert.equal(f.controller.getModel().synced, true);
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+
+    f.snapshots.set('a', snap(session('a', { provider: 'claude', epoch: 4, sequence: 6, thinking: true })));
+    await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't2', clientTurnKey: call.body['clientTurnKey'], sequence: 7, status: 'accepted' }, 202) : undefined);
+    await f.controller.send();
+    assert.equal(f.posts().at(-1)!.path, '/sessions/a/prompt');
+
+    await f.controller.selectSession('b');
+    assert.equal(f.controller.getModel().followUp, false);
+    const before = f.posts().length;
+    f.controller.setInput('codex follow-up');
+    await f.controller.send();
+    assert.equal(f.posts().length, before, 'a busy non-Claude session takes Stop only');
+});
+
+test('a refused follow-up keeps the text editable and is never retried', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude()));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/steer') ? response({ ok: false, error: 'steer_queue_full' }, 409) : undefined);
+    f.controller.setInput('one more thing');
+    await f.controller.send();
+    const model = f.controller.getModel();
+    assert.equal(model.input, 'one more thing');
+    assert.equal(model.steering, false);
+    assert.match(model.error ?? '', /already has its follow-up/);
+    f.controller.onTransport('connected'); await f.controller.refresh();
+    assert.equal(f.posts().length, 1);
+});
+
+test('an unconfirmed follow-up is not resent and settles when its own message arrives', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude()));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/steer') ? response({ ok: false, error: 'steer_outcome_unknown' }, 503) : undefined);
+    f.controller.setInput('did this arrive?');
+    await f.controller.send();
+    assert.match(f.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    assert.equal(f.controller.getModel().input, 'did this arrive?');
+    f.controller.onTransport('connected'); await f.controller.refresh();
+    assert.equal(f.posts().length, 1, 'no automatic resend after reconnect');
+    const key = String(f.posts()[0]!.body['clientTurnKey']);
+    f.controller.onEvent({ topic: 'code', event: 'code_item', sessionId: 'a', sequence: 4, epoch: 4, item: steerItem(key, 4) });
+    assert.equal(f.controller.getModel().input, '', 'its own user_message settles the attempt');
+    assert.doesNotMatch(f.controller.getModel().error ?? '', /not confirmed/);
+
+    const g = fixture(t);
+    g.snapshots.set('a', snap(streamingClaude()));
+    await g.controller.refresh(); await g.controller.selectSession('a');
+    g.intercept(call => call.path.endsWith('/steer') ? Promise.reject(new TypeError('connection dropped')) : undefined);
+    g.controller.setInput('lost in transit');
+    await g.controller.send();
+    assert.match(g.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    assert.equal(g.posts().length, 1);
+});
+
+test('a follow-up outcome never overwrites a Stop in progress', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude()));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const steer = deferred<Response>(), cancel = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/steer') ? steer.promise : call.path.endsWith('/cancel') ? cancel.promise : undefined);
+    f.controller.setInput('late follow-up');
+    const sending = f.controller.send();
+    const stopping = f.controller.stop();
+    assert.equal(f.controller.getModel().operation.kind, 'stopping');
+    steer.resolve(response({ ok: false, error: 'session_not_steerable' }, 409));
+    await sending;
+    assert.equal(f.controller.getModel().operation.kind, 'stopping');
+    assert.equal(f.controller.getModel().input, 'late follow-up');
+    f.snapshots.set('a', snap(streamingClaude({ status: 'stopping', sequence: 4 })));
+    cancel.resolve(response({ ok: true, session: streamingClaude({ status: 'stopping', sequence: 4 }) }));
+    await stopping;
+    assert.equal(f.controller.getModel().followUp, false, 'a stopping turn takes no follow-up');
+});

@@ -30,10 +30,12 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const busy = c.busy || c.working || stopping || c.session?.status === 'starting' || c.session?.status === 'streaming';
     const provider = c.catalog?.providers.find(p => p.id === c.selection.provider);
     const unknownSend = c.operation.kind === 'unknown-send';
-    const canSend = !busy && !c.pending && !c.creationUnknown && !archived && c.operation.kind === 'idle' && !!provider?.available
+    // A streaming Claude turn takes one follow-up beside Stop; any other busy session offers Stop only.
+    const canSend = !c.steering && (c.followUp ? !stopping && !c.pending && !archived && c.operation.kind === 'idle'
+        : !busy && !c.pending && !c.creationUnknown && !archived && c.operation.kind === 'idle' && !!provider?.available
         && !!c.selection.cwd.trim() && !!c.selection.model.trim()
         // A suspended or recoverably failed session can be sent to: send attaches it first.
-        && (c.selectedId === null || (c.synced && (c.session?.status === 'idle' || (!!c.session && codeCanResume(c.session)))));
+        && (c.selectedId === null || (c.synced && (c.session?.status === 'idle' || (!!c.session && codeCanResume(c.session))))));
     const canStop = !!c.session?.turnId && c.session.capabilities.interrupt && busy && !stopping;
     const canResume = !!c.session && codeCanResume(c.session) && c.synced && !c.pending && !unknownSend;
     const error = c.operation.error || c.error || (actionError?.key === sessionKey ? actionError.message : null);
@@ -107,7 +109,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             </div>}
             <div className="code-composer-surface" aria-label="Code composer controls">
                 <CodeComposer key={`composer:${sessionKey}`} inputText={c.input} canSend={canSend} busy={busy} canStop={canStop} stopping={stopping}
-                    pending={c.pending} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop} />
+                    pending={c.pending} followUp={c.followUp} steering={c.steering} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop} />
                 <ComposerFooter key={`footer:${sessionKey}`} controller={c} onNotice={notify} />
             </div>
         </div>
