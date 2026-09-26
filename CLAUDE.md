@@ -4,7 +4,7 @@
 
 This repository is a Node.js ESM orchestration runtime for boss/employee dispatch, Web UI, browser/CDP automation, Telegram/Discord/Slack channels, memory, heartbeat, and PABCD orchestration.
 
-The `/api/code` API owns isolated Codex/Claude/Cursor/Grok sessions through `src/code-mode/host.ts`. Use its dedicated store, native adapters and captured turn/resource ownership; keep full snapshots, compact replay and byte limits synchronized with the runtime and API architecture docs.
+The `/api/code` API owns isolated Codex/Claude/Cursor/Grok sessions through `src/code-mode/host.ts`. Use its dedicated store, native adapters and captured turn/resource ownership; keep full snapshots, compact replay and byte limits synchronized with the runtime and API architecture docs. Claude conversation rollback is the one replay carve-out: removed items and their events are deleted, replay below the replay floor answers `invalid_sequence`, and a higher `historyGeneration` requires a new snapshot.
 
 Native Code interruption seals callbacks before persisting accepted buffered content under the captured store owner. Worker and Manager share the Code JSON body policy in `src/routes/code-body-parser.ts` (1MiB decoded prompt, 6MiB + 4KiB envelope); generic API limits stay separate. Settings navigation guards the drafts actually being discarded, including keyboard and desktop subscriptions.
 

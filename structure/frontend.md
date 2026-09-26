@@ -728,6 +728,18 @@ edits, Plan, Auto review, Don't ask, Auto (YOLO)) rather than the session snapsh
 standing warning stays on Auto (YOLO). Claude approval cards may offer "Allow for this
 session". Claude sessions and drafts add a Thinking menu (Thinking on / Thinking off) after
 Effort; it is hidden for other runtimes, and a draft that leaves Claude drops the switch.
+A Claude session whose server reports `rollback.available` shows "Roll back
+conversation to here" under each settled `${turnId}:user` row at or after
+`rollback.sinceSequence` that has a later turn, while the session is idle or failed,
+synchronized, not archived and no other operation runs; the unsent row and follow-up
+rows never get it, and an older server without the field reads as unavailable. It
+asks first ("Later turns are removed from this conversation. Workspace files are not
+changed. No prompt is sent."), posts only the opaque row id with the revision and
+epoch it saw, shows "Rolling back conversation…" and then takes a fresh snapshot; a
+refusal keeps the transcript and names the reason. A `code_session` event with a
+higher `historyGeneration` makes the reducer take a new snapshot, and a rollback seen
+from elsewhere retires an awaited send whose own row it removed and makes Retry use
+a new key ("The conversation was rolled back").
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
