@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNod
 import { SidebarResizeHandle } from './SidebarResizeHandle';
 import { SIDEBAR_COLLAPSED_WIDTH } from '../hooks/useSidebarWidth';
 
-const TITLEBAR_RAIL_MIN_WIDTH = 292;
+const TITLEBAR_RAIL_MIN_WIDTH = 296;
 
 type WorkspaceLayoutProps = {
     navigator: ReactNode;

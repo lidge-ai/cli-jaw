@@ -3,6 +3,7 @@
 @media (min-width: 1024px) {
     :root[data-cli-jaw-desktop="true"] {
         --desktop-traffic-light-reserve: 76px;
+        --desktop-titlebar-control: 26px;
     }
 
     :root[data-cli-jaw-desktop="true"][data-window-fullscreen="true"] {
@@ -19,7 +20,8 @@
         height: var(--workspace-topbar-height);
         min-height: 0;
         flex-wrap: nowrap;
-        column-gap: 2px;
+        align-items: center;
+        column-gap: 0;
         overflow: hidden;
         border-bottom: 0;
         border-right: 1px solid var(--border-subtle);
@@ -29,15 +31,15 @@
     }
 
     :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .sidebar-rail :is(.rail-button, .rail-collapse-button) {
-        width: 24px;
-        min-width: 24px;
-        height: 24px;
-        min-height: 24px;
+        width: var(--desktop-titlebar-control);
+        min-width: var(--desktop-titlebar-control);
+        height: var(--desktop-titlebar-control);
+        min-height: var(--desktop-titlebar-control);
         -webkit-app-region: no-drag;
     }
 
     :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-collapse-button {
-        margin: 0 6px 0 0;
+        margin: 0 4px 0 0;
     }
 
     :root[data-cli-jaw-desktop="true"][data-manager-titlebar-rail="true"] .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .rail-help-button {
@@ -54,7 +56,7 @@
 
     :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .rail-collapse-button {
         position: fixed;
-        top: calc((var(--workspace-topbar-height) - 24px) / 2);
+        top: calc((var(--workspace-topbar-height) - var(--desktop-titlebar-control)) / 2);
         left: var(--desktop-traffic-light-reserve);
         z-index: 30;
         margin: 0;
@@ -63,5 +65,34 @@
 
     :root[data-cli-jaw-desktop="true"] .dashboard-shell.manager-shell.is-sidebar-collapsed .command-center.command-bar {
         --electron-titlebar-left-reserve: calc(var(--desktop-traffic-light-reserve) + 36px);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.command-primary, .command-actions, .command-panel-controls, .theme-switch) {
+        align-items: center;
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar .manager-brand-heading {
+        align-items: center;
+        height: var(--desktop-titlebar-control);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.manager-brand-wordmark, .manager-brand-dash) {
+        line-height: 1;
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.search-input-wrapper, .search-input-wrapper input, .command-panel-toggle, .command-palette-trigger, .command-icon-button, .desktop-open-button, .theme-switch) {
+        box-sizing: border-box;
+        height: var(--desktop-titlebar-control);
+        min-height: var(--desktop-titlebar-control);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.command-panel-toggle, .command-icon-button) {
+        width: var(--desktop-titlebar-control);
+        min-width: var(--desktop-titlebar-control);
+    }
+
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar .theme-switch button {
+        height: calc(var(--desktop-titlebar-control) - 6px);
+        min-height: calc(var(--desktop-titlebar-control) - 6px);
     }
 }
