@@ -93,10 +93,14 @@ export class ClaudeSdkEvents {
     }
 
     /**
-     * The next CLI turn continues this logical turn with the same transcript, messages,
-     * tools and notices; only what a result settles is cleared.
+     * The next CLI turn continues this logical turn with the same transcript and notices.
+     * The finished segment's message and tool bookkeeping is retired, so the continuation
+     * gets this mapper's full per-turn caps instead of what the first segment left, and
+     * what a result settles is cleared.
      */
     continueAfterResult(): void {
+        this.messages.retire();
+        this.tools.clear();
         this.outcome = undefined;
         this.failureText = null;
         this.lastUsage = null;

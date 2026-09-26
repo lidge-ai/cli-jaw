@@ -710,3 +710,28 @@ test('a follow-up is refused when terminal dedupe cannot hold both of its result
     g.output.push({ ...result('alone'), uuid: 'res-1', ...echo(first) });
     assert.deepEqual({ ...(await only), error: g.session.lastError }, { status: 'done', finalText: 'alone', partialText: '', error: null });
 });
+
+test('a follow-up\'s own CLI turn gets the mapper\'s full budget; the retired segment\'s text survives a Stop', async t => {
+    // 120 primary messages plus 10 in the continuation exceed one turn's 128-message cap.
+    const s = await steering(t);
+    s.f.output.push(started('m0', s.primary)); await tick();
+    const follow = await s.f.session.steer({ text: 'more' });
+    for (let i = 1; i < 120; i++) s.f.output.push(started(`m${i}`, s.primary));
+    s.f.output.push(said('m119', 'long answer'));
+    s.f.output.push({ ...result('long answer'), ...echo(s.primary) });
+    for (let i = 0; i < 10; i++) s.f.output.push(started(`n${i}`, follow.nativeId!));
+    s.f.output.push(said('n9', 'short reply'));
+    s.f.output.push({ ...result('short reply'), ...echo(follow.nativeId!) });
+    assert.deepEqual({ ...(await s.turn), error: s.f.session.lastError, alive: s.f.session.alive },
+        { status: 'done', finalText: 'short reply', partialText: 'short reply', error: null, alive: true });
+
+    const g = await steering(t);
+    g.f.output.push(started('m1', g.primary)); g.f.output.push(said('m1', 'first answer')); await tick();
+    const next = await g.f.session.steer({ text: 'more' });
+    g.f.output.push({ ...result('first answer'), ...echo(g.primary) }); await tick();
+    assert.equal(g.settled, false);
+    g.f.output.push(started('m2', next.nativeId!)); await tick();
+    await g.f.session.cancel();
+    assert.deepEqual(await g.turn, { status: 'stopped', finalText: null, partialText: 'first answer' },
+        'Stop before the continuation says anything keeps the last answer the turn produced');
+});
