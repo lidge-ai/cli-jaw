@@ -481,7 +481,7 @@ export function App() { if (readTrayRemindersMode(window.location.search) && REM
             showSelectedRowActions={view.showSelectedRowActions} profiles={profiles} getLabel={instanceLabel}
             formatUptime={formatUptime} onSelect={handleSelectInstance} onPreview={(instance) => handlePreview(instance, true)}
             onMarkActivitySeen={activityUnread.markPortSeen} onInstanceLabelSave={labelEditor.saveInstanceLabel}
-            onLifecycle={(action, instance) => void handleLifecycle(action, instance)} />
+            onLifecycle={(action, instance) => void handleLifecycle(action, instance)} onToggleFavorite={(instance) => { void registry.save({ instances: { [String(instance.port)]: { favorite: !instance.favorite } } }).then(() => { load(); publishInvalidation({ topics: ['instances'], reason: 'instance:favorite-toggled', source: 'ui', sourceId: 'app' }); }); }} />
     );
     const dashboardSettingsUi = dashboardSettingsUiFromView(view, theme.theme), titleSupport = summarizeActivityTitleSupport(messageActivity.titleSupportByPort);
     const profileChipStrip = (chipProfiles: DashboardProfile[]) => chipProfiles.length > 0 ? <div className="profile-chip-strip drawer-chip-strip" aria-label="Profile filters">{chipProfiles.map(profile => <ProfileChip key={profile.profileId} profile={profile} active={activeProfileIds.includes(profile.profileId)} count={profileCounts[profile.profileId] || 0} onToggle={toggleProfile} />)}</div> : null;

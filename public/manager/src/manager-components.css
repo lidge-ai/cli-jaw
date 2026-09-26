@@ -674,23 +674,6 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     font-weight: 400;
     line-height: 1.4;
 }
-.instance-label-edit-button {
-    position: absolute;
-    top: 7px;
-    right: 8px;
-    width: 22px;
-    min-width: 22px;
-    height: 22px;
-    min-height: 22px;
-    padding: 0;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1;
-}
-.instance-label-edit-button:hover {
-    color: var(--text-primary);
-}
 .instance-label-edit-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -717,22 +700,6 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     grid-column: 1 / -1;
     color: var(--status-error);
     font-size: 11px;
-}
-.instance-actions {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    gap: 6px;
-}
-.instance-actions button {
-    min-width: 0;
-    padding-inline: 6px;
-    font-size: 12px;
-    white-space: nowrap;
-}
-.instance-actions .action-start {
-    border-color: color-mix(in srgb, var(--status-running) 40%, var(--border-subtle));
-    color: var(--status-running);
 }
 .detail-panel {
     height: 100%;

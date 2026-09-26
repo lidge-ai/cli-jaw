@@ -169,7 +169,11 @@ test('row navigation moves focus only, while rename and action controls retain H
         assert.equal((await key(from, name)).defaultPrevented, true);
         assert.equal(dom.window.document.activeElement, to);
     }
-    await act(async () => view.get('.instance-label-edit-button').click());
+    await key(first, 'F10', { shiftKey: true });
+    const renameItem = [...view.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find(el => el.textContent === 'Rename');
+    assert.ok(renameItem, 'context menu must expose Rename');
+    await act(async () => renameItem.click());
     const input = view.get<HTMLInputElement>('.instance-label-input');
     for (const name of ['Home', 'End', 'ArrowDown', 'ArrowUp']) {
         assert.equal((await key(input, name)).defaultPrevented, false);
@@ -215,6 +219,74 @@ test('offline and busy row actions keep their disabled contracts without selecti
     assert.equal(selected.mock.callCount(), 0);
     assert.equal(lifecycle.mock.callCount(), 0);
     assert.equal(seen.mock.callCount(), 0);
+});
+
+test('row context menu groups edit, preview, lifecycle and copy actions', async t => {
+    const lifecycle = t.mock.fn();
+    const favorite = t.mock.fn();
+    const preview = t.mock.fn();
+    const props = { ...rowProps(t), onLifecycle: lifecycle, onToggleFavorite: favorite, onPreview: preview };
+    const view = await mount(t, navigator(createElement(InstanceRow, props), () => {}));
+    const row = view.get('article.instance-row');
+    assert.equal(view.container.querySelector('.instance-actions'), null, 'the actions strip is removed');
+    assert.equal(view.container.querySelector('.instance-label-edit-button'), null, 'the standalone rename button is removed');
+
+    const openMenu = async () => {
+        await act(async () => {
+            row.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 140 }));
+        });
+        const menu = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+        assert.ok(menu, 'right-click must open the row context menu');
+        return menu;
+    };
+    const item = (menu: HTMLElement, label: string) => {
+        const node = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+            .find(el => el.textContent?.trim() === label);
+        assert.ok(node, `context menu must include ${label}`);
+        return node;
+    };
+
+    const menu = await openMenu();
+    assert.deepEqual(
+        [...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent?.trim()),
+        ['Rename', 'Pin', 'Preview', 'Open in new tab', 'Start', 'Restart', 'Register as persistent service', 'Stop', 'Copy URL', 'Copy port'],
+    );
+    assert.equal(menu.querySelectorAll('[role="separator"]').length, 3, 'menu groups stay separated');
+    assert.equal(item(menu, 'Start').disabled, true, 'canStart=false keeps Start disabled');
+    assert.equal(item(menu, 'Stop').disabled, false, 'canStop=true keeps Stop enabled');
+    assert.equal(item(menu, 'Stop').classList.contains('is-danger'), true, 'Stop is the destructive entry');
+    assert.equal(dom.window.document.activeElement, item(menu, 'Rename'), 'menu focuses its first item');
+
+    await act(async () => item(menu, 'Stop').click());
+    assert.deepEqual(lifecycle.mock.calls.map(call => call.arguments), [['stop', props.instance]]);
+    assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null, 'selecting an item closes the menu');
+
+    const keyboardMenu = await key(view.get('[data-instance-port="3457"]'), 'ContextMenu');
+    assert.equal(keyboardMenu.defaultPrevented, true);
+    const reopened = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+    assert.ok(reopened, 'ContextMenu key must reopen the row menu');
+    await act(async () => item(reopened, 'Pin').click());
+    assert.deepEqual(favorite.mock.calls.map(call => call.arguments), [[props.instance]]);
+
+    const third = await openMenu();
+    await act(async () => item(third, 'Preview').click());
+    assert.deepEqual(preview.mock.calls.map(call => call.arguments), [[props.instance]]);
+});
+
+test('row context menu drops the entries hidden by display props', async t => {
+    const props = { ...rowProps(t), showSelectedActions: false, showInlineLabelEditor: false };
+    const view = await mount(t, navigator(createElement(InstanceRow, props), () => {}));
+    const row = view.get('article.instance-row');
+    await act(async () => {
+        row.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+    });
+    const menu = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+    assert.ok(menu);
+    assert.deepEqual(
+        [...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent?.trim()),
+        ['Open in new tab', 'Stop', 'Copy URL', 'Copy port'],
+        'rename and selected-row actions stay out of the menu when their props hide them',
+    );
 });
 
 test('Selected summary retains group identity, session linkage while closed, and lifecycle grouping/paging', async t => {

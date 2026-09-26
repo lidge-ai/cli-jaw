@@ -286,7 +286,6 @@
     }
     .workbench-header .workbench-mode-tabs button { flex: 1 0 auto; }
     .overview-grid { grid-template-columns: 1fr; }
-    .instance-actions { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
     .workbench-preview .preview-panel {
         gap: 8px;
         padding: 8px 10px;

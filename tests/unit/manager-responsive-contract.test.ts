@@ -207,7 +207,7 @@ test('manager instance activity unread badge has compact row styling', () => {
     assert.ok(css.includes('.instance-row-title-line'), 'instance row title line must align label and unread count');
     assert.ok(css.includes('.instance-unread-badge'), 'per-instance Activity unread badge styling must exist');
     assert.ok(css.includes('.instance-row-activity-title'), 'latest activity titles must have compact row styling');
-    assert.ok(css.includes('.instance-label-edit-button'), 'custom label edit affordance must have compact row styling');
+    assert.ok(css.includes('.instance-label-input'), 'custom label edit input must have compact row styling');
     assert.ok(css.includes('.instance-label-edit-form'), 'custom label edit form must have compact row styling');
     assert.ok(css.includes('font-variant-numeric: tabular-nums'), 'Activity unread badge must keep counts stable');
     assert.equal(css.includes('.rail-badge'), false, 'Activity unread badge must not attach to the top rail');
