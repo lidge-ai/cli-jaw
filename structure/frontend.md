@@ -703,6 +703,15 @@ a blue dot. The chosen view persists in `localStorage` (`jaw.code.sidebarView`).
 scopes by workspace); a search icon left of the bell opens the search field together
 with an Archived switch, and closing it clears the query so nothing stays filtered
 by a hidden box.
+From Send until that send's own turn ends, the session reads as working: the row
+shows a spinner (and "Starting" while the server still reports idle) and the
+transcript ends with a "Working…" line unless a running row already animates. The
+client marker is tied to the send's `clientTurnKey` and clears only when the server
+reports the turn busy, the turn's own terminal item arrives, or the send is rejected;
+a newer idle snapshot alone (such as a read-receipt echo) does not clear it, and it is
+never persisted. Sending to a suspended or recoverably failed session attaches it
+first and then sends, as t3code continues a thread on the next message; the Resume
+action remains for attaching without sending.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
