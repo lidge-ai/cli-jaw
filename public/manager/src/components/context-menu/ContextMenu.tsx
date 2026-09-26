@@ -120,8 +120,6 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     }
 
     function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-        // Keys dispatched inside the menu never reach the window keydown
-        // listener (stopPropagation below), so dismissal is settled here.
         const moves: Record<string, 1 | -1 | 'first' | 'last'> = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' };
         const move = moves[event.key];
         if (move !== undefined) { event.preventDefault(); moveFocus(move); }
