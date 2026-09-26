@@ -1198,7 +1198,7 @@ test('Roll back conversation to here shows only on settled Claude user rows with
     assert.deepEqual(actions(), ['t1:user', 't2:user'], 'a failed session can still roll back');
 });
 
-test('the rollback action is absent while archived, busy, pending, unsynced, unsupported or on an older server', bounded, async t => {
+test('the rollback action is absent while archived, busy, pending, following up, unsynced, unsupported or on an older server', bounded, async t => {
     const h = await surface(t); virtualGeometry(t);
     const claude = session({ provider: 'claude', rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
     const items = [
@@ -1220,6 +1220,7 @@ test('the rollback action is absent while archived, busy, pending, unsynced, uns
     assert.equal(await count({ operation: { kind: 'patching', error: null } }), 0);
     assert.equal(await count({ operation: { kind: 'rolling-back', error: null }, pending: true }), 0);
     assert.match(h.container.querySelector('.code-composer-status')?.textContent ?? '', /Rolling back conversation/);
+    assert.equal(await count({ steering: true }), 0, 'a follow-up still in flight settles before any rollback');
     assert.equal(await count({}, { provider: 'codex-app', rollback: { available: false, reason: 'unsupported', sinceSequence: null } }), 0);
     const { rollback: _absent, ...older } = claude;
     assert.equal(await count({ session: older as CodeSessionInfo, sessions: [older as CodeSessionInfo] }), 0, 'an older server without the field reads as unavailable');

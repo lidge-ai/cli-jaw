@@ -314,6 +314,8 @@ export class CodeController {
     /**
      * A rollback removed turns, possibly the one this draft is waiting on. A send whose own
      * row is gone no longer has a turn to wait for, and its key may now be a removed turn's.
+     * An unconfirmed follow-up of a removed turn can no longer appear, so its notice goes too;
+     * one still in flight settles on its own answer.
      */
     private rolledBack(draft: CodeDraft, state: CodeSessionState): void {
         const kept = (key: string) => state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === key);
@@ -321,6 +323,8 @@ export class CodeController {
         if (draft.retry && !kept(draft.retry.key) && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
             this.requireNewKey(draft, 'The conversation was rolled back.');
         }
+        const steer = draft.steer;
+        if (steer?.state === 'unknown' && !state.items.some(item => item.turnId === steer.turnId)) draft.steer = null;
     }
     private makeModel(): CodeControllerModel {
         const id = this.book.selectedId;
@@ -854,7 +858,8 @@ export class CodeController {
     };
     rollbackSession = async (itemId: string): Promise<void> => {
         const id = this.book.selectedId, session = this.info(id), draft = this.draft(id);
-        if (!id || !session || !codeCanRollback(session, this.model.synced, draft.operation.kind === 'idle')) return;
+        // A follow-up still in flight settles first: its answer may name the turn this would remove.
+        if (!id || !session || !codeCanRollback(session, this.model.synced, draft.operation.kind === 'idle' && draft.steer?.state !== 'sending')) return;
         draft.operation = { kind: 'rolling-back', error: null }; this.notify();
         try {
             this.accept(await this.client.rollbackSession(id, { expectedRevision: session.revision, expectedEpoch: session.epoch, upToItemId: itemId }));

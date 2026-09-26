@@ -39,7 +39,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const canStop = !!c.session?.turnId && c.session.capabilities.interrupt && busy && !stopping;
     const canResume = !!c.session && codeCanResume(c.session) && c.synced && !c.pending && !unknownSend;
     const error = c.operation.error || c.error || (actionError?.key === sessionKey ? actionError.message : null);
-    const rollbackRows = codeCanRollback(c.session, c.synced, c.operation.kind === 'idle')
+    const rollbackRows = codeCanRollback(c.session, c.synced, c.operation.kind === 'idle' && !c.steering)
         ? codeRollbackRows(c.items, c.session?.rollback?.sinceSequence) : undefined;
     const terminal = [...c.items].reverse().find(item => item.kind === 'turn_cancelled' || item.kind === 'turn_failed' || item.kind === 'turn_completed');
     const failedInput = terminal && terminal.kind !== 'turn_completed'

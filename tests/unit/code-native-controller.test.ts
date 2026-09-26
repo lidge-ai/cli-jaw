@@ -1125,3 +1125,46 @@ test('a rollback seen from elsewhere retires a send whose turn it removed and re
     await f.controller.retrySameSend();
     assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original);
 });
+
+test('a follow-up in flight holds a rollback back, and an unconfirmed one leaves with the turn a rollback removed', async t => {
+    const f = fixture(t);
+    const rollback = { available: true, reason: null, sinceSequence: 1 };
+    const t1: CodeItem[] = [
+        { itemId: 't1:user', turnId: 't1', kind: 'user_message', status: 'done', text: 'first', clientTurnKey: 'key-t1', createdAt: 1, updatedAt: 1, firstSequence: 1 },
+        { itemId: 't1:terminal', turnId: 't1', kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: 2 }];
+    const running: CodeItem[] = [...t1,
+        { itemId: 'turn-a:user', turnId: 'turn-a', kind: 'user_message', status: 'done', text: 'second', clientTurnKey: 'key-a', createdAt: 1, updatedAt: 1, firstSequence: 3 }];
+    const ended = snap(streamingClaude({ status: 'idle', turnId: null, sequence: 5, rollback, historyGeneration: 0 }), [...running,
+        { itemId: 'turn-a:terminal', turnId: 'turn-a', kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: 4 }]);
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 3, rollback, historyGeneration: 0 }), running));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const offered = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/steer') ? offered.promise : undefined);
+    f.controller.setInput('one more thing');
+    const sending = f.controller.send();
+    // The turn ends while the follow-up is still in flight.
+    f.snapshots.set('a', ended);
+    await f.controller.refresh();
+    assert.equal(f.controller.getModel().steering, true);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/rollback')).length, 0, 'no rollback while a follow-up is unanswered');
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    offered.reject(new TypeError('connection dropped'));
+    await sending;
+    assert.match(f.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    // Once the follow-up is answered (here: unconfirmed), the rollback goes ahead and removes its turn.
+    const after = { ...ended.session, sequence: 7, epoch: 5, revision: 3, historyGeneration: 1 };
+    f.intercept(call => {
+        if (!call.path.endsWith('/rollback')) return undefined;
+        f.snapshots.set('a', snap(after, t1));
+        return response({ ok: true, session: after });
+    });
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/rollback')).length, 1);
+    await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
+    const model = f.controller.getModel();
+    assert.deepEqual(model.items.map(item => item.itemId), ['t1:user', 't1:terminal']);
+    assert.doesNotMatch(model.error ?? '', /not confirmed/, 'a follow-up whose turn was removed can no longer appear');
+    assert.equal(model.input, 'one more thing', 'its text stays in the composer');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/steer')).length, 1, 'never resent');
+});
