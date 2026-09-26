@@ -48,7 +48,7 @@ const forbidden = [
     'jaw-claude-i',
 ];
 const manifest = { name: 'cli-jaw', bin: { jaw: 'dist/bin/cli-jaw.js' },
-    dependencies: { 'better-sqlite3': '13.0.2' }, optionalDependencies: { '@anthropic-ai/claude-agent-sdk': '0.3.261' } };
+    dependencies: { 'better-sqlite3': '13.0.2' }, optionalDependencies: { '@anthropic-ai/claude-agent-sdk': '0.3.282' } };
 const required = ['package.json', 'dist/bin/cli-jaw.js'];
 const packed = (paths: string[]) => paths.map(path => ({ path }));
 

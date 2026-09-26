@@ -178,7 +178,7 @@ function questionAnswers(value: unknown, questions: Question[]): Record<string, 
             return question.labels[index]!;
         });
         if (text) labels.push(text);
-        // SDK 0.3.261: full original question -> string, multiple answers comma-separated.
+        // SDK 0.3.x (re-checked on 0.3.282, sdk-tools.d.ts): full original question -> string, multi-select comma-separated.
         Object.defineProperty(answers, question['question'], { value: labels.join(', '), enumerable: true });
     }
     return Object.freeze(answers);
