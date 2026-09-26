@@ -247,9 +247,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
             turn.inputs.delete(uuid);
             return refuse('not-current' satisfies ClaudeSteerRefusal);
         }
-        // At most one follow-up per turn, so a logical turn is bounded by two windows.
-        clearTimeout(turn.timer);
-        turn.timer = setTimeout(() => this.fail('claude_prompt_timeout'), this.options.promptTimeoutMs);
+        // The window is not re-armed here: a follow-up that runs as its own CLI turn gets a
+        // full one when the first segment ends (accept()); a folded one shares the running turn's.
         return { accepted: true, mode: 'queued', turnId: turn.context.turnId, nativeId: uuid };
     }
     /** Accepted follow-ups of the current or most recent turn that no result has echoed. */
@@ -484,7 +483,13 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         const outcome = turn.mapper.accept(raw, segment);
         if (this.closing || this.turn !== turn) return;
         if (!this.current(turn.context)) { this.fail('claude_owner_stale'); return; }
-        if (segment) { turn.mapper.continueAfterResult(); return; }
+        if (segment) {
+            // The follow-up's own CLI turn gets a full window from here. At most one follow-up
+            // per turn, so a logical turn is bounded by two windows.
+            clearTimeout(turn.timer);
+            turn.timer = setTimeout(() => this.fail('claude_prompt_timeout'), this.options.promptTimeoutMs);
+            turn.mapper.continueAfterResult(); return;
+        }
         if (!outcome) return;
         const nativeId = raw['session_id'];
         if (typeof nativeId === 'string' && nativeId && nativeId.length <= 1024) this.id = nativeId;

@@ -648,15 +648,19 @@ test('Stop before a follow-up is consumed settles stopped and reports it unconsu
     fresh.f.output.push(result('fine')); await next;
 });
 
-test('an accepted follow-up re-arms the turn window once; a refused offer does not', async t => {
-    const s = await steering(t, { promptTimeoutMs: 300 });
+test('the turn window re-arms at the segment boundary, so a follow-up\'s own CLI turn gets a full one', async t => {
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const s = await steering(t, { promptTimeoutMs: 500 });
     s.f.output.push(started('m1', s.primary)); await tick();
-    await new Promise(resolve => setTimeout(resolve, 200));
     const follow = await s.f.session.steer({ text: 'more' });
-    await new Promise(resolve => setTimeout(resolve, 200));
-    assert.equal(s.settled, false, 'the original 300ms deadline passed without failing the turn');
-    s.f.output.push({ ...result('ok'), ...echo(s.primary, follow.nativeId!) });
-    assert.equal((await s.turn).status, 'done');
+    assert.equal(follow.accepted, true);
+    await sleep(300); // the primary keeps answering after the follow-up was accepted
+    s.f.output.push({ ...result('one'), ...echo(s.primary) }); await tick();
+    s.f.output.push(started('m2', follow.nativeId!));
+    await sleep(300); // the follow-up's CLI turn outlives a window that started at acceptance
+    assert.equal(s.settled, false, 'the second window started when the first segment ended');
+    s.f.output.push({ ...result('two'), ...echo(follow.nativeId!) });
+    assert.deepEqual({ status: (await s.turn).status, error: s.f.session.lastError }, { status: 'done', error: null });
 
     // A closed input refuses the offer: the uuid leaves the turn and the window is not extended.
     const output = stream(); let primary = '';
@@ -674,6 +678,6 @@ test('an accepted follow-up re-arms the turn window once; a refused offer does n
     assert.equal((await g.session.steer({ text: 'lost' })).reason, 'not-current');
     assert.equal((await g.session.steer({ text: 'lost again' })).reason, 'not-current', 'the refused uuid did not stay in the turn');
     assert.equal((await turn).status, 'error');
-    assert.ok(Date.now() - began < 450, 'the refused offer did not re-arm the timer');
+    assert.ok(Date.now() - began < 450, 'offering a follow-up never re-arms the timer');
     assert.equal(g.session.lastError, 'claude_prompt_timeout');
 });
