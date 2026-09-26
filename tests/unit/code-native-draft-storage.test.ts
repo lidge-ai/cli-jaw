@@ -138,3 +138,18 @@ test('Claude permission modes round-trip in a stored draft; unknown modes still 
     store.setItem(store.key(0)!, JSON.stringify(swap(raw)));
     assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data?.fresh.selection.permissionMode === 'yolo', false);
 });
+
+test('a Claude thinking switch round-trips in a stored draft; a non-boolean drops it', () => {
+    const store = storage(), draftBook = book(store);
+    draftBook.fresh = createCodeDraft({ provider: 'claude', cwd: '/workspace', model: 'model', effort: null, permissionMode: 'ask', thinking: false });
+    draftBook.fresh.input = 'think less';
+    assert.equal(saveCodeDraftStorage(store, draftBook.endpoint, draftBook), null);
+    assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data!.fresh.selection.thinking, false);
+    const raw = JSON.parse(store.getItem(store.key(0)!)!);
+    store.setItem(store.key(0)!, JSON.stringify(raw).replace('"thinking":false', '"thinking":"no"'));
+    assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data, null);
+    draftBook.fresh = createCodeDraft({ provider: 'claude', cwd: '/workspace', model: 'model', effort: null, permissionMode: 'ask' });
+    draftBook.fresh.input = 'older draft';
+    saveCodeDraftStorage(store, draftBook.endpoint, draftBook);
+    assert.equal('thinking' in loadCodeDraftStorage(store, draftBook.endpoint).data!.fresh.selection, false);
+});

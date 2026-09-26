@@ -82,13 +82,16 @@ export function persistCodeDraftBook(book: CodeDraftBook): void {
 }
 export function sessionSelection(session: CodeSessionInfo): CodeCreateSessionRequest {
     return { provider: session.provider, cwd: session.cwd, model: session.model,
-        effort: session.effort, permissionMode: session.permissionMode };
+        effort: session.effort, permissionMode: session.permissionMode,
+        ...(session.thinking === null ? {} : { thinking: session.thinking }) };
 }
 export function catalogSelection(catalog: CodeModelCatalog, previous: CodeCreateSessionRequest, changedProvider = false): CodeCreateSessionRequest {
     const provider = catalog.providers.find(row => row.id === previous.provider);
     if (!provider) return previous;
     const capabilities = provider.capabilities;
-    return { ...previous,
+    // Thinking is a Claude switch; it must not travel into a create for another runtime.
+    const { thinking, ...rest } = previous;
+    return { ...rest, ...(provider.id === 'claude' && thinking !== undefined ? { thinking } : {}),
         model: !changedProvider && provider.models.includes(previous.model) ? previous.model : provider.defaultModel,
         effort: !changedProvider && previous.effort !== null && capabilities.efforts.includes(previous.effort)
             ? previous.effort : null,

@@ -13,7 +13,7 @@ const STORAGE_WARNING = 'Draft recovery is unavailable in this tab. Your current
 const INCOMPLETE_WARNING = 'Draft recovery is incomplete: some recent text or request state was not saved for reload. Check your draft before sending.';
 const LIMIT_WARNING = 'Draft recovery is incomplete: some text was not saved for reload because this tab reached its recovery limit.';
 
-type DraftSelection = Pick<CodeCreateSessionRequest, 'provider' | 'cwd' | 'model' | 'effort' | 'permissionMode'>;
+type DraftSelection = Pick<CodeCreateSessionRequest, 'provider' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'thinking'>;
 export interface StoredCodeDraft {
     input: string;
     edit: number;
@@ -41,14 +41,17 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
     if (!object(selection) || !['codex-app', 'claude', 'cursor', 'grok'].includes(String(selection['provider']))
         || !text(selection['cwd'], 4096) || !text(selection['model'], 1024)
         || !(selection['effort'] === null || text(selection['effort'], 80))
-        || !['ask', 'auto', 'read-only', 'plan', 'accept-edits', 'dont-ask', 'auto-review'].includes(String(selection['permissionMode']))) return null;
+        || !['ask', 'auto', 'read-only', 'plan', 'accept-edits', 'dont-ask', 'auto-review'].includes(String(selection['permissionMode']))
+        || !(selection['thinking'] === undefined || typeof selection['thinking'] === 'boolean')) return null;
     const retry = value['retry'], stop = value['stop'];
     if (retry !== null && (!object(retry) || !text(retry['text'], MAX_TEXT_CHARS)
         || !text(retry['key'], 240) || !retry['key'] || !count(retry['edit']) || retry['edit'] > value['edit'])) return null;
     if (stop !== null && (!object(stop) || !text(stop['turnId'], 240) || !stop['turnId'] || !count(stop['epoch']))) return null;
     return {
         input: value['input'], edit: value['edit'], selectionEdit: value['selectionEdit'], creating: value['creating'],
-        selection: { provider: selection['provider'] as DraftSelection['provider'], cwd: selection['cwd'], model: selection['model'], effort: selection['effort'], permissionMode: selection['permissionMode'] as DraftSelection['permissionMode'] },
+        selection: { provider: selection['provider'] as DraftSelection['provider'], cwd: selection['cwd'], model: selection['model'], effort: selection['effort'], permissionMode: selection['permissionMode'] as DraftSelection['permissionMode'],
+            // Optional: drafts stored before the Thinking switch carry none.
+            ...(typeof selection['thinking'] === 'boolean' ? { thinking: selection['thinking'] } : {}) },
         // `resend` is optional on purpose: a draft stored before this field existed
         // must still parse, or recovery is wiped instead of downgraded.
         retry: retry === null ? null : { text: retry['text'] as string, key: retry['key'] as string, edit: retry['edit'] as number,
@@ -116,8 +119,9 @@ export function loadCodeDraftStorage(storage: Storage, endpoint: string): { data
 function pack(draft: CodeDraft): StoredCodeDraft | null {
     // Whitelist draft intent only. No permission answers, errors,
     // credentials, transcript, native cursor, metadata revision or live cursor.
-    const { provider, cwd, model, effort, permissionMode } = draft.selection;
-    return parseDraft({ input: draft.input, edit: draft.edit, selection: { provider, cwd, model, effort, permissionMode }, selectionEdit: draft.selectionEdit,
+    const { provider, cwd, model, effort, permissionMode, thinking } = draft.selection;
+    return parseDraft({ input: draft.input, edit: draft.edit, selection: { provider, cwd, model, effort, permissionMode,
+        ...(thinking === undefined ? {} : { thinking }) }, selectionEdit: draft.selectionEdit,
         creating: draft.createUnknown || draft.operation.kind === 'creating',
         retry: draft.retry ? { text: draft.retry.text, key: draft.retry.key, edit: draft.retry.edit,
             ...(draft.retry.resend ? { resend: true } : {}) } : null,

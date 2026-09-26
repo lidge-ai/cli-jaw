@@ -1081,3 +1081,19 @@ test('the Claude permission menu lists today\'s catalog modes, not the session s
     assert.deepEqual([...document.querySelectorAll('[role="option"]')].map(o => o.textContent?.match(/^[^A-Z]*([A-Z][^A-Z]*?(?:\([^)]*\))?)(?=[A-Z]|$)/)?.[1]?.trim() ?? ''),
         ['Ask first', 'Accept edits', 'Plan', 'Auto review', "Don't ask", 'Auto (YOLO)']);
 });
+
+test('the Thinking menu shows only for Claude and switches the setting', bounded, async t => {
+    const h = await surface(t);
+    const changes: unknown[] = [];
+    const claude = model({ selection: { provider: 'claude', cwd: '/workspace', model: 'native-model', effort: null, permissionMode: 'ask' },
+        async setSelection(patch) { changes.push(patch); } });
+    await h.render(createElement(ComposerFooter, { controller: claude }));
+    await click(button(h.container, 'Thinking: Thinking on'));
+    const off = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent?.startsWith('Thinking off'));
+    assert.ok(off, 'an Off option is offered');
+    await click(off!);
+    assert.deepEqual(changes, [{ thinking: false }]);
+    await h.render(createElement(ComposerFooter, { controller: model({
+        selection: { provider: 'codex-app', cwd: '/workspace', model: 'native-model', effort: null, permissionMode: 'ask' } }) }));
+    assert.equal([...h.container.querySelectorAll('button')].some(b => b.getAttribute('aria-label')?.startsWith('Thinking')), false);
+});

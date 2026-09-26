@@ -199,6 +199,11 @@ export function ComposerFooter({ controller: c, onNotice }: {
                 className="code-footer-effort" displayValue={selection.effort ?? 'Default'}
                 options={[{ value: '', label: 'Native default' }, ...modelEfforts.map(value => ({ value, label: value }))]}
                 disabled={controlsDisabled} onChange={value => void change({ effort: value || null })} />}
+            {selection.provider === 'claude' && <CodeFooterMenu label="Thinking" value={selection.thinking === false ? 'off' : 'on'}
+                className="code-footer-thinking"
+                options={[{ value: 'on', label: 'Thinking on', detail: 'Adaptive thinking with summaries' },
+                    { value: 'off', label: 'Thinking off', detail: 'Answer without extended thinking' }]}
+                disabled={controlsDisabled} onChange={value => void change({ thinking: value === 'on' })} />}
             {locked && <button type="button" className="code-inline-action" onClick={c.newSession}>New session</button>}
         </div>
         {models.length === 0 && provider?.available && <div className="code-selection-notice">This runtime published no models.
