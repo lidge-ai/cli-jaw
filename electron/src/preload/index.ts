@@ -34,12 +34,14 @@ function markDesktopDocument(): void {
     const root = document?.documentElement;
     if (root) {
       root.dataset.cliJawDesktop = 'true';
+      root.dataset.cliJawPlatform = process.platform;
       return;
     }
     // Guest webviews can run this preload before documentElement exists.
     document?.addEventListener?.('DOMContentLoaded', () => {
       try {
         document.documentElement.dataset.cliJawDesktop = 'true';
+        document.documentElement.dataset.cliJawPlatform = process.platform;
       } catch { /* ignore */ }
     }, { once: true });
   } catch (err) {

@@ -12,7 +12,7 @@ type SidebarRailProps = {
     onToggleHelp: () => void;
 };
 
-function SidebarToggleIcon() {
+function SidebarToggleIcon({ expanded }: { expanded: boolean }) {
     return (
         <svg
             className="rail-collapse-chevron"
@@ -29,6 +29,7 @@ function SidebarToggleIcon() {
         >
             <rect x="3" y="4" width="14" height="12" rx="2.5" />
             <path d="M8 4v12" />
+            {expanded && <rect x="4.5" y="5.5" width="2" height="9" rx="0.5" fill="currentColor" stroke="none" />}
         </svg>
     );
 }
@@ -112,7 +113,7 @@ export function SidebarRail(props: SidebarRailProps) {
                 aria-controls="manager-sidebar-list"
                 title={toggleLabel}
             >
-                <SidebarToggleIcon />
+                <SidebarToggleIcon expanded={expanded} />
             </button>
             <button
                 className={`rail-button rail-workspace-button${props.mode === 'instances' ? ' is-active' : ''}`}
