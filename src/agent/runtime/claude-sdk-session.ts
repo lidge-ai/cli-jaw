@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, PermissionMode, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { RuntimeCapabilities, RuntimeEvent, RuntimeEventBody } from '../../shared/runtime-contract.js';
 import { parseRuntimeEvent } from '../../shared/runtime-event-parse.js';
 import { FULLTEXT_MAX_CHARS } from '../events/fulltext-bound.js';
@@ -23,7 +23,7 @@ import { ClaudeSdkOwners, claudeToolIds } from './claude-sdk-owners.js';
 
 export interface ClaudeTurnContext extends RuntimeEventContext { isCurrent(): boolean }
 export type { ClaudeResultMetadata } from './claude-sdk-metadata.js';
-export type ClaudeQuery = AsyncIterable<SDKMessage> & { close(): void };
+export type ClaudeQuery = AsyncIterable<SDKMessage> & { close(): void; setPermissionMode?(mode: PermissionMode): Promise<void> };
 export interface ClaudeSessionOptions {
     prepared: PreparedClaudeOptions;
     getTurnContext(): ClaudeTurnContext;
@@ -69,6 +69,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private readonly input = createClaudeInput<SDKUserMessage>(1);
     private readonly processes = createClaudeProcessOwner({ onMultipleRoots: () => this.fail('claude_multiple_root_processes') });
     private query: ClaudeQuery | undefined;
+    /** Code sessions pin an exact SDK mode; a live switch moves it. Jaw sessions leave it undefined. */
+    private sdkMode: PermissionMode | undefined;
     private reader: Promise<void> = Promise.resolve();
     private readonly exits = new Set<(code: number | null) => void>();
     private turn: Turn | null = null;
@@ -94,7 +96,9 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         this.children = new ClaudeSdkChildren({ resolveParent: id => this.owners.parent(id),
             ...(options.transcript ? { transcript: options.transcript } : {}),
             ...(options.resolveTranscriptParent ? { resolveTranscriptParent: options.resolveTranscriptParent } : {}) });
+        this.sdkMode = options.prepared.sdkMode;
         this.permissions = createClaudePermissions({ registry: this.registry, permissions: options.prepared.permissions,
+            sessionGrants: options.prepared.sessionGrants === true,
             resolveOwner: async id => {
                 const turn = this.turn;
                 if (!turn || !this.alive || !this.current(turn.context)) return null;
@@ -123,6 +127,14 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     get lastError(): string | null { return this.failureCode; }
     /** The specific reason the last turn failed (terminal_reason, subtype, first error), if it did. */
     get lastTurnFailureText(): string | null { return this.turnFailureText; }
+    /** Switch the resident query's permission mode without restarting it (Code sessions). */
+    async setPermissionMode(mode: PermissionMode): Promise<void> {
+        const query = this.query;
+        if (!this.alive || !query?.setPermissionMode) throw new Error('claude_permission_mode_unavailable');
+        await query.setPermissionMode(mode);
+        this.sdkMode = mode;
+        this.permissions.setGate(mode === 'bypassPermissions' ? 'auto' : 'safe');
+    }
     get primaryChild() { return this.processes.primaryChild; }
     get rootProcessState() { return this.processes.rootProcessState; }
     waitForPrimaryChild(options?: ClaudeRootWaitOptions) { return this.processes.waitForPrimaryChild(options); }
@@ -314,8 +326,14 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
                     if (childOwned) continue;
                 }
                 if (childParent) continue; // Idle child traffic cannot prelink into a later send.
-                if (raw['type'] === 'system' && raw['subtype'] === 'init' && this.options.prepared.permissions === 'safe'
-                    && raw['permissionMode'] !== 'default') { this.fail('claude_safe_mode_not_confirmed'); break; }
+                if (raw['type'] === 'system' && raw['subtype'] === 'init') {
+                    // An exact Code mode must be the one the CLI confirms; jaw safe must confirm default.
+                    if (this.sdkMode !== undefined && raw['permissionMode'] !== this.sdkMode) {
+                        this.fail('claude_permission_mode_not_confirmed'); break;
+                    }
+                    if (this.sdkMode === undefined && this.options.prepared.permissions === 'safe'
+                        && raw['permissionMode'] !== 'default') { this.fail('claude_safe_mode_not_confirmed'); break; }
+                }
                 if (raw['type'] === 'system' && raw['subtype'] === 'init') {
                     const id = raw['session_id'];
                     if (typeof id === 'string' && id && id.length <= 1024) {

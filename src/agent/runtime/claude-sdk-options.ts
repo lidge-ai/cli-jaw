@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 
 export interface PreparedClaudeOptions {
     cwd: string;
@@ -11,11 +11,19 @@ export interface PreparedClaudeOptions {
     permissions: 'auto' | 'safe';
     effort?: Options['effort'];
     fastMode: boolean;
+    /** Code only: the exact SDK permission mode. Jaw-shaped inputs omit it and keep auto/safe. */
+    sdkMode?: PermissionMode;
+    /** Code only: approval cards may offer "Allow for this session". */
+    sessionGrants?: boolean;
+    /** Code only: lets a later live switch to bypassPermissions be legal; it does not skip prompts by itself. */
+    allowDangerouslySkipPermissions?: boolean;
 }
 
 const PREPARED_KEYS = new Set([
     'cwd', 'binary', 'env', 'model', 'systemPrompt', 'resumeSessionId', 'permissions', 'effort', 'fastMode',
+    'sdkMode', 'sessionGrants', 'allowDangerouslySkipPermissions',
 ]);
+const SDK_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto']);
 const EFFORTS: ReadonlySet<Options['effort']> = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function validString(value: unknown, allowEmpty = false): value is string {
@@ -46,6 +54,17 @@ function validatePrepared(input: PreparedClaudeOptions): void {
     if (input.permissions !== 'auto' && input.permissions !== 'safe') {
         throw new Error('Invalid Claude SDK permissions');
     }
+    if (input.sdkMode !== undefined) {
+        if (!SDK_MODES.has(input.sdkMode)) throw new Error('Invalid Claude SDK permission mode');
+        // The coarse gate and the exact mode must agree about bypass.
+        if ((input.sdkMode === 'bypassPermissions') !== (input.permissions === 'auto')) {
+            throw new Error('Invalid Claude SDK permission mode');
+        }
+    }
+    if (input.sessionGrants !== undefined && typeof input.sessionGrants !== 'boolean') throw new Error('Invalid Claude SDK sessionGrants');
+    if (input.allowDangerouslySkipPermissions !== undefined && typeof input.allowDangerouslySkipPermissions !== 'boolean') {
+        throw new Error('Invalid Claude SDK allowDangerouslySkipPermissions');
+    }
     if (input.effort !== undefined && !EFFORTS.has(input.effort)) throw new Error('Invalid Claude SDK effort');
     if (typeof input.fastMode !== 'boolean') throw new Error('Invalid Claude SDK fastMode');
     if (!validString(input.model, true)) throw new Error('Invalid Claude SDK model');
@@ -70,8 +89,9 @@ export function buildClaudeSdkOptions(input: PreparedClaudeOptions): Options {
         settingSources: ['user', 'project', 'local'],
         includePartialMessages: true,
         maxTurns: 500,
-        permissionMode: input.permissions === 'auto' ? 'bypassPermissions' : 'default',
-        ...(input.permissions === 'auto' ? { allowDangerouslySkipPermissions: true } : {}),
+        permissionMode: input.sdkMode ?? (input.permissions === 'auto' ? 'bypassPermissions' : 'default'),
+        ...(input.permissions === 'auto' || input.allowDangerouslySkipPermissions === true
+            ? { allowDangerouslySkipPermissions: true } : {}),
         ...(input.model && input.model !== 'default' ? { model: input.model } : {}),
         // Match Claude print/resume args: medium leaves the provider's configured effort intact.
         ...(input.effort !== undefined && input.effort !== 'medium' ? { effort: input.effort } : {}),

@@ -1,4 +1,4 @@
-import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { RuntimeEventBody, RuntimeRequestView } from '../../shared/runtime-contract.js';
 import { redactRuntimeContent, sanitizeRuntimeRequestView } from '../../trace/runtime-body-codec.js';
 import type { RuntimeEventContext } from './events.js';
@@ -10,7 +10,7 @@ export interface ClaudePermissionOwner {
     emit(body: RuntimeEventBody): void;
 }
 type CallbackOptions = Parameters<CanUseTool>[2];
-type Decision = 'allow' | 'deny' | 'cancel';
+type Decision = 'allow' | 'allow-session' | 'deny' | 'cancel';
 type Answer = Decision | Record<string, string>;
 type PreparedRequest = { view: RuntimeRequestView; requestType: 'approval' | 'question'; validate(value: unknown): Answer };
 const INPUT_BYTES = 1024 * 1024;
@@ -32,12 +32,24 @@ function exact(value: unknown, required: string[], optional: string[] = []): ass
             || !('value' in Object.getOwnPropertyDescriptor(value, key)!))) throw new Error('invalid_response');
 }
 
-export function encodeClaudeApprovalResponse(optionId: 'allow' | 'deny' | null) { return { optionId }; }
-export function validateClaudeApprovalResponse(value: unknown): Decision {
+export function encodeClaudeApprovalResponse(optionId: 'allow' | 'allow-session' | 'deny' | null) { return { optionId }; }
+/** `allow-session` is only a valid answer when the issued card offered it. */
+export function validateClaudeApprovalResponse(value: unknown, sessionGrants = false): Decision {
     exact(value, ['optionId']);
     if (value['optionId'] === null) return 'cancel';
     if (value['optionId'] === 'allow' || value['optionId'] === 'deny') return value['optionId'];
+    if (sessionGrants && value['optionId'] === 'allow-session') return 'allow-session';
     throw new Error('invalid_option');
+}
+
+/**
+ * "Allow for this session": the SDK's own suggestions, rescoped to the session, or a
+ * session rule for the tool. Never a settings-file destination.
+ */
+export function sessionPermissionUpdates(toolName: string, suggestions: readonly PermissionUpdate[] | undefined): PermissionUpdate[] {
+    const scoped = (suggestions ?? []).map(suggestion => ({ ...suggestion, destination: 'session' as const }));
+    if (scoped.length > 0) return scoped;
+    return [{ type: 'addRules', rules: [{ toolName }], behavior: 'allow', destination: 'session' }];
 }
 
 /** SDK JSON only. Reject accessors, cycles and expansive trees before cloning/freezing. */
@@ -101,7 +113,7 @@ function safeLabel(value: string, onRedaction?: () => void): string {
 function meaningful(text: string): boolean {
     return !!text.replace(/\[[^\]]*(?:REDACTED|withheld)[^\]]*\]/gi, '').replace(/[\s:={}\[\]"']+/g, '');
 }
-function approvalView(toolName: string, input: Record<string, unknown>, options: CallbackOptions): RuntimeRequestView | null {
+function approvalView(toolName: string, input: Record<string, unknown>, options: CallbackOptions, sessionGrants = false): RuntimeRequestView | null {
     const candidates = [options['title'], input['command'], options.blockedPath, input['file_path'], input['path'],
         input['url'], input['pattern'], input['description'], input['title']];
     const target = toolName === 'Bash' ? input['command']
@@ -119,7 +131,9 @@ function approvalView(toolName: string, input: Record<string, unknown>, options:
     // Only selected operation metadata is exposed; never stringify the full input or env.
     return sanitizeRuntimeRequestView({ title, fields: [{
         id: 'decision', label: 'Permission', multiSelect: false, allowFreeform: false,
-        options: [{ id: 'allow', label: 'Allow once' }, { id: 'deny', label: 'Deny' }],
+        options: sessionGrants
+            ? [{ id: 'allow', label: 'Allow once' }, { id: 'allow-session', label: 'Allow for this session' }, { id: 'deny', label: 'Deny' }]
+            : [{ id: 'allow', label: 'Allow once' }, { id: 'deny', label: 'Deny' }],
     }] });
 }
 
@@ -189,12 +203,16 @@ function emit(owner: ClaudePermissionOwner, body: RuntimeEventBody): void {
     try { owner.emit(body); } catch { /* The registry remains the authoritative polling surface. */ }
 }
 
-export function createClaudePermissions({ registry, permissions, resolveOwner }: {
+export function createClaudePermissions({ registry, permissions, sessionGrants = false, resolveOwner }: {
     registry: RuntimeRequests;
     permissions: 'auto' | 'safe';
+    /** Code sessions offer "Allow for this session"; jaw turns never do. */
+    sessionGrants?: boolean;
     resolveOwner(toolUseId: string): Promise<ClaudePermissionOwner | null>;
-}): { canUseTool: CanUseTool; cancelAll(): void } {
+}): { canUseTool: CanUseTool; cancelAll(): void; setGate(gate: 'auto' | 'safe'): void } {
     if (permissions !== 'auto' && permissions !== 'safe') throw new Error('invalid_claude_permissions');
+    // A live permission-mode switch moves the gate; every callback reads it fresh.
+    let gate: 'auto' | 'safe' = permissions;
     const active = new Set<() => void>();
     const canUseTool: CanUseTool = async (toolName, input, options) => {
         if (options.signal.aborted || active.size >= MAX_PENDING) return deny();
@@ -213,9 +231,9 @@ export function createClaudePermissions({ registry, permissions, resolveOwner }:
             if (typeof toolName !== 'string' || !/^[A-Za-z0-9_:.\/-]{1,240}$/.test(toolName)
                 || typeof options.toolUseID !== 'string' || !options.toolUseID || options.toolUseID.length > 1000) return deny();
             const original = snapshotInput(input);
-            const ask = toolName === 'AskUserQuestion' || permissions === 'safe' || options.matchedAskRule !== undefined;
+            const ask = toolName === 'AskUserQuestion' || gate === 'safe' || options.matchedAskRule !== undefined;
             const request = toolName === 'AskUserQuestion' ? questionRequest(original) : undefined;
-            const view = ask && !request ? approvalView(toolName, original, options) : undefined;
+            const view = ask && !request ? approvalView(toolName, original, options, sessionGrants) : undefined;
             if (ask && !request && !view) return deny('Claude action has no supported reviewable operation or target.');
             // Main resolves native tool IDs to the captured turn, with its bounded frame wait.
             const resolved = await Promise.race([resolveOwner(options.toolUseID), cancellation]);
@@ -224,13 +242,17 @@ export function createClaudePermissions({ registry, permissions, resolveOwner }:
                 isCurrent: resolved.isCurrent.bind(resolved), emit: resolved.emit.bind(resolved) };
             if (!current()) return deny();
             if (!ask) return current() ? { behavior: 'allow', updatedInput: original } : deny();
-            const prepared = request ?? { view: view!, requestType: 'approval' as const, validate: validateClaudeApprovalResponse };
+            const prepared = request ?? { view: view!, requestType: 'approval' as const,
+                validate: (value: unknown) => validateClaudeApprovalResponse(value, sessionGrants) };
             pending = registry.open<Answer>({ ...owner.context, ...prepared, cancelled: 'cancel', isCurrent: current });
             if (!current()) { cancel(); return deny(); }
             emit(owner, { kind: 'request', requestId: pending.requestId, requestType: prepared.requestType, view: pending.view });
             const answer = await pending.answer;
             if (!current()) return deny();
             if (answer === 'allow') return { behavior: 'allow', updatedInput: original };
+            if (answer === 'allow-session' && sessionGrants) {
+                return { behavior: 'allow', updatedInput: original, updatedPermissions: sessionPermissionUpdates(toolName, options.suggestions) };
+            }
             if (record(answer) && prepared.requestType === 'question') {
                 return { behavior: 'allow', updatedInput: Object.freeze({ ...original, answers: answer }) };
             }
@@ -243,5 +265,6 @@ export function createClaudePermissions({ registry, permissions, resolveOwner }:
             if (pending && owner) emit(owner, { kind: 'request-settled', requestId: pending.requestId });
         }
     };
-    return { canUseTool, cancelAll: () => { for (const cancel of [...active]) cancel(); } };
+    return { canUseTool, cancelAll: () => { for (const cancel of [...active]) cancel(); },
+        setGate: next => { if (next === 'auto' || next === 'safe') gate = next; } };
 }
