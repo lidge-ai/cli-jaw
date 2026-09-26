@@ -448,3 +448,15 @@ test('Manager production parser leaves proxy/browser/design streams to their exi
         assert.deepEqual(f.calls, []);
     }, '/api/code', createManagerApiJsonParser);
 });
+
+test('POST and PATCH accept every Claude permission mode; provider fit is the manager\'s call', async () => {
+    await server(async (url, f) => {
+        for (const permissionMode of ['plan', 'accept-edits', 'dont-ask', 'auto-review']) {
+            const created = await request(`${url}/sessions`, 'POST', { provider: 'claude', cwd: tmpdir(), model: 'default', permissionMode });
+            assert.equal(created.status, 201, permissionMode);
+            assert.equal((f.calls.at(-1)?.args[0] as { permissionMode?: string }).permissionMode, permissionMode);
+            const patched = await request(`${url}/sessions/session-one`, 'PATCH', { expectedRevision: 2, permissionMode });
+            assert.equal(patched.status, 200, permissionMode);
+        }
+    });
+});

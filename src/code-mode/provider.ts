@@ -48,6 +48,8 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     send(text: string): Promise<RuntimeTurnOutcome>;
     /** Optional: the specific reason the last turn failed, when the runtime names one. */
     readonly lastTurnFailureText?: string | null;
+    /** Optional: switch the resident runtime's permission mode without restarting it (Claude). */
+    setPermissionMode?(mode: CodePermissionMode): Promise<void>;
     cancel(): Promise<void>;
     close(): Promise<void>;
 }

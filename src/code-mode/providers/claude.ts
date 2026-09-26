@@ -1,6 +1,8 @@
 import { createClaudeSdkSession, type ClaudeSdkSession } from '../../agent/runtime/claude-sdk-session.js';
 import type { PreparedClaudeOptions } from '../../agent/runtime/claude-sdk-options.js';
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { CodeProvider } from '../provider.js';
+import type { CodePermissionMode } from '../wire.js';
 import { claudeModelGateMessage } from '../../cli/claude-default-model-boot.js';
 import { admitCodeOpen, captureCodeContext, CODE_PROMPT_TIMEOUT_MS, type CodeProviderDependencies } from './acp.js';
 
@@ -10,13 +12,28 @@ function claudeEffort(value: string | null): PreparedClaudeOptions['effort'] {
     throw new Error('code_provider_effort_unsupported');
 }
 
+const CLAUDE_CODE_MODES = {
+    ask: 'default',
+    'accept-edits': 'acceptEdits',
+    plan: 'plan',
+    'auto-review': 'auto',
+    'dont-ask': 'dontAsk',
+    auto: 'bypassPermissions',
+} as const satisfies Record<Exclude<CodePermissionMode, 'read-only'>, PermissionMode>;
+
+/** Code picker value -> exact SDK permission mode. `auto` stays YOLO; SDK `auto` is `auto-review`. */
+export function claudeCodePermissionMode(mode: CodePermissionMode): PermissionMode {
+    if (mode === 'read-only') throw new Error('code_provider_policy_unsupported');
+    return CLAUDE_CODE_MODES[mode];
+}
+
 export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
     create: typeof createClaudeSdkSession = createClaudeSdkSession): CodeProvider {
     return {
         id: 'claude', describe: dependencies.describe,
         async open(options) {
             admitCodeOpen(options, dependencies);
-            if (options.permissionMode === 'read-only') throw new Error('code_provider_policy_unsupported');
+            const sdkMode = claudeCodePermissionMode(options.permissionMode);
             const modelRefusal = claudeModelGateMessage(dependencies.binary(), options.model);
             if (modelRefusal) throw new Error(modelRefusal);
             const opening = captureCodeContext(options);
@@ -26,7 +43,9 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
             try { runtime = await create({
                 prepared: { cwd: options.cwd, binary: dependencies.binary(), env: dependencies.environment(),
                     model: options.model, systemPrompt: '', fastMode: false,
-                    permissions: options.permissionMode === 'auto' ? 'auto' : 'safe',
+                    permissions: sdkMode === 'bypassPermissions' ? 'auto' : 'safe',
+                    // Every Code process may later switch live, including to bypass.
+                    sdkMode, sessionGrants: true, allowDangerouslySkipPermissions: true,
                     ...(effort === undefined ? {} : { effort }),
                     ...(options.nativeCursor === null ? {} : { resumeSessionId: options.nativeCursor }) },
                 signal: options.signal, registry: options.registry, promptTimeoutMs: CODE_PROMPT_TIMEOUT_MS,
@@ -84,6 +103,7 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                 return {
                     get nativeSessionId() { return runtime.nativeSessionId; },
                     get lastTurnFailureText() { return runtime.lastTurnFailureText; },
+                    setPermissionMode: (mode: CodePermissionMode) => runtime.setPermissionMode(claudeCodePermissionMode(mode)),
                     get alive() { return !closing && runtime.alive; },
                     get closed() { return !runtime.alive && runtime.activeProcessCount === 0; },
                     send(text) {

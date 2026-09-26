@@ -21,11 +21,17 @@ type Turn = {
 const MAX_NATIVE_ITEMS = 4096;
 const CODEX_GRACEFUL_CLOSE_MS = 1000;
 const CODEX_EXIT_DEADLINE_MS = 6000;
-const policy: Record<CodeOpenOptions['permissionMode'], Pick<CodexThreadOptions, 'approvalPolicy' | 'sandbox'>> = {
+type CodexPermissionMode = Extract<CodeOpenOptions['permissionMode'], 'ask' | 'auto' | 'read-only'>;
+const policy: Record<CodexPermissionMode, Pick<CodexThreadOptions, 'approvalPolicy' | 'sandbox'>> = {
     ask: { approvalPolicy: 'untrusted', sandbox: 'workspace-write' },
     auto: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
     'read-only': { approvalPolicy: 'never', sandbox: 'read-only' },
 };
+/** Claude-only modes (plan, accept-edits, dont-ask, auto-review) have no Codex equivalent. */
+function codexPolicy(mode: CodeOpenOptions['permissionMode']): Pick<CodexThreadOptions, 'approvalPolicy' | 'sandbox'> {
+    if (mode !== 'ask' && mode !== 'auto' && mode !== 'read-only') throw new Error('code_provider_policy_unsupported');
+    return policy[mode];
+}
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object'
     && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
@@ -95,7 +101,7 @@ class CodeCodexSession implements CodeProviderSession {
             await this.client.initialize();
             if (!context.isCurrent() || this.options.signal.aborted) throw new Error('code_provider_open_aborted');
             const thread: CodexThreadOptions = { model: this.options.model, effort: this.options.effort ?? '',
-                cwd: this.options.cwd, fastMode: false, ...policy[this.options.permissionMode] };
+                cwd: this.options.cwd, fastMode: false, ...codexPolicy(this.options.permissionMode) };
             this.nativeId = this.options.nativeCursor === null
                 ? await this.client.startThread(this.scope, thread)
                 : await this.client.resumeThread(this.scope, this.options.nativeCursor, thread);

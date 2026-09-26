@@ -1666,3 +1666,67 @@ test('retiring a runtime retires its context figure, not just an explicit exit',
     await service?.dispose();
     assert.equal(f.manager.list().find(entry => entry.sessionId === row.sessionId)?.contextUsage, undefined);
 });
+
+// ─── Claude permission modes switch the resident query instead of restarting it ───
+
+function claudeModes(f: ReturnType<typeof fixture>) {
+    f.providers.claude.catalog.capabilities.permissionModes = ['ask', 'accept-edits', 'plan', 'auto-review', 'dont-ask', 'auto'];
+}
+function switchable(handle: object) {
+    const modes: string[] = [];
+    let fail = false;
+    Object.assign(handle, { async setPermissionMode(mode: string) { if (fail) throw new Error('switch_failed'); modes.push(mode); } });
+    return { modes, failNext() { fail = true; } };
+}
+
+test('Claude permission-only patch switches the idle resident runtime in place', async t => {
+    const f = fixture(t); claudeModes(f);
+    const row = f.create('claude');
+    f.manager.prompt(row.sessionId, prompt);
+    await f.providers.claude.opened();
+    const handle = f.providers.claude.handles[0]!;
+    const sw = switchable(handle);
+    await handle.sent.promise; handle.outcome.resolve(done); await f.terminal(row.sessionId, 1);
+    const patched = await f.manager.patch(row.sessionId, { expectedRevision: 0, permissionMode: 'plan' });
+    assert.equal(patched.permissionMode, 'plan');
+    assert.deepEqual(sw.modes, ['plan']);
+    assert.equal(handle.closes, 0, 'no restart for a permission-only change');
+    f.manager.prompt(row.sessionId, { ...prompt, clientTurnKey: 'second-key' });
+    await handle.waitSent(1);
+    assert.equal(f.providers.claude.calls.length, 1, 'the next prompt reuses the same runtime');
+});
+
+test('Claude permission-only patch with no live runtime is stored and applied on the next open', async t => {
+    const f = fixture(t); claudeModes(f);
+    const row = f.create('claude');
+    await f.manager.patch(row.sessionId, { expectedRevision: 0, permissionMode: 'auto-review' });
+    f.manager.prompt(row.sessionId, prompt);
+    const options = await f.providers.claude.opened();
+    assert.equal(options.permissionMode, 'auto-review');
+});
+
+test('Claude permission patch is refused while busy and restores the runtime when persistence fails', async t => {
+    const f = fixture(t); claudeModes(f);
+    const row = f.create('claude');
+    f.manager.prompt(row.sessionId, prompt);
+    await f.providers.claude.opened();
+    const handle = f.providers.claude.handles[0]!;
+    const sw = switchable(handle);
+    await handle.sent.promise;
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 0, permissionMode: 'plan' }), errorCode('session_busy'));
+    assert.deepEqual(sw.modes, [], 'no SDK call while a turn runs');
+    handle.outcome.resolve(done); await f.terminal(row.sessionId, 1);
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 99, permissionMode: 'plan' }), errorCode('revision_conflict'));
+    assert.deepEqual(sw.modes, ['plan', 'ask'], 'the stored mode is put back on the runtime');
+    assert.equal(handle.closes, 0);
+});
+
+test('a newly chosen Claude mode must be in the live catalog; other providers keep both-list rules', async t => {
+    const f = fixture(t);
+    const row = f.create('claude');
+    await assert.rejects(f.manager.patch(row.sessionId, { expectedRevision: 0, permissionMode: 'plan' }), errorCode('unsupported_policy'));
+    claudeModes(f);
+    await assert.doesNotReject(f.manager.patch(row.sessionId, { expectedRevision: 0, permissionMode: 'plan' }));
+    const codex = f.create('codex-app');
+    await assert.rejects(f.manager.patch(codex.sessionId, { expectedRevision: 0, permissionMode: 'plan' }), errorCode('unsupported_policy'));
+});

@@ -86,7 +86,7 @@ export class CodeSessionManager {
      * newly choosing is always checked against what the runtime serves today.
      */
     private validate(input: CodeCreateSessionRequest, fixed?: CodeCapabilities,
-        accepted?: Pick<CodeCreateSessionRequest, 'model' | 'effort'>): CodeProviderCatalog {
+        accepted?: Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>): CodeProviderCatalog {
         const catalog = this.catalog(input.provider);
         if (!catalog.available) throw new CodeServiceError('provider_unavailable', 'Code provider is unavailable');
         const keptModel = accepted !== undefined && accepted.model === input.model;
@@ -94,8 +94,16 @@ export class CodeSessionManager {
             throw new CodeStoreError('unsupported_model', 'Code model is unsupported', 400);
         }
         const keptEffort = keptModel && accepted !== undefined && accepted.effort === input.effort;
+        if (input.provider === 'claude') {
+            // Claude modes switch live, so a newly chosen mode answers to the live catalog
+            // alone; the mode a session already runs with may also stand on its snapshot.
+            const kept = accepted !== undefined && accepted.permissionMode === input.permissionMode;
+            const allowed = catalog.capabilities.permissionModes.includes(input.permissionMode)
+                || (kept && fixed?.permissionModes.includes(input.permissionMode) === true);
+            if (!allowed) throw new CodeStoreError('unsupported_policy', 'Code permission mode is unsupported', 400);
+        }
         for (const capabilities of fixed ? [fixed, catalog.capabilities] : [catalog.capabilities]) {
-            if (!capabilities.permissionModes.includes(input.permissionMode)) {
+            if (input.provider !== 'claude' && !capabilities.permissionModes.includes(input.permissionMode)) {
                 throw new CodeStoreError('unsupported_policy', 'Code permission mode is unsupported', 400);
             }
             // A kept effort skips the live union for the same reason a kept model
@@ -313,9 +321,29 @@ export class CodeSessionManager {
                 throw new CodeStoreError('resume_unavailable', 'Code policy change requires resumable native history', 409);
             }
         }
-        const result = this.storage(() => this.options.store.patchSession(id, input));
+        // A Claude permission-only change switches the resident query instead of restarting it.
+        const permissionOnly = record.provider === 'claude' && input.permissionMode !== undefined
+            && input.permissionMode !== record.permissionMode
+            && (input.model === undefined || input.model === record.model)
+            && (input.effort === undefined || input.effort === record.effort) && input.archived === undefined;
+        let switched = false;
+        if (permissionOnly && session) {
+            if (session.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing permissions', 409);
+            switched = await session.applyPermissionMode(input.permissionMode!) === 'applied';
+        }
+        let result: ReturnType<CodeStore['patchSession']>;
+        try { result = this.storage(() => this.options.store.patchSession(id, input)); }
+        catch (error) {
+            if (switched && session) {
+                // Put the runtime back where the stored row still is; if that fails, retire it.
+                try { await session.applyPermissionMode(record.permissionMode); }
+                catch { await session.dispose(); }
+            }
+            throw error;
+        }
         // Invalidate residency before exposing the new metadata to subscribers.
-        const closing = session && (policyChanged || input.archived === true) ? session.dispose() : null;
+        const closing = session && ((policyChanged && !permissionOnly) || input.archived === true)
+            ? session.dispose() : null;
         this.publish(result.events);
         if (closing) await closing;
         return { ...result.session, cleanupPending: this.cleanupReadout(id, session) };

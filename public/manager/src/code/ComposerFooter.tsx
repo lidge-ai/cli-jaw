@@ -121,6 +121,9 @@ export function ComposerFooter({ controller: c, onNotice }: {
     const selection = c.selection;
     const provider = c.catalog?.providers.find(entry => entry.id === selection.provider);
     const capabilities = c.session?.capabilities ?? provider?.capabilities;
+    // Claude switches permission modes live, so its menu follows today's catalog rather
+    // than the snapshot a session was created with; other runtimes keep their snapshot.
+    const permissionModes = (selection.provider === 'claude' ? provider?.capabilities : capabilities)?.permissionModes ?? [];
     const locked = c.selectedId !== null;
     const disabled = c.pending || c.busy || c.creationUnknown || c.operation.kind !== 'idle' || (locked && (!c.synced || c.session?.status !== 'idle' || c.session?.archivedAt !== null));
     const [saving, setSaving] = useState(false);
@@ -183,7 +186,7 @@ export function ComposerFooter({ controller: c, onNotice }: {
                 }} />
             <CodeFooterMenu label="Permission" value={selection.permissionMode} displayValue={CODE_POLICY_LABELS[selection.permissionMode]}
                 disabled={controlsDisabled || !capabilities?.permissions}
-                options={(capabilities?.permissionModes ?? []).map(value => ({ value, label: CODE_POLICY_LABELS[value], detail: CODE_POLICY_DETAILS[value] }))}
+                options={permissionModes.map(value => ({ value, label: CODE_POLICY_LABELS[value], detail: CODE_POLICY_DETAILS[value] }))}
                 onChange={value => void change({ permissionMode: value })} />
             <span className="code-composer-footer-spacer" aria-hidden="true" />
             <ContextUsageMeter usage={c.session?.contextUsage} />

@@ -216,3 +216,15 @@ test('lazy loader rejects malformed exports and synchronous importer failures wi
     await assert.rejects(loadClaudeSdk(importer), /Claude native SDK unavailable/);
     assert.equal(calls, 2);
 });
+
+test('Code sessions pin an exact SDK permission mode; jaw-shaped input keeps auto/safe', () => {
+    assert.equal(buildClaudeSdkOptions(prepared()).permissionMode, 'default');
+    assert.equal(buildClaudeSdkOptions(prepared()).allowDangerouslySkipPermissions, undefined);
+    const plan = buildClaudeSdkOptions(prepared({ sdkMode: 'plan', allowDangerouslySkipPermissions: true, sessionGrants: true }));
+    assert.equal(plan.permissionMode, 'plan');
+    assert.equal(plan.allowDangerouslySkipPermissions, true, 'lets a later live switch to bypass be legal');
+    assert.equal(buildClaudeSdkOptions(prepared({ permissions: 'auto', sdkMode: 'bypassPermissions' })).permissionMode, 'bypassPermissions');
+    assert.throws(() => buildClaudeSdkOptions(prepared({ sdkMode: 'bypassPermissions' })), 'bypass needs the auto gate');
+    assert.throws(() => buildClaudeSdkOptions(prepared({ permissions: 'auto', sdkMode: 'plan' })), 'the auto gate needs bypass');
+    assert.throws(() => buildClaudeSdkOptions(prepared({ sdkMode: 'yolo' as never })));
+});

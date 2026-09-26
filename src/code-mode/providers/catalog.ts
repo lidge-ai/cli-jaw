@@ -16,7 +16,9 @@ import { readCodexLiveModels, type CodexLiveModels } from './live-models.js';
 import { readProviderLiveModels, type LiveCatalogProviderId, type ProviderLiveModels } from './provider-live-models.js';
 
 const MODES: Record<CodeProviderId, CodePermissionMode[]> = {
-    'codex-app': ['ask', 'auto', 'read-only'], claude: ['ask', 'auto'], cursor: ['ask', 'auto'], grok: ['auto'],
+    'codex-app': ['ask', 'auto', 'read-only'],
+    claude: ['ask', 'accept-edits', 'plan', 'auto-review', 'dont-ask', 'auto'],
+    cursor: ['ask', 'auto'], grok: ['auto'],
 };
 
 /** Filesystem-only discovery: catalogs must never execute a CLI or a login probe. */

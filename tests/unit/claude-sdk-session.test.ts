@@ -362,3 +362,41 @@ test('an unknown result subtype fails the turn closed without failing the reader
     f.output.push(result('fine'));
     assert.equal((await next).finalText, 'fine');
 });
+
+test('an exact Code mode must be the one init confirms', async t => {
+    const f = await fixture({ prepared: { cwd: process.cwd(), binary: process.execPath, env: {}, model: 'default', systemPrompt: '',
+        permissions: 'safe', fastMode: false, sdkMode: 'plan', allowDangerouslySkipPermissions: true, sessionGrants: true } });
+    t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    f.output.push({ type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'default' });
+    assert.equal((await turn).status, 'error');
+    assert.equal(f.session.lastError, 'claude_permission_mode_not_confirmed');
+});
+
+test('a live permission switch calls the query and moves the approval gate', async t => {
+    const modes: string[] = [];
+    const output = stream();
+    const f = await fixture({
+        prepared: { cwd: process.cwd(), binary: process.execPath, env: {}, model: 'default', systemPrompt: '',
+            permissions: 'auto', fastMode: false, sdkMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, sessionGrants: true },
+        queryFactory: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+            void (async () => { for await (const _ of prompt) { /* drain */ } })();
+            return { ...output, close() { output.close(); }, async setPermissionMode(mode: string) { modes.push(mode); } };
+        },
+    });
+    t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    output.push({ type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'bypassPermissions' });
+    output.push(result('ok'));
+    assert.equal((await turn).finalText, 'ok');
+    await f.session.setPermissionMode('plan');
+    assert.deepEqual(modes, ['plan']);
+});
+
+test('a live permission switch without query support fails loudly', async t => {
+    const f = await fixture(); t.after(() => f.session.close());
+    const turn = f.session.send({ text: 'one' }, () => {});
+    f.output.push(result('ok'));
+    await turn;
+    await assert.rejects(() => f.session.setPermissionMode('plan'), /claude_permission_mode_unavailable/);
+});

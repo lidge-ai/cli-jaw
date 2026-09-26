@@ -359,3 +359,57 @@ test('ordinary auto bypass retains the full long command without applying the ap
     });
     assert.deepEqual(f.bodies, []);
 });
+
+// ─── Code sessions: "Allow for this session" and a gate that follows live mode switches ───
+
+function grantFixture(t: TestContext, permissions: 'auto' | 'safe' = 'safe') {
+    const registry = new RuntimeRequests();
+    const bodies: RuntimeEventBody[] = [];
+    const owner: ClaudePermissionOwner = { context, isCurrent: () => true, emit: body => { bodies.push(body); } };
+    const api = createClaudePermissions({ registry, permissions, sessionGrants: true, resolveOwner: async () => owner });
+    t.after(() => api.cancelAll());
+    const nextRequest = async () => { for (let i = 0; i < 50 && !registry.list('chat').length; i++) await new Promise(r => setTimeout(r, 2)); return registry.list('chat')[0]!; };
+    return { api, registry, bodies, nextRequest };
+}
+
+test('session grants add a third option and allow-session is valid only when offered', () => {
+    assert.equal(validateClaudeApprovalResponse({ optionId: 'allow-session' }, true), 'allow-session');
+    assert.throws(() => validateClaudeApprovalResponse({ optionId: 'allow-session' }));
+    assert.deepEqual(encodeClaudeApprovalResponse('allow-session'), { optionId: 'allow-session' });
+});
+
+test('allow-session answers with session-scoped updates: rescoped suggestions, else a tool rule', async t => {
+    const f = grantFixture(t);
+    const withSuggestions = f.api.canUseTool('Bash', { command: 'npm test' }, { ...options(), suggestions: [
+        { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' },
+    ] } as never);
+    const first = await f.nextRequest();
+    assert.deepEqual(first.view.fields[0]!.options.map(o => o.id), ['allow', 'allow-session', 'deny']);
+    f.registry.respond(first.requestId, context, { optionId: 'allow-session' });
+    const granted = await withSuggestions as { updatedPermissions?: Array<{ destination: string }> };
+    assert.deepEqual(granted.updatedPermissions?.map(u => u.destination), ['session'], 'never written to a settings file');
+
+    const bare = f.api.canUseTool('Bash', { command: 'ls' }, options(new AbortController(), 'tool-2'));
+    const second = await f.nextRequest();
+    f.registry.respond(second.requestId, context, { optionId: 'allow-session' });
+    assert.deepEqual((await bare as { updatedPermissions?: unknown }).updatedPermissions,
+        [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }]);
+
+    const once = f.api.canUseTool('Bash', { command: 'pwd' }, options(new AbortController(), 'tool-3'));
+    const third = await f.nextRequest();
+    f.registry.respond(third.requestId, context, { optionId: 'allow' });
+    assert.equal((await once as { updatedPermissions?: unknown }).updatedPermissions, undefined, 'allow once writes no rule');
+});
+
+test('the gate follows live switches: bypass -> safe asks, safe -> bypass stops asking', async t => {
+    const f = grantFixture(t, 'auto');
+    assert.deepEqual(await f.api.canUseTool('Bash', { command: 'ls' }, options()), { behavior: 'allow', updatedInput: { command: 'ls' } });
+    f.api.setGate('safe');
+    const asked = f.api.canUseTool('Bash', { command: 'ls' }, options(new AbortController(), 'tool-2'));
+    const request = await f.nextRequest();
+    assert.ok(request, 'after switching to a safe mode the next tool asks');
+    f.registry.respond(request.requestId, context, { optionId: 'deny' });
+    assert.equal((await asked).behavior, 'deny');
+    f.api.setGate('auto');
+    assert.equal((await f.api.canUseTool('Bash', { command: 'ls' }, options(new AbortController(), 'tool-3'))).behavior, 'allow');
+});

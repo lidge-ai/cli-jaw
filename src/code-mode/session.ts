@@ -6,7 +6,7 @@ import { CodeTurnNormalizer, redactCodeText } from './normalize.js';
 import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource, CodeTurnContext } from './provider.js';
 import { CodeStore, CodeStoreError, type CodeSessionRecord, type CodeStoreOwner } from './store.js';
 import type {
-    CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionRequest,
+    CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionMode, CodePermissionRequest,
     CodeSessionError, CodeWireEvent,
 } from './wire.js';
 
@@ -98,6 +98,20 @@ export class CodeSession {
     }
 
     get busy(): boolean { return this.operation !== null && !this.operation.settled; }
+
+    /**
+     * Switch the resident runtime's permission mode in place. 'deferred' means there is
+     * no live handle to switch; the next open reads the stored mode instead.
+     */
+    async applyPermissionMode(mode: CodePermissionMode): Promise<'applied' | 'deferred'> {
+        const binding = this.binding;
+        const handle = binding?.handle;
+        if (!binding || !handle || handle.alive !== true || handle.closed === true || binding.retiring || binding.exited) return 'deferred';
+        if (!handle.setPermissionMode) throw new Error('code_permission_mode_unavailable');
+        await handle.setPermissionMode(mode);
+        binding.configuration = Object.freeze({ ...binding.configuration, permissionMode: mode });
+        return 'applied';
+    }
     get resident(): boolean {
         this.reconcileBindings();
         return [...this.bindings].some(binding => binding.opening || this.hasOpenResources(binding));

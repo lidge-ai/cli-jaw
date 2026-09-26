@@ -1,6 +1,9 @@
 /** Public Code contracts. Native runtime identities never belong on this wire. */
 export type CodeProviderId = 'codex-app' | 'claude' | 'cursor' | 'grok';
-export type CodePermissionMode = 'ask' | 'auto' | 'read-only';
+/** `plan`, `accept-edits`, `dont-ask`, `auto-review` are Claude-only (SDK plan/acceptEdits/dontAsk/auto). */
+export type CodePermissionMode =
+    | 'ask' | 'auto' | 'read-only'
+    | 'plan' | 'accept-edits' | 'dont-ask' | 'auto-review';
 export type CodeSessionStatus = 'idle' | 'starting' | 'streaming' | 'stopping' | 'suspended' | 'failed';
 
 export interface CodeCapabilities {

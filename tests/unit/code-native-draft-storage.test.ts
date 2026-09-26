@@ -126,3 +126,15 @@ test('invalid background draft fields retain the previous complete checkpoint', 
     assert.equal(store.getItem('cli-jaw:code-drafts:v1'), checkpoint);
     assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data!.sessions[0]!.draft.selection.cwd, '/workspace');
 });
+
+test('Claude permission modes round-trip in a stored draft; unknown modes still drop it', () => {
+    const store = storage(), draftBook = book(store);
+    draftBook.fresh = createCodeDraft({ provider: 'claude', cwd: '/workspace', model: 'model', effort: null, permissionMode: 'plan' });
+    draftBook.fresh.input = 'plan this';
+    assert.equal(saveCodeDraftStorage(store, draftBook.endpoint, draftBook), null);
+    assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data!.fresh.selection.permissionMode, 'plan');
+    const raw = JSON.parse(store.getItem(store.key(0)!)!);
+    const swap = (value: unknown): unknown => JSON.parse(JSON.stringify(value).replace('"plan"', '"yolo"'));
+    store.setItem(store.key(0)!, JSON.stringify(swap(raw)));
+    assert.equal(loadCodeDraftStorage(store, draftBook.endpoint).data?.fresh.selection.permissionMode === 'yolo', false);
+});
