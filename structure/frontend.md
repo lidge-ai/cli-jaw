@@ -686,14 +686,22 @@ original key and text; reconnect never resends automatically. Each approval has
 its own pending/error state and forwards the native opaque choice. Session rows
 support rename, archive/restore, current-workspace filtering and paging.
 
-The session list is ordered by creation, newest first, with the id as a
-tiebreak. The server returns sessions by last activity, which would move a
-session to the top of the list while the reader is looking at it merely because
-it answered a prompt; which session is running is carried by the row's own
-status instead. Rows are partitioned into active and archived, and the archived
-tail orders by when each session was put away rather than when it was created.
-A section with nothing in it is not rendered. Grouping by workspace remains a
-separate explicit mode. Idle status and "no pending approvals" stay in the
+The session list has two views, modeled on the Codex desktop sidebar. **Projects**
+(the default) groups sessions under their workspace folder, newest session first
+inside a group, and places a group by its newest session; the group heading shows
+the folder name (full path in its title) and a `+` that starts a draft there. The
+server returns sessions by last activity, which would move a session to the top of
+the list while the reader is looking at it merely because it answered a prompt;
+Projects never does that, and which session is running is carried by the row's own
+status instead. The **bell** in the header switches to **Recent activity**, the view
+the reader chose to see movement in: a **Priority** section with unread sessions
+(newest completion first), then Today, Yesterday and Earlier by last activity at
+local midnight, each row showing its workspace name. A session is unread when
+`lastTurnCompletedAt > lastVisitedAt`; never-opened, archived and the currently open
+session are never unread. Unread rows and the bell (when anything is unread) carry
+a blue dot. The chosen view persists in `localStorage` (`jaw.code.sidebarView`).
+Archived sessions, when shown, form a trailing section ordered by when each was put
+away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
 the one row that is actually waiting its visibility; an unhydrated approval
 count remains unknown rather than being shown as zero.
