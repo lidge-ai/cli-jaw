@@ -362,8 +362,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.jaw-ceo-trace-chip,
-.jaw-ceo-activity-actions button {
+.jaw-ceo-trace-chip {
     min-height: 24px;
     padding: 3px 7px;
     border: 1px solid var(--ceo-line);
@@ -372,17 +371,12 @@
     color: var(--ceo-ink);
     font-size: 10.5px;
     font-weight: 800;
-}
-.jaw-ceo-trace-chip {
     display: inline-flex;
     align-items: center;
     justify-content: center;
 }
 .jaw-ceo-activity-actions {
-    display: flex;
-    flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 5px;
 }
 .jaw-ceo-empty-state {
     min-height: 260px;

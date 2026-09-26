@@ -1,3 +1,6 @@
+import { ContextMenu, type ContextMenuEntry } from '../components/context-menu/ContextMenu';
+import { CopyGlyph, DocGlyph, FolderGlyph, PencilGlyph, RestartGlyph } from '../components/context-menu/icons';
+import { isMacLikePlatform } from '../client-platform';
 import type { FolderPanelEntry } from './folder-sources';
 
 type FolderContextMenuProps = {
@@ -7,6 +10,7 @@ type FolderContextMenuProps = {
     canReveal: boolean;
     canRefresh: boolean;
     canMutate: boolean;
+    onClose: () => void;
     onCopyPath: () => void;
     onCopyRelativePath: () => void;
     onReveal: () => void;
@@ -17,23 +21,37 @@ type FolderContextMenuProps = {
 };
 
 export function FolderContextMenu(props: FolderContextMenuProps) {
+    const mac = isMacLikePlatform();
+    const entries: ContextMenuEntry[] = [
+        { id: 'copy-path', label: 'Copy Path', icon: <CopyGlyph />, shortcut: mac ? '⇧⌘C' : 'Ctrl+Shift+C', onSelect: props.onCopyPath },
+        { id: 'copy-relative-path', label: 'Copy Relative Path', icon: <CopyGlyph />, shortcut: mac ? '⌘C' : 'Ctrl+C', onSelect: props.onCopyRelativePath },
+        { kind: 'separator', id: 'sep-reveal' },
+        {
+            id: 'reveal',
+            label: props.entry.kind === 'directory' ? 'Open Folder' : 'Reveal in Finder',
+            icon: <FolderGlyph />,
+            shortcut: mac ? '⌥⌘R' : 'Ctrl+Alt+R',
+            disabled: !props.canReveal,
+            onSelect: props.onReveal,
+        },
+        { kind: 'separator', id: 'sep-create' },
+        { id: 'new-file', label: 'New File', icon: <DocGlyph />, disabled: !props.canMutate, onSelect: props.onCreateFile },
+        { id: 'new-folder', label: 'New Folder', icon: <FolderGlyph />, disabled: !props.canMutate, onSelect: props.onCreateFolder },
+        { kind: 'separator', id: 'sep-rename' },
+        { id: 'rename', label: 'Rename', icon: <PencilGlyph />, disabled: !props.canMutate, onSelect: props.onRename },
+    ];
+    if (props.canRefresh) {
+        entries.push(
+            { kind: 'separator', id: 'sep-refresh' },
+            { id: 'refresh', label: 'Refresh', icon: <RestartGlyph />, onSelect: props.onRefresh },
+        );
+    }
     return (
-        <div
-            className="folder-context-menu"
-            role="menu"
-            style={{ left: props.x, top: props.y }}
-            onPointerDown={event => event.stopPropagation()}
-            onKeyDown={event => event.stopPropagation()}
-        >
-            <button type="button" role="menuitem" onClick={props.onCopyPath}>Copy Path</button>
-            <button type="button" role="menuitem" onClick={props.onCopyRelativePath}>Copy Relative Path</button>
-            <button type="button" role="menuitem" disabled={!props.canReveal} onClick={props.onReveal}>
-                {props.entry.kind === 'directory' ? 'Open Folder' : 'Reveal in Finder'}
-            </button>
-            <button type="button" role="menuitem" disabled={!props.canMutate} onClick={props.onCreateFile}>New File</button>
-            <button type="button" role="menuitem" disabled={!props.canMutate} onClick={props.onCreateFolder}>New Folder</button>
-            <button type="button" role="menuitem" disabled={!props.canMutate} onClick={props.onRename}>Rename</button>
-            {props.canRefresh && <button type="button" role="menuitem" onClick={props.onRefresh}>Refresh</button>}
-        </div>
+        <ContextMenu
+            state={{ x: props.x, y: props.y }}
+            entries={entries}
+            label={`Folder actions for ${props.entry.name}`}
+            onClose={props.onClose}
+        />
     );
 }

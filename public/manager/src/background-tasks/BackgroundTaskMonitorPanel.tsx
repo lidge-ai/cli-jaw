@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { ContextMenu, useContextMenu, type ContextMenuEntry } from '../components/context-menu/ContextMenu';
+import { CopyGlyph, EyeGlyph, RestartGlyph, StopGlyph } from '../components/context-menu/icons';
 import type { BackgroundTaskRow, BackgroundTaskStatus } from './background-task-client';
 import { countBackgroundTasksByStatus, useBackgroundTasks } from './useBackgroundTasks';
 
@@ -71,23 +73,54 @@ type BackgroundTaskRowProps = {
 };
 
 function BackgroundTaskItem({ task, expanded, busy, onCancel, onCopy, onRetry, onToggle }: BackgroundTaskRowProps) {
+    const menu = useContextMenu();
     const preview = resultPreview(task);
     const isRunning = task.status === 'running';
     const canRetry = task.status !== 'running';
     const note = recoveryNote(task);
+    const menuEntries: ContextMenuEntry[] = [
+        { id: 'details', label: expanded ? 'Hide details' : 'Show details', icon: <EyeGlyph />, onSelect: () => onToggle(task.id) },
+        { kind: 'separator', id: 'sep-actions' },
+        { id: 'retry', label: 'Retry', icon: <RestartGlyph />, disabled: !canRetry || busy, onSelect: () => onRetry(task) },
+        { id: 'cancel', label: 'Cancel', icon: <StopGlyph />, disabled: !isRunning || busy, onSelect: () => onCancel(task.id) },
+        { kind: 'separator', id: 'sep-copy' },
+        { id: 'copy-result', label: 'Copy result', icon: <CopyGlyph />, disabled: !task.result || busy, onSelect: () => onCopy(task) },
+    ];
     return (
-        <li className={`code-bg-task-item is-${task.status}`}>
-            <button type="button" className="code-bg-task-main" onClick={() => onToggle(task.id)} aria-expanded={expanded}>
+        <li className={`code-bg-task-item is-${task.status}`} onContextMenu={menu.openAt}>
+            <button
+                type="button"
+                className="code-bg-task-main"
+                onClick={() => onToggle(task.id)}
+                aria-expanded={expanded}
+                onKeyDown={event => {
+                    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) menu.openAt(event);
+                }}
+            >
                 <span className={`code-bg-task-status is-${task.status}`}>{STATUS_LABEL[task.status]}</span>
                 <span className="code-bg-task-title">{task.id}</span>
                 <span className="code-bg-task-meta">{taskSubtitle(task)}</span>
             </button>
-            <div className="code-bg-task-actions">
-                <button type="button" onClick={() => onRetry(task)} disabled={!canRetry || busy} title="Run this background task spec again">
-                    Retry
+            <div className="code-bg-task-actions jaw-row-hover-actions">
+                <button
+                    type="button"
+                    className="jaw-row-icon-btn"
+                    onClick={() => onRetry(task)}
+                    disabled={!canRetry || busy}
+                    title="Run this background task spec again"
+                    aria-label={`Retry ${task.id}`}
+                >
+                    <RestartGlyph />
                 </button>
-                <button type="button" onClick={() => onCancel(task.id)} disabled={!isRunning || busy} title="Cancel running background task">
-                    Cancel
+                <button
+                    type="button"
+                    className="jaw-row-icon-btn"
+                    onClick={() => onCancel(task.id)}
+                    disabled={!isRunning || busy}
+                    title="Cancel running background task"
+                    aria-label={`Cancel ${task.id}`}
+                >
+                    <StopGlyph />
                 </button>
             </div>
             {expanded && (
@@ -122,6 +155,7 @@ function BackgroundTaskItem({ task, expanded, busy, onCancel, onCopy, onRetry, o
                     ) : null}
                 </div>
             )}
+            <ContextMenu state={menu.state} entries={menuEntries} label={`Background task ${task.id}`} onClose={menu.close} />
         </li>
     );
 }

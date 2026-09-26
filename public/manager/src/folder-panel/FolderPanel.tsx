@@ -498,6 +498,7 @@ export function FolderPanel(props: FolderPanelProps) {
                     if (skipMoveConfirmChecked) setSkipInternalMoveConfirm(true);
                     void executeMove(pendingMove);
                 }}
+                onContextMenuClose={folderContextMenu.closeContextMenu}
                 onCopyContextPath={() => { folderContextMenu.closeContextMenu(); void copySelectedPath('absolute'); }}
                 onCopyContextRelativePath={() => { folderContextMenu.closeContextMenu(); void copySelectedPath('relative'); }}
                 onRevealContextPath={() => { folderContextMenu.closeContextMenu(); void revealSelectedPath(); }}
