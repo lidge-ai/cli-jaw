@@ -384,6 +384,9 @@ export class CodeStore {
         const columns = (table: string) => new Set((this.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
             .map(column => column.name));
         const sessions = columns('code_sessions'), turns = columns('code_turns');
+        const indexed = !!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_code_turns_boundary'").get();
+        if (indexed && sessions.has('rollback_since') && sessions.has('replay_floor_sequence') && sessions.has('history_generation')
+            && turns.has('native_prompt_uuid') && turns.has('removed_generation')) return;
         this.database.transaction(() => {
             if (!sessions.has('replay_floor_sequence')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN replay_floor_sequence INTEGER NOT NULL DEFAULT 0');
             if (!sessions.has('history_generation')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN history_generation INTEGER NOT NULL DEFAULT 0');
