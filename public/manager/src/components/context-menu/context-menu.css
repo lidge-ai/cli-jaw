@@ -21,13 +21,13 @@
     width: 100%;
     padding: 6px 9px;
     border-radius: 6px;
-    color: var(--text-base);
+    color: var(--text-primary);
     line-height: 1.25;
     cursor: default;
 }
 .jaw-context-menu-item:hover:not(:disabled),
 .jaw-context-menu-item:focus-visible {
-    background: var(--bg-hover);
+    background: var(--row-bg-hover);
 }
 .jaw-context-menu-item:disabled {
     color: var(--text-dim);
@@ -62,4 +62,47 @@
     height: 1px;
     margin: 5px 4px;
     background: var(--border-subtle);
+}
+
+/* Icon buttons that appear at the edge of a hovered/focused row, pairing with
+   a right-click ContextMenu. The hover selector works because :hover also
+   matches ancestors of the element under the pointer. */
+.jaw-row-hover-actions {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+    opacity: 0;
+    pointer-events: none;
+}
+.jaw-row-hover-actions:focus-within,
+*:hover > .jaw-row-hover-actions,
+*:focus-within > .jaw-row-hover-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+@media (hover: none) {
+    .jaw-row-hover-actions {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+.jaw-row-icon-btn {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.jaw-row-icon-btn:hover:not(:disabled),
+.jaw-row-icon-btn:focus-visible {
+    background: var(--row-bg-hover);
+    color: var(--text-primary);
+}
+.jaw-row-icon-btn:disabled {
+    opacity: 0.4;
 }

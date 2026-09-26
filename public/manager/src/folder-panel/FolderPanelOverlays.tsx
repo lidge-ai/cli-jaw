@@ -13,6 +13,7 @@ type FolderPanelOverlaysProps = {
     onSkipMoveConfirmCheckedChange: (checked: boolean) => void;
     onCancelMove: () => void;
     onConfirmMove: () => void;
+    onContextMenuClose: () => void;
     onCopyContextPath: () => void;
     onCopyContextRelativePath: () => void;
     onRevealContextPath: () => void;
@@ -44,6 +45,7 @@ export function FolderPanelOverlays(props: FolderPanelOverlaysProps) {
                     canReveal={props.canReveal}
                     canRefresh={props.canRefresh}
                     canMutate={props.canMutate}
+                    onClose={props.onContextMenuClose}
                     onCopyPath={props.onCopyContextPath}
                     onCopyRelativePath={props.onCopyContextRelativePath}
                     onReveal={props.onRevealContextPath}

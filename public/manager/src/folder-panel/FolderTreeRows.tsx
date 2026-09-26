@@ -155,7 +155,12 @@ export function FolderTreeRows(props: FolderTreeRowsProps) {
                                 onKeyDown={(event) => props.handleEntryKeyDown(event, entry)}
                                 onContextMenu={(event) => {
                                     event.preventDefault();
-                                    props.openContextMenu(entry, event.clientX, event.clientY);
+                                    if (event.clientX !== 0 || event.clientY !== 0) {
+                                        props.openContextMenu(entry, event.clientX, event.clientY);
+                                        return;
+                                    }
+                                    const rect = event.currentTarget.getBoundingClientRect();
+                                    props.openContextMenu(entry, rect.left + 8, rect.bottom);
                                 }}
                                 onClick={(event) => props.selectEntry(entry, { range: event.shiftKey, toggle: isPlatformToggleClick(event), preview: false })}
                                 onDoubleClick={() => {
