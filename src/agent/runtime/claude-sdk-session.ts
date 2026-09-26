@@ -236,7 +236,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         if (!this.alive || !turn || !turn.offered || this.pendingFinal || this.finishing || !this.current(turn.context)) {
             return refuse('not-current' satisfies ClaudeSteerRefusal);
         }
-        if (!turn.echoed) return refuse('not-ready' satisfies ClaudeSteerRefusal);
+        // A follow-up can end the logical turn with a second result; terminal dedupe must hold both.
+        if (!turn.echoed || this.terminalIds.size >= 511) return refuse('not-ready' satisfies ClaudeSteerRefusal);
         if (turn.inputs.size >= 2) return refuse('queue-full' satisfies ClaudeSteerRefusal);
         if (typeof prompt.text !== 'string' || Buffer.byteLength(prompt.text) > MAX_PROMPT_BYTES) throw new Error('claude_prompt_limit');
         const message = makeClaudeUserMessage(prompt);

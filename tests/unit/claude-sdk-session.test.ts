@@ -681,3 +681,32 @@ test('the turn window re-arms at the segment boundary, so a follow-up\'s own CLI
     assert.ok(Date.now() - began < 450, 'offering a follow-up never re-arms the timer');
     assert.equal(g.session.lastError, 'claude_prompt_timeout');
 });
+
+test('a follow-up is refused when terminal dedupe cannot hold both of its results', async t => {
+    const idle = (output: ReturnType<typeof stream>, count: number) => {
+        for (let i = 0; i < count; i++) output.push({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, uuid: `idle-${i}` });
+    };
+    // 510 seen results leave room for the primary's result and the follow-up's.
+    const f = await fixture({ inBandSteer: true }); t.after(() => f.session.close());
+    idle(f.output, 510); await tick(); await tick();
+    const turn = f.session.send({ text: 'primary' }, () => {}); await tick();
+    const primary = (f.sent[0] as { uuid: string }).uuid;
+    f.output.push(started('m1', primary)); await tick();
+    const follow = await f.session.steer({ text: 'more' });
+    assert.equal(follow.accepted, true);
+    f.output.push({ ...result('one'), uuid: 'res-1', ...echo(primary) }); await tick();
+    f.output.push({ ...result('two'), uuid: 'res-2', ...echo(follow.nativeId!) });
+    assert.deepEqual({ status: (await turn).status, error: f.session.lastError }, { status: 'done', error: null });
+
+    const g = await fixture({ inBandSteer: true }); t.after(() => g.session.close());
+    idle(g.output, 511); await tick(); await tick();
+    assert.equal(g.session.alive, true);
+    const only = g.session.send({ text: 'primary' }, () => {}); await tick();
+    const first = (g.sent[0] as { uuid: string }).uuid;
+    g.output.push(started('m1', first)); await tick();
+    const refused = await g.session.steer({ text: 'more' });
+    assert.deepEqual({ accepted: refused.accepted, reason: refused.reason }, { accepted: false, reason: 'not-ready' });
+    assert.equal(g.sent.length, 1, 'nothing was offered');
+    g.output.push({ ...result('alone'), uuid: 'res-1', ...echo(first) });
+    assert.deepEqual({ ...(await only), error: g.session.lastError }, { status: 'done', finalText: 'alone', partialText: '', error: null });
+});
