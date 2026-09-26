@@ -1363,21 +1363,24 @@ test('a rollback commit clears a failed session and drops kept boundaries the fo
 
 test('a replaced native identity retires recorded boundaries; the first identity and the active turn keep theirs', t => {
     const { store, db } = fixture(t);
-    const first = admit(store, 'k1', 'session-a', 'prompt k1');
-    store.writeNativeCursor(owner(first.session), null);
-    store.writeNativeCursor(owner(first.session), 'native-a');
-    store.settleTurn(owner(first.session), { status: 'completed' });
-    assert.match(boundaries(db)['turn-1']!, UUID, 'null -> first id keeps the turn that created the session');
-    settled(store, 'k2', { cursor: 'native-a' });
+    // A settled turn that never reported an identity keeps its boundary (dispatch unknown).
+    settled(store, 'k1', { cursor: null });
+    const second = admit(store, 'k2', 'session-a', 'prompt k2');
+    store.writeNativeCursor(owner(second.session), null);
+    store.writeNativeCursor(owner(second.session), 'native-a');
+    store.settleTurn(owner(second.session), { status: 'completed' });
+    assert.match(boundaries(db)['turn-1']!, UUID, 'null -> first id keeps every recorded boundary, not only the active one');
+    assert.match(boundaries(db)['turn-2']!, UUID);
+    settled(store, 'k3', { cursor: 'native-a' });
     assert.match(boundaries(db)['turn-1']!, UUID, 'the same id keeps them');
-    const third = admit(store, 'k3', 'session-a', 'prompt k3');
-    store.writeNativeCursor(owner(third.session), 'native-b');
+    const fourth = admit(store, 'k4', 'session-a', 'prompt k4');
+    store.writeNativeCursor(owner(fourth.session), 'native-b');
     const ids = boundaries(db);
-    assert.deepEqual([ids['turn-1'], ids['turn-2']], [null, null]);
-    assert.match(ids['turn-3']!, UUID, 'the active prompt is sent to the new identity');
-    store.settleTurn(owner(third.session), { status: 'completed' });
+    assert.deepEqual([ids['turn-1'], ids['turn-2'], ids['turn-3']], [null, null, null]);
+    assert.match(ids['turn-4']!, UUID, 'the active prompt is sent to the new identity');
+    store.settleTurn(owner(fourth.session), { status: 'completed' });
     assert.equal(store.read('session-a')!.rollback.sinceSequence,
-        store.snapshot('session-a').items.find(item => item.itemId === 'turn-3:user')!.firstSequence);
+        store.snapshot('session-a').items.find(item => item.itemId === 'turn-4:user')!.firstSequence);
 });
 
 test('a turn that settles before its prompt was dispatched is not a boundary; an unknown dispatch keeps it', t => {
