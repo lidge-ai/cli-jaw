@@ -53,13 +53,15 @@ CREATE TABLE IF NOT EXISTS code_sessions (
     native_policy_json TEXT, capabilities_json TEXT NOT NULL,
     epoch INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0,
     revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
-    last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER
+    last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER,
+    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
     prompt_hash TEXT NOT NULL, status TEXT NOT NULL, accepted_sequence INTEGER NOT NULL,
     event_bytes INTEGER NOT NULL DEFAULT 0, control_event_bytes INTEGER NOT NULL DEFAULT 0,
     settlement_bytes INTEGER NOT NULL DEFAULT 0,
+    native_prompt_uuid TEXT, removed_generation INTEGER,
     PRIMARY KEY(session_id, turn_id), UNIQUE(session_id, client_turn_key)
 );
 CREATE TABLE IF NOT EXISTS code_events (
@@ -83,10 +85,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_code_steers_one_per_turn ON code_steers(se
 export type CodeNativePolicy = Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>;
 
 /** INTERNAL ONLY: never return this record from HTTP or put it on an event bus. */
-export interface CodeSessionRecord extends Omit<CodeSessionInfo, 'resume'> {
+export interface CodeSessionRecord extends Omit<CodeSessionInfo, 'resume' | 'rollback'> {
     nativeCursor: string | null;
     nativeStarted: boolean;
     nativePolicy: CodeNativePolicy | null;
+    /** Replay after a lower sequence answers `invalid_sequence`: those events describe a rolled-back history. */
+    replayFloorSequence: number;
+    /** First sequence of a kept user row whose turn has a native prompt boundary. */
+    rollbackSince: number | null;
 }
 
 export interface CodeStoreOwner { sessionId: string; turnId: string | null; epoch: number }
@@ -94,6 +100,8 @@ export interface CodeStoreMutation { session: CodeSessionInfo; events: CodeWireE
 export interface CodeTurnAdmission extends CodeStoreMutation {
     receipt: CodePromptReceipt;
     duplicate: boolean;
+    /** INTERNAL ONLY: the native input identity to send this turn with (Claude); null otherwise. */
+    promptUuid: string | null;
 }
 export interface CodeTurnSettlement extends CodeStoreMutation { receipt: CodePromptReceipt }
 export interface CodeStoreOptions { now?: () => number; newId?: () => string; limits?: Partial<CodeStoreLimits> }
@@ -111,6 +119,30 @@ export interface CodeSettleTurn {
     error?: CodeSessionError | null;
     /** Native ids of committed follow-ups no native result consumed; their items read `phase: 'unknown'`. */
     undeliveredFollowUps?: readonly string[];
+    /** false: the prompt never left for the native runtime, so it is not a boundary. Omitted keeps it. */
+    dispatched?: boolean;
+}
+/** A turn and its private native prompt boundary; null means it cannot bound a rollback. */
+export interface CodeRollbackTurn { turnId: string; promptUuid: string | null }
+/** INTERNAL ONLY: provider input for a rollback, validated against the stored transcript. */
+export interface CodeRollbackPlan {
+    target: { turnId: string; promptUuid: string };
+    kept: CodeRollbackTurn[];
+    later: CodeRollbackTurn[];
+    revision: number;
+    epoch: number;
+    nativeCursor: string;
+    title: string | null;
+}
+export interface CodeRollbackCommit {
+    sessionId: string;
+    upToItemId: string;
+    expectedRevision: number;
+    expectedEpoch: number;
+    expectedCursor: string;
+    forkCursor: string;
+    remapped: Array<{ turnId: string; promptUuid: string }>;
+    cleared: string[];
 }
 export interface CodeSteerAdmission extends CodeSteerRequest { sessionId: string }
 /** `receipt` is the stored receipt of an already committed key; otherwise the key is now reserved. */
@@ -138,16 +170,23 @@ type SessionRow = {
     native_policy_json: string | null; capabilities_json: string;
     epoch: number; sequence: number; revision: number; created_at: number; last_used_at: number;
     last_turn_completed_at: number | null; last_visited_at: number | null; thinking: number | null;
+    replay_floor_sequence: number; history_generation: number; rollback_since: number | null;
 };
 type TurnRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
-    status: CodePromptReceipt['status']; accepted_sequence: number;
+    status: CodePromptReceipt['status']; accepted_sequence: number; removed_generation: number | null;
 };
+type PlanTurnRow = { turn_id: string; status: string; accepted_sequence: number; native_prompt_uuid: string | null };
+/** The first kept user row whose turn still has a native prompt boundary. */
+const rollbackSinceSql = (session: string) => `(SELECT MIN(i.first_sequence) FROM code_turns t
+    JOIN code_items i ON i.session_id = t.session_id AND i.item_id = t.turn_id || ':user'
+    WHERE t.session_id = ${session} AND t.native_prompt_uuid IS NOT NULL AND t.removed_generation IS NULL)`;
 const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permission_mode,
     status, active_turn_id, archived_at, error_json, native_cursor, native_started,
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
-    last_turn_completed_at, last_visited_at, thinking`;
-const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence';
+    last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation,
+    ${rollbackSinceSql('code_sessions.session_id')} AS rollback_since`;
+const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence, removed_generation';
 type SteerRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
     status: 'reserved' | 'committed' | 'rejected' | 'unknown'; accepted_sequence: number | null; native_uuid: string | null;
@@ -158,7 +197,7 @@ function steerItem(turnId: string, clientTurnKey: string, text: string, at: numb
     return { itemId: `${turnId}:steer:${clientTurnKey}`, turnId, kind: 'user_message', status: 'done',
         text, clientTurnKey, createdAt: at, updatedAt: at };
 }
-const isBusy = (status: CodeSessionStatus): boolean =>
+export const isBusy = (status: CodeSessionStatus): boolean =>
     status === 'starting' || status === 'streaming' || status === 'stopping';
 
 function mapCapabilities(value: CodeCapabilities): CodeCapabilities {
@@ -238,11 +277,14 @@ export function toCodeSessionInfo(record: CodeSessionRecord): CodeSessionInfo {
     const reason = record.archivedAt !== null ? 'archived'
         : !record.capabilities.resume ? 'unsupported'
             : record.nativeCursor ? null : record.nativeStarted ? 'resume_unavailable' : 'not_started';
+    const rollback = record.provider !== 'claude' ? 'unsupported' : reason ?? (record.rollbackSince === null ? 'no_boundary' : null);
     return {
         sessionId: record.sessionId, provider: record.provider, cwd: record.cwd, title: record.title,
         model: record.model, effort: record.effort, permissionMode: record.permissionMode,
         status: record.status, turnId: record.turnId, archivedAt: record.archivedAt,
         error: mapError(record.error), resume: { available: reason === null, reason },
+        rollback: { available: rollback === null, reason: rollback, sinceSequence: record.rollbackSince },
+        historyGeneration: record.historyGeneration,
         capabilities: mapCapabilities(record.capabilities), epoch: record.epoch,
         sequence: record.sequence, revision: record.revision, createdAt: record.createdAt,
         lastUsedAt: record.lastUsedAt, lastTurnCompletedAt: record.lastTurnCompletedAt,
@@ -264,12 +306,15 @@ function rowToRecord(row: SessionRow): CodeSessionRecord {
         lastTurnCompletedAt: row.last_turn_completed_at, lastVisitedAt: row.last_visited_at,
         // Claude thinking defaults on, including rows written before the column existed.
         thinking: row.provider === 'claude' ? row.thinking !== 0 : null,
+        replayFloorSequence: row.replay_floor_sequence, historyGeneration: row.history_generation,
+        rollbackSince: row.rollback_since,
     };
 }
 
+/** A turn a rollback removed is no longer current: its receipt reads cancelled. */
 function receipt(row: TurnRow): CodePromptReceipt {
     return { turnId: row.turn_id, clientTurnKey: row.client_turn_key,
-        sequence: row.accepted_sequence, status: row.status };
+        sequence: row.accepted_sequence, status: row.removed_generation === null ? row.status : 'cancelled' };
 }
 
 function pageLimit(value: number | undefined, max: number): number {
@@ -297,6 +342,7 @@ export class CodeStore {
         this.ensureSessionListIndex();
         this.ensureBudgetColumns();
         this.ensureActivityColumns();
+        this.ensureRollbackColumns();
     }
 
     /** Rebuild the list index only when it does not already match the page key. */
@@ -319,6 +365,24 @@ export class CodeStore {
             if (!names.has('last_turn_completed_at')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN last_turn_completed_at INTEGER');
             if (!names.has('last_visited_at')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN last_visited_at INTEGER');
             if (!names.has('thinking')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN thinking INTEGER');
+        }).immediate();
+    }
+
+    /**
+     * Adds the rollback columns to databases created before them. Existing turns keep a
+     * NULL prompt boundary, so they are never rollback targets; floors and generations start at 0.
+     */
+    private ensureRollbackColumns(): void {
+        const columns = (table: string) => new Set((this.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+            .map(column => column.name));
+        const sessions = columns('code_sessions'), turns = columns('code_turns');
+        if (sessions.has('replay_floor_sequence') && sessions.has('history_generation')
+            && turns.has('native_prompt_uuid') && turns.has('removed_generation')) return;
+        this.database.transaction(() => {
+            if (!sessions.has('replay_floor_sequence')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN replay_floor_sequence INTEGER NOT NULL DEFAULT 0');
+            if (!sessions.has('history_generation')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN history_generation INTEGER NOT NULL DEFAULT 0');
+            if (!turns.has('native_prompt_uuid')) this.database.exec('ALTER TABLE code_turns ADD COLUMN native_prompt_uuid TEXT');
+            if (!turns.has('removed_generation')) this.database.exec('ALTER TABLE code_turns ADD COLUMN removed_generation INTEGER');
         }).immediate();
     }
 
@@ -362,6 +426,11 @@ export class CodeStore {
         const record = this.readRecord(sessionId);
         if (!record) throw new CodeStoreError('session_not_found', 'Code session not found', 404);
         return record;
+    }
+
+    /** Refresh the derived rollback start after boundaries or user rows change, before the session event. */
+    private readRollbackSince(sessionId: string): number | null {
+        return (this.database.prepare(`SELECT ${rollbackSinceSql('?')} AS since`).get(sessionId) as { since: number | null }).since;
     }
 
     read(sessionId: string): CodeSessionInfo | null {
@@ -467,8 +536,11 @@ export class CodeStore {
         }
         const size = pageLimit(limit, CODE_EVENT_PAGE_MAX);
         return this.database.transaction(() => {
-            const throughSequence = this.requireRecord(sessionId).sequence;
+            const record = this.requireRecord(sessionId);
+            const throughSequence = record.sequence;
             if (afterSequence > throughSequence) throw new CodeStoreError('invalid_sequence', 'Sequence exceeds session watermark', 409);
+            // Events before a rollback describe items it removed; only a new snapshot is consistent.
+            if (afterSequence < record.replayFloorSequence) throw new CodeStoreError('invalid_sequence', 'Conversation was rolled back; take a new snapshot', 409);
             const events: CodeWireEvent[] = [];
             let bytes = jsonBytes({ events, nextSequence: throughSequence, throughSequence, hasMore: false });
             if (bytes > this.limits.maxReplayPageBytes) throw new CodeStoreError('event_too_large', 'Replay envelope exceeds byte limit', 409);
@@ -545,13 +617,15 @@ export class CodeStore {
         this.database.prepare(`UPDATE code_sessions SET title = ?, model = ?, effort = ?, permission_mode = ?,
             status = ?, active_turn_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
             native_policy_json = ?, epoch = ?, sequence = ?, revision = ?, last_used_at = ?,
-            last_turn_completed_at = ?, last_visited_at = ?, thinking = ? WHERE session_id = ?`)
+            last_turn_completed_at = ?, last_visited_at = ?, thinking = ?, replay_floor_sequence = ?,
+            history_generation = ? WHERE session_id = ?`)
             .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId,
                 record.archivedAt, record.error === null ? null : JSON.stringify(mapError(record.error)),
                 record.nativeCursor, Number(record.nativeStarted),
                 record.nativePolicy === null ? null : JSON.stringify(record.nativePolicy), record.epoch,
                 record.sequence, record.revision, record.lastUsedAt, record.lastTurnCompletedAt, record.lastVisitedAt,
-                record.thinking === null ? null : Number(record.thinking), record.sessionId);
+                record.thinking === null ? null : Number(record.thinking), record.replayFloorSequence,
+                record.historyGeneration, record.sessionId);
     }
 
     private persistEvent(record: CodeSessionRecord, event: CodeWireEvent, mode: EventBudgetMode,
@@ -774,7 +848,7 @@ export class CodeStore {
                 .get(input.sessionId, input.clientTurnKey) as TurnRow | undefined;
             if (previous) {
                 if (previous.prompt_hash !== hash) throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for different content', 409);
-                return { session: toCodeSessionInfo(record), events: [], receipt: receipt(previous), duplicate: true };
+                return { session: toCodeSessionInfo(record), events: [], receipt: receipt(previous), duplicate: true, promptUuid: null };
             }
             this.refuseSteerKey(input.sessionId, input.clientTurnKey);
             if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
@@ -793,17 +867,20 @@ export class CodeStore {
             if (record.title === null) record.title = initialTitle(input.text) || null;
             record.nativePolicy = { model: record.model, effort: record.effort, permissionMode: record.permissionMode };
             const acceptedSequence = record.sequence + 3;
+            // The private native input identity; the provider sends the prompt under it.
+            const promptUuid = record.provider === 'claude' ? randomUUID() : null;
             this.database.prepare(`INSERT INTO code_turns
-                (session_id, turn_id, client_turn_key, prompt_hash, status, accepted_sequence)
-                VALUES (?, ?, ?, ?, 'accepted', ?)`)
-                .run(input.sessionId, turnId, input.clientTurnKey, hash, acceptedSequence);
+                (session_id, turn_id, client_turn_key, prompt_hash, status, accepted_sequence, native_prompt_uuid)
+                VALUES (?, ?, ?, ?, 'accepted', ?, ?)`)
+                .run(input.sessionId, turnId, input.clientTurnKey, hash, acceptedSequence, promptUuid);
             const events = [
                 this.event(record, { itemId: `${turnId}:user`, turnId, kind: 'user_message', status: 'done',
                     text: input.text, clientTurnKey: input.clientTurnKey, createdAt: now, updatedAt: now }),
                 this.event(record, { itemId: `${turnId}:started`, turnId, kind: 'turn_started', status: 'running', createdAt: now, updatedAt: now }),
-                this.event(record),
             ];
-            return { session: toCodeSessionInfo(record), events, duplicate: false,
+            record.rollbackSince = this.readRollbackSince(input.sessionId);
+            events.push(this.event(record));
+            return { session: toCodeSessionInfo(record), events, duplicate: false, promptUuid,
                 receipt: { turnId, clientTurnKey: input.clientTurnKey, sequence: acceptedSequence, status: 'accepted' } };
         });
     }
@@ -885,8 +962,15 @@ export class CodeStore {
             const record = this.checkOwner(owner);
             if (record.archivedAt !== null || record.status === 'stopping') throw new CodeStoreError('stale_owner', 'Native cursor owner is no longer writable', 409);
             if (cursor !== null && !cursor.trim()) throw new CodeStoreError('invalid_cursor', 'Native cursor must be nonempty', 400);
+            // Boundaries belong to the native session that recorded them. A replaced identity
+            // retires them; the first identity, and the active turn now sent to it, keep theirs.
+            if (cursor !== null && record.nativeCursor !== null && cursor !== record.nativeCursor) {
+                this.database.prepare('UPDATE code_turns SET native_prompt_uuid = NULL WHERE session_id = ? AND turn_id IS NOT ?')
+                    .run(record.sessionId, record.turnId);
+            }
             record.nativeStarted = true;
             if (cursor !== null) record.nativeCursor = cursor;
+            record.rollbackSince = this.readRollbackSince(record.sessionId);
             const events = [this.event(record)];
             return { session: toCodeSessionInfo(record), events };
         });
@@ -955,6 +1039,12 @@ export class CodeStore {
             ...(error ? { text: error.message } : {}), createdAt: now, updatedAt: now }, 'settlement', turnId));
         this.database.prepare('UPDATE code_turns SET status = ? WHERE session_id = ? AND turn_id = ?')
             .run(result.status, record.sessionId, record.turnId);
+        // A prompt that never reached the native runtime is absent from its history.
+        if (result.dispatched === false) {
+            this.database.prepare('UPDATE code_turns SET native_prompt_uuid = NULL WHERE session_id = ? AND turn_id = ?')
+                .run(record.sessionId, record.turnId);
+            record.rollbackSince = this.readRollbackSince(record.sessionId);
+        }
         record.turnId = null;
         record.status = result.status === 'failed' ? 'failed' : 'idle';
         record.error = error;
@@ -1000,6 +1090,103 @@ export class CodeStore {
             if (policyChange || patch.archived !== undefined) record.epoch += 1;
             record.revision += 1;
             record.lastUsedAt = this.now();
+            const events = [this.event(record)];
+            return { session: toCodeSessionInfo(record), events };
+        });
+    }
+
+    /** Kept and later turns around a settled `${turnId}:user` target; removed turns are not part of the conversation. */
+    private rollbackTurns(record: CodeSessionRecord, upToItemId: string): { kept: PlanTurnRow[]; later: PlanTurnRow[] } {
+        const item = this.database.prepare(`SELECT json_extract(item_json, '$.kind') AS kind, json_extract(item_json, '$.turnId') AS turn_id
+            FROM code_items WHERE session_id = ? AND item_id = ?`).get(record.sessionId, upToItemId) as { kind: unknown; turn_id: unknown } | undefined;
+        const turnId = item?.turn_id;
+        if (!item || item.kind !== 'user_message' || typeof turnId !== 'string' || `${turnId}:user` !== upToItemId) {
+            throw new CodeStoreError('rollback_target_not_found', 'Rollback target is not a turn in this conversation', 404);
+        }
+        const turns = this.database.prepare(`SELECT turn_id, status, accepted_sequence, native_prompt_uuid FROM code_turns
+            WHERE session_id = ? AND removed_generation IS NULL ORDER BY accepted_sequence`).all(record.sessionId) as PlanTurnRow[];
+        const index = turns.findIndex(turn => turn.turn_id === turnId);
+        const target = turns[index];
+        if (!target) throw new CodeStoreError('rollback_target_not_found', 'Rollback target is not a turn in this conversation', 404);
+        if (target.status !== 'completed' && target.status !== 'failed' && target.status !== 'cancelled') {
+            throw new CodeStoreError('session_busy', 'The rollback target has not settled', 409);
+        }
+        return { kept: turns.slice(0, index + 1), later: turns.slice(index + 1) };
+    }
+
+    /**
+     * Validate a rollback to the item's turn without writing anything. The target and the
+     * first later turn that carries a boundary must both have one; the provider then proves
+     * both are present in native history before any fork.
+     */
+    readRollbackPlan(sessionId: string, upToItemId: string): CodeRollbackPlan {
+        return this.database.transaction(() => {
+            const record = this.requireRecord(sessionId);
+            if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
+            if (record.provider !== 'claude' || !record.nativeCursor) throw new CodeStoreError('rollback_unavailable', 'Conversation history is unavailable', 409);
+            const { kept, later } = this.rollbackTurns(record, upToItemId);
+            const target = kept.at(-1)!;
+            if (!later.length) throw new CodeStoreError('rollback_noop', 'The target is already the latest turn', 409);
+            if (target.native_prompt_uuid === null || !later.some(turn => turn.native_prompt_uuid !== null)) {
+                throw new CodeStoreError('rollback_boundary_unavailable', 'This turn has no recorded conversation boundary', 409);
+            }
+            const turn = (row: PlanTurnRow): CodeRollbackTurn => ({ turnId: row.turn_id, promptUuid: row.native_prompt_uuid });
+            return { target: { turnId: target.turn_id, promptUuid: target.native_prompt_uuid }, kept: kept.map(turn),
+                later: later.map(turn), revision: record.revision, epoch: record.epoch, nativeCursor: record.nativeCursor,
+                title: record.title };
+        })();
+    }
+
+    /**
+     * Commit a verified fork in one transaction, compare-and-swap on the revision, epoch and
+     * native cursor the plan was read at. Later items and their events leave; their turn rows
+     * stay so client keys keep answering, marked removed. Replay below the new floor fails with
+     * `invalid_sequence`, and the history generation tells live readers to take a snapshot.
+     */
+    commitRollback(input: CodeRollbackCommit): CodeStoreMutation {
+        return this.write(() => {
+            const record = this.requireRecord(input.sessionId);
+            if (record.revision !== input.expectedRevision || record.epoch !== input.expectedEpoch
+                || record.nativeCursor !== input.expectedCursor || record.turnId !== null || isBusy(record.status)
+                || record.archivedAt !== null || record.provider !== 'claude') {
+                throw new CodeStoreError('revision_conflict', 'Code session changed during rollback', 409);
+            }
+            if (!input.forkCursor.trim() || input.forkCursor === input.expectedCursor) {
+                throw new CodeStoreError('invalid_cursor', 'Rollback fork must be a new native session', 400);
+            }
+            const { kept, later } = this.rollbackTurns(record, input.upToItemId);
+            if (!later.length) throw new CodeStoreError('rollback_noop', 'The target is already the latest turn', 409);
+            const keptIds = new Set(kept.map(turn => turn.turn_id));
+            if (!input.remapped.every(turn => keptIds.has(turn.turnId) && !!turn.promptUuid.trim())
+                || !input.cleared.every(turnId => keptIds.has(turnId))) {
+                throw new CodeStoreError('rollback_unavailable', 'Rollback boundaries do not match the kept turns', 409);
+            }
+            const generation = record.historyGeneration + 1;
+            const after = kept.at(-1)!.accepted_sequence;
+            const cut = (this.database.prepare(`SELECT MIN(first_sequence) AS cut FROM code_items WHERE session_id = ?
+                AND json_extract(item_json, '$.turnId') IN (SELECT turn_id FROM code_turns WHERE session_id = ?
+                    AND removed_generation IS NULL AND accepted_sequence > ?)`)
+                .get(record.sessionId, record.sessionId, after) as { cut: number | null }).cut;
+            if (cut !== null) {
+                this.database.prepare('DELETE FROM code_items WHERE session_id = ? AND first_sequence >= ?').run(record.sessionId, cut);
+                this.database.prepare('DELETE FROM code_events WHERE session_id = ? AND sequence >= ?').run(record.sessionId, cut);
+            }
+            this.database.prepare(`UPDATE code_turns SET removed_generation = ? WHERE session_id = ?
+                AND removed_generation IS NULL AND accepted_sequence > ?`).run(generation, record.sessionId, after);
+            // Every source boundary is retired; only the ones found again in the fork return.
+            this.database.prepare('UPDATE code_turns SET native_prompt_uuid = NULL WHERE session_id = ?').run(record.sessionId);
+            const remap = this.database.prepare('UPDATE code_turns SET native_prompt_uuid = ? WHERE session_id = ? AND turn_id = ?');
+            for (const turn of input.remapped) remap.run(turn.promptUuid, record.sessionId, turn.turnId);
+            record.historyGeneration = generation;
+            record.nativeCursor = input.forkCursor;
+            record.nativeStarted = true;
+            record.revision += 1;
+            record.epoch += 1;
+            record.status = 'idle';
+            record.error = null;
+            record.lastUsedAt = this.now();
+            record.rollbackSince = this.readRollbackSince(record.sessionId);
+            record.replayFloorSequence = record.sequence + 1;
             const events = [this.event(record)];
             return { session: toCodeSessionInfo(record), events };
         });

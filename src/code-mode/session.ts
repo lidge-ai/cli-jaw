@@ -31,6 +31,8 @@ interface Operation {
     permissions: Map<string, CodePermissionRequest>;
     syncingPermissions: boolean;
     stopped: boolean;
+    /** The prompt was handed to the native session; until then it cannot be in native history. */
+    dispatched: boolean;
     callbacksClosed: boolean;
     settled: boolean;
     failure: CodeSessionError | null;
@@ -263,7 +265,7 @@ export class CodeSession {
     }
 
     /** Install ownership synchronously, before admission events can call subscribers. */
-    start(record: CodeSessionRecord, text: string | null): void {
+    start(record: CodeSessionRecord, text: string | null, promptUuid: string | null = null): void {
         if (this.operation) this.registry.cancelRun(this.operation.context.runId);
         const previous = this.binding;
         const reuse = previous !== null && previous.handle?.alive === true && previous.handle.closed !== true && !previous.retiring
@@ -293,7 +295,7 @@ export class CodeSession {
         const op: Operation = {
             owner, context, binding, registry: this.registry,
             normalizer: null, permissions: new Map(), syncingPermissions: false,
-            stopped: false, callbacksClosed: false, settled: false, failure: null, persistenceFailure: false,
+            stopped: false, dispatched: false, callbacksClosed: false, settled: false, failure: null, persistenceFailure: false,
             interrupted, wake, work: Promise.resolve(),
         };
         this.operation = op;
@@ -305,7 +307,7 @@ export class CodeSession {
                 commitItem: item => this.commitItem(op, item),
                 failPersistence: error => this.failPersistence(op, error),
             });
-            await this.run(op, record, text, reuse ? null : previous);
+            await this.run(op, record, text, reuse ? null : previous, promptUuid);
         }).catch(async error => {
             this.failPersistence(op, error);
             await this.finish(op, null);
@@ -526,7 +528,8 @@ export class CodeSession {
         return opened;
     }
 
-    private async run(op: Operation, record: CodeSessionRecord, text: string | null, previous: HandleBinding | null): Promise<void> {
+    private async run(op: Operation, record: CodeSessionRecord, text: string | null, previous: HandleBinding | null,
+        promptUuid: string | null): Promise<void> {
         let outcome: RuntimeTurnOutcome | null = null;
         try {
             if (previous && !await this.cleanup(previous, false)) {
@@ -550,7 +553,8 @@ export class CodeSession {
                     this.publish(started.events);
                     if (!this.current(op)) return null;
                 }
-                return handle.send(text);
+                op.dispatched = true;
+                return handle.send(text, promptUuid === null ? undefined : { promptUuid });
             }), op.interrupted.then(() => null)]);
         } catch (error) {
             if (!op.stopped && !op.failure) op.failure = this.diagnostic(
@@ -589,7 +593,8 @@ export class CodeSession {
                 ? this.diagnostic('native_failed', 'Code provider turn failed') : null);
             const result = op.owner.turnId === null
                 ? this.options.store.setRuntimeState(op.owner, status === 'failed' ? 'failed' : 'idle', error)
-                : this.options.store.settleTurn(op.owner, { status, error, undeliveredFollowUps });
+                : this.options.store.settleTurn(op.owner, { status, error, undeliveredFollowUps,
+                    ...(op.dispatched ? {} : { dispatched: false }) });
             // A durable failed terminal restores reads; the captured turn latch stays closed.
             if (op.persistenceFailure && result.session.status === 'failed' && this.operation === op) {
                 this.persistenceError = null;

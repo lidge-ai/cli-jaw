@@ -261,7 +261,7 @@ export class CodeSessionManager {
                 expectedRevision: record.revision }));
             if (!result.duplicate) {
                 this.admitted = true;
-                session.start({ ...record, ...result.session }, input.text);
+                session.start({ ...record, ...result.session }, input.text, result.promptUuid);
             }
             this.publish(result.events);
             return { receipt: result.receipt, duplicate: result.duplicate };

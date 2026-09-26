@@ -23,6 +23,7 @@ const prompt = { text: 'hello', clientTurnKey: 'key-one' };
 class NativeHandle implements CodeProviderSession {
     alive = true;
     sends: string[] = [];
+    sendOptions: Array<{ promptUuid?: string } | undefined> = [];
     cancellations = 0;
     closes = 0;
     readonly sent = deferred<void>();
@@ -44,12 +45,13 @@ class NativeHandle implements CodeProviderSession {
         if (!signal) { signal = deferred<void>(); this.sentSignals.set(index, signal); }
         return signal.promise;
     }
-    send(text: string): Promise<RuntimeTurnOutcome> {
+    send(text: string, options?: { promptUuid?: string }): Promise<RuntimeTurnOutcome> {
         assert.equal(this.alive, true, 'closed handles must never receive a new prompt');
         this.beforeSend?.();
         const index = this.sends.length;
         if (!this.outcomes[index]) this.outcomes[index] = deferred<RuntimeTurnOutcome>();
         this.sends.push(text);
+        this.sendOptions.push(options);
         this.sentSignals.get(index)?.resolve();
         return this.outcomes[index]!.promise;
     }
@@ -176,6 +178,41 @@ test('index attention counts hydrate unloaded sessions without transcript reads 
     assert.equal(f.manager.list().find(row => row.sessionId === a.sessionId)?.pendingPermissionCount, 0);
     handle.outcome.resolve(done);
     await f.terminal(a.sessionId, 1);
+});
+
+test('a Claude turn is sent under its private prompt UUID; a turn stopped before dispatch leaves no boundary', async t => {
+    const f = fixture(t);
+    const boundary = (turnId: string) => (f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?')
+        .get(turnId) as { native_prompt_uuid: string | null }).native_prompt_uuid;
+    const claude = f.create('claude');
+    const sent = f.manager.prompt(claude.sessionId, prompt);
+    const handle = (await f.providers.claude.opened(), f.providers.claude.handles[0]!);
+    await handle.sent.promise;
+    assert.match(boundary(sent.receipt.turnId)!, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(handle.sendOptions, [{ promptUuid: boundary(sent.receipt.turnId) }]);
+    handle.outcome.resolve(done);
+    await f.terminal(claude.sessionId, 1);
+    assert.match(boundary(sent.receipt.turnId)!, /^[0-9a-f-]{36}$/, 'a dispatched turn keeps its boundary');
+    assert.doesNotMatch(JSON.stringify(f.events), new RegExp(boundary(sent.receipt.turnId)!));
+    const codex = f.create();
+    const codexTurn = f.manager.prompt(codex.sessionId, prompt);
+    await f.providers['codex-app'].opened();
+    const codexHandle = f.providers['codex-app'].handles[0]!;
+    await codexHandle.sent.promise;
+    assert.deepEqual(codexHandle.sendOptions, [undefined]);
+    assert.equal(boundary(codexTurn.receipt.turnId), null);
+    codexHandle.outcome.resolve(done);
+    await f.terminal(codex.sessionId, 1);
+    const gate = deferred<void>();
+    f.providers.claude.gate = gate.promise;
+    const slow = f.create('claude');
+    const stopped = f.manager.prompt(slow.sessionId, prompt);
+    await f.providers.claude.opened(1);
+    assert.match(boundary(stopped.receipt.turnId)!, /^[0-9a-f-]{36}$/);
+    await f.manager.cancel(slow.sessionId, { turnId: stopped.receipt.turnId, epoch: 1 });
+    gate.resolve();
+    assert.equal(boundary(stopped.receipt.turnId), null, 'stopped during open: the prompt never left');
+    assert.deepEqual(f.providers.claude.handles[1]!.sends, []);
 });
 
 test('constructor and metadata reads are pure; create snapshots fixed capabilities without native open', async t => {

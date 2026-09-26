@@ -20,7 +20,7 @@ const creation: CodeSessionCreate = {
 const dtoKeys = [
     'sessionId', 'provider', 'cwd', 'title', 'model', 'effort', 'permissionMode', 'status',
     'turnId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
-    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'thinking',
+    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'thinking', 'rollback', 'historyGeneration',
 ].sort();
 
 function fixture(t: { after(fn: () => void): void }, options: CodeStoreOptions = {}) {
@@ -400,6 +400,7 @@ test('full row mapping includes every field and public surfaces exclude private 
         archivedAt: null, error: { code: 'stored_error', message: 'diagnostic', at: 56, recoverable: true },
         resume: { available: true, reason: null }, capabilities, epoch: 7, sequence: 1, revision: 8,
         createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: true,
+        rollback: { available: false, reason: 'no_boundary', sinceSequence: null }, historyGeneration: 0,
     };
     assert.deepEqual(store.read('session-a'), expected);
     const record = store.readRecord('session-a')!;
@@ -420,6 +421,7 @@ test('public mapper also strips future private properties nested in capabilities
         ...creation, sessionId: 's', title: null, status: 'idle', turnId: null,
         archivedAt: null, error: null, epoch: 0, sequence: 0, revision: 0, createdAt: 1, lastUsedAt: 2,
         lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
+        replayFloorSequence: 0, historyGeneration: 0, rollbackSince: null,
     };
     const extra = { ...record, privateFutureField: 'private', capabilities: { ...capabilities, nativeCursor: 'hidden' } };
     assert.deepEqual(Object.keys(toCodeSessionInfo(extra)).sort(), dtoKeys);
@@ -1220,4 +1222,197 @@ test('restart marks every committed follow-up of the recovered turn delivery not
         [['key-a', undefined], ['steer-1', 'unknown']]);
     assert.equal(replayItems(restarted.readEvents('session-a').events).find(item => item.itemId === itemId)?.phase, 'unknown');
     assert.deepEqual(restarted.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), { ...committed.receipt, status: 'failed' });
+});
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function settled(store: CodeStore, key: string, options: { cursor?: string | null; status?: 'completed' | 'failed' | 'cancelled'; dispatched?: boolean } = {}) {
+    const admitted = admit(store, key, 'session-a', `prompt ${key}`);
+    const current = owner(admitted.session);
+    const cursor = options.cursor === undefined ? 'native-a' : options.cursor;
+    if (cursor !== null) store.writeNativeCursor(current, cursor);
+    store.commitItem(current, message(admitted.receipt.turnId, `${admitted.receipt.turnId}:answer`, `answer ${key}`));
+    store.settleTurn(current, { status: options.status ?? 'completed', ...(options.dispatched === undefined ? {} : { dispatched: options.dispatched }) });
+    return admitted;
+}
+function boundaries(db: InstanceType<typeof Database>): Record<string, string | null> {
+    return Object.fromEntries((db.prepare('SELECT turn_id, native_prompt_uuid FROM code_turns ORDER BY accepted_sequence')
+        .all() as Array<{ turn_id: string; native_prompt_uuid: string | null }>).map(row => [row.turn_id, row.native_prompt_uuid]));
+}
+const FORK_UUID = '6f2b1d4e-8a1c-4c3e-9b7a-2d5e8f1a3c9b';
+
+test('Claude admissions carry a private prompt UUID that never reaches the wire; other providers carry none', t => {
+    const { store, db } = fixture(t);
+    const first = settled(store, 'k1');
+    const stored = boundaries(db)['turn-1']!;
+    assert.match(stored, UUID);
+    assert.equal(first.promptUuid, stored);
+    const surfaces = [first.events, first.receipt, first.session, store.snapshot('session-a'), store.readEvents('session-a'),
+        store.history('session-a'), store.list(), store.readTurn('session-a', 'k1')];
+    assert.doesNotMatch(JSON.stringify(surfaces), new RegExp(stored));
+    store.create({ ...creation, sessionId: 'session-codex', provider: 'codex-app' });
+    const codex = admit(store, 'k-codex', 'session-codex');
+    assert.equal(codex.promptUuid, null);
+    assert.equal((db.prepare("SELECT native_prompt_uuid FROM code_turns WHERE session_id = 'session-codex'").get() as { native_prompt_uuid: null }).native_prompt_uuid, null);
+    assert.equal(admit(store, 'k1', 'session-a', 'prompt k1').promptUuid, null, 'a duplicate receipt starts nothing');
+});
+
+test('rollback availability names why it is off and where recorded boundaries start', t => {
+    const { store, db } = fixture(t);
+    assert.deepEqual(store.read('session-a')!.rollback, { available: false, reason: 'not_started', sinceSequence: null });
+    store.create({ ...creation, sessionId: 'session-codex', provider: 'codex-app' });
+    assert.equal(store.read('session-codex')!.rollback.reason, 'unsupported');
+    settled(store, 'k1');
+    db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-1'").run();
+    assert.deepEqual(store.read('session-a')!.rollback, { available: false, reason: 'no_boundary', sinceSequence: null },
+        'a turn without a boundary (admitted before this change) is not a target');
+    const second = settled(store, 'k2');
+    const secondUser = store.snapshot('session-a').items.find(item => item.itemId === `${second.receipt.turnId}:user`)!;
+    assert.deepEqual(store.read('session-a')!.rollback, { available: true, reason: null, sinceSequence: secondUser.firstSequence });
+    assert.equal(second.events.at(-1)?.session?.rollback.sinceSequence, secondUser.firstSequence, 'the admission event already carries it');
+    const revision = store.read('session-a')!.revision;
+    store.patchSession('session-a', { expectedRevision: revision, archived: true });
+    assert.equal(store.read('session-a')!.rollback.reason, 'archived');
+});
+
+test('a rollback plan targets only a settled user row with a boundary and a later turn with one', t => {
+    const { store, db } = fixture(t);
+    for (const key of ['k1', 'k2', 'k3']) settled(store, key);
+    const ids = boundaries(db);
+    const plan = store.readRollbackPlan('session-a', 'turn-1:user');
+    const session = store.read('session-a')!;
+    assert.deepEqual(plan, { target: { turnId: 'turn-1', promptUuid: ids['turn-1'] },
+        kept: [{ turnId: 'turn-1', promptUuid: ids['turn-1'] }],
+        later: [{ turnId: 'turn-2', promptUuid: ids['turn-2'] }, { turnId: 'turn-3', promptUuid: ids['turn-3'] }],
+        revision: session.revision, epoch: session.epoch, nativeCursor: 'native-a', title: 'prompt k1' });
+    assert.deepEqual(store.readRollbackPlan('session-a', 'turn-2:user').kept.map(turn => turn.turnId), ['turn-1', 'turn-2']);
+    expectError(() => store.readRollbackPlan('session-a', 'turn-3:user'), 'rollback_noop');
+    expectError(() => store.readRollbackPlan('session-a', 'turn-1:answer'), 'rollback_target_not_found', 404);
+    expectError(() => store.readRollbackPlan('session-a', 'turn-9:user'), 'rollback_target_not_found', 404);
+    db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-2'").run();
+    assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later.map(turn => turn.promptUuid), [null, ids['turn-3']],
+        'an undispatched later turn is carried for the provider to skip');
+    db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-3'").run();
+    expectError(() => store.readRollbackPlan('session-a', 'turn-1:user'), 'rollback_boundary_unavailable');
+    db.prepare("UPDATE code_turns SET native_prompt_uuid = ? WHERE turn_id = 'turn-3'").run(ids['turn-3']);
+    db.prepare("UPDATE code_turns SET native_prompt_uuid = NULL WHERE turn_id = 'turn-1'").run();
+    expectError(() => store.readRollbackPlan('session-a', 'turn-1:user'), 'rollback_boundary_unavailable');
+    const active = admit(store, 'k4', 'session-a', 'prompt k4');
+    expectError(() => store.readRollbackPlan('session-a', `${active.receipt.turnId}:user`), 'session_busy');
+});
+
+test('a rollback commit is one compare-and-swap that removes later turns, floors replay and keeps receipts', t => {
+    const { store, db } = fixture(t);
+    for (const key of ['k1', 'k2', 'k3']) settled(store, key);
+    const plan = store.readRollbackPlan('session-a', 'turn-1:user');
+    const commit = { sessionId: 'session-a', upToItemId: 'turn-1:user', expectedRevision: plan.revision, expectedEpoch: plan.epoch,
+        expectedCursor: plan.nativeCursor, forkCursor: 'fork-a', remapped: [{ turnId: 'turn-1', promptUuid: FORK_UUID }], cleared: [] };
+    const before = { snapshot: store.snapshot('session-a'), boundaries: boundaries(db) };
+    for (const stale of [{ expectedRevision: plan.revision + 1 }, { expectedEpoch: plan.epoch + 1 }, { expectedCursor: 'other-native' }]) {
+        expectError(() => store.commitRollback({ ...commit, ...stale }), 'revision_conflict');
+    }
+    expectError(() => store.commitRollback({ ...commit, forkCursor: 'native-a' }), 'invalid_cursor', 400);
+    expectError(() => store.commitRollback({ ...commit, remapped: [{ turnId: 'turn-2', promptUuid: FORK_UUID }] }), 'rollback_unavailable');
+    assert.deepEqual(store.snapshot('session-a'), before.snapshot, 'a refused commit changes nothing');
+    assert.deepEqual(boundaries(db), before.boundaries);
+    // A read receipt moves the sequence, not the swap's identity.
+    store.markVisited('session-a');
+    const floorBefore = store.read('session-a')!.sequence;
+    const result = store.commitRollback(commit);
+    assert.deepEqual(result.events.map(event => event.event), ['code_session']);
+    const session = result.session;
+    assert.equal(session.sequence, floorBefore + 1);
+    assert.equal(result.events[0]!.sequence, session.sequence);
+    assert.deepEqual({ generation: session.historyGeneration, revision: session.revision, epoch: session.epoch, status: session.status, error: session.error },
+        { generation: 1, revision: plan.revision + 1, epoch: plan.epoch + 1, status: 'idle', error: null });
+    assert.deepEqual([...new Set(store.snapshot('session-a').items.map(item => item.turnId))], ['turn-1']);
+    const events = db.prepare("SELECT event_json FROM code_events WHERE session_id = 'session-a'").all() as Array<{ event_json: string }>;
+    assert.ok(!events.some(row => /turn-2|turn-3/.test(row.event_json)), 'removed turns take their events with them');
+    expectError(() => store.readEvents('session-a', session.sequence - 1), 'invalid_sequence');
+    expectError(() => store.readEvents('session-a', 0), 'invalid_sequence');
+    assert.deepEqual(store.readEvents('session-a', session.sequence).events, []);
+    assert.equal(store.readRecord('session-a')!.nativeCursor, 'fork-a');
+    assert.deepEqual(boundaries(db), { 'turn-1': FORK_UUID, 'turn-2': null, 'turn-3': null });
+    assert.deepEqual((db.prepare('SELECT removed_generation FROM code_turns ORDER BY accepted_sequence').all() as Array<{ removed_generation: number | null }>)
+        .map(row => row.removed_generation), [null, 1, 1]);
+    assert.equal(store.readTurn('session-a', 'k1')?.status, 'completed');
+    assert.equal(store.readTurn('session-a', 'k2')?.status, 'cancelled', 'a removed turn is not current');
+    const duplicate = admit(store, 'k3', 'session-a', 'prompt k3');
+    assert.deepEqual({ duplicate: duplicate.duplicate, status: duplicate.receipt.status, events: duplicate.events }, { duplicate: true, status: 'cancelled', events: [] });
+    expectError(() => store.commitRollback(commit), 'revision_conflict', 409);
+    expectError(() => store.readRollbackPlan('session-a', 'turn-2:user'), 'rollback_target_not_found', 404);
+    const next = settled(store, 'k4', { cursor: 'fork-a' });
+    assert.deepEqual(store.readEvents('session-a', session.sequence).events.map(event => event.sequence)[0], session.sequence + 1);
+    assert.match(boundaries(db)[next.receipt.turnId]!, UUID);
+    assert.equal(boundaries(db)['turn-1'], FORK_UUID, 'the fork cursor is the same identity, not a replaced one');
+});
+
+test('a rollback commit clears a failed session and drops kept boundaries the fork did not align', t => {
+    const { store, db } = fixture(t);
+    settled(store, 'k1'); settled(store, 'k2');
+    settled(store, 'k3', { status: 'failed' });
+    assert.equal(store.read('session-a')!.status, 'failed');
+    const plan = store.readRollbackPlan('session-a', 'turn-2:user');
+    const result = store.commitRollback({ sessionId: 'session-a', upToItemId: 'turn-2:user', expectedRevision: plan.revision,
+        expectedEpoch: plan.epoch, expectedCursor: plan.nativeCursor, forkCursor: 'fork-b',
+        remapped: [{ turnId: 'turn-2', promptUuid: FORK_UUID }], cleared: ['turn-1'] });
+    assert.deepEqual({ status: result.session.status, error: result.session.error }, { status: 'idle', error: null });
+    assert.deepEqual(boundaries(db), { 'turn-1': null, 'turn-2': FORK_UUID, 'turn-3': null });
+    const user = store.snapshot('session-a').items.find(item => item.itemId === 'turn-2:user')!;
+    assert.deepEqual(result.session.rollback, { available: true, reason: null, sinceSequence: user.firstSequence });
+});
+
+test('a replaced native identity retires recorded boundaries; the first identity and the active turn keep theirs', t => {
+    const { store, db } = fixture(t);
+    const first = admit(store, 'k1', 'session-a', 'prompt k1');
+    store.writeNativeCursor(owner(first.session), null);
+    store.writeNativeCursor(owner(first.session), 'native-a');
+    store.settleTurn(owner(first.session), { status: 'completed' });
+    assert.match(boundaries(db)['turn-1']!, UUID, 'null -> first id keeps the turn that created the session');
+    settled(store, 'k2', { cursor: 'native-a' });
+    assert.match(boundaries(db)['turn-1']!, UUID, 'the same id keeps them');
+    const third = admit(store, 'k3', 'session-a', 'prompt k3');
+    store.writeNativeCursor(owner(third.session), 'native-b');
+    const ids = boundaries(db);
+    assert.deepEqual([ids['turn-1'], ids['turn-2']], [null, null]);
+    assert.match(ids['turn-3']!, UUID, 'the active prompt is sent to the new identity');
+    store.settleTurn(owner(third.session), { status: 'completed' });
+    assert.equal(store.read('session-a')!.rollback.sinceSequence,
+        store.snapshot('session-a').items.find(item => item.itemId === 'turn-3:user')!.firstSequence);
+});
+
+test('a turn that settles before its prompt was dispatched is not a boundary; an unknown dispatch keeps it', t => {
+    const { store, db } = fixture(t);
+    settled(store, 'k1');
+    settled(store, 'k2', { status: 'failed', dispatched: false });
+    settled(store, 'k3', { status: 'failed' });
+    const interrupted = admit(store, 'k4', 'session-a', 'prompt k4');
+    store.recoverInterrupted();
+    const ids = boundaries(db);
+    assert.equal(ids['turn-2'], null);
+    assert.match(ids['turn-3']!, UUID);
+    assert.match(ids[interrupted.receipt.turnId]!, UUID, 'a restart cannot prove the prompt stayed local');
+    assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later.map(turn => turn.promptUuid === null), [true, false, false]);
+});
+
+test('databases created before rollback gain its columns: old turns have no boundary, floors and generations start at 0', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    const legacy = CREATE_CODE_SCHEMA_SQL
+        .replace(',\n    replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0', '')
+        .replace('\n    native_prompt_uuid TEXT, removed_generation INTEGER,', '');
+    assert.ok(!legacy.includes('replay_floor_sequence') && !legacy.includes('native_prompt_uuid'));
+    db.exec(legacy);
+    db.prepare(`INSERT INTO code_sessions (session_id, provider, cwd, model, permission_mode, status, native_cursor, native_started,
+        capabilities_json, epoch, sequence, created_at, last_used_at) VALUES ('legacy', 'claude', '/workspace', 'model', 'ask',
+        'idle', 'native-old', 1, ?, 1, 4, 1, 1)`).run(JSON.stringify(capabilities));
+    db.exec("INSERT INTO code_turns (session_id, turn_id, client_turn_key, prompt_hash, status, accepted_sequence) VALUES ('legacy', 'old', 'old-key', 'h', 'completed', 4)");
+    db.prepare('INSERT INTO code_items VALUES (?, ?, ?, ?)').run('legacy', 'old:user', 2,
+        JSON.stringify({ itemId: 'old:user', turnId: 'old', kind: 'user_message', status: 'done', text: 'old', createdAt: 1, updatedAt: 1 }));
+    const store = new CodeStore(db);
+    const record = store.readRecord('legacy')!;
+    assert.deepEqual({ floor: record.replayFloorSequence, generation: record.historyGeneration, since: record.rollbackSince }, { floor: 0, generation: 0, since: null });
+    assert.deepEqual(store.read('legacy')!.rollback, { available: false, reason: 'no_boundary', sinceSequence: null });
+    assert.deepEqual(boundaries(db), { old: null });
+    assert.equal(store.readTurn('legacy', 'old-key')?.status, 'completed');
+    new CodeStore(db);
 });

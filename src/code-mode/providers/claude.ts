@@ -118,13 +118,14 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                     },
                     get alive() { return !closing && runtime.alive; },
                     get closed() { return !runtime.alive && runtime.activeProcessCount === 0; },
-                    send(text) {
+                    send(text, sendOptions) {
                         const context = captureCodeContext(options);
                         if (!runtime.idle || closing) throw new Error('code_claude_not_idle');
                         if (Buffer.byteLength(text) > 1024 * 1024) throw new Error('claude_prompt_limit');
                         // SDK startup may not reveal its native ID until the first input is offered.
                         if (!runtime.nativeSessionId && options.nativeCursor === null) options.onNativeCursor(null, context);
-                        return runtime.send({ text }, () => {});
+                        // The turn's rollback boundary is the native input's own identity.
+                        return runtime.send({ text }, () => {}, sendOptions?.promptUuid === undefined ? {} : { uuid: sendOptions.promptUuid });
                     },
                     // The only busy-session input path; a refusal is returned, never turned into success.
                     async steer(text) {
