@@ -12,7 +12,6 @@ type CommandBarProps = {
     onRefresh: () => void;
     onOpenDrawer: () => void;
     onThemeChange: (next: DashboardUiTheme) => void;
-    onOpenPalette: () => void;
 };
 
 export function CommandBar(props: CommandBarProps) {
@@ -47,15 +46,6 @@ export function CommandBar(props: CommandBarProps) {
                 <div className="command-actions-group">
                     <DesktopPanelControls />
                     <DesktopLink />
-                    <button
-                        type="button"
-                        className="command-palette-trigger"
-                        onClick={props.onOpenPalette}
-                        aria-label="Open command palette"
-                        title="Open command palette (⌘K / Ctrl+K)"
-                    >
-                        <span aria-hidden="true">⌘K</span>
-                    </button>
                     <ThemeSwitch theme={props.theme} onChange={props.onThemeChange} />
                     <button
                         type="button"

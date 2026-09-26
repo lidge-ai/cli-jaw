@@ -129,7 +129,7 @@ export function AppChrome(props: AppChromeProps) {
             <PanelLayoutProvider initialPanelState={props.panelInitialState} onStateChange={props.onPanelStateChange}>
             <ManagerShell
                 sidebarCollapsed={props.view.sidebarCollapsed}
-                commandBar={<CommandBar query={props.query} loading={props.loading} onQueryChange={props.setQuery} onRefresh={() => void props.load()} onOpenDrawer={() => props.view.setDrawerOpen(true)} theme={props.theme.theme} onThemeChange={props.theme.setTheme} onOpenPalette={props.palette.toggle} />}
+                commandBar={<CommandBar query={props.query} loading={props.loading} onQueryChange={props.setQuery} onRefresh={() => void props.load()} onOpenDrawer={() => props.view.setDrawerOpen(true)} theme={props.theme.theme} onThemeChange={props.theme.setTheme} />}
                 workspace={(
                     <SidebarRailRouter sidebarCollapsed={props.view.sidebarCollapsed} activityDockCollapsed={props.view.activityDockCollapsed}
                         activityDockHeight={props.view.activityDockHeight} drawerOpen={props.view.drawerOpen} onCloseDrawer={() => props.view.setDrawerOpen(false)}

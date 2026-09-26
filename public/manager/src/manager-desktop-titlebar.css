@@ -90,7 +90,7 @@
         --electron-titlebar-left-reserve: calc(var(--desktop-traffic-light-reserve) + var(--desktop-titlebar-control) + 12px);
     }
 
-    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.command-primary, .command-actions, .command-panel-controls, .theme-switch) {
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.command-primary, .command-actions, .command-panel-controls) {
         align-items: center;
     }
 
@@ -103,7 +103,7 @@
         line-height: 1;
     }
 
-    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.search-input-wrapper, .search-input-wrapper input, .command-panel-toggle, .command-palette-trigger, .command-icon-button, .desktop-open-button, .theme-switch) {
+    :root[data-cli-jaw-desktop="true"] .command-center.command-bar :is(.search-input-wrapper, .search-input-wrapper input, .command-panel-toggle, .command-icon-button, .desktop-open-button) {
         box-sizing: border-box;
         height: var(--desktop-titlebar-control);
         min-height: var(--desktop-titlebar-control);
@@ -114,8 +114,4 @@
         min-width: var(--desktop-titlebar-control);
     }
 
-    :root[data-cli-jaw-desktop="true"] .command-center.command-bar .theme-switch button {
-        height: calc(var(--desktop-titlebar-control) - 6px);
-        min-height: calc(var(--desktop-titlebar-control) - 6px);
-    }
 }
