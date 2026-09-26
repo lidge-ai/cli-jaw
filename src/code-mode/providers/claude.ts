@@ -1,4 +1,5 @@
 import { createClaudeSdkSession, type ClaudeSdkSession } from '../../agent/runtime/claude-sdk-session.js';
+import { loadClaudeHistory } from '../../agent/runtime/claude-sdk-history-loader.js';
 import type { PreparedClaudeOptions } from '../../agent/runtime/claude-sdk-options.js';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { CodeLiveSettings, CodeProvider } from '../provider.js';
@@ -6,6 +7,10 @@ import type { CodePermissionMode } from '../wire.js';
 import { CodeStoreError } from '../store.js';
 import { claudeModelGateMessage } from '../../cli/claude-default-model-boot.js';
 import { admitCodeOpen, captureCodeContext, CODE_PROMPT_TIMEOUT_MS, type CodeProviderDependencies } from './acp.js';
+import { forkClaudeHistory } from './claude-history.js';
+
+/** The in-process history helpers read these from process.env; the runtime must see the same projects dir. */
+const HISTORY_ENVIRONMENT = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PROJECT_DIR_NAME'] as const;
 
 function claudeEffort(value: string | null): PreparedClaudeOptions['effort'] {
     if (value === null) return undefined;
@@ -29,9 +34,20 @@ export function claudeCodePermissionMode(mode: CodePermissionMode): PermissionMo
 }
 
 export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
-    create: typeof createClaudeSdkSession = createClaudeSdkSession): CodeProvider {
+    create: typeof createClaudeSdkSession = createClaudeSdkSession,
+    loadHistory: typeof loadClaudeHistory = loadClaudeHistory): CodeProvider {
     return {
         id: 'claude', describe: dependencies.describe,
+        async rollback(input) {
+            const environment = dependencies.environment();
+            if (HISTORY_ENVIRONMENT.some(key => environment[key] !== process.env[key])) {
+                throw new CodeStoreError('rollback_unavailable', 'Claude history lives outside this server\'s configuration directory', 409);
+            }
+            const history = await loadHistory().catch(() => {
+                throw new CodeStoreError('rollback_unavailable', 'Claude history helpers are unavailable', 409);
+            });
+            return forkClaudeHistory(history, input);
+        },
         async open(options) {
             admitCodeOpen(options, dependencies);
             const sdkMode = claudeCodePermissionMode(options.permissionMode);
