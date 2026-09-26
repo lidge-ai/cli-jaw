@@ -214,7 +214,14 @@ export class CodeController {
     }
     private accept(incoming: CodeSessionInfo): void {
         if (!this.active) return;
-        if (!newer(incoming, this.info(incoming.sessionId))) return;
+        const before = this.info(incoming.sessionId);
+        if (!newer(incoming, before)) return;
+        // A turn that finishes while its session is open was seen: receipt it so the
+        // sidebar does not mark it unread. The receipt's own echo leaves the clock alone.
+        if (incoming.sessionId === this.book.selectedId && before
+            && (incoming.lastTurnCompletedAt ?? 0) > (before.lastTurnCompletedAt ?? 0)) {
+            void this.markVisited(incoming.sessionId);
+        }
         // The ranked record carries identity and lifecycle only. Attached fields are
         // dropped by copy, never by mutation: readIndex hands the same row to
         // observe(), and update() hands over details.session, which the reducer may
@@ -494,8 +501,16 @@ export class CodeController {
         this.gitInfo = null;
         this.notify();
         await this.sync(id, true);
+        if (this.book.selectedId === id) void this.markVisited(id);
         if (this.book.selectedId === id) await this.readGit();
     };
+    /** Read receipt for the unread marker. A failure only leaves the marker on; selection never waits for it. */
+    private async markVisited(id: string): Promise<void> {
+        try {
+            this.accept(await this.client.visitSession(id));
+            this.notify();
+        } catch { /* the next open retries */ }
+    }
     setInput = (text: string): void => { const draft = this.draft(); draft.input = text; draft.edit++; this.notify(); };
     clearError = (): void => {
         const draft = this.draft();

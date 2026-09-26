@@ -274,6 +274,14 @@ export class CodeSessionManager {
             cleanupPending: this.cleanupReadout(id, session) };
     }
 
+    /** Read receipt from the Manager; drives the unread marker (lastTurnCompletedAt > lastVisitedAt). */
+    visit(id: string): CodeSessionInfo {
+        this.ready();
+        const result = this.storage(() => this.options.store.markVisited(id));
+        this.publish(result.events);
+        return result.session;
+    }
+
     async attach(id: string): Promise<CodeSessionInfo> {
         this.ready();
         const record = this.record(id);

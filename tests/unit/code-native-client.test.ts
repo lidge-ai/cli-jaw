@@ -7,7 +7,7 @@ const session: CodeSessionInfo = {
     sessionId: 's', provider: 'cursor', cwd: '/work', title: null, model: 'composer', effort: null, permissionMode: 'auto',
     status: 'idle', turnId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
     capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: true, efforts: [], permissionModes: ['ask', 'auto'] },
-    epoch: 9, sequence: 17, revision: 3, createdAt: 1, lastUsedAt: 2,
+    epoch: 9, sequence: 17, revision: 3, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
 };
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });

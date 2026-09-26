@@ -41,7 +41,7 @@ function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return { sessionId: 's-a', provider: 'codex-app', cwd: '/work/alpha', title: 'Alpha', model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false, efforts: ['low', 'high'], permissionModes: ['ask', 'auto'] },
-        epoch: 2, sequence: 10, revision: 4, createdAt: 1, lastUsedAt: 2, ...patch };
+        epoch: 2, sequence: 10, revision: 4, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch };
 }
 function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
     const s = session();
@@ -674,7 +674,8 @@ test('CodeCanvas uses the sidebar portal and forwards workspace and explicit fil
     const alpha = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.querySelector('.code-session-cwd')?.textContent === 'Alpha'); assert.ok(alpha);
     await click(alpha);
     assert.deepEqual(files, []); await click(button(h.container, 'report.md')); assert.deepEqual(files, ['/tmp/report.md']);
-    assert.deepEqual(calls.filter(([method]) => method !== 'GET'), [['POST', '/api/code/workspace/pick']], 'navigation and file preview must not start or prompt a runtime');
+    // Opening a session posts its read receipt (/visit); nothing else may start or prompt a runtime.
+    assert.deepEqual(calls.filter(([method, path]) => method !== 'GET' && !String(path).endsWith('/visit')), [['POST', '/api/code/workspace/pick']], 'navigation and file preview must not start or prompt a runtime');
     await h.render(null);
     assert.ok(sources.length > 0 && sources.every(source => source.closed));
     assert.equal(host.querySelector('nav'), null);

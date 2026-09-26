@@ -38,6 +38,10 @@ export interface CodeSessionInfo {
     revision: number;
     createdAt: number;
     lastUsedAt: number;
+    /** When the latest turn ended completed or failed; null until one has. A cancelled turn does not move it. */
+    lastTurnCompletedAt: number | null;
+    /** When the Manager last opened this session; null if it never has (never counts as unread). */
+    lastVisitedAt: number | null;
     /** Current index/snapshot attention, absent when not hydrated. */
     pendingPermissionCount?: number;
     /**

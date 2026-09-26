@@ -8,7 +8,7 @@ const session: CodeSessionInfo = {
     permissionMode: 'ask', status: 'streaming', turnId: 't', epoch: 1, sequence: 3, revision: 1,
     archivedAt: null, error: null, resume: { available: true, reason: null },
     capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: true, efforts: [], permissionModes: ['ask', 'auto'] },
-    createdAt: 1, lastUsedAt: 2,
+    createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
 };
 const item = (id = 'answer', text = 'A', firstSequence = 3): CodeItem => ({ itemId: id, firstSequence,
     turnId: 't', kind: 'assistant_message', status: 'running', text, phase: 'commentary', createdAt: 1, updatedAt: 1 });

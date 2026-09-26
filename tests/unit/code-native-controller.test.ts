@@ -14,7 +14,7 @@ function session(id: string, patch: Partial<CodeSessionInfo> = {}): CodeSessionI
     return { sessionId: id, provider: 'codex-app', cwd: `/workspace/${id}`, title: id, model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
         resume: { available: true, reason: null }, capabilities: { resume: true, interrupt: true, permissions: true,
-            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, ...patch };
+            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch };
 }
 function snap(info: CodeSessionInfo, items: CodeItem[] = [], pendingPermissions: CodePermissionRequest[] = []): CodeSnapshot {
     return { session: info, items, sequence: info.sequence, pendingPermissions, truncated: false };
@@ -43,6 +43,10 @@ function fixture(t: TestContext) {
         if (path === '/sessions' && call.method === 'GET') return response({ ok: true, sessions: [...snapshots.values()].map(s => s.session), limit: 100, nextCursor: null, hasMore: false });
         const id = path.split('/')[2] ?? '';
         const snapshot = snapshots.get(id);
+        // Read receipts are counted separately (visits()); they never change a session's turn state.
+        if (snapshot && path.endsWith('/visit') && call.method === 'POST') {
+            return response({ ok: true, session: { ...snapshot.session, lastVisitedAt: Date.now() } });
+        }
         if (snapshot && path.endsWith('/events')) return response({ ok: true, events: [], nextSequence: snapshot.sequence, throughSequence: snapshot.sequence, hasMore: false });
         if (snapshot && call.method === 'GET') return response({ ok: true, ...snapshot });
         throw new Error(`Unhandled fixture request ${call.method} ${path}`);
@@ -53,7 +57,8 @@ function fixture(t: TestContext) {
     t.after(() => { for (const cleanup of cleanups) cleanup(); globalThis.fetch = savedFetch; });
     return { controller, options, snapshots, calls, cleanups,
         intercept(fn: NonNullable<typeof intercept>) { intercept = fn; },
-        posts() { return calls.filter(call => call.method === 'POST'); },
+        posts() { return calls.filter(call => call.method === 'POST' && !call.path.endsWith('/visit')); },
+        visits() { return calls.filter(call => call.method === 'POST' && call.path.endsWith('/visit')); },
     };
 }
 function until(controller: CodeController, predicate: () => boolean): Promise<void> {
@@ -805,4 +810,15 @@ test('a re-keyed send stops claiming it might already be accepted, and shows the
     assert.equal(copies.length, 1, 'no second copy claiming to be in flight');
     assert.equal(copies[0]!.itemId, 't:user', 'the surviving copy is the real failed attempt');
     assert.equal(f.controller.getModel().retryText, 'original message', 'the strip still previews the text');
+});
+
+test('opening a session sends one read receipt and a visit failure never surfaces', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    await f.controller.selectSession('a');
+    await until(f.controller, () => f.visits().length === 1);
+    assert.equal(f.visits()[0]?.path, '/sessions/a/visit');
+    f.intercept(call => call.path.endsWith('/visit') ? response({ ok: false, error: { code: 'boom', message: 'boom' } }, 500) : undefined);
+    await f.controller.selectSession('b');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(f.controller.getModel().error, null);
 });

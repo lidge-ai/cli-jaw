@@ -469,6 +469,9 @@ injectable store, session manager, transcript normalizer and four direct native
 adapters: Codex app-server, Claude Agent SDK, Cursor ACP and Grok ACP. Each
 provider uses its installed CLI and existing login. Catalog availability means
 an executable was found; catalog reads do not start a native session or login.
+Sessions also persist two sidebar clocks: `last_turn_completed_at` (a completed or failed
+turn; a cancelled one does not move it) and `last_visited_at` (the Manager's read receipt).
+Neither affects runtime ownership or replay.
 Provider live-model inventory (the Cursor and Grok CLI probes) is owned by host
 activation — `CodeHost.prime()`, called once at server startup — never by a
 catalog read or lazy `host.get()`.
