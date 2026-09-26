@@ -22,10 +22,52 @@ export const CODE_SESSION_LABELS: Record<CodeSessionStatus, string> = {
 export function codeSessionBusy(session: CodeSessionInfo): boolean {
     return session.status === 'starting' || session.status === 'streaming' || session.status === 'stopping';
 }
+/** Why a send's key was retired: the server spent it without running, or a rollback removed its turn. */
+export type CodeResendReason = 'rolled-back';
+/** What the composer says about a retired send: `error` in the alert, `heading`/`detail` in its recovery strip. */
+export function codeResendCopy(reason: CodeResendReason | undefined): { heading: string; detail: string; error: string } {
+    return reason === 'rolled-back' ? {
+        heading: 'Turn rolled back',
+        detail: "This message's turn was removed by a rollback. Files it changed were not reverted. Retry sends it as a new message.",
+        error: "This message's turn was removed by a rollback. The message was not resent; Retry will submit it as a new message.",
+    } : {
+        heading: 'Send did not start',
+        detail: 'The original attempt ended on the server without running. Retry sends this as a new message.',
+        error: 'The original attempt ended on the server without running. The message was not resent; Retry will submit it as a new message.',
+    };
+}
 export function codeCanResume(session: CodeSessionInfo): boolean {
     return session.archivedAt === null && session.capabilities.resume && session.resume.available
         && (session.status === 'suspended' || (session.status === 'failed' && session.error?.recoverable === true));
 }
+/**
+ * Whether the open session may roll its conversation back right now. An older server
+ * without the `rollback` field reads as unavailable.
+ */
+export function codeCanRollback(session: CodeSessionInfo | null, synced: boolean, idleOperation: boolean): boolean {
+    return !!session && session.rollback?.available === true && session.archivedAt === null && synced && idleOperation
+        && (session.status === 'idle' || session.status === 'failed');
+}
+
+/**
+ * User rows a rollback may target: a settled turn's own `${turnId}:user` row (never the
+ * unsent row or a follow-up), at or after the first recorded boundary, with a later turn.
+ */
+export function codeRollbackRows(items: readonly CodeItem[], sinceSequence: number | null | undefined): ReadonlySet<string> {
+    const rows = new Set<string>();
+    if (sinceSequence == null) return rows;
+    const settled = new Set(items.filter(item => item.kind === 'turn_completed' || item.kind === 'turn_failed'
+        || item.kind === 'turn_cancelled').map(item => item.turnId));
+    const turns = items.filter(item => item.kind === 'user_message' && item.turnId !== null
+        && item.itemId === `${item.turnId}:user` && item.firstSequence !== undefined);
+    // One row per turn, so a later turn exists exactly when the row is not the newest one.
+    const newest = Math.max(...turns.map(row => row.firstSequence!));
+    for (const row of turns) {
+        if (row.firstSequence! >= sinceSequence && row.firstSequence! < newest && settled.has(row.turnId)) rows.add(row.itemId);
+    }
+    return rows;
+}
+
 export function codeItemStatus(item: CodeItem): string {
     if (item.kind === 'turn_cancelled' || item.status === 'cancelled') return 'Stopped';
     if (item.kind === 'turn_failed' || item.status === 'error') return 'Failed';

@@ -100,3 +100,252 @@ test('only the Code Claude provider switches the runtime to in-band follow-ups',
     const users = files('src').filter(file => readFileSync(file, 'utf8').includes('inBandSteer')).sort();
     assert.deepEqual(users, [join('src', 'agent', 'runtime', 'claude-sdk-session.ts'), join('src', 'code-mode', 'providers', 'claude.ts')]);
 });
+
+test('Claude Code provider sends a turn under its private prompt UUID', async () => {
+    const h = harness();
+    const sent: unknown[] = [];
+    h.runtime.send = (async (...args: unknown[]) => { sent.push(args); return { status: 'done', finalText: 'ok', partialText: '' }; }) as never;
+    const handle = await h.open();
+    await handle.send('first', { promptUuid: '0f8fad5b-d9cb-469f-a165-70867728950e' });
+    await handle.send('second');
+    assert.deepEqual(sent.map(args => (args as unknown[])[2]), [{ uuid: '0f8fad5b-d9cb-469f-a165-70867728950e' }, {}]);
+    await handle.close();
+});
+
+type Message = { type: 'user' | 'assistant' | 'system'; uuid: string; session_id: string; message: unknown; parent_tool_use_id: string | null; parent_agent_id: string | null };
+const SOURCE = '11111111-1111-4111-8111-111111111111';
+let counter = 0;
+const uuid = () => `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`;
+function msg(type: Message['type'], content: unknown, id = uuid()): Message {
+    return { type, uuid: id, session_id: SOURCE, message: type === 'system' ? undefined : { role: type, content }, parent_tool_use_id: null, parent_agent_id: null };
+}
+/** Two-turn-plus history: T1 runs a tool, T2 and T3 answer in text. */
+function transcript() {
+    const t1 = msg('user', [{ type: 'text', text: 'first' }]);
+    const toolUse = msg('assistant', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} }]);
+    const toolResult = msg('user', [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'hi' }]);
+    const a1 = msg('assistant', [{ type: 'text', text: 'done one' }]);
+    const t2 = msg('user', [{ type: 'text', text: 'second SECRET' }]);
+    const a2 = msg('assistant', [{ type: 'text', text: 'two' }]);
+    const t3 = msg('user', [{ type: 'text', text: 'third' }]);
+    const a3 = msg('assistant', [{ type: 'text', text: 'three' }]);
+    return { t1, toolUse, toolResult, a1, t2, a2, t3, a3, all: [t1, toolUse, toolResult, a1, t2, a2, t3, a3] };
+}
+function fakeHistory(sessions: Map<string, Message[]>, options: { fileSize?: number | undefined; forkId?: string; mutate?: (fork: Message[]) => Message[] } = {}) {
+    const calls: Array<[string, ...unknown[]]> = [];
+    const helpers = {
+        async getSessionInfo(id: string, opts: unknown) { calls.push(['info', id, opts]); return sessions.has(id) ? { sessionId: id, summary: '', lastModified: 0, ...('fileSize' in options ? { fileSize: options.fileSize } : { fileSize: 2048 }) } : undefined; },
+        async getSessionMessages(id: string, opts: unknown) { calls.push(['messages', id, opts]); return structuredClone(sessions.get(id) ?? []); },
+        async forkSession(id: string, opts: { dir?: string; upToMessageId?: string; title?: string }) {
+            calls.push(['fork', id, opts]);
+            const source = sessions.get(id)!;
+            const cut = source.findIndex(entry => entry.uuid === opts.upToMessageId);
+            const forkId = options.forkId ?? uuid();
+            let copy = source.slice(0, cut + 1).map(entry => ({ ...structuredClone(entry), uuid: uuid(), session_id: forkId }));
+            if (options.mutate) copy = options.mutate(copy);
+            sessions.set(forkId, copy);
+            return { sessionId: forkId };
+        },
+        async deleteSession(id: string, opts: unknown) { calls.push(['delete', id, opts]); sessions.delete(id); },
+    };
+    return { helpers: helpers as never, calls };
+}
+function rollbackProvider(history: unknown, environment: NodeJS.ProcessEnv = { ...process.env }) {
+    let loads = 0;
+    const provider = createClaudeCodeProvider({ describe: () => ({ capabilities: { permissionModes: ['ask'] } }) as never,
+        binary: () => '/nonexistent/claude', environment: () => environment },
+    (async () => { throw new Error('no runtime is opened by a rollback'); }) as never,
+    async () => { loads++; if (history instanceof Error) throw history; return history as never; });
+    return { provider, get loads() { return loads; } };
+}
+const input = (h: ReturnType<typeof transcript>, overrides: Record<string, unknown> = {}) => ({
+    cwd: '/work', nativeCursor: SOURCE, title: 'Session title', target: { turnId: 'turn-1', promptUuid: h.t1.uuid },
+    kept: [{ turnId: 'turn-1', promptUuid: h.t1.uuid }],
+    later: [{ turnId: 'turn-2', promptUuid: h.t2.uuid }, { turnId: 'turn-3', promptUuid: h.t3.uuid }], ...overrides });
+const codeError = (code: string) => (error: unknown) => error instanceof CodeStoreError && error.code === code && error.statusCode === 409;
+
+test('Claude rollback forks the stored cursor through the entry before the next boundary and remaps kept turns', async () => {
+    const h = transcript();
+    const sessions = new Map([[SOURCE, h.all]]);
+    const fake = fakeHistory(sessions);
+    const result = await rollbackProvider(fake.helpers).provider.rollback!(input(h));
+    assert.deepEqual(fake.calls.slice(0, 3), [
+        ['info', SOURCE, { dir: '/work' }],
+        ['messages', SOURCE, { dir: '/work', includeSystemMessages: true }],
+        ['fork', SOURCE, { dir: '/work', upToMessageId: h.a1.uuid, title: 'Session title' }],
+    ]);
+    const fork = sessions.get(result.forkCursor)!;
+    assert.deepEqual(fork.map(entry => entry.message), [h.t1, h.toolUse, h.toolResult, h.a1].map(entry => entry.message),
+        'the tool call and its result stay with the kept turn; the removed prompt does not');
+    assert.deepEqual(result.remapped, [{ turnId: 'turn-1', promptUuid: fork[0]!.uuid }]);
+    assert.deepEqual(result.cleared, []);
+    assert.deepEqual(sessions.get(SOURCE), h.all, 'the source conversation is never changed');
+    await result.discard();
+    assert.equal(sessions.has(result.forkCursor), false);
+    assert.deepEqual(fake.calls.at(-1), ['delete', result.forkCursor, { dir: '/work' }]);
+});
+
+test('Claude rollback skips an undispatched later turn, passes a missing one only up to its own turn, and fails closed without the target', async () => {
+    const h = transcript();
+    const sessions = new Map([[SOURCE, h.all]]);
+    const fake = fakeHistory(sessions);
+    const { provider } = rollbackProvider(fake.helpers);
+    const skipped = await provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: null }, { turnId: 'turn-3', promptUuid: h.t3.uuid }],
+        kept: [{ turnId: 'turn-1', promptUuid: h.t1.uuid }], title: null }));
+    assert.deepEqual(fake.calls.find(call => call[0] === 'fork'), ['fork', SOURCE, { dir: '/work', upToMessageId: h.a2.uuid }], 'no title: the SDK derives one');
+    assert.equal(sessions.get(skipped.forkCursor)!.length, 6);
+    const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
+    const before = forks();
+    await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: uuid() }, { turnId: 'turn-3', promptUuid: h.t3.uuid }] })),
+        codeError('rollback_boundary_unavailable'), 'a missing later boundary is not passed over once a human turn started after the target');
+    await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: uuid() } })), codeError('rollback_boundary_unavailable'));
+    await assert.rejects(provider.rollback!(input(h, { target: { turnId: 'turn-1', promptUuid: h.toolResult.uuid } })), codeError('rollback_boundary_unavailable'),
+        'a tool result is not a human turn start');
+    await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-2', promptUuid: null }] })), codeError('rollback_boundary_unavailable'),
+        'no later boundary: the fork would keep turns 2 and 3, which Code is removing');
+    await assert.rejects(provider.rollback!(input(h, { later: [{ turnId: 'turn-0', promptUuid: h.t1.uuid }], target: { turnId: 'turn-2', promptUuid: h.t2.uuid } })),
+        codeError('rollback_boundary_unavailable'), 'a later boundary before the target is out of order');
+    sessions.set(SOURCE, []);
+    await assert.rejects(provider.rollback!(input(h)), codeError('rollback_unavailable'));
+    assert.equal(forks(), before);
+});
+
+test('a later prompt Claude never recorded is passed over while only the target turn lies before the next boundary', async () => {
+    // Send, Stop before Claude wrote the prompt, send again: turn 3 has a boundary that is not in history.
+    const t1 = msg('user', [{ type: 'text', text: 'first' }]), a1 = msg('assistant', [{ type: 'text', text: 'one' }]);
+    const t2 = msg('user', [{ type: 'text', text: 'second' }]);
+    const toolUse = msg('assistant', [{ type: 'tool_use', id: 'toolu_2', name: 'Bash', input: {} }]);
+    const toolResult = msg('user', [{ type: 'tool_result', tool_use_id: 'toolu_2', content: 'ok' }]);
+    const a2 = msg('assistant', [{ type: 'text', text: 'two' }]);
+    const t4 = msg('user', [{ type: 'text', text: 'fourth' }]), a4 = msg('assistant', [{ type: 'text', text: 'four' }]);
+    const stopped = uuid();
+    const kept = [{ turnId: 'turn-1', promptUuid: t1.uuid }, { turnId: 'turn-2', promptUuid: t2.uuid }];
+    const request = (later: Array<{ turnId: string; promptUuid: string | null }>) => ({ cwd: '/work', nativeCursor: SOURCE, title: null,
+        target: { turnId: 'turn-2', promptUuid: t2.uuid }, kept, later });
+
+    const sessions = new Map([[SOURCE, [t1, a1, t2, toolUse, toolResult, a2, t4, a4]]]);
+    const fake = fakeHistory(sessions);
+    const { provider } = rollbackProvider(fake.helpers);
+    const passed = await provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }]));
+    assert.deepEqual(fake.calls.find(call => call[0] === 'fork'), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }],
+        'the fork ends before the next recorded prompt; the target turn keeps its tool loop');
+    const fork = sessions.get(passed.forkCursor)!;
+    assert.deepEqual(fork.map(entry => entry.message), [t1, a1, t2, toolUse, toolResult, a2].map(entry => entry.message));
+    assert.deepEqual(passed.remapped, [{ turnId: 'turn-1', promptUuid: fork[0]!.uuid }, { turnId: 'turn-2', promptUuid: fork[2]!.uuid }]);
+
+    // With no later turn in history at all, the fork keeps the whole history.
+    sessions.set(SOURCE, [t1, a1, t2, toolUse, toolResult, a2]);
+    const whole = await provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: null }]));
+    assert.equal(sessions.get(whole.forkCursor)!.length, 6);
+    assert.deepEqual(fake.calls.filter(call => call[0] === 'fork').at(-1), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }]);
+
+    // Any human turn start after the target means the history moved: fail closed, before any fork.
+    const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
+    const before = forks();
+    const outside = msg('user', 'typed in claude --resume'), outsideAnswer = msg('assistant', [{ type: 'text', text: 'elsewhere' }]);
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer, t4, a4]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }])), codeError('rollback_boundary_unavailable'));
+    // A follow-up is a human turn start too, so a target turn that took one stays fail-closed here.
+    const followUp = msg('user', [{ type: 'text', text: 'also run the tests' }]);
+    sessions.set(SOURCE, [t1, a1, t2, followUp, a2, t4, a4]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
+    // A later recorded prompt that is present but out of order is never passed.
+    sessions.set(SOURCE, [t1, a1, t4, a4, t2, a2]);
+    await assert.rejects(provider.rollback!(request([{ turnId: 'turn-3', promptUuid: stopped }, { turnId: 'turn-4', promptUuid: t4.uuid }])),
+        codeError('rollback_boundary_unavailable'));
+    assert.equal(forks(), before);
+});
+
+test('later turns that never reached Claude fork to the end of history while only the target turn follows its prompt', async () => {
+    // Two sends after turn 2 failed before dispatch: neither has a boundary, and neither is in history.
+    const t1 = msg('user', [{ type: 'text', text: 'first' }]), a1 = msg('assistant', [{ type: 'text', text: 'one' }]);
+    const t2 = msg('user', [{ type: 'text', text: 'second' }]);
+    const toolUse = msg('assistant', [{ type: 'tool_use', id: 'toolu_3', name: 'Bash', input: {} }]);
+    const toolResult = msg('user', [{ type: 'tool_result', tool_use_id: 'toolu_3', content: 'ok' }]);
+    const a2 = msg('assistant', [{ type: 'text', text: 'two' }]);
+    const kept = [{ turnId: 'turn-1', promptUuid: t1.uuid }, { turnId: 'turn-2', promptUuid: t2.uuid }];
+    const request = { cwd: '/work', nativeCursor: SOURCE, title: null, target: { turnId: 'turn-2', promptUuid: t2.uuid }, kept,
+        later: [{ turnId: 'turn-3', promptUuid: null }, { turnId: 'turn-4', promptUuid: null }] };
+
+    const sessions = new Map([[SOURCE, [t1, a1, t2, toolUse, toolResult, a2]]]);
+    const fake = fakeHistory(sessions);
+    const { provider } = rollbackProvider(fake.helpers);
+    const whole = await provider.rollback!(request);
+    assert.deepEqual(fake.calls.find(call => call[0] === 'fork'), ['fork', SOURCE, { dir: '/work', upToMessageId: a2.uuid }],
+        'the fork keeps the whole history, the target turn and its tool loop');
+    const fork = sessions.get(whole.forkCursor)!;
+    assert.deepEqual(fork.map(entry => entry.message), [t1, a1, t2, toolUse, toolResult, a2].map(entry => entry.message));
+    assert.deepEqual(whole.remapped, [{ turnId: 'turn-1', promptUuid: fork[0]!.uuid }, { turnId: 'turn-2', promptUuid: fork[2]!.uuid }]);
+
+    // A human turn start after the target is a turn the rollback would keep without meaning to: fail closed, before any fork.
+    const forks = () => fake.calls.filter(call => call[0] === 'fork').length;
+    const before = forks();
+    const outside = msg('user', 'typed in claude --resume'), outsideAnswer = msg('assistant', [{ type: 'text', text: 'elsewhere' }]);
+    sessions.set(SOURCE, [t1, a1, t2, a2, outside, outsideAnswer]);
+    await assert.rejects(provider.rollback!(request), codeError('rollback_boundary_unavailable'));
+    const followUp = msg('user', [{ type: 'text', text: 'also run the tests' }]);
+    sessions.set(SOURCE, [t1, a1, t2, followUp, a2]);
+    await assert.rejects(provider.rollback!(request), codeError('rollback_boundary_unavailable'), 'a follow-up is a human turn start too');
+    assert.equal(forks(), before);
+});
+
+test('Claude rollback deletes a fork that does not reproduce the retained conversation', async () => {
+    const h = transcript();
+    for (const mutate of [(fork: Message[]) => fork.slice(1), (fork: Message[]) => fork.map((entry, index) => index === 2 ? { ...entry, message: { role: 'user', content: 'changed' } } : entry)]) {
+        const sessions = new Map([[SOURCE, h.all]]);
+        const fake = fakeHistory(sessions, { mutate });
+        await assert.rejects(rollbackProvider(fake.helpers).provider.rollback!(input(h)), codeError('rollback_unavailable'));
+        const fork = fake.calls.find(call => call[0] === 'fork');
+        const created = [...sessions.keys()].filter(id => id !== SOURCE);
+        assert.equal(created.length, 0, 'the unverified fork is deleted');
+        assert.ok(fork && fake.calls.some(call => call[0] === 'delete'));
+        assert.deepEqual(sessions.get(SOURCE), h.all);
+    }
+    for (const forkId of [SOURCE, 'not-a-uuid']) {
+        const sessions = new Map([[SOURCE, h.all]]);
+        const fake = fakeHistory(sessions, { forkId });
+        await assert.rejects(rollbackProvider(fake.helpers).provider.rollback!(input(h)), codeError('rollback_unavailable'));
+        assert.equal(fake.calls.some(call => call[0] === 'delete'), false, 'only a fresh UUID other than the source is deleted');
+        assert.ok(sessions.has(SOURCE));
+    }
+});
+
+test('Claude rollback remaps by aligned position, leaves unrecorded turns alone and clears unaligned ones', async () => {
+    const h = transcript();
+    const summary = msg('user', 'This session is being continued. SUMMARY');
+    const sessions = new Map([[SOURCE, [summary, ...h.all.slice(4)]]]);
+    const fake = fakeHistory(sessions, { mutate: fork => [msg('system', null), ...fork] });
+    const result = await rollbackProvider(fake.helpers).provider.rollback!(input(h, {
+        target: { turnId: 'turn-2', promptUuid: h.t2.uuid },
+        kept: [{ turnId: 'turn-0', promptUuid: null }, { turnId: 'turn-1', promptUuid: h.t1.uuid }, { turnId: 'turn-2', promptUuid: h.t2.uuid }],
+        later: [{ turnId: 'turn-3', promptUuid: h.t3.uuid }] }));
+    const fork = sessions.get(result.forkCursor)!;
+    assert.deepEqual(result.remapped, [{ turnId: 'turn-2', promptUuid: fork[2]!.uuid }], 'system entries are outside the alignment');
+    assert.deepEqual(result.cleared, ['turn-1'], 'a compacted kept turn has no aligned message');
+});
+
+test('Claude rollback is bounded by transcript size and the history configuration, before any read', async () => {
+    const h = transcript();
+    for (const fileSize of [32 * 1024 * 1024 + 1, undefined]) {
+        const fake = fakeHistory(new Map([[SOURCE, h.all]]), { fileSize });
+        await assert.rejects(rollbackProvider(fake.helpers).provider.rollback!(input(h)), codeError('rollback_unavailable'));
+        assert.deepEqual(fake.calls.map(call => call[0]), ['info'], 'no transcript parse and no fork');
+    }
+    const fake = fakeHistory(new Map([[SOURCE, h.all]]));
+    for (const key of ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PROJECT_DIR_NAME']) {
+        const guarded = rollbackProvider(fake.helpers, { ...process.env, [key]: '/elsewhere' });
+        await assert.rejects(guarded.provider.rollback!(input(h)), codeError('rollback_unavailable'));
+        assert.equal(guarded.loads, 0);
+    }
+    assert.deepEqual(fake.calls, []);
+    const missing = rollbackProvider(new Error('optional dependency missing'));
+    await assert.rejects(missing.provider.rollback!(input(h)), codeError('rollback_unavailable'));
+    const failing = fakeHistory(new Map([[SOURCE, h.all]]));
+    (failing.helpers as { forkSession: unknown }).forkSession = async () => { throw new Error('ENOENT private path'); };
+    await assert.rejects(rollbackProvider(failing.helpers).provider.rollback!(input(h)),
+        (error: unknown) => codeError('rollback_unavailable')(error) && !String((error as Error).message).includes('private path'));
+});

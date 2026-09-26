@@ -332,6 +332,26 @@ test('unknown-send retry previews original text and never submits the edited dra
     await click(button(h.container, 'Retry same send')); assert.equal(retries, 1); assert.equal(sends, 0);
 });
 
+test('a retired send says why: the server never ran it, or a rollback removed its turn', bounded, async t => {
+    const h = await surface(t);
+    const strip = async (patch: Partial<CodeControllerModel>) => {
+        await h.render(createElement(CodeWorkbench, { endpointKey: '43225', controller: model({ operation: { kind: 'unknown-send', error: null },
+            retryText: 'third prompt', canRetrySameSend: true, resendRequired: true, ...patch }) }));
+        const node = h.container.querySelector('.code-recovery-strip[aria-label]:not([aria-label="Unconfirmed session creation"])');
+        return { label: node?.getAttribute('aria-label'), text: node?.textContent ?? '' };
+    };
+    const rolled = await strip({ resendReason: 'rolled-back' });
+    assert.equal(rolled.label, 'Send rolled back');
+    assert.match(rolled.text, /^Turn rolled back/);
+    assert.ok(rolled.text.includes("This message's turn was removed by a rollback. Files it changed were not reverted. Retry sends it as a new message."));
+    assert.doesNotMatch(rolled.text, /without running/);
+    assert.equal(button(h.container, 'Send as a new message').disabled, false);
+    const spent = await strip({ resendReason: null });
+    assert.equal(spent.label, 'Send not started');
+    assert.ok(spent.text.includes('Send did not start') && spent.text.includes('The original attempt ended on the server without running. Retry sends this as a new message.'));
+    assert.doesNotMatch(spent.text, /rollback/);
+});
+
 function item(patch: Partial<CodeItem>): CodeItem { return { itemId: 'item-a', turnId: 't-a', kind: 'user_message', status: 'done', createdAt: 1, updatedAt: 1, ...patch }; }
 test('timeline retains stable item ID, escaped tool output, truncation and distinct stopped/failed states', bounded, async t => {
     const h = await surface(t);
@@ -1156,4 +1176,72 @@ test('a follow-up the turn never consumed reads delivery not confirmed', bounded
     assert.match(h.container.textContent ?? '', /You · Delivery not confirmed/);
     await h.render(createElement(CodeTranscriptItem, { item: { ...item, phase: undefined } as CodeItem, provider: 'claude', sessionKey: 'k' }));
     assert.doesNotMatch(h.container.textContent ?? '', /not confirmed/);
+});
+
+test('Roll back conversation to here shows only on settled Claude user rows with a later turn and asks first', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t);
+    const rolled: string[] = [];
+    const claude = session({ provider: 'claude', rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
+    const turn = (id: string, at: number): CodeItem[] => [
+        item({ itemId: `${id}:user`, turnId: id, kind: 'user_message', status: 'done', text: `prompt ${id}`, firstSequence: at }),
+        item({ itemId: `${id}:answer`, turnId: id, kind: 'assistant_message', status: 'done', text: `answer ${id}`, firstSequence: at + 1 }),
+        item({ itemId: `${id}:tool`, turnId: id, kind: 'tool_call', status: 'done', tool: { name: 'Bash' }, firstSequence: at + 2 }),
+        item({ itemId: `${id}:terminal`, turnId: id, kind: 'turn_completed', status: 'done', firstSequence: at + 3 }),
+    ];
+    const followUp = item({ itemId: 't1:steer:1', turnId: 't1', kind: 'user_message', status: 'done', text: 'follow-up', firstSequence: 3 });
+    const pending = item({ itemId: 'pending:user', turnId: null, kind: 'user_message', status: 'pending', text: 'unsent', firstSequence: Number.MAX_SAFE_INTEGER });
+    const items = [...turn('t1', 1), followUp, ...turn('t2', 5), ...turn('t3', 9), pending];
+    const render = (patch: Partial<CodeControllerModel> = {}, info: Partial<CodeSessionInfo> = {}) => {
+        const current = { ...claude, ...info };
+        return h.render(createElement(CodeWorkbench, { endpointKey: '43225', controller: model({ session: current, sessions: [current],
+            selection: { provider: 'claude', cwd: current.cwd, model: current.model, effort: null, permissionMode: 'ask' }, items,
+            async rollbackSession(itemId: string) { rolled.push(itemId); }, ...patch }) }));
+    };
+    const actions = () => [...h.container.querySelectorAll('.code-message-rollback')]
+        .map(node => node.closest('[data-code-item-id]')?.getAttribute('data-code-item-id'));
+    await render();
+    assert.deepEqual(actions(), ['t1:user', 't2:user'], 'the last turn, assistant, tool, follow-up and unsent rows have no action');
+    const confirms: string[] = [];
+    let answer = false;
+    t.mock.method(dom.window, 'confirm', (text: string) => { confirms.push(text); return answer; });
+    const target = () => h.container.querySelector('[data-code-item-id="t1:user"] .code-message-rollback') as HTMLButtonElement;
+    assert.equal(target().textContent, 'Roll back conversation to here');
+    await act(async () => { target().click(); });
+    assert.deepEqual(rolled, [], 'declining the confirmation sends nothing');
+    answer = true;
+    await act(async () => { target().click(); });
+    assert.deepEqual(rolled, ['t1:user']);
+    assert.deepEqual(confirms, Array(2).fill('Later turns are removed from this conversation. Workspace files are not changed. No prompt is sent.'));
+    await render({}, { rollback: { available: true, reason: null, sinceSequence: 5 } });
+    assert.deepEqual(actions(), ['t2:user'], 'turns before the first recorded boundary are not targets');
+    await render({}, { status: 'failed', error: { code: 'native_exit', message: 'exited', at: 1, recoverable: true } });
+    assert.deepEqual(actions(), ['t1:user', 't2:user'], 'a failed session can still roll back');
+});
+
+test('the rollback action is absent while archived, busy, pending, following up, unsynced, unsupported or on an older server', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t);
+    const claude = session({ provider: 'claude', rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
+    const items = [
+        item({ itemId: 't1:user', turnId: 't1', kind: 'user_message', status: 'done', text: 'one', firstSequence: 1 }),
+        item({ itemId: 't1:terminal', turnId: 't1', kind: 'turn_failed', status: 'error', firstSequence: 2 }),
+        item({ itemId: 't2:user', turnId: 't2', kind: 'user_message', status: 'done', text: 'two', firstSequence: 3 }),
+        item({ itemId: 't2:terminal', turnId: 't2', kind: 'turn_completed', status: 'done', firstSequence: 4 }),
+    ];
+    const count = async (patch: Partial<CodeControllerModel>, info: Partial<CodeSessionInfo> = {}) => {
+        const current = { ...claude, ...info } as CodeSessionInfo;
+        await h.render(createElement(CodeWorkbench, { endpointKey: '43225', controller: model({ session: current, sessions: [current], items,
+            selection: { provider: current.provider, cwd: current.cwd, model: current.model, effort: null, permissionMode: 'ask' }, ...patch }) }));
+        return h.container.querySelectorAll('.code-message-rollback').length;
+    };
+    assert.equal(await count({}), 1, 'a failed turn is still a settled target');
+    assert.equal(await count({}, { archivedAt: 5 }), 0);
+    assert.equal(await count({}, { status: 'streaming', turnId: 't3' }), 0);
+    assert.equal(await count({ synced: false }), 0);
+    assert.equal(await count({ operation: { kind: 'patching', error: null } }), 0);
+    assert.equal(await count({ operation: { kind: 'rolling-back', error: null }, pending: true }), 0);
+    assert.match(h.container.querySelector('.code-composer-status')?.textContent ?? '', /Rolling back conversation/);
+    assert.equal(await count({ steering: true }), 0, 'a follow-up still in flight settles before any rollback');
+    assert.equal(await count({}, { provider: 'codex-app', rollback: { available: false, reason: 'unsupported', sinceSequence: null } }), 0);
+    const { rollback: _absent, ...older } = claude;
+    assert.equal(await count({ session: older as CodeSessionInfo, sessions: [older as CodeSessionInfo] }), 0, 'an older server without the field reads as unavailable');
 });

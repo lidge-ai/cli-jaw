@@ -728,6 +728,30 @@ edits, Plan, Auto review, Don't ask, Auto (YOLO)) rather than the session snapsh
 standing warning stays on Auto (YOLO). Claude approval cards may offer "Allow for this
 session". Claude sessions and drafts add a Thinking menu (Thinking on / Thinking off) after
 Effort; it is hidden for other runtimes, and a draft that leaves Claude drops the switch.
+A Claude session whose server reports `rollback.available` shows "Roll back
+conversation to here" under each settled `${turnId}:user` row at or after
+`rollback.sinceSequence` that has a later turn, while the session is idle or failed,
+synchronized, not archived and no other operation or follow-up POST is in flight; the
+unsent row and follow-up rows never get it, and an older server without the field reads
+as unavailable. It
+asks first ("Later turns are removed from this conversation. Workspace files are not
+changed. No prompt is sent."), posts only the opaque row id with the revision and
+epoch it saw, shows "Rolling back conversation…" and then takes a fresh snapshot; a
+refusal keeps the transcript and names the reason (a revision conflict reads "The
+conversation changed since you chose this point", a missing boundary names a turn that
+never reached Claude or a compaction). A `code_session` event with a higher
+`historyGeneration` makes the reducer take a new snapshot. A rollback, including one seen
+from elsewhere or learned only from the next snapshot (the index copy is then the older
+generation), stops awaiting a send whose row it removed. An unconfirmed send keeps its
+key, since nothing the page saw ties it to a removed turn, and reads "The conversation was
+rolled back elsewhere; this message was not sent."; a same-key retry is admitted at most
+once. Only the server's answer names a removed turn: a same-key retry answered
+`cancelled` for a turn absent from the post-rollback transcript, which is all a reloaded
+page can go by, retires the key, and its recovery strip, kept across reload, reads "This
+message's turn was removed by a rollback. Files it changed were not reverted. Retry sends
+it as a new message.". An unconfirmed follow-up whose turn is absent after a rollback
+stops being reported as unconfirmed, also when the page had dropped that session's
+transcript.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs

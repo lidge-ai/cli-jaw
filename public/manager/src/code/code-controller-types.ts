@@ -2,10 +2,11 @@ import type {
     CodeCreateSessionRequest, CodeItem, CodeModelCatalog, CodePermissionRequest, CodeSessionInfo,
 } from '../../../../src/code-mode/wire';
 import type { CodeGitInfo } from './code-session-client';
+import type { CodeResendReason } from './code-types';
 
 export type CodeTransportState = 'connected' | 'reconnecting' | 'disconnected';
 export type CodeSessionFilter = { scope: 'all' | 'cwd'; archived: boolean };
-export type CodeOperationKind = 'idle' | 'creating' | 'sending' | 'stopping' | 'resuming' | 'patching' | 'unknown-send';
+export type CodeOperationKind = 'idle' | 'creating' | 'sending' | 'stopping' | 'resuming' | 'patching' | 'rolling-back' | 'unknown-send';
 export interface CodeControllerOptions { port: number; workingDir: string }
 
 export interface CodeControllerModel {
@@ -42,6 +43,8 @@ export interface CodeControllerModel {
     canRetrySameSend: boolean;
     /** The previous key is spent: Retry sends a new message rather than reusing it. */
     resendRequired?: boolean;
+    /** Why the key was spent, when a rollback removed its turn rather than the server settling it. */
+    resendReason?: CodeResendReason | null;
     permissionOperations: Record<string, { pending: boolean; error: string | null }>;
     hasMoreSessions: boolean;
     hasOlderHistory: boolean;
@@ -57,6 +60,8 @@ export interface CodeControllerModel {
     retrySameSend(): Promise<void>;
     stop(): Promise<void>;
     resume(): Promise<void>;
+    /** Claude only: remove the turns after this `${turnId}:user` row. Files are not reverted and nothing is sent. */
+    rollbackSession(itemId: string): Promise<void>;
     rename(id: string, title: string): Promise<void>;
     archive(id: string, archived: boolean): Promise<void>;
     answer(permission: CodePermissionRequest, optionId: string): Promise<void>;

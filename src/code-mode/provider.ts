@@ -2,6 +2,7 @@ import type { RuntimeEvent, RuntimeEventBody, RuntimeTurnOutcome } from '../shar
 import type { RuntimeEventContext } from '../agent/runtime/events.js';
 import type { RuntimeRequests } from '../agent/runtime/requests.js';
 import type { RuntimeTranscriptObserver } from '../agent/runtime/projection.js';
+import type { CodeRollbackTurn } from './store.js';
 import type { CodeContextUsage, CodePermissionMode, CodeProviderCatalog, CodeProviderId } from './wire.js';
 
 export interface CodeTurnContext extends RuntimeEventContext {
@@ -50,7 +51,8 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     readonly alive: boolean;
     /** True only when owned native resources have actually exited/drained. */
     readonly closed: boolean;
-    send(text: string): Promise<RuntimeTurnOutcome>;
+    /** `promptUuid` is the turn's private native input identity (Claude only). */
+    send(text: string, options?: { promptUuid?: string }): Promise<RuntimeTurnOutcome>;
     /**
      * Optional (Claude): offer one follow-up to the running turn. It throws only before
      * dispatch; `nativeId` names the offered input for `unconsumedFollowUps`.
@@ -69,10 +71,33 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     close(): Promise<void>;
 }
 
+/** A fork of the native conversation through the target turn; the source session is never changed. */
+export interface CodeRollbackInput {
+    cwd: string;
+    nativeCursor: string;
+    title: string | null;
+    target: { turnId: string; promptUuid: string };
+    /** Turns kept, in order, target last. */
+    kept: CodeRollbackTurn[];
+    /** Turns removed, in order. */
+    later: CodeRollbackTurn[];
+}
+export interface CodeRollbackFork {
+    forkCursor: string;
+    /** Kept turns whose boundary maps to the fork at the same aligned position. */
+    remapped: Array<{ turnId: string; promptUuid: string }>;
+    /** Kept turns with a boundary that has no aligned fork message. */
+    cleared: string[];
+    /** Best-effort delete of the fork, for when it is not committed. */
+    discard(): Promise<void>;
+}
+
 export interface CodeProvider {
     readonly id: CodeProviderId;
     describe(): CodeProviderCatalog;
     open(options: CodeOpenOptions): Promise<CodeProviderSession>;
+    /** Claude only: history read, fork, verify and remap. No runtime is opened. */
+    rollback?(input: CodeRollbackInput): Promise<CodeRollbackFork>;
 }
 
 export type CodeProviders = Readonly<Record<CodeProviderId, CodeProvider>>;

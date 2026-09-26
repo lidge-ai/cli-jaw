@@ -35,6 +35,14 @@ export interface CodeSessionInfo {
     archivedAt: number | null;
     error: CodeSessionError | null;
     resume: { available: boolean; reason: string | null };
+    /**
+     * Claude conversation rollback. `sinceSequence` is the first user row that
+     * carries a rollback boundary; turns admitted before boundaries were recorded
+     * (or before a native identity change) cannot be targets.
+     */
+    rollback: { available: boolean; reason: string | null; sinceSequence: number | null };
+    /** Bumped by each rollback; a higher value means removed items must be dropped by a new snapshot. */
+    historyGeneration: number;
     capabilities: CodeCapabilities;
     epoch: number;
     sequence: number;
@@ -217,6 +225,8 @@ export interface CodePatchSessionRequest {
 export interface CodePromptRequest { text: string; clientTurnKey: string }
 /** A Claude follow-up for the captured running turn; it never starts a turn of its own. */
 export interface CodeSteerRequest extends CodePromptRequest { turnId: string; epoch: number }
+/** Keep turns through the opaque `${turnId}:user` item; later turns leave the conversation, files do not change. */
+export interface CodeRollbackRequest { expectedRevision: number; expectedEpoch: number; upToItemId: string }
 export interface CodeCancelRequest { turnId: string; epoch: number }
 export interface CodePermissionAnswer {
     sessionId: string;

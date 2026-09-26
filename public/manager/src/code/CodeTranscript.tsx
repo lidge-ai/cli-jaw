@@ -9,6 +9,7 @@ import { copyText } from '../clipboard/copy-text';
 import { PENDING_USER_ITEM_ID } from './pending-user-item';
 
 const MarkdownRenderer = lazy(() => import('../notes/rendering/MarkdownRenderer').then(m => ({ default: m.MarkdownRenderer })));
+export const CODE_ROLLBACK_CONFIRM = 'Later turns are removed from this conversation. Workspace files are not changed. No prompt is sent.';
 
 /**
  * Turn boundaries are bookkeeping, not conversation. A one-line answer framed by
@@ -60,11 +61,13 @@ function ItemMarkdown({ item, identity, onOpenLocalFile }: { item: CodeItem; ide
     </Suspense>;
 }
 
-export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = '', onOpenLocalFile, expanded, onExpandedChange }: {
+export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = '', onOpenLocalFile, expanded, onExpandedChange, onRollback }: {
     item: CodeItem; provider: CodeProviderId; sessionKey: string; workingDir?: string;
     onOpenLocalFile?: ((path: string) => void) | undefined;
     expanded?: boolean;
     onExpandedChange?: ((itemId: string, open: boolean) => void) | undefined;
+    /** Present only on a row the conversation may be rolled back to; asks before calling. */
+    onRollback?: ((itemId: string) => void) | undefined;
 }) {
     const tool = item.kind === 'tool_call' || item.kind === 'file_change';
     const reasoning = item.kind === 'reasoning';
@@ -179,16 +182,22 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
             <div className="code-message-text">{assistant ? <ItemMarkdown item={item} identity={`${sessionKey}:${item.itemId}`} onOpenLocalFile={onOpenLocalFile} />
                 : <span className="code-plain-text">{item.text ?? item.permission?.title ?? ''}</span>}</div>
             {item.permission?.detail && <p className="code-plain-text">{item.permission.detail}</p>}
+            {onRollback && user && !unsent && <button type="button" className="code-message-rollback"
+                onClick={() => { if (window.confirm(CODE_ROLLBACK_CONFIRM)) onRollback(item.itemId); }}>Roll back conversation to here</button>}
         </>}
         {(assistant || reasoning) && (item.status === 'cancelled' || item.status === 'error') && <span className="code-partial-label">Partial output · {status}</span>}
         {item.truncation && <p className="code-truncation" role="note">Output truncated: {item.truncation.storedChars.toLocaleString()} of {item.truncation.sourceChars.toLocaleString()} characters retained.</p>}
     </article>;
 }
 
-export function CodeTranscript({ items, provider, sessionKey, workingDir, loading, hasOlderHistory, loadOlderHistory, permissionCount, onOpenLocalFile, working = false }: {
+export function CodeTranscript({ items, provider, sessionKey, workingDir, loading, hasOlderHistory, loadOlderHistory, permissionCount, onOpenLocalFile, working = false,
+    rollbackRows, onRollback }: {
     items: CodeItem[]; provider: CodeProviderId; sessionKey: string; workingDir: string; loading: boolean; working?: boolean;
     hasOlderHistory: boolean; loadOlderHistory(): Promise<void>; permissionCount: number;
     onOpenLocalFile?: ((path: string) => void) | undefined;
+    /** Opaque user row ids that may be rollback targets; the transcript never sees native ids. */
+    rollbackRows?: ReadonlySet<string> | undefined;
+    onRollback?: ((itemId: string) => void) | undefined;
 }) {
     const transcriptRef = useRef<HTMLDivElement>(null);
     const visible = useMemo(() => items.filter(item => !HIDDEN_KINDS.has(item.kind)), [items]);
@@ -282,7 +291,8 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
                             <CodeTranscriptItem item={item} provider={provider} sessionKey={sessionKey}
                                 workingDir={workingDir} onOpenLocalFile={onOpenLocalFile}
                                 expanded={isRowOpen(openRows, sessionKey, item)}
-                                onExpandedChange={setExpanded} />
+                                onExpandedChange={setExpanded}
+                                onRollback={rollbackRows?.has(item.itemId) ? onRollback : undefined} />
                         </div> : null;
                     })}
                 </div>}

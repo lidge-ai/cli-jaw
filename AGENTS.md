@@ -2,7 +2,7 @@
 
 System-level AI agent with full computer control via CLI wrapping (pi, agy, claude, codex, codex-app, cursor, kiro-code, gemini, grok, opencode, copilot).
 
-Native Code API: `/api/code` is composed by `src/code-mode/host.ts` and `src/routes/code-native.ts`. Keep per-backend storage, captured turn ownership, full snapshots/compact replay, byte limits, native approval capabilities, and observed process-exit proof aligned with `structure/runtime-integration.md` and `server_api.md`. It uses direct native adapters rather than Jaw orchestration or its runtime pools.
+Native Code API: `/api/code` is composed by `src/code-mode/host.ts` and `src/routes/code-native.ts`. Keep per-backend storage, captured turn ownership, full snapshots/compact replay, byte limits, native approval capabilities, and observed process-exit proof aligned with `structure/runtime-integration.md` and `server_api.md`. It uses direct native adapters rather than Jaw orchestration or its runtime pools. Compact replay's one carve-out is Claude conversation rollback: it removes items and their events, replay below the replay floor answers `invalid_sequence`, and a higher `historyGeneration` requires a new snapshot.
 
 Native Code interruption seals callbacks before persisting accepted buffered content under the captured store owner. Worker and Manager share the Code JSON body policy in `src/routes/code-body-parser.ts` (1MiB decoded prompt, 6MiB + 4KiB envelope); generic API limits stay separate. Settings navigation guards the drafts actually being discarded, including keyboard and desktop subscriptions.
 

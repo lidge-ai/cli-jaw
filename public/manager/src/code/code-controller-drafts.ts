@@ -1,6 +1,7 @@
 import type { CodeCreateSessionRequest, CodeModelCatalog, CodeSessionInfo } from '../../../../src/code-mode/wire';
 import type { CodeControllerModel } from './code-controller-types';
 import { browserCodeDraftStorage, loadCodeDraftStorage, saveCodeDraftStorage, type StoredCodeDraft } from './code-controller-draft-storage';
+import { codeResendCopy, type CodeResendReason } from './code-types';
 
 export interface CodeDraft {
     input: string;
@@ -11,9 +12,9 @@ export interface CodeDraft {
     /**
      * `resend` marks an attempt whose key the server already spent. Acceptance is
      * then known — it failed — so the surfaces that describe an unconfirmed send
-     * must stop hedging.
+     * must stop hedging. `resendReason` says why, when it was not the server's own settlement.
      */
-    retry: { text: string; key: string; edit: number; resend?: boolean } | null;
+    retry: { text: string; key: string; edit: number; resend?: boolean; resendReason?: CodeResendReason } | null;
     createUnknown: boolean;
     requiredSequence: number;
     stopTarget: { turnId: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
@@ -63,7 +64,7 @@ function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     draft.retry = saved.retry;
     if (saved.creating) draft.operation = { kind: 'creating', error: 'Creation was interrupted by reload. The original session may exist; no request has been retried.' };
     if (saved.retry) draft.operation = { kind: 'unknown-send', error: saved.retry.resend
-        ? 'The original attempt ended on the server without running. The message was not resent; Retry will submit it as a new message.'
+        ? codeResendCopy(saved.retry.resendReason).error
         : 'The original message has not been reconciled after reload. It will not be sent automatically.' };
     if (saved.stop) {
         draft.stopTarget = { ...saved.stop, outcome: 'unknown' };

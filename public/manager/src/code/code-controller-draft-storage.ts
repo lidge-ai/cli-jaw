@@ -1,5 +1,6 @@
 import type { CodeCreateSessionRequest } from '../../../../src/code-mode/wire';
 import type { CodeDraft, CodeDraftBook } from './code-controller-drafts';
+import type { CodeResendReason } from './code-types';
 
 const STORAGE_KEY = 'cli-jaw:code-drafts:v1';
 const WARNING_KEY = 'cli-jaw:code-draft-warnings:v1';
@@ -20,7 +21,7 @@ export interface StoredCodeDraft {
     selection: DraftSelection;
     selectionEdit: number;
     creating: boolean;
-    retry: { text: string; key: string; edit: number; resend?: boolean } | null;
+    retry: { text: string; key: string; edit: number; resend?: boolean; resendReason?: CodeResendReason } | null;
     stop: { turnId: string; epoch: number } | null;
 }
 export interface StoredCodeEndpoint {
@@ -55,7 +56,9 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
         // `resend` is optional on purpose: a draft stored before this field existed
         // must still parse, or recovery is wiped instead of downgraded.
         retry: retry === null ? null : { text: retry['text'] as string, key: retry['key'] as string, edit: retry['edit'] as number,
-            ...(retry['resend'] === true ? { resend: true } : {}) },
+            ...(retry['resend'] === true ? { resend: true } : {}),
+            // An unknown reason downgrades to the generic spent-key copy instead of wiping recovery.
+            ...(retry['resend'] === true && retry['resendReason'] === 'rolled-back' ? { resendReason: 'rolled-back' as const } : {}) },
         stop: stop === null ? null : { turnId: stop['turnId'] as string, epoch: stop['epoch'] as number },
     };
 }
@@ -124,7 +127,8 @@ function pack(draft: CodeDraft): StoredCodeDraft | null {
         ...(thinking === undefined ? {} : { thinking }) }, selectionEdit: draft.selectionEdit,
         creating: draft.createUnknown || draft.operation.kind === 'creating',
         retry: draft.retry ? { text: draft.retry.text, key: draft.retry.key, edit: draft.retry.edit,
-            ...(draft.retry.resend ? { resend: true } : {}) } : null,
+            ...(draft.retry.resend ? { resend: true } : {}),
+            ...(draft.retry.resend && draft.retry.resendReason ? { resendReason: draft.retry.resendReason } : {}) } : null,
         stop: draft.stopTarget ? { turnId: draft.stopTarget.turnId, epoch: draft.stopTarget.epoch } : null });
 }
 export function saveCodeDraftStorage(storage: Storage, endpoint: string, book: CodeDraftBook): string | null {

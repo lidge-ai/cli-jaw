@@ -76,7 +76,7 @@ cli-jaw/
 │   │   ├── manager.ts ← session index, admission and resource capacity
 │   │   ├── session.ts ← captured turn ownership, cancellation and accepted-buffer drain
 │   │   ├── normalize.ts ← redacted materialized transcript and coalescing
-│   │   ├── store.ts ← SQLite ownership, replay, snapshots and byte budgets
+│   │   ├── store.ts ← SQLite ownership, replay, snapshots, byte budgets and the rollback commit
 │   │   ├── provider.ts ← native handle and turn-context contracts
 │   │   ├── types.ts ← internal session and store contracts
 │   │   ├── wire.ts ← public request/event DTOs
@@ -85,6 +85,7 @@ cli-jaw/
 │   │       ├── live-models.ts ← last-known opencodex catalog, refreshed in background
 │   │       ├── codex-app.ts ← Codex app-server adapter
 │   │       ├── claude.ts ← Claude native adapter
+│   │       ├── claude-history.ts ← Claude conversation rollback: boundary checks, fork, retained-conversation verification and remap
 │   │       ├── acp.ts ← shared ACP resource ownership
 │   │       ├── cursor.ts ← Cursor native adapter
 │   │       └── grok.ts ← Grok native adapter
@@ -119,6 +120,7 @@ cli-jaw/
 │   │   │   ├── claude-sdk-messages.ts ← bounded UTF8 blocks and streamed/snapshot reconciliation
 │   │   │   ├── claude-sdk-input.ts ← bounded single-consumer input admission
 │   │   │   ├── claude-sdk-loader.ts ← optional exact SDK lazy import and retry
+│   │   │   ├── claude-sdk-history-loader.ts ← optional SDK transcript helpers (info/messages/fork/delete), checked, lazy and retryable
 │   │   │   ├── claude-sdk-options.ts ← validated prepared configuration and environment snapshot
 │   │   │   ├── claude-sdk-process.ts ← owned SDK process and native Windows launch
 │   │   │   ├── claude-sdk-roots.ts ← observed single root identity and bounded acquisition
@@ -657,6 +659,9 @@ cli-jaw/
 │       ├── dispatch-batch-summary.ts ← batch dispatch safe summary printer + recovery command fallback
 │       └── tui/              ← chat 터미널 TUI 분리 (api, channel, fullscreen-mode, input-handler, overlays, raw-pipe-mode, renderer, simple-mode, tui-io, types, ws-handler)
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
+│   └── unit/
+│       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
+│       └── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 ├── scripts/                  ← 도구 스크립트 (TypeScript + Shell + CJS; atomic build, sidecar bundle, release gates, install-risk evidence)
 ├── officecli/                ← OfficeCLI 포크 서브모듈 (lidge-jun/OfficeCLI, Apache 2.0)
 ├── skills_ref/               ← 레퍼런스 스킬

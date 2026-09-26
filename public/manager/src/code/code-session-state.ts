@@ -61,6 +61,8 @@ function apply(state: CodeSessionState, event: CodeWireEvent): CodeSessionState 
     let { items, session, permissions } = state;
     if (event.event === 'code_session') {
         if (!event.session || event.session.sessionId !== state.sessionId) return { ...state, needsSnapshot: true, synced: false };
+        // A rollback removed items this state still holds; only a new snapshot drops them.
+        if ((event.session.historyGeneration ?? 0) > (state.session?.historyGeneration ?? 0)) return { ...state, needsSnapshot: true, synced: false };
         // Usage is attached at read time, so a stored session event does not
         // carry it. Replacing the record wholesale would blank the meter on
         // every unrelated session change; the last figure stands until a

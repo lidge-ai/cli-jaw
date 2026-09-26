@@ -15,6 +15,8 @@ type CodeComposerProps = {
     followUpSent?: boolean;
     /** A follow-up is in flight. */
     steering?: boolean;
+    /** What the pending operation is doing, when it is not a send. */
+    pendingLabel?: string;
     readOnly: boolean;
     autoFocus?: boolean;
     onInputChange: (text: string) => void;
@@ -87,7 +89,7 @@ export function CodeComposer(props: CodeComposerProps) {
         {/* An icon button cannot announce progress on its own. */}
         {(props.stopping || props.steering || props.pending || dictation.status === 'recording' || dictation.status === 'transcribing') &&
             <span className="code-composer-status" role="status">
-                {props.stopping ? 'Stopping…' : props.steering ? 'Sending follow-up…' : props.pending ? 'Sending…'
+                {props.stopping ? 'Stopping…' : props.steering ? 'Sending follow-up…' : props.pending ? props.pendingLabel ?? 'Sending…'
                     : dictation.status === 'recording' ? 'Recording…' : 'Transcribing…'}</span>}
         {(error || dictation.error) && <div className="code-action-error" role="alert">{error ?? dictation.error}</div>}
     </div>;

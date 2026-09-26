@@ -120,3 +120,30 @@ test('steerSession posts the captured follow-up once and names every refusal', a
         assert.equal(calls.length, 7, 'no request is retried');
     } finally { globalThis.fetch = original; }
 });
+
+test('rollback posts only the opaque row, revision and epoch, and a refusal carries its reason and current session', async () => {
+    const original = globalThis.fetch;
+    const calls: { url: string; init: RequestInit }[] = [];
+    let refuse: { error: string; session?: CodeSessionInfo } | null = null;
+    globalThis.fetch = async (url, init = {}) => {
+        calls.push({ url: String(url), init });
+        return refuse ? reply({ ok: false, ...refuse }, 409) : reply({ ok: true, session: { ...session, historyGeneration: 1 } });
+    };
+    try {
+        const client = createCodeSessionClient(4567);
+        const rolled = await client.rollbackSession('s/a', { expectedRevision: 3, expectedEpoch: 9, upToItemId: 'turn:user' });
+        assert.equal(rolled.historyGeneration, 1);
+        assert.equal(calls[0]!.url, 'http://127.0.0.1:4567/api/code/sessions/s%2Fa/rollback');
+        assert.equal(calls[0]!.init.method, 'POST');
+        assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { expectedRevision: 3, expectedEpoch: 9, upToItemId: 'turn:user' });
+        for (const [code, copy] of [['rollback_unavailable', /compacted/], ['rollback_boundary_unavailable', /can't be a rollback point: it or a later turn never reached Claude, or the conversation was compacted/],
+            ['rollback_noop', /latest turn/]] as const) {
+            refuse = { error: code };
+            await assert.rejects(client.rollbackSession('s', { expectedRevision: 3, expectedEpoch: 9, upToItemId: 'turn:user' }),
+                (error: unknown) => error instanceof CodeClientError && error.code === code && error.status === 409 && copy.test(error.message));
+        }
+        refuse = { error: 'revision_conflict', session };
+        await assert.rejects(client.rollbackSession('s', { expectedRevision: 2, expectedEpoch: 9, upToItemId: 'turn:user' }),
+            (error: unknown) => error instanceof CodeClientError && error.session?.revision === 3);
+    } finally { globalThis.fetch = original; }
+});

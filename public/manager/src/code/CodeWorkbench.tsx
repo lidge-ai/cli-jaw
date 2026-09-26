@@ -8,7 +8,7 @@ import { CodeTranscript } from './CodeTranscript';
 import { CodeToastHost } from './CodeToastHost';
 import { applyCodeNotice, dismissCodeToast, type CodeNotice, type CodeToast } from './code-toasts';
 import { CodeWorkspaceHeader } from './CodeWorkspaceHeader';
-import { codeCanResume } from './code-types';
+import { codeCanResume, codeCanRollback, codeResendCopy, codeRollbackRows } from './code-types';
 
 type Props = { controller: CodeControllerModel; endpointKey: string; onOpenLocalFile?: ((path: string) => void) | undefined };
 export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: Props) {
@@ -39,6 +39,8 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const canStop = !!c.session?.turnId && c.session.capabilities.interrupt && busy && !stopping;
     const canResume = !!c.session && codeCanResume(c.session) && c.synced && !c.pending && !unknownSend;
     const error = c.operation.error || c.error || (actionError?.key === sessionKey ? actionError.message : null);
+    const rollbackRows = codeCanRollback(c.session, c.synced, c.operation.kind === 'idle' && !c.steering)
+        ? codeRollbackRows(c.items, c.session?.rollback?.sinceSequence) : undefined;
     const terminal = [...c.items].reverse().find(item => item.kind === 'turn_cancelled' || item.kind === 'turn_failed' || item.kind === 'turn_completed');
     const failedInput = terminal && terminal.kind !== 'turn_completed'
         ? c.items.find(item => item.kind === 'user_message' && item.turnId === terminal.turnId)?.text : undefined;
@@ -71,12 +73,12 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             <button type="button" onClick={c.startAnotherSession}>Start another session</button>
         </section>}
         {unknownSend && <section className="code-recovery-strip"
-            aria-label={c.resendRequired ? 'Send not started' : 'Unconfirmed send'}>
-            <strong>{c.resendRequired ? 'Send did not start' : 'Send outcome not confirmed'}</strong>
+            aria-label={c.resendRequired ? (c.resendReason === 'rolled-back' ? 'Send rolled back' : 'Send not started') : 'Unconfirmed send'}>
+            <strong>{c.resendRequired ? codeResendCopy(c.resendReason ?? undefined).heading : 'Send outcome not confirmed'}</strong>
             {/* Once the server has spent the key, acceptance is no longer unknown,
                 so this must stop offering the weaker, hedged explanation. */}
             <p>{c.resendRequired
-                ? 'The original attempt ended on the server without running. Retry sends this as a new message.'
+                ? codeResendCopy(c.resendReason ?? undefined).detail
                 : 'Retry uses the original request. It may submit it if the server has not already accepted it.'}</p>
             <pre className="code-retry-preview" aria-label="Original prompt">{c.retryText}</pre>
             <button type="button" disabled={!c.canRetrySameSend || retrying === sessionKey} onClick={() => void retry()}>
@@ -99,7 +101,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             : <CodeTranscript items={c.items} provider={c.session?.provider ?? c.selection.provider} sessionKey={sessionKey}
                 workingDir={c.session?.cwd ?? c.selection.cwd} loading={c.loading} hasOlderHistory={c.hasOlderHistory}
                 loadOlderHistory={c.loadOlderHistory} permissionCount={c.permissions.length} onOpenLocalFile={onOpenLocalFile}
-                working={c.working} />}
+                working={c.working} rollbackRows={rollbackRows} onRollback={itemId => perform(() => c.rollbackSession(itemId))} />}
         <CodePermissionQueue permissions={c.permissions} operations={c.permissionOperations} session={c.session} synced={c.synced} onAnswer={c.answer} />
         <div className="code-composer-dock">
             {failedInput !== undefined && !busy && !archived && <div className="code-input-recovery">
@@ -109,7 +111,8 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             </div>}
             <div className="code-composer-surface" aria-label="Code composer controls">
                 <CodeComposer key={`composer:${sessionKey}`} inputText={c.input} canSend={canSend} busy={busy} canStop={canStop} stopping={stopping}
-                    pending={c.pending} followUp={c.followUp} followUpSent={c.followUpSent} steering={c.steering} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop} />
+                    pending={c.pending} followUp={c.followUp} followUpSent={c.followUpSent} steering={c.steering} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop}
+                    {...(c.operation.kind === 'rolling-back' ? { pendingLabel: 'Rolling back conversation…' } : {})} />
                 <ComposerFooter key={`footer:${sessionKey}`} controller={c} onNotice={notify} />
             </div>
         </div>

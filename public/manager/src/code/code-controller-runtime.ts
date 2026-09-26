@@ -10,7 +10,7 @@ import {
     type CodeDraft, type CodeDraftBook,
 } from './code-controller-drafts';
 import { withPendingUserItem } from './pending-user-item';
-import { codeCanResume } from './code-types';
+import { codeCanResume, codeCanRollback, codeResendCopy, type CodeResendReason } from './code-types';
 
 const MAX_DETAILS = 6;
 const MAX_INDEX = 1000;
@@ -23,6 +23,10 @@ const rejected = (error: unknown) => error instanceof CodeClientError && error.s
 // means the server could not record it, so it never will.
 const FOLLOW_UP_UNCONFIRMED = 'Follow-up delivery not confirmed. It was not resent; it appears in the conversation if Claude received it.';
 const FOLLOW_UP_UNRECORDED = 'Follow-up delivery not confirmed. Claude may have received it, but it will not appear in the conversation. It was not resent.';
+// A rollback posts the revision and epoch the user chose the row at; PATCH's settings copy does not fit its conflict.
+const ROLLBACK_CONFLICT = 'The conversation changed since you chose this point. Review it and try again.';
+// A rollback seen from elsewhere, for a send whose key nothing ties to a removed turn.
+const ROLLED_BACK_ELSEWHERE = 'The conversation was rolled back elsewhere; this message was not sent.';
 const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !current
     || incoming.epoch > current.epoch || (incoming.epoch === current.epoch && (incoming.sequence > current.sequence
         || (incoming.sequence === current.sequence && incoming.revision >= current.revision)));
@@ -268,9 +272,20 @@ export class CodeController {
         }
     }
     private update(id: string, state: CodeSessionState): void {
+        // A trimmed or reloaded detail holds no session of its own; the index copy, read before
+        // accept() below can replace it, is then the last generation this page saw.
+        const before = this.details.get(id)?.session ?? this.summaries.get(id);
         this.details.set(id, state);
         if (state.session) this.accept(state.session);
         const draft = this.book.sessions.get(id);
+        if (draft && state.session && state.hydrated && !state.needsSnapshot) {
+            const generation = state.session.historyGeneration ?? 0;
+            if (before && generation > (before.historyGeneration ?? 0)) this.rolledBack(draft, state);
+            // Also without that copy: once any rollback happened, a follow-up whose turn is gone
+            // can no longer appear, so its unconfirmed notice goes.
+            const steer = draft.steer;
+            if (generation > 0 && steer?.state === 'unknown' && !state.items.some(item => item.turnId === steer.turnId)) draft.steer = null;
+        }
         if (draft?.retry && state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === draft.retry!.key)) {
             if (deadSend(state, draft.retry.key)) this.requireNewKey(draft);
             else acknowledgeCodeSend(draft, draft.retry.key);
@@ -303,10 +318,40 @@ export class CodeController {
      * can actually be admitted, and it also stops the settled turn's own
      * `user_message` from matching, so this fires once rather than on every read.
      */
-    private requireNewKey(draft: CodeDraft): void {
+    private requireNewKey(draft: CodeDraft, reason?: CodeResendReason): void {
         if (!draft.retry) return;
-        draft.retry = { ...draft.retry, key: crypto.randomUUID(), resend: true };
-        draft.operation = { kind: 'unknown-send', error: 'The original attempt ended on the server without running. The message was not resent; Retry will submit it as a new message.' };
+        const { resendReason: _previous, ...retry } = draft.retry;
+        draft.retry = { ...retry, key: crypto.randomUUID(), resend: true, ...(reason ? { resendReason: reason } : {}) };
+        draft.operation = { kind: 'unknown-send', error: codeResendCopy(reason).error };
+    }
+    /**
+     * A rollback removed turns, possibly the one this draft is waiting on. A send whose own
+     * row is gone no longer has a turn to wait for. An unconfirmed send keeps its key: seeing
+     * its row would have settled it, so nothing here ties the key to a removed turn. A same-key
+     * retry is then admitted once, or answers `cancelled` and submit() names the rollback. A
+     * key already retired says it was not sent. (An unconfirmed follow-up of a removed turn is
+     * dropped by update(); one still in flight settles on its own answer.)
+     */
+    private rolledBack(draft: CodeDraft, state: CodeSessionState): void {
+        const kept = (key: string) => state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === key);
+        if (draft.awaitingTurn && !kept(draft.awaitingTurn)) draft.awaitingTurn = null;
+        if (draft.retry && !draft.retry.resend && !kept(draft.retry.key)
+            && (draft.operation.kind === 'idle' || draft.operation.kind === 'unknown-send')) {
+            draft.operation = { kind: 'unknown-send', error: ROLLED_BACK_ELSEWHERE };
+        }
+    }
+    /**
+     * A spent key answers `cancelled` both for a turn that was stopped and for one a rollback
+     * removed. Every turn this detail has read past (its cursor is at or after the receipt), in
+     * a window that reaches back to it, still has items unless a rollback deleted them, so the
+     * turn's absence there says which. The HTTP receipt is all a reloaded page has: the
+     * transcript that held the turn is gone with the rollback.
+     */
+    private removedByRollback(id: string, receipt: CodePromptReceipt): boolean {
+        const state = this.details.get(id);
+        return receipt.status === 'cancelled' && !!state?.hydrated && (state.session?.historyGeneration ?? 0) > 0
+            && receipt.sequence <= state.cursor && (!state.hasOlder || (state.beforeSequence ?? Infinity) <= receipt.sequence)
+            && !state.items.some(item => item.turnId === receipt.turnId);
     }
     private makeModel(): CodeControllerModel {
         const id = this.book.selectedId;
@@ -322,7 +367,7 @@ export class CodeController {
         const session = canonical ? publish(canonical, detail) : canonical;
         const operation = draft.operation;
         const persistenceWarning = this.book.storageWarning ?? this.book.recoveryWarning;
-        const pending = ['creating', 'sending', 'stopping', 'resuming', 'patching'].includes(operation.kind) && !operation.error;
+        const pending = ['creating', 'sending', 'stopping', 'resuming', 'patching', 'rolling-back'].includes(operation.kind) && !operation.error;
         const synced = id === null ? !!this.catalog : !!detail?.synced && (!session || session.sequence <= detail.cursor) && draft.requiredSequence <= (detail?.cursor ?? 0);
         const followUp = !!session && synced && session.provider === 'claude' && session.status === 'streaming'
             && !!session.turnId && session.archivedAt === null;
@@ -348,13 +393,13 @@ export class CodeController {
             error: [operation.error ?? unconfirmed ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
-            resendRequired: !!draft.retry?.resend,
+            resendRequired: !!draft.retry?.resend, resendReason: draft.retry?.resend ? draft.retry.resendReason ?? null : null,
             permissionOperations: { ...draft.permissionOperations }, hasMoreSessions: this.moreSessions,
             hasOlderHistory: detail?.hasOlder ?? false, filter: this.filter,
             creationUnknown: id === null && draft.createUnknown, startAnotherSession: this.startAnotherSession,
             newSession: this.newSession, selectSession: this.selectSession, setInput: this.setInput,
             setSelection: this.setSelection, pickWorkspace: this.pickWorkspace, send: this.send,
-            retrySameSend: this.retrySameSend, stop: this.stop, resume: this.resume, rename: this.rename,
+            retrySameSend: this.retrySameSend, stop: this.stop, resume: this.resume, rollbackSession: this.rollbackSession, rename: this.rename,
             archive: this.archive, answer: this.answer, refresh: this.refresh, loadMoreSessions: this.loadMoreSessions,
             loadOlderHistory: this.loadOlderHistory, setFilter: this.setFilter, clearError: this.clearError,
         };
@@ -732,7 +777,10 @@ export class CodeController {
             if (state) this.details.set(id, reduceCodeSession(state, { type: 'stale' }));
             // A duplicate receipt for a spent key is a report about a turn that is
             // already over, not an admission of this one.
-            if (spent(receipt.status)) { this.requireNewKey(draft); draft.awaitingTurn = null; }
+            if (spent(receipt.status)) {
+                this.requireNewKey(draft, this.removedByRollback(id, receipt) ? 'rolled-back' : undefined);
+                draft.awaitingTurn = null;
+            }
             else acknowledgeCodeSend(draft, attempt.key);
         } catch (error) {
             // The committed user event may already have acknowledged a lost HTTP response.
@@ -835,6 +883,21 @@ export class CodeController {
         draft.operation = { kind: 'resuming', error: null }; this.notify();
         try { this.accept(await this.client.attachSession(id)); draft.operation = { kind: 'idle', error: null }; }
         catch (error) { draft.operation = { kind: 'idle', error: message(error) }; }
+        this.notify(); this.scheduleIndex();
+        if (this.active) await this.sync(id, true);
+    };
+    rollbackSession = async (itemId: string): Promise<void> => {
+        const id = this.book.selectedId, session = this.info(id), draft = this.draft(id);
+        // A follow-up still in flight settles first: its answer may name the turn this would remove.
+        if (!id || !session || !codeCanRollback(session, this.model.synced, draft.operation.kind === 'idle' && draft.steer?.state !== 'sending')) return;
+        draft.operation = { kind: 'rolling-back', error: null }; this.notify();
+        try {
+            this.accept(await this.client.rollbackSession(id, { expectedRevision: session.revision, expectedEpoch: session.epoch, upToItemId: itemId }));
+            draft.operation = { kind: 'idle', error: null };
+        } catch (error) {
+            if (error instanceof CodeClientError && error.session?.sessionId === id) { this.observe(error.session); this.accept(error.session); }
+            draft.operation = { kind: 'idle', error: error instanceof CodeClientError && error.code === 'revision_conflict' ? ROLLBACK_CONFLICT : message(error) };
+        }
         this.notify(); this.scheduleIndex();
         if (this.active) await this.sync(id, true);
     };

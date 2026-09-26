@@ -6,6 +6,7 @@ import { CodeSessionManager, CodeServiceError } from '../../src/code-mode/manage
 import { CodeSession } from '../../src/code-mode/session.js';
 import { CodeStore, CodeStoreError, type CodeStoreLimits } from '../../src/code-mode/store.js';
 import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource } from '../../src/code-mode/provider.js';
+import { forkClaudeHistory } from '../../src/code-mode/providers/claude-history.js';
 import type { RuntimeEventContext } from '../../src/agent/runtime/events.js';
 import type { RuntimeTurnOutcome } from '../../src/shared/runtime-contract.js';
 import type { CodeCreateSessionRequest, CodeProviderCatalog, CodeProviderId, CodeWireEvent } from '../../src/code-mode/wire.js';
@@ -23,6 +24,7 @@ const prompt = { text: 'hello', clientTurnKey: 'key-one' };
 class NativeHandle implements CodeProviderSession {
     alive = true;
     sends: string[] = [];
+    sendOptions: Array<{ promptUuid?: string } | undefined> = [];
     cancellations = 0;
     closes = 0;
     readonly sent = deferred<void>();
@@ -44,12 +46,13 @@ class NativeHandle implements CodeProviderSession {
         if (!signal) { signal = deferred<void>(); this.sentSignals.set(index, signal); }
         return signal.promise;
     }
-    send(text: string): Promise<RuntimeTurnOutcome> {
+    send(text: string, options?: { promptUuid?: string }): Promise<RuntimeTurnOutcome> {
         assert.equal(this.alive, true, 'closed handles must never receive a new prompt');
         this.beforeSend?.();
         const index = this.sends.length;
         if (!this.outcomes[index]) this.outcomes[index] = deferred<RuntimeTurnOutcome>();
         this.sends.push(text);
+        this.sendOptions.push(options);
         this.sentSignals.get(index)?.resolve();
         return this.outcomes[index]!.promise;
     }
@@ -176,6 +179,41 @@ test('index attention counts hydrate unloaded sessions without transcript reads 
     assert.equal(f.manager.list().find(row => row.sessionId === a.sessionId)?.pendingPermissionCount, 0);
     handle.outcome.resolve(done);
     await f.terminal(a.sessionId, 1);
+});
+
+test('a Claude turn is sent under its private prompt UUID; a turn stopped before dispatch leaves no boundary', async t => {
+    const f = fixture(t);
+    const boundary = (turnId: string) => (f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?')
+        .get(turnId) as { native_prompt_uuid: string | null }).native_prompt_uuid;
+    const claude = f.create('claude');
+    const sent = f.manager.prompt(claude.sessionId, prompt);
+    const handle = (await f.providers.claude.opened(), f.providers.claude.handles[0]!);
+    await handle.sent.promise;
+    assert.match(boundary(sent.receipt.turnId)!, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(handle.sendOptions, [{ promptUuid: boundary(sent.receipt.turnId) }]);
+    handle.outcome.resolve(done);
+    await f.terminal(claude.sessionId, 1);
+    assert.match(boundary(sent.receipt.turnId)!, /^[0-9a-f-]{36}$/, 'a dispatched turn keeps its boundary');
+    assert.doesNotMatch(JSON.stringify(f.events), new RegExp(boundary(sent.receipt.turnId)!));
+    const codex = f.create();
+    const codexTurn = f.manager.prompt(codex.sessionId, prompt);
+    await f.providers['codex-app'].opened();
+    const codexHandle = f.providers['codex-app'].handles[0]!;
+    await codexHandle.sent.promise;
+    assert.deepEqual(codexHandle.sendOptions, [undefined]);
+    assert.equal(boundary(codexTurn.receipt.turnId), null);
+    codexHandle.outcome.resolve(done);
+    await f.terminal(codex.sessionId, 1);
+    const gate = deferred<void>();
+    f.providers.claude.gate = gate.promise;
+    const slow = f.create('claude');
+    const stopped = f.manager.prompt(slow.sessionId, prompt);
+    await f.providers.claude.opened(1);
+    assert.match(boundary(stopped.receipt.turnId)!, /^[0-9a-f-]{36}$/);
+    await f.manager.cancel(slow.sessionId, { turnId: stopped.receipt.turnId, epoch: 1 });
+    gate.resolve();
+    assert.equal(boundary(stopped.receipt.turnId), null, 'stopped during open: the prompt never left');
+    assert.deepEqual(f.providers.claude.handles[1]!.sends, []);
 });
 
 test('constructor and metadata reads are pure; create snapshots fixed capabilities without native open', async t => {
@@ -2104,4 +2142,325 @@ test('an offer in flight when the turn settles reads unknown until the runtime r
     assert.equal(status(), 'rejected', 'the refusal the runtime returned is definitive');
     await assert.rejects(f.follow('steer-1'), errorCode('steer_key_spent', 409));
     assert.equal(userItems(f, f.row.sessionId).length, 1);
+});
+
+const FORK_CURSOR = '6f2b1d4e-8a1c-4c3e-9b7a-2d5e8f1a3c9b';
+/** Three settled Claude turns on one resident handle; returns their turn ids. */
+async function claudeConversation(f: ReturnType<typeof fixture>, count = 3) {
+    const row = f.create('claude');
+    const turns: string[] = [];
+    for (let index = 0; index < count; index++) {
+        const { receipt } = f.manager.prompt(row.sessionId, { text: `prompt ${index + 1}`, clientTurnKey: `key-${index + 1}` });
+        const epoch = f.store.read(row.sessionId)!.epoch;
+        await f.providers.claude.opened();
+        const handle = f.providers.claude.handles[0]!;
+        await handle.waitSent(index);
+        handle.outcome.resolve(done);
+        await f.terminal(row.sessionId, epoch);
+        turns.push(receipt.turnId);
+    }
+    return { id: row.sessionId, turns, handle: f.providers.claude.handles[0]! };
+}
+function forkProvider(f: ReturnType<typeof fixture>, options: { gate?: Promise<void>; fail?: Error; before?: () => void } = {}) {
+    const calls: Array<{ input: Parameters<NonNullable<CodeProvider['rollback']>>[0]; closesAtCall: number }> = [];
+    const discarded: string[] = [];
+    f.providers.claude.rollback = async input => {
+        calls.push({ input: structuredClone(input), closesAtCall: f.providers.claude.handles[0]?.closes ?? 0 });
+        await options.gate;
+        options.before?.();
+        if (options.fail) throw options.fail;
+        return { forkCursor: FORK_CURSOR, remapped: [{ turnId: input.target.turnId, promptUuid: '0f8fad5b-d9cb-469f-a165-70867728950e' }],
+            cleared: [], discard: async () => { discarded.push(FORK_CURSOR); } };
+    };
+    return { calls, discarded };
+}
+const request = (f: ReturnType<typeof fixture>, id: string, turnId: string) => {
+    const session = f.store.read(id)!;
+    return { expectedRevision: session.revision, expectedEpoch: session.epoch, upToItemId: `${turnId}:user` };
+};
+
+test('rollback retires the resident runtime, forks the stored cursor, swaps the transcript once and the next prompt resumes the fork', async t => {
+    const f = fixture(t);
+    const { id, turns, handle } = await claudeConversation(f);
+    const fork = forkProvider(f);
+    const boundaries = f.db.prepare('SELECT turn_id, native_prompt_uuid FROM code_turns ORDER BY accepted_sequence').all() as Array<{ turn_id: string; native_prompt_uuid: string }>;
+    const before = f.store.read(id)!;
+    const published = f.events.length;
+    const session = await f.manager.rollback(id, request(f, id, turns[0]!));
+    assert.equal(fork.calls.length, 1);
+    assert.ok(fork.calls[0]!.closesAtCall > 0 && handle.alive === false, 'the resident query is closed before history is read');
+    assert.deepEqual(fork.calls[0]!.input, { cwd: '/workspace/a', nativeCursor: 'private-native-cursor', title: 'prompt 1',
+        target: { turnId: turns[0], promptUuid: boundaries[0]!.native_prompt_uuid },
+        kept: [{ turnId: turns[0], promptUuid: boundaries[0]!.native_prompt_uuid }],
+        later: boundaries.slice(1).map(row => ({ turnId: row.turn_id, promptUuid: row.native_prompt_uuid })) });
+    assert.deepEqual({ generation: session.historyGeneration, revision: session.revision, epoch: session.epoch, status: session.status, cleanup: session.cleanupPending },
+        { generation: 1, revision: before.revision + 1, epoch: before.epoch + 1, status: 'idle', cleanup: false });
+    assert.deepEqual(f.events.slice(published).filter(event => event.sessionId === id && event.session?.historyGeneration === 1).length, 1);
+    assert.deepEqual([...new Set(f.manager.snapshot(id).items.map(item => item.turnId))], [turns[0]]);
+    assert.doesNotMatch(JSON.stringify([session, f.events, f.manager.snapshot(id)]), new RegExp(`${FORK_CURSOR}|${boundaries[0]!.native_prompt_uuid}`));
+    assert.equal(f.store.readRecord(id)!.nativeCursor, FORK_CURSOR);
+    assert.equal(f.manager.prompt(id, { text: 'prompt 2', clientTurnKey: 'key-2' }).receipt.status, 'cancelled', 'a removed turn key is spent');
+    f.manager.prompt(id, { text: 'after rollback', clientTurnKey: 'key-after' });
+    const reopened = await f.providers.claude.opened(1);
+    assert.equal(reopened.nativeCursor, FORK_CURSOR, 'no prompt is sent by the rollback; the next one resumes the fork');
+    assert.equal(fork.discarded.length, 0);
+});
+
+test('while a rollback is pending, prompt, attach, patch and a second rollback answer session_busy', async t => {
+    const f = fixture(t);
+    const { id, turns } = await claudeConversation(f);
+    const gate = deferred<void>();
+    const fork = forkProvider(f, { gate: gate.promise });
+    const input = request(f, id, turns[0]!);
+    const pending = f.manager.rollback(id, input);
+    assert.equal(f.manager.prompt(id, { text: 'prompt 3', clientTurnKey: 'key-3' }).duplicate, true, 'a duplicate receipt is still answered');
+    assert.throws(() => f.manager.prompt(id, { text: 'new', clientTurnKey: 'key-new' }), errorCode('session_busy', 409));
+    await assert.rejects(f.manager.attach(id), errorCode('session_busy', 409));
+    await assert.rejects(f.manager.patch(id, { expectedRevision: input.expectedRevision, title: 'renamed' }), errorCode('session_busy', 409));
+    await assert.rejects(f.manager.rollback(id, input), errorCode('session_busy', 409));
+    gate.resolve();
+    assert.equal((await pending).historyGeneration, 1);
+    assert.equal(fork.calls.length, 1);
+    assert.equal(f.store.readTurn(id, 'key-new'), null);
+    f.manager.prompt(id, { text: 'new', clientTurnKey: 'key-new' });
+});
+
+/** Claude turns that each took one committed follow-up while they streamed. */
+async function steeredConversation(f: ReturnType<typeof fixture>, count = 3) {
+    const handle = new SteerHandle();
+    f.providers.claude.handles[0] = handle;
+    const row = f.create('claude');
+    const turns: string[] = [];
+    for (let index = 0; index < count; index++) {
+        const { receipt } = f.manager.prompt(row.sessionId, { text: `prompt ${index + 1}`, clientTurnKey: `key-${index + 1}` });
+        const epoch = f.store.read(row.sessionId)!.epoch;
+        await f.providers.claude.opened();
+        await handle.waitSent(index);
+        handle.steerResult = { accepted: true, turnId: 'native-turn', nativeId: `native-follow-${index + 1}` };
+        await f.manager.steer(row.sessionId, { text: `follow-up ${index + 1}`, clientTurnKey: `steer-${index + 1}`, turnId: receipt.turnId, epoch });
+        handle.outcome.resolve(done);
+        await f.terminal(row.sessionId, epoch);
+        turns.push(receipt.turnId);
+    }
+    return { id: row.sessionId, turns, handle };
+}
+
+test('while a rollback is pending, a new follow-up answers session_busy and a committed one still replays its receipt', async t => {
+    const f = fixture(t);
+    const { id, turns, handle } = await steeredConversation(f);
+    const gate = deferred<void>();
+    forkProvider(f, { gate: gate.promise });
+    const epoch = f.store.read(id)!.epoch;
+    const pending = f.manager.rollback(id, request(f, id, turns[0]!));
+    const replay = await f.manager.steer(id, { text: 'follow-up 3', clientTurnKey: 'steer-3', turnId: turns[2]!, epoch });
+    assert.deepEqual({ duplicate: replay.duplicate, status: replay.receipt.status }, { duplicate: true, status: 'completed' });
+    await assert.rejects(f.manager.steer(id, { text: 'late', clientTurnKey: 'steer-new', turnId: turns[2]!, epoch }), errorCode('session_busy', 409));
+    assert.equal(handle.steers.length, 3, 'nothing reaches the runtime');
+    gate.resolve();
+    assert.equal((await pending).historyGeneration, 1);
+    assert.equal(f.db.prepare("SELECT 1 FROM code_steers WHERE client_turn_key = 'steer-new'").get(), undefined, 'the refused key was never reserved');
+});
+
+test('a rollback never targets a follow-up row, keeps follow-up rows unchanged and reads the removed ones cancelled', async t => {
+    const f = fixture(t);
+    const { id, turns } = await steeredConversation(f);
+    const fork = forkProvider(f);
+    for (const turnId of turns.slice(0, 2)) {
+        await assert.rejects(f.manager.rollback(id, { ...request(f, id, turnId), upToItemId: `${turnId}:steer:steer-${turns.indexOf(turnId) + 1}` }),
+            errorCode('rollback_target_not_found', 404));
+    }
+    assert.equal(fork.calls.length, 0);
+    const rows = () => f.db.prepare('SELECT * FROM code_steers ORDER BY client_turn_key').all();
+    const before = rows();
+    await f.manager.rollback(id, request(f, id, turns[0]!));
+    assert.deepEqual([...fork.calls[0]!.input.kept, ...fork.calls[0]!.input.later].map(turn => turn.turnId), turns, 'only turns bound the fork');
+    assert.deepEqual(rows(), before, 'keys stay spent and native ids are not remapped');
+    assert.deepEqual(userItems(f, id).map(item => item.itemId), [`${turns[0]}:user`, `${turns[0]}:steer:steer-1`]);
+    const epoch = f.store.read(id)!.epoch;
+    for (const [key, status] of [['steer-1', 'completed'], ['steer-2', 'cancelled'], ['steer-3', 'cancelled']] as const) {
+        const index = Number(key.slice(-1)) - 1;
+        const replay = await f.manager.steer(id, { text: `follow-up ${index + 1}`, clientTurnKey: key, turnId: turns[index]!, epoch });
+        assert.deepEqual({ duplicate: replay.duplicate, turnId: replay.receipt.turnId, status: replay.receipt.status }, { duplicate: true, turnId: turns[index], status });
+    }
+    assert.throws(() => f.manager.prompt(id, { text: 'follow-up 2', clientTurnKey: 'steer-2' }), errorCode('turn_key_conflict', 409));
+    assert.equal(f.manager.prompt(id, { text: 'after', clientTurnKey: 'key-after' }).duplicate, false, 'the session takes new work');
+});
+
+/**
+ * Native history as the Claude CLI writes it, behind the real fork-point and verification code:
+ * a prompt appears only once its turn ran. `record` adds a turn under the prompt UUID Code sent.
+ */
+function injectedHistory(f: ReturnType<typeof fixture>, source = 'private-native-cursor') {
+    type Entry = { type: 'user' | 'assistant'; uuid: string; session_id: string; message: unknown; parent_tool_use_id: null; parent_agent_id: null };
+    let next = 0;
+    const fresh = () => `00000000-0000-4000-8000-${String(++next).padStart(12, '0')}`;
+    const entry = (sessionId: string, type: Entry['type'], text: string, uuid = fresh()): Entry =>
+        ({ type, uuid, session_id: sessionId, message: { role: type, content: [{ type: 'text', text }] }, parent_tool_use_id: null, parent_agent_id: null });
+    const sessions = new Map<string, Entry[]>([[source, []]]);
+    const helpers = {
+        async getSessionInfo(id: string) { return sessions.has(id) ? { sessionId: id, summary: '', lastModified: 0, fileSize: 1024 } : undefined; },
+        async getSessionMessages(id: string) { return structuredClone(sessions.get(id) ?? []); },
+        async forkSession(id: string, options: { upToMessageId?: string }) {
+            const from = sessions.get(id)!, forkId = fresh();
+            sessions.set(forkId, from.slice(0, from.findIndex(row => row.uuid === options.upToMessageId) + 1)
+                .map(row => ({ ...structuredClone(row), uuid: fresh(), session_id: forkId })));
+            return { sessionId: forkId };
+        },
+        async deleteSession(id: string) { sessions.delete(id); },
+    };
+    f.providers.claude.rollback = input => forkClaudeHistory(helpers as never, input);
+    return {
+        sessions,
+        record(promptUuid: string, text: string) { sessions.get(source)!.push(entry(source, 'user', text, promptUuid), entry(source, 'assistant', `answer to ${text}`)); },
+    };
+}
+
+test('send, Stop before Claude recorded the prompt, send again: rolling back to the turn before it still works', async t => {
+    const f = fixture(t);
+    const history = injectedHistory(f);
+    const row = f.create('claude');
+    const id = row.sessionId;
+    const turns: string[] = [];
+    const run = async (text: string, key: string, handleIndex: number, sendIndex: number, stop = false) => {
+        const { receipt } = f.manager.prompt(id, { text, clientTurnKey: key });
+        const epoch = f.store.read(id)!.epoch;
+        await f.providers.claude.opened(handleIndex);
+        const handle = f.providers.claude.handles[handleIndex]!;
+        await handle.waitSent(sendIndex);
+        const promptUuid = handle.sendOptions[sendIndex]!.promptUuid!;
+        if (stop) await f.manager.cancel(id, { turnId: receipt.turnId, epoch });
+        else { history.record(promptUuid, text); handle.outcome.resolve(done); }
+        await f.terminal(id, epoch);
+        turns.push(receipt.turnId);
+        return promptUuid;
+    };
+    await run('prompt 1', 'key-1', 0, 0);
+    await run('prompt 2', 'key-2', 0, 1);
+    const stopped = await run('prompt 3', 'key-3', 0, 2, true);
+    assert.equal(f.store.readTurn(id, 'key-3')?.status, 'cancelled');
+    assert.equal((f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?').get(turns[2]) as { native_prompt_uuid: string }).native_prompt_uuid,
+        stopped, 'the prompt was handed to the runtime, so its boundary stays');
+    await run('prompt 4', 'key-4', 1, 0);
+    assert.equal(f.providers.claude.calls[1]!.nativeCursor, 'private-native-cursor', 'the next send resumed the same native session');
+    const session = await f.manager.rollback(id, request(f, id, turns[1]!));
+    assert.equal(session.historyGeneration, 1);
+    assert.deepEqual([...new Set(f.manager.snapshot(id).items.map(item => item.turnId))], turns.slice(0, 2));
+    const fork = f.store.readRecord(id)!.nativeCursor!;
+    assert.notEqual(fork, 'private-native-cursor');
+    assert.deepEqual(history.sessions.get(fork)!.map(row => JSON.stringify(row.message)).filter(text => text.includes('"user"')),
+        ['prompt 1', 'prompt 2'].map(text => JSON.stringify({ role: 'user', content: [{ type: 'text', text }] })));
+    const kept = f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id IN (?, ?) ORDER BY accepted_sequence').all(turns[0], turns[1]) as Array<{ native_prompt_uuid: string }>;
+    assert.deepEqual(kept.map(row => row.native_prompt_uuid), [history.sessions.get(fork)![0]!.uuid, history.sessions.get(fork)![2]!.uuid],
+        'kept turns are remapped onto the fork');
+});
+
+test('sends that never reached Claude do not block rolling back past them; a turn Code does not know about still does', async t => {
+    const f = fixture(t);
+    const history = injectedHistory(f);
+    const id = f.create('claude').sessionId;
+    const turns: string[] = [];
+    for (const [index, text] of ['prompt 1', 'prompt 2'].entries()) {
+        const { receipt } = f.manager.prompt(id, { text, clientTurnKey: `key-${index + 1}` });
+        const epoch = f.store.read(id)!.epoch;
+        await f.providers.claude.opened();
+        const handle = f.providers.claude.handles[0]!;
+        await handle.waitSent(index);
+        history.record(handle.sendOptions[index]!.promptUuid!, text);
+        handle.outcome.resolve(done);
+        await f.terminal(id, epoch);
+        turns.push(receipt.turnId);
+    }
+    // The runtime exits, and reopening it fails for the next two sends: neither prompt leaves this process.
+    f.providers.claude.handles[0]!.alive = false;
+    f.providers.claude.beforeOpen = () => { throw new Error('spawn failed'); };
+    for (const key of ['key-3', 'key-4']) {
+        const { receipt } = f.manager.prompt(id, { text: key, clientTurnKey: key });
+        await f.terminal(id, f.store.read(id)!.epoch);
+        assert.equal(f.store.readTurn(id, key)?.status, 'failed');
+        turns.push(receipt.turnId);
+    }
+    const boundary = (turnId: string) => (f.db.prepare('SELECT native_prompt_uuid FROM code_turns WHERE turn_id = ?').get(turnId) as { native_prompt_uuid: string | null }).native_prompt_uuid;
+    assert.deepEqual(turns.slice(2).map(boundary), [null, null], 'an undispatched send keeps no boundary');
+
+    // Claude history also holds a turn Code never sent (typed in `claude --resume`): the fork would keep it, so no fork.
+    const source = history.sessions.get('private-native-cursor')!;
+    const before = f.store.snapshot(id);
+    history.record('00000000-0000-4000-8000-00000000abcd', 'typed elsewhere');
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[1]!)), errorCode('rollback_boundary_unavailable', 409));
+    assert.equal(history.sessions.size, 1, 'nothing was forked');
+    assert.deepEqual(f.store.snapshot(id), before);
+    source.splice(-2);
+
+    const session = await f.manager.rollback(id, request(f, id, turns[1]!));
+    assert.equal(session.historyGeneration, 1);
+    assert.deepEqual([...new Set(f.manager.snapshot(id).items.map(item => item.turnId))], turns.slice(0, 2));
+    const fork = f.store.readRecord(id)!.nativeCursor!;
+    assert.notEqual(fork, 'private-native-cursor');
+    assert.deepEqual(history.sessions.get(fork)!.map(row => JSON.stringify(row.message)), source.map(row => JSON.stringify(row.message)),
+        'the fork keeps the whole history: only the target turn followed its prompt');
+    assert.equal(f.store.readTurn(id, 'key-3')?.status, 'cancelled', 'the removed sends read cancelled');
+});
+
+test('rollback checks provider, archive, history, client revision and epoch, and busy before any fork', async t => {
+    const f = fixture(t);
+    const { id, turns } = await claudeConversation(f, 2);
+    const fork = forkProvider(f);
+    const input = request(f, id, turns[0]!);
+    await assert.rejects(f.manager.rollback(id, { ...input, expectedRevision: input.expectedRevision + 1 }), errorCode('revision_conflict', 409));
+    await assert.rejects(f.manager.rollback(id, { ...input, expectedEpoch: input.expectedEpoch - 1 }), errorCode('revision_conflict', 409));
+    await assert.rejects(f.manager.rollback(id, { ...input, upToItemId: `${turns[1]}:user` }), errorCode('rollback_noop', 409));
+    const codex = f.create();
+    await assert.rejects(f.manager.rollback(codex.sessionId, { expectedRevision: 0, expectedEpoch: 0, upToItemId: 'x:user' }), errorCode('unsupported_capability', 400));
+    const fresh = f.create('claude');
+    await assert.rejects(f.manager.rollback(fresh.sessionId, { expectedRevision: 0, expectedEpoch: 0, upToItemId: 'x:user' }), errorCode('rollback_unavailable', 409));
+    const { receipt } = f.manager.prompt(id, { text: 'busy', clientTurnKey: 'key-busy' });
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[0]!)), errorCode('session_busy', 409));
+    const handle = f.providers.claude.handles[0]!;
+    await handle.waitSent(2);
+    handle.outcome.resolve(done);
+    await f.terminal(id, f.store.read(id)!.epoch);
+    assert.equal(f.store.readTurn(id, 'key-busy')?.turnId, receipt.turnId);
+    const archived = await f.manager.patch(id, { expectedRevision: f.store.read(id)!.revision, archived: true });
+    await assert.rejects(f.manager.rollback(id, { expectedRevision: archived.revision, expectedEpoch: archived.epoch, upToItemId: `${turns[0]}:user` }),
+        errorCode('session_archived', 409));
+    assert.equal(fork.calls.length, 0);
+});
+
+test('a failed fork leaves transcript, cursor, epoch and revision unchanged; a lost commit deletes the fork', async t => {
+    const f = fixture(t);
+    const { id, turns } = await claudeConversation(f);
+    const unchanged = () => ({ snapshot: f.store.snapshot(id), cursor: f.store.readRecord(id)!.nativeCursor });
+    const before = unchanged();
+    forkProvider(f, { fail: new Error('private sdk detail') });
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[0]!)),
+        (error: unknown) => errorCode('rollback_unavailable', 409)(error) && !String((error as Error).message).includes('private'));
+    assert.deepEqual(unchanged(), before);
+    forkProvider(f, { fail: new CodeStoreError('rollback_boundary_unavailable', 'compacted', 409) });
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[1]!)), errorCode('rollback_boundary_unavailable', 409));
+    assert.deepEqual(unchanged(), before);
+    // Something moves the row between the fork and its commit: the swap is refused and the fork deleted.
+    const lost = forkProvider(f, { before: () => { f.store.patchSession(id, { expectedRevision: f.store.read(id)!.revision, title: 'moved' }); } });
+    await assert.rejects(f.manager.rollback(id, request(f, id, turns[0]!)), errorCode('revision_conflict', 409));
+    assert.deepEqual(lost.discarded, [FORK_CURSOR]);
+    assert.deepEqual(f.store.snapshot(id).items, before.snapshot.items);
+    assert.equal(f.store.readRecord(id)!.nativeCursor, before.cursor);
+});
+
+test('a manager disposed while a fork is pending waits for it and deletes the fork instead of committing', async t => {
+    const f = fixture(t);
+    const { id, turns } = await claudeConversation(f);
+    const gate = deferred<void>();
+    const fork = forkProvider(f, { gate: gate.promise });
+    const pending = f.manager.rollback(id, request(f, id, turns[0]!));
+    await yieldEventLoop();
+    let disposed = false;
+    const disposal = f.manager.dispose().then(() => { disposed = true; });
+    await yieldEventLoop();
+    assert.equal(disposed, false, 'disposal waits for the in-flight rollback');
+    gate.resolve();
+    await assert.rejects(pending, errorCode('manager_disposed'));
+    await disposal;
+    assert.deepEqual(fork.discarded, [FORK_CURSOR]);
+    assert.equal(f.store.readRecord(id)!.nativeCursor, 'private-native-cursor');
+    assert.equal(f.store.read(id)!.historyGeneration, 0);
 });

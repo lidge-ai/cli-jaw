@@ -168,3 +168,21 @@ test('an in-flight follow-up is never checkpointed: a reload cannot resend it or
     assert.equal(loaded.sessions[0]!.draft.input, 'kept draft');
     assert.equal(loaded.sessions[0]!.draft.retry, null);
 });
+
+test('a rolled-back retry keeps its reason across reload; an unknown reason falls back to the spent-key copy', () => {
+    const store = storage(), draftBook = book(store);
+    const draft = createCodeDraft(draftBook.fresh.selection);
+    draft.retry = { text: 'third prompt', key: 'new-key', edit: 0, resend: true, resendReason: 'rolled-back' };
+    draftBook.sessions.set('s', draft); draftBook.selectedId = 's';
+    assert.equal(saveCodeDraftStorage(store, draftBook.endpoint, draftBook), null);
+    assert.deepEqual(loadCodeDraftStorage(store, draftBook.endpoint).data!.sessions[0]!.draft.retry,
+        { text: 'third prompt', key: 'new-key', edit: 0, resend: true, resendReason: 'rolled-back' });
+    const raw = store.getItem('cli-jaw:code-drafts:v1')!;
+    store.setItem('cli-jaw:code-drafts:v1', raw.replace('"resendReason":"rolled-back"', '"resendReason":"elsewhere"'));
+    assert.deepEqual(loadCodeDraftStorage(store, draftBook.endpoint).data!.sessions[0]!.draft.retry,
+        { text: 'third prompt', key: 'new-key', edit: 0, resend: true });
+    draft.retry = { text: 'unsent', key: 'k', edit: 0, resendReason: 'rolled-back' };
+    saveCodeDraftStorage(store, draftBook.endpoint, draftBook);
+    assert.deepEqual(loadCodeDraftStorage(store, draftBook.endpoint).data!.sessions[0]!.draft.retry, { text: 'unsent', key: 'k', edit: 0 },
+        'a reason means nothing without a spent key');
+});

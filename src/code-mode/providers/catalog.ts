@@ -35,6 +35,7 @@ export interface CodeProviderFactories {
     acpSpawn?: Parameters<typeof createCursorCodeProvider>[2];
     codex?: Parameters<typeof createCodexCodeProvider>[1];
     claude?: Parameters<typeof createClaudeCodeProvider>[1];
+    claudeHistory?: Parameters<typeof createClaudeCodeProvider>[2];
     cursor?: Parameters<typeof createCursorCodeProvider>[1];
     grok?: Parameters<typeof createGrokCodeProvider>[1];
     detect?: (binary: string) => CliDetection;
@@ -124,7 +125,7 @@ export function createCodeProviders(factories: CodeProviderFactories = {}): Code
     };
     return Object.freeze({
         'codex-app': createCodexCodeProvider(dependencies('codex-app'), factories.codex),
-        claude: createClaudeCodeProvider(dependencies('claude'), factories.claude),
+        claude: createClaudeCodeProvider(dependencies('claude'), factories.claude, factories.claudeHistory),
         cursor: createCursorCodeProvider(dependencies('cursor'), factories.cursor, factories.acpSpawn),
         grok: createGrokCodeProvider(dependencies('grok'), factories.grok, factories.acpSpawn),
     });

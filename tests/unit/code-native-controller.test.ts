@@ -1054,3 +1054,266 @@ test('a follow-up outcome never overwrites a Stop in progress', async t => {
     await stopping;
     assert.equal(f.controller.getModel().followUp, false, 'a stopping turn takes no follow-up');
 });
+
+function rolledBackFixture(t: TestContext) {
+    const f = fixture(t);
+    const claude = session('a', { provider: 'claude', sequence: 9, rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
+    const turn = (id: string, at: number): CodeItem[] => [
+        { itemId: `${id}:user`, turnId: id, kind: 'user_message', status: 'done', text: `prompt ${id}`, clientTurnKey: `key-${id}`, createdAt: 1, updatedAt: 1, firstSequence: at },
+        { itemId: `${id}:terminal`, turnId: id, kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: at + 1 },
+    ];
+    f.snapshots.set('a', snap(claude, [...turn('t1', 1), ...turn('t2', 3)]));
+    const after = { ...claude, sequence: 11, epoch: 2, revision: 3, historyGeneration: 1 };
+    return { ...f, claude, after, rolled: snap(after, turn('t1', 1)) };
+}
+
+const ROLLED_BACK_COPY = "This message's turn was removed by a rollback. The message was not resent; Retry will submit it as a new message.";
+const SPENT_COPY = 'The original attempt ended on the server without running. The message was not resent; Retry will submit it as a new message.';
+/** A send whose HTTP answer was lost: the draft keeps its key, unconfirmed. Returns that key. */
+async function lostSend(f: ReturnType<typeof fixture>, controller = f.controller, text = 'third prompt'): Promise<string> {
+    const pending = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/prompt') ? pending.promise : undefined);
+    controller.setInput(text);
+    const sending = controller.send();
+    pending.reject(new TypeError('connection dropped'));
+    await sending;
+    assert.equal(controller.getModel().operation.kind, 'unknown-send');
+    return String(f.posts().at(-1)!.body['clientTurnKey']);
+}
+const cancelledReceipt = (turnId: string, sequence: number) => (call: { path: string; body: Record<string, unknown> }) => call.path.endsWith('/prompt')
+    ? response({ ok: true, turnId, clientTurnKey: call.body['clientTurnKey'], sequence, status: 'cancelled' }) : undefined;
+
+test('rolling back posts the opaque row with the revision and epoch it saw, then takes a fresh snapshot', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => {
+        if (!call.path.endsWith('/rollback')) return undefined;
+        f.snapshots.set('a', f.rolled);
+        return response({ ok: true, session: f.after });
+    });
+    const reads = () => f.calls.filter(call => call.method === 'GET' && call.path === '/sessions/a').length;
+    const before = reads();
+    const rolling = f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.controller.getModel().operation.kind, 'rolling-back');
+    assert.equal(f.controller.getModel().pending, true);
+    await rolling;
+    assert.deepEqual(f.posts().at(-1)!.body, { expectedRevision: 2, expectedEpoch: 1, upToItemId: 't1:user' });
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    assert.ok(reads() > before);
+    assert.deepEqual(f.controller.getModel().items.map(item => item.itemId), ['t1:user', 't1:terminal']);
+    assert.equal(f.controller.getModel().session?.historyGeneration, 1);
+});
+
+test('a refused rollback keeps the transcript and names why; an unavailable session never posts', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'rollback_unavailable' }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.match(f.controller.getModel().operation.error ?? '', /compacted/);
+    assert.equal(f.controller.getModel().items.length, 4);
+    f.controller.clearError();
+    const posts = f.posts().length;
+    f.snapshots.set('a', snap({ ...f.claude, sequence: 12, rollback: { available: false, reason: 'no_boundary', sinceSequence: null } }, []));
+    await f.controller.refresh();
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().length, posts, 'the controller does not post when the server says rollback is unavailable');
+});
+
+test('a rollback seen from elsewhere keeps a send it never saw admitted on its key, and says why', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const original = await lostSend(f);
+    f.snapshots.set('a', f.rolled);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 11, epoch: 2, session: f.after });
+    await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
+    const model = f.controller.getModel();
+    assert.deepEqual({ resendRequired: model.resendRequired, resendReason: model.resendReason, error: model.operation.error, text: model.retryText },
+        { resendRequired: false, resendReason: null, error: 'The conversation was rolled back elsewhere; this message was not sent.', text: 'third prompt' },
+        'nothing ties the key to a removed turn, so this is not "turn rolled back"');
+    assert.equal(model.working, false, 'no turn is awaited');
+    assert.equal(model.canRetrySameSend, true);
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't3', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
+    await f.controller.retrySameSend();
+    assert.equal(f.posts().at(-1)!.body['clientTurnKey'], original, 'the same key: the server admits it at most once');
+    assert.equal(f.controller.getModel().retryText, null);
+});
+
+test('a same-key retry the server answers cancelled after a rollback retires the key as rolled back, across a reload', async t => {
+    const browser = browserDraftStorage(t);
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const original = await lostSend(f);
+    f.snapshots.set('a', f.rolled);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 11, epoch: 2, session: f.after });
+    await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
+    // The server had admitted the send as t3 before the rollback removed it.
+    f.intercept(cancelledReceipt('t3', 10));
+    await f.controller.retrySameSend();
+    assert.equal(f.posts().at(-1)!.body['clientTurnKey'], original);
+    const model = f.controller.getModel();
+    assert.deepEqual({ resendRequired: model.resendRequired, resendReason: model.resendReason, error: model.operation.error },
+        { resendRequired: true, resendReason: 'rolled-back', error: ROLLED_BACK_COPY });
+    const saved = browser.checkpoint();
+    f.cleanups[0]!(); f.cleanups[0] = () => {}; browser.reload(saved);
+    const restored = new CodeController(f.options);
+    f.cleanups.push(restored.mount());
+    assert.equal(restored.getModel().operation.error, ROLLED_BACK_COPY, 'the reason survives a reload');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't4', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
+    await restored.refresh(); await restored.selectSession('a');
+    assert.equal(restored.getModel().resendReason, 'rolled-back');
+    await restored.retrySameSend();
+    assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original);
+    assert.equal(restored.getModel().resendReason, null);
+});
+
+test('a rollback the page learns of only from its next snapshot keeps an unconfirmed send on its key', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const original = await lostSend(f);
+    // Let the listing the send scheduled land first, so the index copy is from before the rollback.
+    await new Promise(resolve => setTimeout(resolve, 200));
+    // Opening six other sessions drops a's transcript; the rollback then happens with no live event.
+    for (const other of ['c', 'd', 'e', 'f', 'g', 'h']) { f.snapshots.set(other, snap(session(other))); await f.controller.selectSession(other); }
+    f.snapshots.set('a', f.rolled);
+    await f.controller.selectSession('a');
+    const model = f.controller.getModel();
+    assert.equal(model.session?.historyGeneration, 1);
+    assert.deepEqual({ resendRequired: model.resendRequired, error: model.operation.error },
+        { resendRequired: false, error: 'The conversation was rolled back elsewhere; this message was not sent.' },
+        'the index copy was the last generation the page saw');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't3', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
+    await f.controller.retrySameSend();
+    assert.equal(f.posts().at(-1)!.body['clientTurnKey'], original);
+});
+
+test('a rollback refused for a revision conflict says the conversation changed, not the session settings', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const moved = { ...f.claude, revision: 5 };
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'revision_conflict', session: moved }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.controller.getModel().operation.error, 'The conversation changed since you chose this point. Review it and try again.');
+    assert.equal(f.controller.getModel().session?.revision, 5, 'the current session is taken from the refusal');
+    assert.equal(f.controller.getModel().items.length, 4, 'the transcript is kept');
+    f.intercept(call => call.path.endsWith('/rollback') ? response({ ok: false, error: 'rollback_boundary_unavailable' }, 409) : undefined);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.match(f.controller.getModel().operation.error ?? '', /never reached Claude, or the conversation was compacted/);
+    f.intercept(call => call.path === '/sessions/a' && call.method === 'PATCH' ? response({ ok: false, error: 'revision_conflict', session: moved }, 409) : undefined);
+    await assert.rejects(f.controller.rename('a', 'renamed'));
+    assert.equal(f.controller.getModel().operation.error, 'Session settings changed elsewhere. Review the updated values and try again.',
+        'PATCH keeps its own copy');
+});
+
+test('a follow-up in flight holds a rollback back, and an unconfirmed one leaves with the turn a rollback removed', async t => {
+    const f = fixture(t);
+    const rollback = { available: true, reason: null, sinceSequence: 1 };
+    const t1: CodeItem[] = [
+        { itemId: 't1:user', turnId: 't1', kind: 'user_message', status: 'done', text: 'first', clientTurnKey: 'key-t1', createdAt: 1, updatedAt: 1, firstSequence: 1 },
+        { itemId: 't1:terminal', turnId: 't1', kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: 2 }];
+    const running: CodeItem[] = [...t1,
+        { itemId: 'turn-a:user', turnId: 'turn-a', kind: 'user_message', status: 'done', text: 'second', clientTurnKey: 'key-a', createdAt: 1, updatedAt: 1, firstSequence: 3 }];
+    const ended = snap(streamingClaude({ status: 'idle', turnId: null, sequence: 5, rollback, historyGeneration: 0 }), [...running,
+        { itemId: 'turn-a:terminal', turnId: 'turn-a', kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: 4 }]);
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 3, rollback, historyGeneration: 0 }), running));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const offered = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/steer') ? offered.promise : undefined);
+    f.controller.setInput('one more thing');
+    const sending = f.controller.send();
+    // The turn ends while the follow-up is still in flight.
+    f.snapshots.set('a', ended);
+    await f.controller.refresh();
+    assert.equal(f.controller.getModel().steering, true);
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/rollback')).length, 0, 'no rollback while a follow-up is unanswered');
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    offered.reject(new TypeError('connection dropped'));
+    await sending;
+    assert.match(f.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    // Once the follow-up is answered (here: unconfirmed), the rollback goes ahead and removes its turn.
+    const after = { ...ended.session, sequence: 7, epoch: 5, revision: 3, historyGeneration: 1 };
+    f.intercept(call => {
+        if (!call.path.endsWith('/rollback')) return undefined;
+        f.snapshots.set('a', snap(after, t1));
+        return response({ ok: true, session: after });
+    });
+    await f.controller.getModel().rollbackSession('t1:user');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/rollback')).length, 1);
+    await until(f.controller, () => f.controller.getModel().session?.historyGeneration === 1 && f.controller.getModel().synced);
+    const model = f.controller.getModel();
+    assert.deepEqual(model.items.map(item => item.itemId), ['t1:user', 't1:terminal']);
+    assert.doesNotMatch(model.error ?? '', /not confirmed/, 'a follow-up whose turn was removed can no longer appear');
+    assert.equal(model.input, 'one more thing', 'its text stays in the composer');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/steer')).length, 1, 'never resent');
+});
+
+test('after a reload, a same-key retry answered cancelled for a turn a rollback removed reads rolled back', async t => {
+    const browser = browserDraftStorage(t);
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const original = await lostSend(f);
+    // Reload. Meanwhile the server had admitted the send as t3, and a rollback elsewhere removed it.
+    const saved = browser.checkpoint();
+    f.cleanups[0]!(); f.cleanups[0] = () => {}; browser.reload(saved);
+    f.snapshots.set('a', f.rolled);
+    const restored = new CodeController(f.options);
+    f.cleanups.push(restored.mount());
+    await restored.refresh(); await restored.selectSession('a');
+    assert.equal(restored.getModel().session?.historyGeneration, 1);
+    assert.equal(restored.getModel().resendRequired, false, 'nothing this page holds says what became of the key yet');
+    f.intercept(cancelledReceipt('t3', 8));
+    await restored.retrySameSend();
+    assert.equal(f.posts().at(-1)!.body['clientTurnKey'], original, 'the retry reused the original key');
+    const model = restored.getModel();
+    assert.deepEqual({ resendRequired: model.resendRequired, resendReason: model.resendReason, error: model.operation.error, text: model.retryText },
+        { resendRequired: true, resendReason: 'rolled-back', error: ROLLED_BACK_COPY, text: 'third prompt' },
+        'not "ended on the server without running"');
+    assert.equal(browser.saved(`http://127.0.0.1:${f.options.port}`).sessions[0]!.draft.retry!.resendReason, 'rolled-back');
+    f.intercept(call => call.path.endsWith('/prompt') ? response({ ok: true, turnId: 't4', clientTurnKey: call.body['clientTurnKey'], sequence: 12, status: 'accepted' }) : undefined);
+    await restored.retrySameSend();
+    assert.notEqual(f.posts().at(-1)!.body['clientTurnKey'], original, 'Retry then sends it as a new message');
+    assert.equal(restored.getModel().resendReason, null);
+});
+
+test('a cancelled receipt the transcript cannot place keeps the spent-key copy', async t => {
+    const f = rolledBackFixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    await lostSend(f);
+    f.intercept(cancelledReceipt('t3', 8));
+    await f.controller.retrySameSend();
+    assert.deepEqual({ reason: f.controller.getModel().resendReason, error: f.controller.getModel().operation.error }, { reason: null, error: SPENT_COPY },
+        'no rollback happened: the turn was stopped');
+    // After a rollback, a turn admitted past what this page has read is not evidence either.
+    f.snapshots.set('a', f.rolled);
+    await f.controller.refresh();
+    f.intercept(cancelledReceipt('t9', 20));
+    await f.controller.retrySameSend();
+    assert.equal(f.controller.getModel().session?.historyGeneration, 1);
+    assert.deepEqual({ reason: f.controller.getModel().resendReason, error: f.controller.getModel().operation.error }, { reason: null, error: SPENT_COPY });
+});
+
+test('an unconfirmed follow-up whose turn a rollback removed goes, also when the page no longer held its transcript', async t => {
+    const f = fixture(t);
+    const rollback = { available: true, reason: null, sinceSequence: 1 };
+    const t1: CodeItem[] = [
+        { itemId: 't1:user', turnId: 't1', kind: 'user_message', status: 'done', text: 'first', clientTurnKey: 'key-t1', createdAt: 1, updatedAt: 1, firstSequence: 1 },
+        { itemId: 't1:terminal', turnId: 't1', kind: 'turn_completed', status: 'done', createdAt: 1, updatedAt: 1, firstSequence: 2 }];
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 3, rollback, historyGeneration: 0 }), [...t1,
+        { itemId: 'turn-a:user', turnId: 'turn-a', kind: 'user_message', status: 'done', text: 'second', clientTurnKey: 'key-a', createdAt: 1, updatedAt: 1, firstSequence: 3 }]));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.path.endsWith('/steer') ? Promise.reject(new TypeError('connection dropped')) : undefined);
+    f.controller.setInput('one more thing');
+    await f.controller.send();
+    assert.match(f.controller.getModel().error ?? '', /Follow-up delivery not confirmed/);
+    // Opening six other sessions drops a's transcript from the page.
+    for (const other of ['c', 'd', 'e', 'f', 'g', 'h']) { f.snapshots.set(other, snap(session(other))); await f.controller.selectSession(other); }
+    // Meanwhile the turn ended and a rollback elsewhere removed it; the listing already reports the new generation.
+    f.snapshots.set('a', snap(streamingClaude({ status: 'idle', turnId: null, sequence: 7, epoch: 5, revision: 3, rollback, historyGeneration: 1 }), t1));
+    await f.controller.refresh();
+    await f.controller.selectSession('a');
+    const model = f.controller.getModel();
+    assert.deepEqual(model.items.map(item => item.itemId), ['t1:user', 't1:terminal']);
+    assert.doesNotMatch(model.error ?? '', /not confirmed/, 'the removed turn can no longer show the follow-up');
+    assert.equal(model.input, 'one more thing', 'its text stays in the composer');
+    assert.equal(f.posts().filter(call => call.path.endsWith('/steer')).length, 1, 'never resent');
+});

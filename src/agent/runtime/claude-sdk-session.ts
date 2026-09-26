@@ -65,6 +65,9 @@ type Turn = {
 };
 const MAX_PROMPT_BYTES = 1024 * 1024;
 export type ClaudeSteerRefusal = 'not-current' | 'not-ready' | 'queue-full';
+const PROMPT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A caller-chosen input UUID (Code rollback boundaries); otherwise the session mints one. */
+export interface ClaudeSendOptions { uuid?: string }
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('claude_invalid_frame');
     return value as Record<string, unknown>;
@@ -183,8 +186,9 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     get rootProcessState() { return this.processes.rootProcessState; }
     waitForPrimaryChild(options?: ClaudeRootWaitOptions) { return this.processes.waitForPrimaryChild(options); }
 
-    async send(prompt: RuntimePrompt, onEvent: (event: RuntimeEvent) => void): Promise<RuntimeTurnResult> {
+    async send(prompt: RuntimePrompt, onEvent: (event: RuntimeEvent) => void, options: ClaudeSendOptions = {}): Promise<RuntimeTurnResult> {
         if (!this.alive) throw new Error('claude_session_closed');
+        if (options.uuid !== undefined && !PROMPT_UUID.test(options.uuid)) throw new Error('claude_invalid_prompt_uuid');
         if (this.terminalIds.size >= 512) throw new Error('claude_terminal_capacity');
         if (this.turn || this.pendingFinal || this.finishing) throw new Error('claude_session_busy');
         if (typeof prompt.text !== 'string' || Buffer.byteLength(prompt.text) > MAX_PROMPT_BYTES) throw new Error('claude_prompt_limit');
@@ -204,7 +208,7 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         const projection = new RuntimeProjection(context, (_context, body) => this.recordEvent(turn, body),
             undefined, this.options.transcript?.(context), this.options.recordLoss
                 ?? ((this.options.record ?? recordRuntimeEvent) === recordRuntimeEvent ? recordRuntimeProjectionLoss : undefined));
-        const uuid = randomUUID();
+        const uuid = (options.uuid ?? randomUUID()) as ReturnType<typeof randomUUID>;
         const turn: Turn = { context, onEvent, resolve, mapper: new ClaudeSdkEvents(projection), uuid, offered: false,
             inputs: new Set([uuid]), consumed: new Set(), echoed: false,
             passiveFinalizing: false, terminalChildRecording: false,
