@@ -1,0 +1,15 @@
+/* Code sidebar: Projects/Activity header, bell toggle, unread markers. */
+.code-session-list-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.code-session-bell {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; min-height: 24px; padding: 0; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.code-session-bell:hover { background: var(--bg-raised); color: var(--text-primary); }
+.code-session-bell.active { color: var(--accent); background: var(--accent-soft); }
+.code-session-bell:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.code-session-bell .code-session-unread-dot { position: absolute; top: 3px; right: 3px; margin: 0; }
+.code-session-unread-dot {
+    display: inline-block; flex: none; width: 7px; height: 7px; margin-right: 6px;
+    border-radius: 50%; background: var(--accent); vertical-align: 1px;
+}

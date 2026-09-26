@@ -7,7 +7,7 @@ import type { CodeItem, CodePermissionRequest, CodeSessionInfo } from '../../src
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true, url: 'http://localhost:43225' });
 const globals = globalThis as unknown as Record<string, unknown>;
-const replacements = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+const replacements = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, localStorage: dom.window.localStorage,
     IS_REACT_ACT_ENVIRONMENT: true, React: await import('react') };
 const previous = new Map(Object.keys(replacements).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 for (const [key, value] of Object.entries(replacements)) globals[key] = value;
@@ -31,6 +31,8 @@ after(() => {
 });
 const bounded = { timeout: 10_000 };
 async function surface(t: TestContext) {
+    // The sidebar remembers its view; every test starts from the default Projects view.
+    dom.window.localStorage.clear();
     const container = document.createElement('div'); document.body.append(container);
     const root = createRoot(container);
     t.mock.method(globalThis, 'fetch', async () => { throw Error('Unexpected view network request'); });
@@ -802,15 +804,16 @@ test('workspace groups each offer a + that starts a draft with that cwd', bounde
         async setSelection(patch) { selections.push(patch); },
     });
     await h.render(createElement(CodeSessionList, { controller: c }));
-    await click(button(h.container, 'Group'));
+    // Projects is the default view: one group per workspace, named by its folder.
     const headers = [...h.container.querySelectorAll('.code-session-group-title')];
     assert.equal(headers.length, 2, 'each workspace is its own group');
-    const beta = headers.find(node => node.textContent?.includes('/work/beta')); assert.ok(beta);
+    const beta = headers.find(node => node.getAttribute('title') === '/work/beta'); assert.ok(beta);
+    assert.equal(beta.querySelector('span')?.textContent, 'beta', 'the heading shows the folder name, the full path stays in the title');
     await click(button(beta, 'New session in /work/beta'));
     assert.equal(created, 1);
     assert.deepEqual(selections, [{ cwd: '/work/beta' }], 'the group workspace preselects the draft cwd');
-    // Lifecycle grouping (the default) has no per-group workspace to preselect.
-    await click(button(h.container, 'Group'));
+    // The Activity view groups by time, so it has no per-group workspace to preselect.
+    await click(button(h.container, 'Recent activity'));
     assert.equal(h.container.querySelector('.code-session-group-new'), null);
 });
 
@@ -822,7 +825,6 @@ test('a workspace + does not retarget a draft that already holds unsent content'
         async setSelection(patch) { selections.push(patch); },
     });
     await h.render(createElement(CodeSessionList, { controller: c }));
-    await click(button(h.container, 'Group'));
     await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
     assert.deepEqual(selections, [], 'a draft with unsent content keeps its workspace');
     assert.match(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Send or clear the current draft/, 'the reason is surfaced instead of a silent no-op');
@@ -839,7 +841,6 @@ test('a workspace + still retargets the fresh draft while the viewed session is 
         async setSelection(patch) { calls.push(patch); },
     });
     await h.render(createElement(CodeSessionList, { controller: c }));
-    await click(button(h.container, 'Group'));
     await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
     // The reader has already left for a fresh draft, so the busy session's own
     // pending operation is not a reason to refuse the workspace it picked.
@@ -854,7 +855,6 @@ test('a workspace + explains a fresh draft that is itself mid-operation in its o
         async setSelection(patch) { selections.push(patch); },
     });
     await h.render(createElement(CodeSessionList, { controller: c }));
-    await click(button(h.container, 'Group'));
     await click(button(h.container.querySelector('.code-session-group-title')!, 'New session in /work/alpha'));
     assert.deepEqual(selections, [], 'setSelection early-returns while the draft is mid-operation');
     assert.match(h.container.querySelector('.code-session-list-error')?.textContent ?? '', /Wait for the current change to finish/, 'the in-flight reason is distinct from the unsent-draft reason');
@@ -966,4 +966,40 @@ test('the draft empty state only replaces the transcript for a draft', bounded, 
     assert.ok(h.container.querySelector('[aria-label="Code transcript"]'), 'a selected session keeps its transcript');
     await h.render(createElement(CodeDraftEmptyState, { controller: model({ selectedId: null, session: null, sessions: [] }) }));
     assert.ok(h.container.querySelector('.code-draft-empty'));
+});
+
+test('the bell switches to Recent activity with unread sessions under Priority and a dot on the bell', bounded, async t => {
+    const h = await surface(t);
+    localStorage.removeItem('jaw.code.sidebarView');
+    const now = Date.now();
+    const c = model({ sessions: [
+        session({ sessionId: 's-unread', title: 'Unread one', cwd: '/work/alpha', lastUsedAt: now, lastTurnCompletedAt: now, lastVisitedAt: now - 1000 }),
+        session({ sessionId: 's-read', title: 'Read one', cwd: '/work/beta', lastUsedAt: now, lastTurnCompletedAt: now - 5000, lastVisitedAt: now }),
+        session({ sessionId: 's-never', title: 'Never opened', cwd: '/work/beta', lastUsedAt: now, lastTurnCompletedAt: now, lastVisitedAt: null }),
+    ], selectedId: null, session: null });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const bell = h.container.querySelector<HTMLButtonElement>('.code-session-bell'); assert.ok(bell);
+    assert.equal(bell.getAttribute('aria-pressed'), 'false');
+    assert.ok(bell.querySelector('.code-session-unread-dot'), 'the bell carries a dot while anything is unread');
+    assert.equal(h.container.querySelectorAll('.code-session-item .code-session-unread-dot').length, 1, 'only the unread row has a dot');
+    await click(bell);
+    assert.equal(bell.getAttribute('aria-pressed'), 'true');
+    assert.equal(localStorage.getItem('jaw.code.sidebarView'), 'activity', 'the chosen view persists');
+    const titles = [...h.container.querySelectorAll('.code-session-group-title')].map(node => node.textContent);
+    assert.deepEqual(titles, ['Priority', 'Today']);
+    const priority = h.container.querySelector('.code-session-group-priority')!.closest('.code-session-group')!;
+    assert.match(priority.textContent ?? '', /Unread one/);
+    assert.doesNotMatch(priority.textContent ?? '', /Never opened/, 'a never-opened session is not unread');
+    assert.match(h.container.querySelector('.code-session-meta')?.textContent ?? '', /^alpha · /, 'activity rows show their workspace');
+    await click(bell);
+    assert.equal(h.container.querySelector('.code-session-list-title')?.textContent, 'Projects');
+    localStorage.removeItem('jaw.code.sidebarView');
+});
+
+test('the open session never shows as unread, even before its receipt lands', bounded, async t => {
+    const h = await surface(t);
+    const now = Date.now();
+    const c = model({ sessions: [session({ sessionId: 's-a', lastTurnCompletedAt: now, lastVisitedAt: now - 1 })], selectedId: 's-a' });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    assert.equal(h.container.querySelector('.code-session-unread-dot'), null);
 });
