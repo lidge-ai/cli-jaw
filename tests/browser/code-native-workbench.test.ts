@@ -425,8 +425,9 @@ test('native Code workbench on isolated real Manager', { timeout: 240_000 }, asy
                         // is visible, then measure the target responsive layout.
                         await p.setViewportSize({ width: 1440, height: 1000 });
                         await p.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
-                        await p.getByRole('radiogroup', { name: 'Theme', exact: true })
-                            .getByRole('radio', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+                        await p.getByRole('button', { name: 'Theme', exact: true }).click();
+                        await p.getByRole('menu', { name: 'Theme', exact: true })
+                            .getByRole('menuitem', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
                         await p.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme);
                         await p.setViewportSize({ width, height: width === 320 ? 844 : 1000 });
                         await closeVisibleDrawer(p);
