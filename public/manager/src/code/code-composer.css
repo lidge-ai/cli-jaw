@@ -110,7 +110,7 @@
 .code-composer-stop:focus-visible,
 .code-composer-send:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
-/* Footer: [runtime icon] [permission] ····· [model] [effort] */
+/* Footer: [runtime icon] [permission] ····· [model] [effort] [thinking] */
 .code-composer-footer {
     display: flex;
     gap: 4px;
