@@ -215,6 +215,8 @@ export interface CodePatchSessionRequest {
 }
 
 export interface CodePromptRequest { text: string; clientTurnKey: string }
+/** A Claude follow-up for the captured running turn; it never starts a turn of its own. */
+export interface CodeSteerRequest extends CodePromptRequest { turnId: string; epoch: number }
 export interface CodeCancelRequest { turnId: string; epoch: number }
 export interface CodePermissionAnswer {
     sessionId: string;

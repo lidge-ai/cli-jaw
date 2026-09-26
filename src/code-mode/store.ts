@@ -4,7 +4,7 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
 import type {
     CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeItem, CodeItemUpdate,
     CodePatchSessionRequest, CodePermissionRequest, CodePromptReceipt, CodePromptRequest, CodeSessionCursor,
-    CodeSessionError, CodeSessionInfo, CodeSessionStatus, CodeSnapshot, CodeWireEvent,
+    CodeSessionError, CodeSessionInfo, CodeSessionStatus, CodeSnapshot, CodeSteerRequest, CodeWireEvent,
 } from './wire.js';
 
 export const CODE_EVENT_PAGE_MAX = 500;
@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS code_items (
     item_json TEXT NOT NULL, PRIMARY KEY(session_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_code_items_order ON code_items(session_id, first_sequence);
+CREATE TABLE IF NOT EXISTS code_steers (
+    session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL, status TEXT NOT NULL, accepted_sequence INTEGER, native_uuid TEXT,
+    PRIMARY KEY(session_id, client_turn_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_code_steers_one_per_turn ON code_steers(session_id, turn_id)
+    WHERE status IN ('reserved', 'committed', 'unknown');
 `;
 
 export type CodeNativePolicy = Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>;
@@ -102,7 +109,12 @@ export interface CodeAdmitTurn extends CodePromptRequest {
 export interface CodeSettleTurn {
     status: 'completed' | 'cancelled' | 'failed';
     error?: CodeSessionError | null;
+    /** Native ids of committed follow-ups no native result consumed; their items read `phase: 'unknown'`. */
+    undeliveredFollowUps?: readonly string[];
 }
+export interface CodeSteerAdmission extends CodeSteerRequest { sessionId: string }
+/** `receipt` is the stored receipt of an already committed key; otherwise the key is now reserved. */
+export interface CodeSteerReservation { reservationId: string; receipt: CodePromptReceipt | null }
 export interface CodeSessionListOptions {
     cwd?: string;
     archived?: boolean;
@@ -112,7 +124,7 @@ export interface CodeSessionListOptions {
 }
 
 export class CodeStoreError extends Error {
-    constructor(public readonly code: string, message: string, public readonly statusCode: 400 | 404 | 409) {
+    constructor(public readonly code: string, message: string, public readonly statusCode: 400 | 404 | 409 | 503) {
         super(message);
         this.name = 'CodeStoreError';
     }
@@ -136,6 +148,16 @@ const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permis
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
     last_turn_completed_at, last_visited_at, thinking`;
 const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence';
+type SteerRow = {
+    turn_id: string; client_turn_key: string; prompt_hash: string;
+    status: 'reserved' | 'committed' | 'rejected' | 'unknown'; accepted_sequence: number | null; native_uuid: string | null;
+};
+const STEER_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence, native_uuid';
+const promptHash = (text: string): string => createHash('sha256').update(text).digest('hex');
+function steerItem(turnId: string, clientTurnKey: string, text: string, at: number): CodeItem {
+    return { itemId: `${turnId}:steer:${clientTurnKey}`, turnId, kind: 'user_message', status: 'done',
+        text, clientTurnKey, createdAt: at, updatedAt: at };
+}
 const isBusy = (status: CodeSessionStatus): boolean =>
     status === 'starting' || status === 'streaming' || status === 'stopping';
 
@@ -563,7 +585,9 @@ export class CodeStore {
         return event;
     }
 
-    private event(record: CodeSessionRecord, item?: CodeItem, mode: EventBudgetMode = 'ordinary', budgetTurnId = record.turnId): CodeWireEvent {
+    /** `reserve` holds extra settlement bytes for a frame this item may need at settlement. */
+    private event(record: CodeSessionRecord, item?: CodeItem, mode: EventBudgetMode = 'ordinary', budgetTurnId = record.turnId,
+        reserve = 0): CodeWireEvent {
         record.sequence += 1;
         let retainedItem: CodeItem | undefined;
         let previousItem: CodeItem | undefined;
@@ -586,7 +610,8 @@ export class CodeStore {
             sequence: record.sequence, epoch: record.epoch,
             ...(update ? { update } : retainedItem ? { item: retainedItem } : { session: toCodeSessionInfo(record) }),
         };
-        this.persistEvent(record, event, mode, settlementCost(record.sessionId, retainedItem) - settlementCost(record.sessionId, previousItem), budgetTurnId);
+        this.persistEvent(record, event, mode, settlementCost(record.sessionId, retainedItem) - settlementCost(record.sessionId, previousItem) + reserve,
+            budgetTurnId);
         if (item) this.database.prepare(`INSERT INTO code_items (session_id, item_id, first_sequence, item_json)
             VALUES (?, ?, ?, ?) ON CONFLICT(session_id, item_id) DO UPDATE SET item_json = excluded.item_json`)
                 .run(record.sessionId, item.itemId, retainedItem!.firstSequence, JSON.stringify(retainedItem));
@@ -620,20 +645,134 @@ export class CodeStore {
     readTurn(sessionId: string, clientTurnKey: string): CodePromptReceipt | null {
         const row = this.database.prepare(`SELECT ${TURN_COLUMNS} FROM code_turns WHERE session_id = ? AND client_turn_key = ?`)
             .get(sessionId, clientTurnKey) as TurnRow | undefined;
+        if (!row) this.refuseSteerKey(sessionId, clientTurnKey);
         return row ? receipt(row) : null;
+    }
+
+    /** One client key names one message: a prompt key is never a follow-up key, or the reverse. */
+    private refuseSteerKey(sessionId: string, clientTurnKey: string): void {
+        if (this.database.prepare('SELECT 1 FROM code_steers WHERE session_id = ? AND client_turn_key = ?').get(sessionId, clientTurnKey)) {
+            throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for a follow-up', 409);
+        }
+    }
+
+    private steerRow(sessionId: string, clientTurnKey: string): SteerRow | undefined {
+        return this.database.prepare(`SELECT ${STEER_COLUMNS} FROM code_steers WHERE session_id = ? AND client_turn_key = ?`)
+            .get(sessionId, clientTurnKey) as SteerRow | undefined;
+    }
+
+    /** The follow-up key state machine; null means a new key that may be reserved. */
+    private steerKey(sessionId: string, clientTurnKey: string, text: string): CodePromptReceipt | null {
+        if (!text.trim() || !clientTurnKey.trim()) throw new CodeStoreError('invalid_prompt', 'Text and client turn key are required', 400);
+        this.requireRecord(sessionId);
+        if (this.database.prepare('SELECT 1 FROM code_turns WHERE session_id = ? AND client_turn_key = ?').get(sessionId, clientTurnKey)) {
+            throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for a prompt', 409);
+        }
+        const row = this.steerRow(sessionId, clientTurnKey);
+        if (!row) return null;
+        if (row.prompt_hash !== promptHash(text)) throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for different content', 409);
+        if (row.status === 'reserved') throw new CodeStoreError('steer_in_flight', 'This follow-up is still being delivered', 409);
+        if (row.status === 'rejected') throw new CodeStoreError('steer_key_spent', 'This follow-up was refused; send it again as a new message', 409);
+        if (row.status === 'unknown') throw new CodeStoreError('steer_outcome_unknown', 'Follow-up delivery could not be confirmed', 503);
+        const turn = this.database.prepare('SELECT status FROM code_turns WHERE session_id = ? AND turn_id = ?')
+            .get(sessionId, row.turn_id) as { status: CodePromptReceipt['status'] };
+        return { turnId: row.turn_id, clientTurnKey, sequence: row.accepted_sequence!, status: turn.status };
+    }
+
+    /** The committed receipt of a follow-up key, whatever its turn has become since. */
+    readSteer(sessionId: string, input: Pick<CodeSteerRequest, 'text' | 'clientTurnKey'>): CodePromptReceipt | null {
+        return this.database.transaction(() => this.steerKey(sessionId, input.clientTurnKey, input.text))();
+    }
+
+    /**
+     * Take the running turn's one follow-up slot before any native offer. No events: the
+     * message joins the transcript only through commitSteer, after the runtime accepted it.
+     */
+    reserveSteer(input: CodeSteerAdmission): CodeSteerReservation {
+        return this.write(() => {
+            const replay = this.steerKey(input.sessionId, input.clientTurnKey, input.text);
+            if (replay) return { reservationId: input.clientTurnKey, receipt: replay };
+            const record = this.requireRecord(input.sessionId);
+            if (record.epoch !== input.epoch || record.turnId !== input.turnId) {
+                throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
+            }
+            if (record.archivedAt !== null || record.status !== 'streaming' || record.turnId === null) {
+                throw new CodeStoreError('session_not_steerable', 'This turn does not take a follow-up right now', 409);
+            }
+            const turnId = record.turnId;
+            if (this.database.prepare(`SELECT 1 FROM code_steers WHERE session_id = ? AND turn_id = ?
+                AND status IN ('reserved', 'committed', 'unknown')`).get(input.sessionId, turnId)) {
+                throw new CodeStoreError('steer_queue_full', 'The running turn already has its follow-up', 409);
+            }
+            // Refuse before the native offer what commitSteer could not store, including the reserve for
+            // the settlement frame that may re-mark this item; digits a later sequence adds are covered.
+            const item = steerItem(turnId, input.clientTurnKey, input.text, this.now());
+            const bytes = jsonBytes({ topic: 'code', event: 'code_item', sessionId: record.sessionId, sequence: record.sequence + 1,
+                epoch: record.epoch, item: mapItem(item, record.sequence + 1) }) + 32;
+            const budget = this.database.prepare(`SELECT event_bytes, control_event_bytes, settlement_bytes FROM code_turns
+                WHERE session_id = ? AND turn_id = ?`).get(record.sessionId, turnId) as {
+                    event_bytes: number; control_event_bytes: number; settlement_bytes: number;
+                };
+            if (bytes > this.limits.maxEventBytes
+                || budget.event_bytes - budget.control_event_bytes + bytes > this.limits.maxTurnEventBytes
+                || budget.control_event_bytes + budget.settlement_bytes + settlementCost(record.sessionId, { ...item, status: 'pending' })
+                    + CODE_SETTLEMENT_TAIL_BYTES > CODE_TERMINAL_RESERVE_BYTES) {
+                throw new CodeStoreError('transcript_limit', 'Code turn event byte limit reached', 409);
+            }
+            this.database.prepare(`INSERT INTO code_steers (session_id, turn_id, client_turn_key, prompt_hash, status)
+                VALUES (?, ?, ?, ?, 'reserved')`).run(input.sessionId, turnId, input.clientTurnKey, promptHash(input.text));
+            return { reservationId: input.clientTurnKey, receipt: null };
+        });
+    }
+
+    /** The runtime accepted the follow-up: append it to the running turn and spend the reservation. */
+    commitSteer(sessionId: string, reservationId: string, text: string, nativeId: string | null): CodeStoreMutation & { receipt: CodePromptReceipt } {
+        return this.write(() => {
+            const row = this.steerRow(sessionId, reservationId);
+            const record = this.requireRecord(sessionId);
+            if (!row || row.status !== 'reserved' || row.prompt_hash !== promptHash(text) || record.turnId !== row.turn_id
+                || record.archivedAt !== null || record.status !== 'streaming') {
+                throw new CodeStoreError('stale_owner', 'Follow-up reservation is no longer open', 409);
+            }
+            const item = steerItem(row.turn_id, reservationId, text, this.now());
+            const events = [this.event(record, item, 'ordinary', row.turn_id, settlementCost(sessionId, { ...item, status: 'pending' }))];
+            this.database.prepare(`UPDATE code_steers SET status = 'committed', accepted_sequence = ?, native_uuid = ?
+                WHERE session_id = ? AND client_turn_key = ?`).run(record.sequence, nativeId, sessionId, reservationId);
+            const turn = this.database.prepare('SELECT status FROM code_turns WHERE session_id = ? AND turn_id = ?')
+                .get(sessionId, row.turn_id) as { status: CodePromptReceipt['status'] };
+            return { session: toCodeSessionInfo(record), events,
+                receipt: { turnId: row.turn_id, clientTurnKey: reservationId, sequence: record.sequence, status: turn.status } };
+        });
+    }
+
+    /** A definitive refusal before native acceptance: the key is spent, the turn's slot is free again. */
+    rejectSteer(sessionId: string, reservationId: string): void {
+        this.write(() => {
+            this.database.prepare(`UPDATE code_steers SET status = 'rejected' WHERE session_id = ? AND client_turn_key = ?
+                AND status = 'reserved'`).run(sessionId, reservationId);
+        });
+    }
+
+    /** Native input left the process without a durable record: the slot stays spent and the key answers unknown. */
+    markSteerUnknown(sessionId: string, reservationId: string): void {
+        this.write(() => {
+            this.database.prepare(`UPDATE code_steers SET status = 'unknown' WHERE session_id = ? AND client_turn_key = ?
+                AND status <> 'committed'`).run(sessionId, reservationId);
+        });
     }
 
     admitTurn(input: CodeAdmitTurn): CodeTurnAdmission {
         return this.write(() => {
             if (!input.text.trim() || !input.clientTurnKey.trim()) throw new CodeStoreError('invalid_prompt', 'Text and client turn key are required', 400);
             const record = this.requireRecord(input.sessionId);
-            const promptHash = createHash('sha256').update(input.text).digest('hex');
+            const hash = promptHash(input.text);
             const previous = this.database.prepare(`SELECT ${TURN_COLUMNS} FROM code_turns WHERE session_id = ? AND client_turn_key = ?`)
                 .get(input.sessionId, input.clientTurnKey) as TurnRow | undefined;
             if (previous) {
-                if (previous.prompt_hash !== promptHash) throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for different content', 409);
+                if (previous.prompt_hash !== hash) throw new CodeStoreError('turn_key_conflict', 'Client turn key was used for different content', 409);
                 return { session: toCodeSessionInfo(record), events: [], receipt: receipt(previous), duplicate: true };
             }
+            this.refuseSteerKey(input.sessionId, input.clientTurnKey);
             if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
             if (input.expectedRevision !== undefined && input.expectedRevision !== record.revision) {
                 throw new CodeStoreError('revision_conflict', 'Code metadata changed', 409);
@@ -653,7 +792,7 @@ export class CodeStore {
             this.database.prepare(`INSERT INTO code_turns
                 (session_id, turn_id, client_turn_key, prompt_hash, status, accepted_sequence)
                 VALUES (?, ?, ?, ?, 'accepted', ?)`)
-                .run(input.sessionId, turnId, input.clientTurnKey, promptHash, acceptedSequence);
+                .run(input.sessionId, turnId, input.clientTurnKey, hash, acceptedSequence);
             const events = [
                 this.event(record, { itemId: `${turnId}:user`, turnId, kind: 'user_message', status: 'done',
                     text: input.text, clientTurnKey: input.clientTurnKey, createdAt: now, updatedAt: now }),
@@ -782,6 +921,25 @@ export class CodeStore {
                 .run(status, now, record.sessionId, item.item_id);
             after = item.first_sequence;
         }
+        // A follow-up no native result consumed may never have reached Claude; say so on its item.
+        const undelivered = new Set(result.undeliveredFollowUps ?? []);
+        const steers = this.database.prepare(`SELECT client_turn_key, native_uuid FROM code_steers
+            WHERE session_id = ? AND turn_id = ? AND status = 'committed'`).all(record.sessionId, turnId) as Array<{ client_turn_key: string; native_uuid: string | null }>;
+        for (const steer of steers) {
+            const itemId = `${turnId}:steer:${steer.client_turn_key}`;
+            const projected = this.database.prepare('SELECT first_sequence FROM code_items WHERE session_id = ? AND item_id = ?')
+                .get(record.sessionId, itemId) as { first_sequence: number } | undefined;
+            if (steer.native_uuid === null || !undelivered.has(steer.native_uuid) || !projected) continue;
+            record.sequence += 1;
+            events.push(this.persistEvent(record, {
+                topic: 'code', event: 'code_item_update', sessionId: record.sessionId, sequence: record.sequence, epoch: record.epoch,
+                update: { itemId, turnId, firstSequence: projected.first_sequence, phase: 'unknown', updatedAt: now },
+            }, 'settlement', -settlementCost(record.sessionId, { itemId, turnId, status: 'pending' }), turnId));
+            this.database.prepare(`UPDATE code_items SET item_json = json_set(item_json, '$.phase', 'unknown', '$.updatedAt', ?)
+                WHERE session_id = ? AND item_id = ?`).run(now, record.sessionId, itemId);
+        }
+        this.database.prepare(`UPDATE code_steers SET status = 'rejected' WHERE session_id = ? AND turn_id = ? AND status = 'reserved'`)
+            .run(record.sessionId, turnId);
         const kind = result.status === 'completed' ? 'turn_completed' : result.status === 'failed' ? 'turn_failed' : 'turn_cancelled';
         events.push(this.event(record, { itemId: `${record.turnId}:terminal`, turnId: record.turnId, kind,
             status: result.status === 'completed' ? 'done' : result.status === 'failed' ? 'error' : 'cancelled',

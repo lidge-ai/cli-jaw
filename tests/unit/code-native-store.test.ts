@@ -1060,3 +1060,139 @@ test('a non-Claude session reads thinking as null', t => {
     store.create({ ...creation, sessionId: 'session-codex', provider: 'codex-app' });
     assert.equal(store.read('session-codex').thinking, null);
 });
+
+// Code in-band follow-ups: one durable slot per running turn, reserved before the native
+// offer and recorded in the transcript only after the runtime accepted it.
+function streamingTurn(t: { after(fn: () => void): void }, options: CodeStoreOptions = {}) {
+    const f = fixture(t, options);
+    const admitted = admit(f.store);
+    const running = f.store.setRuntimeState(owner(admitted.session), 'streaming').session;
+    const steer = (key: string, text = 'follow-up', session = running) =>
+        f.store.reserveSteer({ sessionId: 'session-a', clientTurnKey: key, text, turnId: session.turnId!, epoch: session.epoch });
+    return { ...f, admitted, running, steer };
+}
+const steerRows = (db: Database.Database) => db.prepare('SELECT client_turn_key, status, native_uuid FROM code_steers ORDER BY client_turn_key').all();
+
+test('a follow-up reservation holds the turn slot without events, a new turn, or a new epoch', t => {
+    const f = streamingTurn(t);
+    const before = f.store.read('session-a')!;
+    assert.deepEqual(f.steer('steer-1'), { reservationId: 'steer-1', receipt: null });
+    const after = f.store.read('session-a')!;
+    assert.deepEqual({ sequence: after.sequence, epoch: after.epoch, turnId: after.turnId, status: after.status },
+        { sequence: before.sequence, epoch: before.epoch, turnId: before.turnId, status: 'streaming' });
+    expectError(() => f.steer('steer-2'), 'steer_queue_full');
+    f.store.rejectSteer('session-a', 'steer-1');
+    assert.deepEqual(f.steer('steer-2').receipt, null, 'a refused offer frees the slot');
+    const committed = f.store.commitSteer('session-a', 'steer-2', 'follow-up', 'native-2');
+    expectError(() => f.steer('steer-3'), 'steer_queue_full');
+    assert.deepEqual(committed.events.map(event => event.item?.itemId), [`${f.running.turnId}:steer:steer-2`]);
+    const item = committed.events[0]!.item!;
+    assert.deepEqual({ kind: item.kind, status: item.status, turnId: item.turnId, text: item.text, key: item.clientTurnKey },
+        { kind: 'user_message', status: 'done', turnId: f.running.turnId, text: 'follow-up', key: 'steer-2' });
+    assert.deepEqual(committed.receipt, { turnId: f.running.turnId, clientTurnKey: 'steer-2', sequence: committed.events[0]!.sequence, status: 'running' });
+    const session = f.store.read('session-a')!;
+    assert.deepEqual({ epoch: session.epoch, turnId: session.turnId, status: session.status }, { epoch: f.running.epoch, turnId: f.running.turnId, status: 'streaming' });
+    assert.equal(f.store.snapshot('session-a').items.filter(row => row.kind === 'turn_started').length, 1);
+    assert.deepEqual(steerRows(f.db), [
+        { client_turn_key: 'steer-1', status: 'rejected', native_uuid: null },
+        { client_turn_key: 'steer-2', status: 'committed', native_uuid: 'native-2' }]);
+});
+
+test('SQLite itself refuses a second live follow-up for one turn', t => {
+    const f = streamingTurn(t);
+    f.steer('steer-1');
+    assert.throws(() => f.db.prepare(`INSERT INTO code_steers (session_id, turn_id, client_turn_key, prompt_hash, status)
+        VALUES ('session-a', ?, 'forged', 'x', 'unknown')`).run(f.running.turnId), /UNIQUE/);
+    f.db.prepare(`INSERT INTO code_steers (session_id, turn_id, client_turn_key, prompt_hash, status)
+        VALUES ('session-a', ?, 'forged', 'x', 'rejected')`).run(f.running.turnId);
+});
+
+test('the follow-up key state machine answers every stored state without a second offer', t => {
+    const f = streamingTurn(t);
+    f.steer('steer-1', 'same text');
+    expectError(() => f.steer('steer-1', 'same text'), 'steer_in_flight');
+    expectError(() => f.steer('steer-1', 'other text'), 'turn_key_conflict');
+    f.store.markSteerUnknown('session-a', 'steer-1');
+    expectError(() => f.steer('steer-1', 'same text'), 'steer_outcome_unknown', 503);
+    expectError(() => f.store.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'same text' }), 'steer_outcome_unknown', 503);
+    expectError(() => f.steer('steer-2'), 'steer_queue_full', 409);
+    expectError(() => f.steer('key-a', 'hello'), 'turn_key_conflict');
+    expectError(() => f.steer('', 'hello'), 'invalid_prompt', 400);
+    expectError(() => f.steer('steer-3', '   '), 'invalid_prompt', 400);
+
+    const g = streamingTurn(t);
+    g.steer('steer-1');
+    g.store.rejectSteer('session-a', 'steer-1');
+    expectError(() => g.steer('steer-1'), 'steer_key_spent');
+    g.steer('steer-2');
+    const committed = g.store.commitSteer('session-a', 'steer-2', 'follow-up', 'native');
+    assert.deepEqual(g.steer('steer-2'), { reservationId: 'steer-2', receipt: committed.receipt });
+    assert.deepEqual(g.store.readSteer('session-a', { clientTurnKey: 'steer-2', text: 'follow-up' }), committed.receipt);
+    expectError(() => g.store.readSteer('session-a', { clientTurnKey: 'steer-2', text: 'changed' }), 'turn_key_conflict');
+    expectError(() => g.store.commitSteer('session-a', 'steer-2', 'follow-up', 'native'), 'stale_owner');
+    // One key names one message across prompts and follow-ups.
+    expectError(() => g.store.readTurn('session-a', 'steer-2'), 'turn_key_conflict');
+    expectError(() => admit(g.store, 'steer-1', 'session-a', 'follow-up'), 'turn_key_conflict');
+});
+
+test('only the captured streaming turn takes a follow-up', t => {
+    const f = fixture(t);
+    const idle = f.store.read('session-a')!;
+    expectError(() => f.store.reserveSteer({ sessionId: 'session-a', clientTurnKey: 's', text: 'x', turnId: 'turn-1', epoch: idle.epoch }), 'stale_owner');
+    const admitted = admit(f.store);
+    const starting = admitted.session;
+    expectError(() => f.store.reserveSteer({ sessionId: 'session-a', clientTurnKey: 's', text: 'x', turnId: starting.turnId!, epoch: starting.epoch }),
+        'session_not_steerable');
+    const running = f.store.setRuntimeState(owner(starting), 'streaming').session;
+    expectError(() => f.store.reserveSteer({ sessionId: 'session-a', clientTurnKey: 's', text: 'x', turnId: running.turnId!, epoch: running.epoch + 1 }),
+        'stale_owner');
+    const stopping = f.store.setRuntimeState(owner(running), 'stopping').session;
+    expectError(() => f.store.reserveSteer({ sessionId: 'session-a', clientTurnKey: 's', text: 'x', turnId: stopping.turnId!, epoch: stopping.epoch }),
+        'session_not_steerable');
+    expectError(() => f.store.reserveSteer({ sessionId: 'missing', clientTurnKey: 's', text: 'x', turnId: 't', epoch: 1 }), 'session_not_found', 404);
+    assert.deepEqual(steerRows(f.db), []);
+});
+
+test('a follow-up the turn budget cannot store is refused before any reservation', t => {
+    const f = streamingTurn(t, { limits: { maxTurnEventBytes: 4096 } });
+    expectError(() => f.steer('steer-1', 'x'.repeat(4096)), 'transcript_limit');
+    assert.deepEqual(steerRows(f.db), []);
+    assert.equal(f.steer('steer-2', 'small').receipt, null);
+});
+
+test('settlement marks an unconsumed follow-up unconfirmed, keeps a consumed one, and spends a leftover reservation', t => {
+    const f = streamingTurn(t);
+    f.steer('steer-1');
+    const committed = f.store.commitSteer('session-a', 'steer-1', 'follow-up', 'native-1');
+    const settled = f.store.settleTurn(owner(f.running), { status: 'cancelled', undeliveredFollowUps: ['native-1', 'foreign'] });
+    const itemId = `${f.running.turnId}:steer:steer-1`;
+    const update = settled.events.find(event => event.update?.itemId === itemId)?.update;
+    assert.deepEqual(update && { phase: update.phase, firstSequence: update.firstSequence, status: update.status },
+        { phase: 'unknown', firstSequence: committed.events[0]!.sequence, status: undefined });
+    assert.equal(f.store.snapshot('session-a').items.find(item => item.itemId === itemId)?.phase, 'unknown');
+    assert.equal(replayItems(f.store.readEvents('session-a').events).find(item => item.itemId === itemId)?.phase, 'unknown');
+    assert.deepEqual(f.store.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }),
+        { ...committed.receipt, status: 'cancelled' }, 'a committed replay reports the turn as it ended');
+
+    const g = streamingTurn(t);
+    g.steer('steer-1');
+    g.store.commitSteer('session-a', 'steer-1', 'follow-up', 'native-1');
+    const completed = g.store.settleTurn(owner(g.running), { status: 'completed', undeliveredFollowUps: [] });
+    assert.equal(completed.events.some(event => event.update?.phase === 'unknown'), false);
+    assert.equal(g.store.snapshot('session-a').items.find(item => item.kind === 'user_message' && item.clientTurnKey === 'steer-1')?.phase, undefined);
+
+    const h = streamingTurn(t);
+    h.steer('steer-1');
+    h.store.settleTurn(owner(h.running), { status: 'completed' });
+    expectError(() => h.steer('steer-1', 'follow-up', h.running), 'steer_key_spent');
+    expectError(() => h.store.commitSteer('session-a', 'steer-1', 'follow-up', 'late'), 'stale_owner');
+});
+
+test('restart spends a reservation the lost process never offered', t => {
+    const f = streamingTurn(t);
+    f.steer('steer-1');
+    const restarted = new CodeStore(f.db, { now: () => 5678 });
+    restarted.recoverInterrupted();
+    assert.deepEqual(steerRows(f.db), [{ client_turn_key: 'steer-1', status: 'rejected', native_uuid: null }]);
+    expectError(() => restarted.readSteer('session-a', { clientTurnKey: 'steer-1', text: 'follow-up' }), 'steer_key_spent');
+});
