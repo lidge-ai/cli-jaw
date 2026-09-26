@@ -534,6 +534,7 @@ test('rollback accepts only an opaque user-row target with the client revision a
             [{ ...valid, upToItemId: '0f8fad5b-d9cb-469f-a165-70867728950e' }, 'invalid_rollback_target'],
             [{ ...valid, upToItemId: 'turn-one:answer' }, 'invalid_rollback_target'],
             [{ ...valid, upToItemId: 'turn-one:steer:1:user' }, 'invalid_rollback_target'],
+            [{ ...valid, upToItemId: 'turn-one:steer:steer-key' }, 'invalid_rollback_target'],
             [{ ...valid, upToItemId: 'turn one:user' }, 'invalid_rollback_target'],
             [{ ...valid, upToItemId: `${'x'.repeat(201)}:user` }, 'invalid_rollback_target'],
             [{ ...valid, upToItemId: 42 }, 'invalid_rollback_target'],

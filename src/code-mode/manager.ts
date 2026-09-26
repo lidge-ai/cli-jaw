@@ -289,6 +289,8 @@ export class CodeSessionManager {
         }
         const replay = this.storage(() => this.options.store.readSteer(id, input));
         if (replay) return { receipt: replay, duplicate: true };
+        // A rollback in flight owns the transcript: no new follow-up joins it, whatever turn it names.
+        this.fenced(id);
         if (record.epoch !== input.epoch || record.turnId !== input.turnId) {
             throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
         }

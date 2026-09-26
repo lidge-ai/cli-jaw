@@ -735,6 +735,13 @@ export class CodeStore {
             .get(sessionId, clientTurnKey) as SteerRow | undefined;
     }
 
+    /** A follow-up receipt reports its owning turn as a prompt receipt does: a turn a rollback removed reads cancelled. */
+    private turnStatus(sessionId: string, turnId: string): CodePromptReceipt['status'] {
+        const turn = this.database.prepare('SELECT status, removed_generation FROM code_turns WHERE session_id = ? AND turn_id = ?')
+            .get(sessionId, turnId) as { status: CodePromptReceipt['status']; removed_generation: number | null };
+        return turn.removed_generation === null ? turn.status : 'cancelled';
+    }
+
     /** The follow-up key state machine; null means a new key that may be reserved. */
     private steerKey(sessionId: string, clientTurnKey: string, text: string): CodePromptReceipt | null {
         if (!text.trim() || !clientTurnKey.trim()) throw new CodeStoreError('invalid_prompt', 'Text and client turn key are required', 400);
@@ -748,9 +755,7 @@ export class CodeStore {
         if (row.status === 'reserved') throw new CodeStoreError('steer_in_flight', 'This follow-up is still being delivered', 409);
         if (row.status === 'rejected') throw new CodeStoreError('steer_key_spent', 'This follow-up was refused; send it again as a new message', 409);
         if (row.status === 'unknown') throw new CodeStoreError('steer_outcome_unknown', 'Follow-up delivery could not be confirmed', 503);
-        const turn = this.database.prepare('SELECT status FROM code_turns WHERE session_id = ? AND turn_id = ?')
-            .get(sessionId, row.turn_id) as { status: CodePromptReceipt['status'] };
-        return { turnId: row.turn_id, clientTurnKey, sequence: row.accepted_sequence!, status: turn.status };
+        return { turnId: row.turn_id, clientTurnKey, sequence: row.accepted_sequence!, status: this.turnStatus(sessionId, row.turn_id) };
     }
 
     /** The committed receipt of a follow-up key, whatever its turn has become since. */
@@ -812,10 +817,8 @@ export class CodeStore {
             const events = [this.event(record, item, 'ordinary', row.turn_id, settlementCost(sessionId, { ...item, status: 'pending' }))];
             this.database.prepare(`UPDATE code_steers SET status = 'committed', accepted_sequence = ?, native_uuid = ?
                 WHERE session_id = ? AND client_turn_key = ?`).run(record.sequence, nativeId, sessionId, reservationId);
-            const turn = this.database.prepare('SELECT status FROM code_turns WHERE session_id = ? AND turn_id = ?')
-                .get(sessionId, row.turn_id) as { status: CodePromptReceipt['status'] };
             return { session: toCodeSessionInfo(record), events,
-                receipt: { turnId: row.turn_id, clientTurnKey: reservationId, sequence: record.sequence, status: turn.status } };
+                receipt: { turnId: row.turn_id, clientTurnKey: reservationId, sequence: record.sequence, status: this.turnStatus(sessionId, row.turn_id) } };
         });
     }
 
@@ -1142,6 +1145,9 @@ export class CodeStore {
      * native cursor the plan was read at. Later items and their events leave; their turn rows
      * stay so client keys keep answering, marked removed. Replay below the new floor fails with
      * `invalid_sequence`, and the history generation tells live readers to take a snapshot.
+     * Follow-up rows (`code_steers`) stay as they are: their keys remain spent and their native
+     * ids are not remapped (only a running turn reads them). The follow-up items of removed turns
+     * leave with the other later items, and their receipts read cancelled like the turns'.
      */
     commitRollback(input: CodeRollbackCommit): CodeStoreMutation {
         return this.write(() => {

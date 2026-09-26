@@ -1397,6 +1397,49 @@ test('a turn that settles before its prompt was dispatched is not a boundary; an
     assert.deepEqual(store.readRollbackPlan('session-a', 'turn-1:user').later.map(turn => turn.promptUuid === null), [true, false, false]);
 });
 
+/** A settled Claude turn that took one committed follow-up while it streamed. */
+function steered(store: CodeStore, key: string, steerKey: string) {
+    const admitted = admit(store, key, 'session-a', `prompt ${key}`);
+    store.writeNativeCursor(owner(admitted.session), 'native-a');
+    const running = store.setRuntimeState(owner(admitted.session), 'streaming').session;
+    store.reserveSteer({ sessionId: 'session-a', clientTurnKey: steerKey, text: `follow ${steerKey}`, turnId: running.turnId!, epoch: running.epoch });
+    const committed = store.commitSteer('session-a', steerKey, `follow ${steerKey}`, `native-${steerKey}`);
+    store.commitItem(owner(running), message(running.turnId!, `${running.turnId}:answer`, `answer ${key}`));
+    store.settleTurn(owner(running), { status: 'completed' });
+    return { turnId: running.turnId!, receipt: committed.receipt };
+}
+
+test('a rollback keeps follow-up rows as they are, removes the follow-ups of removed turns and reads their receipts cancelled', t => {
+    const { store, db } = fixture(t);
+    const first = steered(store, 'k1', 's1');
+    const second = steered(store, 'k2', 's2');
+    settled(store, 'k3');
+    expectError(() => store.readRollbackPlan('session-a', `${first.turnId}:steer:s1`), 'rollback_target_not_found', 404);
+    expectError(() => store.readRollbackPlan('session-a', `${second.turnId}:steer:s2`), 'rollback_target_not_found', 404);
+    const plan = store.readRollbackPlan('session-a', `${first.turnId}:user`);
+    assert.deepEqual([...plan.kept, ...plan.later].map(turn => turn.turnId), ['turn-1', 'turn-2', 'turn-3'], 'follow-ups never bound a rollback');
+    const rows = () => db.prepare('SELECT * FROM code_steers ORDER BY client_turn_key').all();
+    const before = rows();
+    assert.equal(before.length, 2);
+    store.commitRollback({ sessionId: 'session-a', upToItemId: `${first.turnId}:user`, expectedRevision: plan.revision, expectedEpoch: plan.epoch,
+        expectedCursor: plan.nativeCursor, forkCursor: 'fork-a', remapped: [{ turnId: first.turnId, promptUuid: FORK_UUID }], cleared: [] });
+    assert.deepEqual(rows(), before, 'status, sequence and native id of every follow-up row are unchanged');
+    assert.deepEqual(store.snapshot('session-a').items.filter(item => item.kind === 'user_message').map(item => item.itemId),
+        [`${first.turnId}:user`, `${first.turnId}:steer:s1`]);
+    const events = db.prepare("SELECT event_json FROM code_events WHERE session_id = 'session-a'").all() as Array<{ event_json: string }>;
+    assert.ok(!events.some(row => row.event_json.includes(':steer:s2')), 'the removed follow-up takes its events with it');
+    assert.deepEqual(store.readSteer('session-a', { clientTurnKey: 's1', text: 'follow s1' }), { ...first.receipt, status: 'completed' });
+    assert.deepEqual(store.readSteer('session-a', { clientTurnKey: 's2', text: 'follow s2' }), { ...second.receipt, status: 'cancelled' },
+        'a follow-up of a removed turn reads cancelled, like its prompt');
+    assert.equal(store.readTurn('session-a', 'k2')?.status, 'cancelled');
+    const replay = store.reserveSteer({ sessionId: 'session-a', clientTurnKey: 's2', text: 'follow s2', turnId: second.turnId, epoch: plan.epoch });
+    assert.deepEqual(replay, { reservationId: 's2', receipt: { ...second.receipt, status: 'cancelled' } });
+    expectError(() => store.readSteer('session-a', { clientTurnKey: 's2', text: 'changed' }), 'turn_key_conflict');
+    expectError(() => admit(store, 's2', 'session-a', 'follow s2'), 'turn_key_conflict', 409);
+    expectError(() => store.readTurn('session-a', 's2'), 'turn_key_conflict');
+    assert.deepEqual(rows(), before);
+});
+
 test('databases created before rollback gain its columns: old turns have no boundary, floors and generations start at 0', t => {
     const db = new Database(':memory:');
     t.after(() => db.close());

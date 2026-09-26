@@ -2224,6 +2224,67 @@ test('while a rollback is pending, prompt, attach, patch and a second rollback a
     f.manager.prompt(id, { text: 'new', clientTurnKey: 'key-new' });
 });
 
+/** Claude turns that each took one committed follow-up while they streamed. */
+async function steeredConversation(f: ReturnType<typeof fixture>, count = 3) {
+    const handle = new SteerHandle();
+    f.providers.claude.handles[0] = handle;
+    const row = f.create('claude');
+    const turns: string[] = [];
+    for (let index = 0; index < count; index++) {
+        const { receipt } = f.manager.prompt(row.sessionId, { text: `prompt ${index + 1}`, clientTurnKey: `key-${index + 1}` });
+        const epoch = f.store.read(row.sessionId)!.epoch;
+        await f.providers.claude.opened();
+        await handle.waitSent(index);
+        handle.steerResult = { accepted: true, turnId: 'native-turn', nativeId: `native-follow-${index + 1}` };
+        await f.manager.steer(row.sessionId, { text: `follow-up ${index + 1}`, clientTurnKey: `steer-${index + 1}`, turnId: receipt.turnId, epoch });
+        handle.outcome.resolve(done);
+        await f.terminal(row.sessionId, epoch);
+        turns.push(receipt.turnId);
+    }
+    return { id: row.sessionId, turns, handle };
+}
+
+test('while a rollback is pending, a new follow-up answers session_busy and a committed one still replays its receipt', async t => {
+    const f = fixture(t);
+    const { id, turns, handle } = await steeredConversation(f);
+    const gate = deferred<void>();
+    forkProvider(f, { gate: gate.promise });
+    const epoch = f.store.read(id)!.epoch;
+    const pending = f.manager.rollback(id, request(f, id, turns[0]!));
+    const replay = await f.manager.steer(id, { text: 'follow-up 3', clientTurnKey: 'steer-3', turnId: turns[2]!, epoch });
+    assert.deepEqual({ duplicate: replay.duplicate, status: replay.receipt.status }, { duplicate: true, status: 'completed' });
+    await assert.rejects(f.manager.steer(id, { text: 'late', clientTurnKey: 'steer-new', turnId: turns[2]!, epoch }), errorCode('session_busy', 409));
+    assert.equal(handle.steers.length, 3, 'nothing reaches the runtime');
+    gate.resolve();
+    assert.equal((await pending).historyGeneration, 1);
+    assert.equal(f.db.prepare("SELECT 1 FROM code_steers WHERE client_turn_key = 'steer-new'").get(), undefined, 'the refused key was never reserved');
+});
+
+test('a rollback never targets a follow-up row, keeps follow-up rows unchanged and reads the removed ones cancelled', async t => {
+    const f = fixture(t);
+    const { id, turns } = await steeredConversation(f);
+    const fork = forkProvider(f);
+    for (const turnId of turns.slice(0, 2)) {
+        await assert.rejects(f.manager.rollback(id, { ...request(f, id, turnId), upToItemId: `${turnId}:steer:steer-${turns.indexOf(turnId) + 1}` }),
+            errorCode('rollback_target_not_found', 404));
+    }
+    assert.equal(fork.calls.length, 0);
+    const rows = () => f.db.prepare('SELECT * FROM code_steers ORDER BY client_turn_key').all();
+    const before = rows();
+    await f.manager.rollback(id, request(f, id, turns[0]!));
+    assert.deepEqual([...fork.calls[0]!.input.kept, ...fork.calls[0]!.input.later].map(turn => turn.turnId), turns, 'only turns bound the fork');
+    assert.deepEqual(rows(), before, 'keys stay spent and native ids are not remapped');
+    assert.deepEqual(userItems(f, id).map(item => item.itemId), [`${turns[0]}:user`, `${turns[0]}:steer:steer-1`]);
+    const epoch = f.store.read(id)!.epoch;
+    for (const [key, status] of [['steer-1', 'completed'], ['steer-2', 'cancelled'], ['steer-3', 'cancelled']] as const) {
+        const index = Number(key.slice(-1)) - 1;
+        const replay = await f.manager.steer(id, { text: `follow-up ${index + 1}`, clientTurnKey: key, turnId: turns[index]!, epoch });
+        assert.deepEqual({ duplicate: replay.duplicate, turnId: replay.receipt.turnId, status: replay.receipt.status }, { duplicate: true, turnId: turns[index], status });
+    }
+    assert.throws(() => f.manager.prompt(id, { text: 'follow-up 2', clientTurnKey: 'steer-2' }), errorCode('turn_key_conflict', 409));
+    assert.equal(f.manager.prompt(id, { text: 'after', clientTurnKey: 'key-after' }).duplicate, false, 'the session takes new work');
+});
+
 test('rollback checks provider, archive, history, client revision and epoch, and busy before any fork', async t => {
     const f = fixture(t);
     const { id, turns } = await claudeConversation(f, 2);
