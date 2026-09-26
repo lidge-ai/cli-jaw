@@ -480,6 +480,14 @@ the approval gate instead of restarting; with no live runtime it is stored and a
 on the next open. Code Claude approval cards add "Allow for this session", which returns
 session-scoped `updatedPermissions` only (never a settings file). Jaw main turns keep
 Auto/Safe and two-option cards.
+Code Claude also switches model, effort and thinking live: on an idle resident query it
+calls `setModel` and then `applyFlagSettings({effortLevel, alwaysThinkingEnabled,
+showThinkingSummaries})`; if the second step fails the previous model and flags are put
+back, and if that rollback fails the process is retired (`claude_reconfigure_inconsistent`).
+The binding records the new tuple only after the runtime confirms. Thinking on opens with
+`thinking: {type: 'adaptive', display: 'summarized'}`, off with `{type: 'disabled'}`; a
+Claude row without a stored value reads as on. Other providers keep the restart-on-change
+rule.
 Provider live-model inventory (the Cursor and Grok CLI probes) is owned by host
 activation — `CodeHost.prime()`, called once at server startup — never by a
 catalog read or lazy `host.get()`.

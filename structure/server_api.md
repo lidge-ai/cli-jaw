@@ -488,8 +488,8 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | GET `/sessions/:id` | Full-item snapshot, session watermark and current pending permissions |
 | GET `/sessions/:id/items` | Byte-bounded older materialized items before `beforeSequence`; never advances the live replay cursor |
 | GET `/sessions/:id/events` | Contiguous replay after `afterSequence`; byte/row-bounded page with `nextSequence`, `throughSequence`, `hasMore` |
-| POST `/sessions` | Explicit provider, existing absolute cwd, model, effort and permissionMode;201 metadata creation |
-| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/archive;409 on conflict or busy policy/archive change. `permissionMode` also accepts the Claude-only `plan`, `accept-edits`, `dont-ask`, `auto-review`; a Claude permission-only change switches the resident query without retiring it |
+| POST `/sessions` | Explicit provider, existing absolute cwd, model, effort and permissionMode, plus an optional boolean `thinking` (Claude only; omitted means on, other providers answer `unsupported_capability`);201 metadata creation |
+| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/archive;409 on conflict or busy policy/archive change. `permissionMode` also accepts the Claude-only `plan`, `accept-edits`, `dont-ask`, `auto-review`; `thinking` is a Claude-only boolean. On an idle resident Claude session a model, effort, thinking or permission change switches the resident query without retiring it (busy answers `session_busy`); the runtime is put back if persistence fails |
 | POST `/sessions/:id/prompt` | `text` and `clientTurnKey`;202 new admission,200 existing receipt,409 mismatched key/busy |
 | POST `/sessions/:id/cancel` | Captured `turnId` and `epoch`; never cancels a successor |
 | POST `/sessions/:id/attach` | Explicit native resume; selecting or reading a session does not attach |

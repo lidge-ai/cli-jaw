@@ -714,7 +714,8 @@ first and then sends, as t3code continues a thread on the next message; the Resu
 action remains for attaching without sending. The Claude permission menu lists the live catalog's six modes (Ask first, Accept
 edits, Plan, Auto review, Don't ask, Auto (YOLO)) rather than the session snapshot; the
 standing warning stays on Auto (YOLO). Claude approval cards may offer "Allow for this
-session".
+session". Claude sessions and drafts add a Thinking menu (Thinking on / Thinking off) after
+Effort; it is hidden for other runtimes, and a draft that leaves Claude drops the switch.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
