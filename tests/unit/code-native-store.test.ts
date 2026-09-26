@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import Database from 'better-sqlite3';
 import {
@@ -332,6 +335,27 @@ test('constructor adds only Code schema and repeated initialization preserves re
     assert.deepEqual(db.prepare('SELECT content FROM messages').all(), [{ content: 'existing history' }]);
     assert.deepEqual(reopened.snapshot('session-a').items, []);
     assert.deepEqual(reopened.readEvents('session-a').events, created.events);
+});
+
+test('opening an up-to-date store takes no write lock; a missing column still migrates under one', t => {
+    const dir = mkdtempSync(join(tmpdir(), 'code-store-lock-'));
+    const file = join(dir, 'code.db');
+    const first = new Database(file);
+    first.pragma('journal_mode = WAL');
+    const created = new CodeStore(first).create(creation);
+    // Another connection holds the write lock; this one refuses to wait for it.
+    const holder = new Database(file), second = new Database(file, { timeout: 0 });
+    t.after(() => { for (const db of [first, holder, second]) if (db.open) db.close(); rmSync(dir, { recursive: true, force: true }); });
+    const busy = (error: unknown) => (error as { code?: string }).code === 'SQLITE_BUSY';
+    holder.prepare('BEGIN IMMEDIATE').run();
+    assert.deepEqual(new CodeStore(second).read('session-a'), created.session, 'every schema check returns before the lock');
+    holder.prepare('ROLLBACK').run();
+    first.exec('ALTER TABLE code_turns DROP COLUMN settlement_bytes');
+    holder.prepare('BEGIN IMMEDIATE').run();
+    assert.throws(() => new CodeStore(second), busy, 'a missing budget column is added under the write lock');
+    holder.prepare('ROLLBACK').run();
+    new CodeStore(second);
+    assert.ok((second.prepare('PRAGMA table_info(code_turns)').all() as { name: string }[]).some(column => column.name === 'settlement_bytes'));
 });
 
 test('materialized history pages return older complete rows without advancing live sequence', t => {

@@ -401,11 +401,17 @@ export class CodeStore {
         }).immediate();
     }
 
+    /** Adds the per-turn byte budgets; an up-to-date database returns before taking the write lock. */
     private ensureBudgetColumns(): void {
+        const budgetColumns = ['event_bytes', 'control_event_bytes', 'settlement_bytes'];
+        const present = () => new Set((this.database.prepare('PRAGMA table_info(code_turns)').all() as { name: string }[])
+            .map(column => column.name));
+        const before = present();
+        if (budgetColumns.every(column => before.has(column))) return;
         this.database.transaction(() => {
-            const columns = this.database.prepare('PRAGMA table_info(code_turns)').all() as { name: string }[];
-            const names = new Set(columns.map(column => column.name));
-            for (const column of ['event_bytes', 'control_event_bytes', 'settlement_bytes']) {
+            // Read again under the lock: another process may have migrated in between.
+            const names = present();
+            for (const column of budgetColumns) {
                 if (!names.has(column)) this.database.exec(`ALTER TABLE code_turns ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
             }
             if (!names.has('event_bytes')) this.database.exec(`UPDATE code_turns SET event_bytes = (
