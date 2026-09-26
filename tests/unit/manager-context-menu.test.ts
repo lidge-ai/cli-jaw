@@ -113,3 +113,20 @@ test('clamps to the viewport near the right and bottom edges', async () => {
         assert.ok(top <= dom.window.innerHeight - 8, `top ${top}`);
     } finally { await cleanup(); }
 });
+
+test('inline state and onClose props neither loop nor re-steal focus on parent re-render', async () => {
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const entries: Entry[] = [{ id: 'a', label: 'A', onSelect: () => {} }, { id: 'b', label: 'B', onSelect: () => {} }];
+    const render = (tick: number) => root.render(createElement('div', { 'data-tick': tick },
+        createElement(ContextMenu, { state: { x: 10, y: 10 }, entries, label: 'Inline', onClose: () => {} })));
+    try {
+        await act(async () => render(0));
+        await act(async () => {
+            document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        });
+        assert.equal(document.activeElement, items()[1]);
+        await act(async () => render(1));
+        assert.equal(document.activeElement, items()[1], 'focus is not reset to the first item');
+    } finally { await act(async () => root.unmount()); container.remove(); }
+});

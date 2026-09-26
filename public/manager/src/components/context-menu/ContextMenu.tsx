@@ -61,22 +61,27 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     /** Dismissal hands focus back to the opener; choosing an item leaves focus to the action. */
     const restoreOnClose = useRef(true);
     const [position, setPosition] = useState<ContextMenuState | null>(null);
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    const anchorX = state?.x;
+    const anchorY = state?.y;
 
     useLayoutEffect(() => {
-        if (!state) { setPosition(null); return; }
+        if (anchorX === undefined || anchorY === undefined) { setPosition(null); return; }
         const node = menu.current;
         const width = node?.offsetWidth ?? 0;
         const height = node?.offsetHeight ?? 0;
         const maxX = window.innerWidth - width - VIEWPORT_MARGIN;
         const maxY = window.innerHeight - height - VIEWPORT_MARGIN;
         setPosition({
-            x: Math.max(VIEWPORT_MARGIN, Math.min(state.x, maxX)),
-            y: Math.max(VIEWPORT_MARGIN, Math.min(state.y > maxY ? state.y - height : state.y, maxY)),
+            x: Math.max(VIEWPORT_MARGIN, Math.min(anchorX, maxX)),
+            y: Math.max(VIEWPORT_MARGIN, Math.min(anchorY > maxY ? anchorY - height : anchorY, maxY)),
         });
-    }, [state]);
+    }, [anchorX, anchorY]);
 
     useEffect(() => {
-        if (!state) return;
+        if (anchorX === undefined || anchorY === undefined) return;
+        const onClose = () => onCloseRef.current();
         restoreFocus.current = document.activeElement;
         restoreOnClose.current = true;
         const first = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
@@ -101,7 +106,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
             const previous = restoreFocus.current;
             if (restoreOnClose.current && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
         };
-    }, [state, onClose]);
+    }, [anchorX, anchorY]);
 
     if (!state) return null;
 
