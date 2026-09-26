@@ -1,4 +1,5 @@
-import { ContextMenu, type ContextMenuEntry } from '../components/context-menu/ContextMenu';
+import { useMemo } from 'react';
+import { ContextMenu, type ContextMenuEntry, type ContextMenuState } from '../components/context-menu/ContextMenu';
 import { CopyGlyph, DocGlyph, FolderGlyph, PencilGlyph, RestartGlyph } from '../components/context-menu/icons';
 import { isMacLikePlatform } from '../client-platform';
 import type { FolderPanelEntry } from './folder-sources';
@@ -22,6 +23,8 @@ type FolderContextMenuProps = {
 
 export function FolderContextMenu(props: FolderContextMenuProps) {
     const mac = isMacLikePlatform();
+    // ContextMenu's positioning effect keys on `state` identity — keep it stable.
+    const menuState = useMemo<ContextMenuState>(() => ({ x: props.x, y: props.y }), [props.x, props.y]);
     const entries: ContextMenuEntry[] = [
         { id: 'copy-path', label: 'Copy Path', icon: <CopyGlyph />, shortcut: mac ? '⇧⌘C' : 'Ctrl+Shift+C', onSelect: props.onCopyPath },
         { id: 'copy-relative-path', label: 'Copy Relative Path', icon: <CopyGlyph />, shortcut: mac ? '⌘C' : 'Ctrl+C', onSelect: props.onCopyRelativePath },
@@ -48,7 +51,7 @@ export function FolderContextMenu(props: FolderContextMenuProps) {
     }
     return (
         <ContextMenu
-            state={{ x: props.x, y: props.y }}
+            state={menuState}
             entries={entries}
             label={`Folder actions for ${props.entry.name}`}
             onClose={props.onClose}
