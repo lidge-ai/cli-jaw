@@ -17,11 +17,13 @@ export interface PreparedClaudeOptions {
     sessionGrants?: boolean;
     /** Code only: lets a later live switch to bypassPermissions be legal; it does not skip prompts by itself. */
     allowDangerouslySkipPermissions?: boolean;
+    /** Code only: adaptive summarized thinking on/off. Jaw-shaped inputs omit it. */
+    thinking?: boolean;
 }
 
 const PREPARED_KEYS = new Set([
     'cwd', 'binary', 'env', 'model', 'systemPrompt', 'resumeSessionId', 'permissions', 'effort', 'fastMode',
-    'sdkMode', 'sessionGrants', 'allowDangerouslySkipPermissions',
+    'sdkMode', 'sessionGrants', 'allowDangerouslySkipPermissions', 'thinking',
 ]);
 const SDK_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto']);
 const EFFORTS: ReadonlySet<Options['effort']> = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -67,6 +69,7 @@ function validatePrepared(input: PreparedClaudeOptions): void {
     }
     if (input.effort !== undefined && !EFFORTS.has(input.effort)) throw new Error('Invalid Claude SDK effort');
     if (typeof input.fastMode !== 'boolean') throw new Error('Invalid Claude SDK fastMode');
+    if (input.thinking !== undefined && typeof input.thinking !== 'boolean') throw new Error('Invalid Claude SDK thinking');
     if (!validString(input.model, true)) throw new Error('Invalid Claude SDK model');
     // Prompt bytes are preserved; whitespace-only prompts are also valid append content.
     if (typeof input.systemPrompt !== 'string' || input.systemPrompt.includes('\0')) {
@@ -75,6 +78,22 @@ function validatePrepared(input: PreparedClaudeOptions): void {
     if (input.resumeSessionId !== undefined && !validString(input.resumeSessionId)) {
         throw new Error('Invalid Claude SDK resumeSessionId');
     }
+}
+
+/**
+ * Thinking on = adaptive with summarized display, off = disabled; both set the matching
+ * session flags. Omitted (jaw) adds nothing, so the jaw options object is unchanged.
+ */
+function claudeThinkingOptions(thinking: boolean | undefined, fastMode: boolean): Pick<Options, 'thinking' | 'settings'> {
+    const settings: NonNullable<Options['settings']> = {
+        ...(fastMode ? { fastMode: true } : {}),
+        ...(thinking === undefined ? {} : { alwaysThinkingEnabled: thinking, showThinkingSummaries: thinking }),
+    };
+    return {
+        ...(thinking === true ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
+        ...(thinking === false ? { thinking: { type: 'disabled' } } : {}),
+        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+    };
 }
 
 /** Translate a prepared snapshot only: no configuration, credential or process reads. */
@@ -95,7 +114,7 @@ export function buildClaudeSdkOptions(input: PreparedClaudeOptions): Options {
         ...(input.model && input.model !== 'default' ? { model: input.model } : {}),
         // Match Claude print/resume args: medium leaves the provider's configured effort intact.
         ...(input.effort !== undefined && input.effort !== 'medium' ? { effort: input.effort } : {}),
-        ...(input.fastMode ? { settings: { fastMode: true } } : {}),
+        ...claudeThinkingOptions(input.thinking, input.fastMode),
         ...(input.resumeSessionId !== undefined ? { resume: input.resumeSessionId } : {}),
     };
 }

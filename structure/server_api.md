@@ -484,12 +484,12 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | Method and suffix | Contract |
 |---|---|
 | GET `/models` | Four CLI catalogs, availability and honest per-provider capabilities |
-| GET `/sessions` | Durable index; canonical cwd, archive, limit and offset filters; current pending permission counts; each row carries `lastTurnCompletedAt` (completed/failed turns) and `lastVisitedAt` |
+| GET `/sessions` | Durable index; canonical cwd, archive, limit and offset filters; current pending permission counts; each row carries `lastTurnCompletedAt` (completed/failed turns), `lastVisitedAt` and `thinking` (a Claude boolean, where a legacy or unset Claude row reads `true`; `null` for other providers) |
 | GET `/sessions/:id` | Full-item snapshot, session watermark and current pending permissions |
 | GET `/sessions/:id/items` | Byte-bounded older materialized items before `beforeSequence`; never advances the live replay cursor |
 | GET `/sessions/:id/events` | Contiguous replay after `afterSequence`; byte/row-bounded page with `nextSequence`, `throughSequence`, `hasMore` |
-| POST `/sessions` | Explicit provider, existing absolute cwd, model, effort and permissionMode;201 metadata creation |
-| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/archive;409 on conflict or busy policy/archive change. `permissionMode` also accepts the Claude-only `plan`, `accept-edits`, `dont-ask`, `auto-review`; a Claude permission-only change switches the resident query without retiring it |
+| POST `/sessions` | Explicit provider, existing absolute cwd, model, effort and permissionMode, plus an optional boolean `thinking` (Claude only; omitted means on, a non-boolean is400 `invalid_thinking`, other providers answer `unsupported_capability`);201 metadata creation |
+| PATCH `/sessions/:id` | `expectedRevision` plus title/model/effort/permissionMode/thinking/archive;409 on conflict or busy policy/archive change. `permissionMode` also accepts the Claude-only `plan`, `accept-edits`, `dont-ask`, `auto-review`; `thinking` is a Claude-only boolean (non-boolean:400 `invalid_thinking`). On an idle resident Claude session a permission-only change, or a model and/or effort change, switches the resident query without retiring it and is put back if persistence fails; while it runs, a prompt, attach or another patch on that session answers409 `session_busy`. A thinking change, or a permission change combined with a model or effort change, retires the runtime and the next turn reopens with the new options |
 | POST `/sessions/:id/prompt` | `text` and `clientTurnKey`;202 new admission,200 existing receipt,409 mismatched key/busy |
 | POST `/sessions/:id/cancel` | Captured `turnId` and `epoch`; never cancels a successor |
 | POST `/sessions/:id/attach` | Explicit native resume; selecting or reading a session does not attach |

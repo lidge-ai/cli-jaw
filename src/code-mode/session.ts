@@ -3,7 +3,7 @@ import type { RuntimeEventContext } from '../agent/runtime/events.js';
 import type { RuntimeTranscriptObserver } from '../agent/runtime/projection.js';
 import type { RuntimeEventBody, RuntimeTurnOutcome } from '../shared/runtime-contract.js';
 import { CodeTurnNormalizer, redactCodeText } from './normalize.js';
-import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource, CodeTurnContext } from './provider.js';
+import type { CodeLiveSettings, CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource, CodeTurnContext } from './provider.js';
 import { CodeStore, CodeStoreError, type CodeSessionRecord, type CodeStoreOwner } from './store.js';
 import type {
     CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionMode, CodePermissionRequest,
@@ -40,7 +40,7 @@ interface Operation {
     work: Promise<void>;
 }
 
-type NativeConfiguration = Pick<CodeSessionRecord, 'provider' | 'cwd' | 'model' | 'effort' | 'permissionMode'>;
+type NativeConfiguration = Pick<CodeSessionRecord, 'provider' | 'cwd' | 'model' | 'effort' | 'permissionMode' | 'thinking'>;
 interface HandleBinding {
     configuration: Readonly<NativeConfiguration>;
     controller: AbortController;
@@ -57,7 +57,7 @@ interface HandleBinding {
 
 function sameConfiguration(a: NativeConfiguration, b: NativeConfiguration): boolean {
     return a.provider === b.provider && a.cwd === b.cwd && a.model === b.model
-        && a.effort === b.effort && a.permissionMode === b.permissionMode;
+        && a.effort === b.effort && a.permissionMode === b.permissionMode && a.thinking === b.thinking;
 }
 
 function isResourceClosed(resource: CodeRuntimeResource): boolean {
@@ -91,13 +91,27 @@ export class CodeSession {
     private disposed = false;
     private disposePromise: Promise<void> | null = null;
     private persistenceError: CodeServiceError | null = null;
+    private settingsChange = false;
     lastUsedAt: number;
 
     constructor(private readonly options: CodeSessionOptions) {
         this.lastUsedAt = options.now();
     }
 
-    get busy(): boolean { return this.operation !== null && !this.operation.settled; }
+    get busy(): boolean { return this.settingsChange || (this.operation !== null && !this.operation.settled); }
+    get reconfiguring(): boolean { return this.settingsChange; }
+
+    /**
+     * Run a live settings change with admission held off: the session reads busy from this
+     * check through the caller's store write and any rollback, so no prompt, attach or
+     * second change lands between the runtime switch and the stored row.
+     */
+    async exclusive<T>(work: () => Promise<T>): Promise<T> {
+        if (this.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing session settings', 409);
+        this.settingsChange = true;
+        try { return await work(); }
+        finally { this.settingsChange = false; this.options.changed(); }
+    }
 
     /**
      * Switch the resident runtime's permission mode in place. 'deferred' means there is
@@ -110,6 +124,25 @@ export class CodeSession {
         if (!handle.setPermissionMode) throw new Error('code_permission_mode_unavailable');
         await handle.setPermissionMode(mode);
         binding.configuration = Object.freeze({ ...binding.configuration, permissionMode: mode });
+        return 'applied';
+    }
+
+    /**
+     * Change model and effort on the resident runtime in place. The binding moves only
+     * once the runtime confirmed, so a refused change leaves it describing the process
+     * that is actually running. 'deferred' means no live handle; 'unsupported' means a
+     * live handle that can only be retired.
+     */
+    async reconfigure(next: CodeLiveSettings): Promise<'applied' | 'deferred' | 'unsupported'> {
+        const binding = this.binding;
+        const handle = binding?.handle;
+        if (!binding || !handle || handle.alive !== true || handle.closed === true || binding.retiring || binding.exited) return 'deferred';
+        if (!handle.reconfigure) return 'unsupported';
+        const current = binding.configuration;
+        await handle.reconfigure(next, { model: current.model, effort: current.effort });
+        binding.configuration = Object.freeze({ ...current, model: next.model, effort: next.effort });
+        // The figure is a proportion of the previous model's window.
+        if (next.model !== current.model) this.usage = null;
         return 'applied';
     }
     get resident(): boolean {
@@ -237,7 +270,7 @@ export class CodeSession {
             && !previous.exited && !previous.controller.signal.aborted && sameConfiguration(previous.configuration, record);
         const binding: HandleBinding = reuse && previous ? previous : {
             configuration: Object.freeze({ provider: record.provider, cwd: record.cwd, model: record.model,
-                effort: record.effort, permissionMode: record.permissionMode }),
+                effort: record.effort, permissionMode: record.permissionMode, thinking: record.thinking }),
             controller: new AbortController(), opening: false, openingContext: null,
             handle: null, resources: new Set(), resourceCloses: new Map(),
             retiring: false, exited: false, closed: false, cancelPromise: null,
@@ -395,7 +428,8 @@ export class CodeSession {
     private openOptions(binding: HandleBinding, record: CodeSessionRecord): CodeOpenOptions {
         return {
             sessionId: record.sessionId, cwd: record.cwd, model: record.model,
-            effort: record.effort, permissionMode: record.permissionMode, nativeCursor: record.nativeCursor,
+            effort: record.effort, permissionMode: record.permissionMode, thinking: record.thinking,
+            nativeCursor: record.nativeCursor,
             signal: binding.controller.signal, registry: this.registry,
             onResource: resource => this.registerResource(binding, resource),
             getTurnContext: () => {

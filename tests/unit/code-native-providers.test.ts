@@ -137,7 +137,9 @@ test('catalog is exhaustive, detached from native factories, and honest about re
     assert.deepEqual(catalogs.map(c => c.capabilities.permissionModes), [
         ['ask', 'auto', 'read-only'], ['ask', 'accept-edits', 'plan', 'auto-review', 'dont-ask', 'auto'], ['ask', 'auto'], ['auto'],
     ]);
-    assert.ok(catalogs.every(c => c.available && c.modelSource === 'registry' && !c.capabilities.setModelMidSession));
+    assert.ok(catalogs.every(c => c.available && c.modelSource === 'registry'));
+    // Only Claude switches model, effort and thinking on the resident process.
+    assert.deepEqual(catalogs.map(c => c.capabilities.setModelMidSession), [false, true, false, false]);
     assert.ok(catalogs.every(c => c.models.includes(c.defaultModel)));
     catalogs[0]!.models.length = 0;
     assert.ok(providers['codex-app'].describe().models.length > 0);

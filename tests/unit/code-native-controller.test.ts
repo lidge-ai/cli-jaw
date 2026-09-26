@@ -14,7 +14,7 @@ function session(id: string, patch: Partial<CodeSessionInfo> = {}): CodeSessionI
     return { sessionId: id, provider: 'codex-app', cwd: `/workspace/${id}`, title: id, model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
         resume: { available: true, reason: null }, capabilities: { resume: true, interrupt: true, permissions: true,
-            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch };
+            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, ...patch };
 }
 function snap(info: CodeSessionInfo, items: CodeItem[] = [], pendingPermissions: CodePermissionRequest[] = []): CodeSnapshot {
     return { session: info, items, sequence: info.sequence, pendingPermissions, truncated: false };
@@ -889,4 +889,24 @@ test('a failed attach sends nothing, surfaces the error and keeps the draft', as
     assert.deepEqual(f.posts().map(call => call.path), ['/sessions/a/attach']);
     assert.ok(f.controller.getModel().operation.error);
     assert.equal(f.controller.getModel().input, 'continue please');
+});
+
+test('a Claude session PATCHes its thinking switch; a draft leaving Claude drops it', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(session('a', { provider: 'claude', thinking: true })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    assert.equal(f.controller.getModel().selection.thinking, true);
+    f.intercept(call => call.method === 'PATCH'
+        ? response({ ok: true, session: session('a', { provider: 'claude', thinking: false, revision: 3 }) }) : undefined);
+    await f.controller.setSelection({ thinking: false });
+    assert.deepEqual(f.calls.find(call => call.method === 'PATCH')!.body,
+        { expectedRevision: 2, model: 'native-model', effort: null, permissionMode: 'ask', thinking: false });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body['thinking'], false, 'an effort change keeps the stored switch');
+    f.controller.newSession();
+    await f.controller.setSelection({ provider: 'claude' });
+    await f.controller.setSelection({ thinking: false });
+    assert.equal(f.controller.getModel().selection.thinking, false);
+    await f.controller.setSelection({ provider: 'codex-app' });
+    assert.equal('thinking' in f.controller.getModel().selection, false);
 });

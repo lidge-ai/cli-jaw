@@ -85,7 +85,8 @@ export class CodeSessionManager {
      * a reason the user can neither see nor act on. A value the caller is
      * newly choosing is always checked against what the runtime serves today.
      */
-    private validate(input: CodeCreateSessionRequest, fixed?: CodeCapabilities,
+    private validate(input: Pick<CodeCreateSessionRequest, 'provider' | 'model' | 'effort' | 'permissionMode'>
+        & { thinking?: boolean | null }, fixed?: CodeCapabilities,
         accepted?: Pick<CodeCreateSessionRequest, 'model' | 'effort' | 'permissionMode'>): CodeProviderCatalog {
         const catalog = this.catalog(input.provider);
         if (!catalog.available) throw new CodeServiceError('provider_unavailable', 'Code provider is unavailable');
@@ -94,6 +95,9 @@ export class CodeSessionManager {
             throw new CodeStoreError('unsupported_model', 'Code model is unsupported', 400);
         }
         const keptEffort = keptModel && accepted !== undefined && accepted.effort === input.effort;
+        if (input.provider !== 'claude' && typeof input.thinking === 'boolean') {
+            throw new CodeStoreError('unsupported_capability', 'Thinking is only switchable for Claude sessions', 400);
+        }
         if (input.provider === 'claude') {
             // Claude modes switch live, so a newly chosen mode answers to the live catalog
             // alone; the mode a session already runs with may also stand on its snapshot.
@@ -311,39 +315,58 @@ export class CodeSessionManager {
         const record = this.record(id);
         const session = this.sessions.get(id);
         session?.assertHealthy();
-        const policy = input.model !== undefined || input.effort !== undefined || input.permissionMode !== undefined;
-        const policyChanged = (input.model !== undefined && input.model !== record.model)
-            || (input.effort !== undefined && input.effort !== record.effort)
-            || (input.permissionMode !== undefined && input.permissionMode !== record.permissionMode);
+        if (session?.reconfiguring) throw new CodeStoreError('session_busy', 'Code session settings are already changing', 409);
+        const policy = input.model !== undefined || input.effort !== undefined || input.permissionMode !== undefined
+            || input.thinking !== undefined;
+        const modelChanged = input.model !== undefined && input.model !== record.model;
+        const effortChanged = input.effort !== undefined && input.effort !== record.effort;
+        const thinkingChanged = input.thinking !== undefined && input.thinking !== record.thinking;
+        const permissionChanged = input.permissionMode !== undefined && input.permissionMode !== record.permissionMode;
+        const policyChanged = modelChanged || effortChanged || thinkingChanged || permissionChanged;
         if (policy) {
             this.validate({ ...record, ...input }, record.capabilities, record);
             if (policyChanged && record.nativeStarted && (!record.nativeCursor || !record.capabilities.resume)) {
                 throw new CodeStoreError('resume_unavailable', 'Code policy change requires resumable native history', 409);
             }
         }
-        // A Claude permission-only change switches the resident query instead of restarting it.
-        const permissionOnly = record.provider === 'claude' && input.permissionMode !== undefined
-            && input.permissionMode !== record.permissionMode
-            && (input.model === undefined || input.model === record.model)
-            && (input.effort === undefined || input.effort === record.effort) && input.archived === undefined;
-        let switched = false;
-        if (permissionOnly && session) {
-            if (session.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing permissions', 409);
-            switched = await session.applyPermissionMode(input.permissionMode!) === 'applied';
+        // Claude switches the permission mode alone, or model and effort together, on the
+        // resident query. Thinking is fixed at open, so a thinking or mixed change, other
+        // providers and archiving retire the runtime and the next turn reopens.
+        const live = record.provider === 'claude' && input.archived === undefined && !thinkingChanged;
+        const permissionOnly = live && permissionChanged && !modelChanged && !effortChanged;
+        const tupleOnly = live && (modelChanged || effortChanged) && !permissionChanged;
+        if (session && !session.closing && (permissionOnly || tupleOnly)) {
+            return session.exclusive(() => this.patchLive(record, session, input, permissionOnly));
         }
+        const result = this.storage(() => this.options.store.patchSession(id, input));
+        return this.patched(id, session, result, policyChanged || input.archived === true);
+    }
+
+    /** Runs inside the session's exclusive section, from the SDK switch through any rollback. */
+    private async patchLive(record: CodeSessionRecord, session: CodeSession, input: CodePatchSessionRequest,
+        permissionOnly: boolean): Promise<CodeSessionInfo> {
+        const apply = (target: Pick<CodeSessionRecord, 'model' | 'effort' | 'permissionMode'>) => permissionOnly
+            ? session.applyPermissionMode(target.permissionMode) : session.reconfigure({ model: target.model, effort: target.effort });
+        const outcome = await apply({ model: input.model ?? record.model,
+            effort: input.effort !== undefined ? input.effort : record.effort, permissionMode: input.permissionMode ?? record.permissionMode });
         let result: ReturnType<CodeStore['patchSession']>;
-        try { result = this.storage(() => this.options.store.patchSession(id, input)); }
+        try { result = this.storage(() => this.options.store.patchSession(record.sessionId, input)); }
         catch (error) {
-            if (switched && session) {
-                // Put the runtime back where the stored row still is; if that fails, retire it.
-                try { await session.applyPermissionMode(record.permissionMode); }
+            // Put the runtime back where the stored row still is; if that fails, retire it.
+            if (outcome === 'applied') {
+                try { await apply(record); }
                 catch { await session.dispose(); }
             }
             throw error;
         }
+        // A live handle that cannot switch in place is retired like any other policy change.
+        return this.patched(record.sessionId, session, result, outcome === 'unsupported');
+    }
+
+    private async patched(id: string, session: CodeSession | undefined, result: ReturnType<CodeStore['patchSession']>,
+        retire: boolean): Promise<CodeSessionInfo> {
         // Invalidate residency before exposing the new metadata to subscribers.
-        const closing = session && ((policyChanged && !permissionOnly) || input.archived === true)
-            ? session.dispose() : null;
+        const closing = session && retire ? session.dispose() : null;
         this.publish(result.events);
         if (closing) await closing;
         return { ...result.session, cleanupPending: this.cleanupReadout(id, session) };

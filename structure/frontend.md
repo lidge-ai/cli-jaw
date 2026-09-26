@@ -603,8 +603,8 @@ submitted value and preserved controls, including ABA and replaced DOM owners.
 ## Native Code workbench
 
 Manager Code uses `/api/code` with isolated Codex, Claude, Cursor and Grok
-sessions. Runtime and workspace are fixed at creation; idle session model, effort
-and approval policy changes use optimistic revision checks. New-session and
+sessions. Runtime and workspace are fixed at creation; idle session model, effort,
+Claude thinking and approval policy changes use optimistic revision checks. New-session and
 per-session prompt drafts survive selection changes and page reloads in the same
 browser tab. A bounded, versioned sessionStorage record keeps text, choices and
 request uncertainty; it stores no transcript, native cursor or permission answer.
@@ -612,7 +612,7 @@ Uncertain creation/send recovery requires explicit action and never auto-submits
 provider capability, and opening the catalog never launches a process.
 
 The composer dock groups its controls by how often each is touched:
-`[runtime glyph] [permission] ····· [model] [effort]` on one row, with dictation
+`[runtime glyph] [permission] ····· [model] [effort] [thinking (Claude only)]` on one row, with dictation
 and send trailing the input. Runtime is icon-only and carries its name on the
 button (`aria-label="Runtime: Codex"` plus a title) while the brand SVG stays
 `aria-hidden`; the marks come from `public/assets/providers`, inlined in
@@ -714,7 +714,8 @@ first and then sends, as t3code continues a thread on the next message; the Resu
 action remains for attaching without sending. The Claude permission menu lists the live catalog's six modes (Ask first, Accept
 edits, Plan, Auto review, Don't ask, Auto (YOLO)) rather than the session snapshot; the
 standing warning stays on Auto (YOLO). Claude approval cards may offer "Allow for this
-session".
+session". Claude sessions and drafts add a Thinking menu (Thinking on / Thinking off) after
+Effort; it is hidden for other runtimes, and a draft that leaves Claude drops the switch.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs

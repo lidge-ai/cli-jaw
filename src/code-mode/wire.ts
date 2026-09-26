@@ -45,6 +45,8 @@ export interface CodeSessionInfo {
     lastTurnCompletedAt: number | null;
     /** When the Manager last opened this session; null if it never has (never counts as unread). */
     lastVisitedAt: number | null;
+    /** Claude only: adaptive summarized thinking on/off. Null for other providers. */
+    thinking: boolean | null;
     /** Current index/snapshot attention, absent when not hydrated. */
     pendingPermissionCount?: number;
     /**
@@ -197,6 +199,8 @@ export interface CodeCreateSessionRequest {
     model: string;
     effort: string | null;
     permissionMode: CodePermissionMode;
+    /** Claude only; omitted means on. */
+    thinking?: boolean;
 }
 
 export interface CodePatchSessionRequest {
@@ -205,6 +209,8 @@ export interface CodePatchSessionRequest {
     model?: string;
     effort?: string | null;
     permissionMode?: CodePermissionMode;
+    /** Claude only. */
+    thinking?: boolean;
     archived?: boolean;
 }
 

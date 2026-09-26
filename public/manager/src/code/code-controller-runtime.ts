@@ -595,7 +595,8 @@ export class CodeController {
             }
             await this.patch(id, { model: patch.model ?? session.model,
                 effort: patch.effort === undefined ? session.effort : patch.effort,
-                permissionMode: patch.permissionMode ?? session.permissionMode });
+                permissionMode: patch.permissionMode ?? session.permissionMode,
+                ...(session.provider === 'claude' ? { thinking: patch.thinking ?? session.thinking ?? true } : {}) });
             return;
         }
         if (id) return;

@@ -23,7 +23,13 @@ import { ClaudeSdkOwners, claudeToolIds } from './claude-sdk-owners.js';
 
 export interface ClaudeTurnContext extends RuntimeEventContext { isCurrent(): boolean }
 export type { ClaudeResultMetadata } from './claude-sdk-metadata.js';
-export type ClaudeQuery = AsyncIterable<SDKMessage> & { close(): void; setPermissionMode?(mode: PermissionMode): Promise<void> };
+export type ClaudeQuery = AsyncIterable<SDKMessage> & {
+    close(): void;
+    setPermissionMode?(mode: PermissionMode): Promise<void>;
+    setModel?(model?: string): Promise<void>;
+    applyFlagSettings?(settings: { effortLevel?: NonNullable<Options['effort']> | null }): Promise<void>;
+};
+export type ClaudeLiveTuple = { model: string; effort: Options['effort'] | null };
 export interface ClaudeSessionOptions {
     prepared: PreparedClaudeOptions;
     getTurnContext(): ClaudeTurnContext;
@@ -127,6 +133,34 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     get lastError(): string | null { return this.failureCode; }
     /** The specific reason the last turn failed (terminal_reason, subtype, first error), if it did. */
     get lastTurnFailureText(): string | null { return this.turnFailureText; }
+    /**
+     * Change model and effort on the idle resident query (Code sessions), sending only what
+     * differs. If the effort step fails after the model moved, the previous model and effort
+     * are put back; if that also fails the process is retired before the error is reported.
+     * Thinking is fixed by the open's explicit `thinking` option, so it is not switched here.
+     */
+    async reconfigure(next: ClaudeLiveTuple, previous: ClaudeLiveTuple): Promise<void> {
+        const query = this.query;
+        if (!this.idle || !query?.setModel || !query.applyFlagSettings) throw new Error('claude_query_control_unavailable');
+        const setModel = query.setModel.bind(query), applyFlags = query.applyFlagSettings.bind(query);
+        const model = (tuple: ClaudeLiveTuple) => setModel(tuple.model && tuple.model !== 'default' ? tuple.model : undefined);
+        // Match the open: no effort and medium leave the provider's configured effort intact.
+        const effort = (tuple: ClaudeLiveTuple) => applyFlags({
+            effortLevel: tuple.effort == null || tuple.effort === 'medium' ? null : tuple.effort });
+        let modelApplied = false;
+        try {
+            if (next.model !== previous.model) { await model(next); modelApplied = true; }
+            if (next.effort !== previous.effort) await effort(next);
+        } catch (error) {
+            if (!modelApplied) throw error;
+            try { await model(previous); await effort(previous); }
+            catch (rollbackError) {
+                const closeError = await this.close().then(() => null, (e: unknown) => e);
+                throw new AggregateError([error, rollbackError, ...(closeError ? [closeError] : [])], 'claude_reconfigure_inconsistent');
+            }
+            throw error;
+        }
+    }
     /** Switch the resident query's permission mode without restarting it (Code sessions). */
     async setPermissionMode(mode: PermissionMode): Promise<void> {
         const query = this.query;

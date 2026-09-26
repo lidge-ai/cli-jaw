@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClaudeCodeProvider } from '../../src/code-mode/providers/claude.ts';
+import { CodeStoreError } from '../../src/code-mode/store.ts';
 
-function harness() {
+function harness(extra: Record<string, unknown> = {}) {
     let captured: Record<string, any> | undefined;
     const runtime = {
         nativeSessionId: 'native-1', alive: true, idle: true, activeProcessCount: 0,
         lastError: null as string | null, lastTurnFailureText: 'Claude turn failed: reached the turn limit' as string | null,
         onExit: () => () => {}, close: async () => {}, send: async () => ({ status: 'done', finalText: 'ok', partialText: '' }),
+        reconfigured: [] as unknown[],
+        async reconfigure(next: unknown, previous: unknown) { this.reconfigured.push({ next, previous }); },
     };
     const create = (async (options: Record<string, any>) => { captured = options; return runtime; }) as never;
     const provider = createClaudeCodeProvider({
@@ -21,7 +24,7 @@ function harness() {
         signal: new AbortController().signal,
         getTurnContext: () => ({ audience: 'internal', sessionId: 'code-1', isCurrent: () => true }),
         onResource: () => {}, onNativeCursor: () => {}, onExit: () => {},
-        onContextUsage: (value: unknown) => usage.push(value),
+        onContextUsage: (value: unknown) => usage.push(value), thinking: null, ...extra,
     } as never);
     return { open, usage, runtime, captured: () => captured! };
 }
@@ -36,4 +39,33 @@ test('Claude Code provider forwards context usage and exposes the last failure r
     h.runtime.lastTurnFailureText = null;
     assert.equal(handle.lastTurnFailureText, null);
     await handle.close();
+});
+
+test('Claude Code provider passes the thinking switch and reconfigures model and effort through the runtime', async () => {
+    const off = harness({ thinking: false });
+    const handle = await off.open();
+    assert.equal(off.captured()['prepared'].thinking, false);
+    await handle.reconfigure!({ model: 'claude-sonnet-5', effort: null }, { model: 'claude-opus-4-8', effort: 'high' });
+    assert.deepEqual(off.runtime.reconfigured, [{ next: { model: 'claude-sonnet-5', effort: null },
+        previous: { model: 'claude-opus-4-8', effort: 'high' } }]);
+    await assert.rejects(async () => handle.reconfigure!({ model: 'x', effort: 'ultra' },
+        { model: 'claude-opus-4-8', effort: null }), /code_provider_effort_unsupported/);
+    await handle.close();
+    const unset = harness();
+    await (await unset.open()).close();
+    assert.equal('thinking' in unset.captured()['prepared'], false, 'null leaves the CLI default');
+});
+
+test('Claude Code provider refuses a reconfigure while the runtime is not idle, before any SDK call', async () => {
+    const h = harness();
+    const handle = await h.open();
+    h.runtime.idle = false;
+    await assert.rejects(handle.reconfigure!({ model: 'claude-sonnet-5', effort: null }, { model: 'claude-opus-4-8', effort: null }),
+        (error: unknown) => error instanceof CodeStoreError && error.code === 'session_busy' && error.statusCode === 409);
+    assert.deepEqual(h.runtime.reconfigured, []);
+    h.runtime.idle = true;
+    await handle.close();
+    await assert.rejects(handle.reconfigure!({ model: 'claude-sonnet-5', effort: null }, { model: 'claude-opus-4-8', effort: null }),
+        (error: unknown) => error instanceof CodeStoreError && error.code === 'session_busy');
+    assert.deepEqual(h.runtime.reconfigured, [], 'a closing runtime is not idle either');
 });

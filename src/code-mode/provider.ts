@@ -21,6 +21,8 @@ export interface CodeOpenOptions {
     model: string;
     effort: string | null;
     permissionMode: CodePermissionMode;
+    /** Claude only: adaptive thinking on/off; null for providers without the switch. */
+    thinking: boolean | null;
     nativeCursor: string | null;
     signal: AbortSignal;
     registry: RuntimeRequests;
@@ -40,6 +42,9 @@ export interface CodeOpenOptions {
     onExit(error: Error | null): void;
 }
 
+/** What a resident runtime may change in place; thinking is fixed at open. */
+export type CodeLiveSettings = { model: string; effort: string | null };
+
 export interface CodeProviderSession extends CodeRuntimeResource {
     readonly nativeSessionId: string;
     readonly alive: boolean;
@@ -50,6 +55,8 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     readonly lastTurnFailureText?: string | null;
     /** Optional: switch the resident runtime's permission mode without restarting it (Claude). */
     setPermissionMode?(mode: CodePermissionMode): Promise<void>;
+    /** Optional: change model and effort on the idle resident runtime (Claude); busy answers `session_busy`. */
+    reconfigure?(next: CodeLiveSettings, previous: CodeLiveSettings): Promise<void>;
     cancel(): Promise<void>;
     close(): Promise<void>;
 }

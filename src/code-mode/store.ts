@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS code_sessions (
     native_policy_json TEXT, capabilities_json TEXT NOT NULL,
     epoch INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0,
     revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
-    last_turn_completed_at INTEGER, last_visited_at INTEGER
+    last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
@@ -125,7 +125,7 @@ type SessionRow = {
     error_json: string | null; native_cursor: string | null; native_started: number;
     native_policy_json: string | null; capabilities_json: string;
     epoch: number; sequence: number; revision: number; created_at: number; last_used_at: number;
-    last_turn_completed_at: number | null; last_visited_at: number | null;
+    last_turn_completed_at: number | null; last_visited_at: number | null; thinking: number | null;
 };
 type TurnRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
@@ -134,7 +134,7 @@ type TurnRow = {
 const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permission_mode,
     status, active_turn_id, archived_at, error_json, native_cursor, native_started,
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
-    last_turn_completed_at, last_visited_at`;
+    last_turn_completed_at, last_visited_at, thinking`;
 const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence';
 const isBusy = (status: CodeSessionStatus): boolean =>
     status === 'starting' || status === 'streaming' || status === 'stopping';
@@ -224,7 +224,7 @@ export function toCodeSessionInfo(record: CodeSessionRecord): CodeSessionInfo {
         capabilities: mapCapabilities(record.capabilities), epoch: record.epoch,
         sequence: record.sequence, revision: record.revision, createdAt: record.createdAt,
         lastUsedAt: record.lastUsedAt, lastTurnCompletedAt: record.lastTurnCompletedAt,
-        lastVisitedAt: record.lastVisitedAt,
+        lastVisitedAt: record.lastVisitedAt, thinking: record.thinking,
     };
 }
 
@@ -240,6 +240,8 @@ function rowToRecord(row: SessionRow): CodeSessionRecord {
         epoch: row.epoch, sequence: row.sequence, revision: row.revision,
         createdAt: row.created_at, lastUsedAt: row.last_used_at,
         lastTurnCompletedAt: row.last_turn_completed_at, lastVisitedAt: row.last_visited_at,
+        // Claude thinking defaults on, including rows written before the column existed.
+        thinking: row.provider === 'claude' ? row.thinking !== 0 : null,
     };
 }
 
@@ -286,14 +288,15 @@ export class CodeStore {
         })();
     }
 
-    /** Adds the sidebar activity clocks to databases created before them; both stay NULL. */
+    /** Adds the sidebar activity clocks and the thinking switch to databases created before them; all stay NULL. */
     private ensureActivityColumns(): void {
         const names = new Set((this.database.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[])
             .map(column => column.name));
-        if (names.has('last_turn_completed_at') && names.has('last_visited_at')) return;
+        if (names.has('last_turn_completed_at') && names.has('last_visited_at') && names.has('thinking')) return;
         this.database.transaction(() => {
             if (!names.has('last_turn_completed_at')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN last_turn_completed_at INTEGER');
             if (!names.has('last_visited_at')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN last_visited_at INTEGER');
+            if (!names.has('thinking')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN thinking INTEGER');
         }).immediate();
     }
 
@@ -520,13 +523,13 @@ export class CodeStore {
         this.database.prepare(`UPDATE code_sessions SET title = ?, model = ?, effort = ?, permission_mode = ?,
             status = ?, active_turn_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
             native_policy_json = ?, epoch = ?, sequence = ?, revision = ?, last_used_at = ?,
-            last_turn_completed_at = ?, last_visited_at = ? WHERE session_id = ?`)
+            last_turn_completed_at = ?, last_visited_at = ?, thinking = ? WHERE session_id = ?`)
             .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId,
                 record.archivedAt, record.error === null ? null : JSON.stringify(mapError(record.error)),
                 record.nativeCursor, Number(record.nativeStarted),
                 record.nativePolicy === null ? null : JSON.stringify(record.nativePolicy), record.epoch,
                 record.sequence, record.revision, record.lastUsedAt, record.lastTurnCompletedAt, record.lastVisitedAt,
-                record.sessionId);
+                record.thinking === null ? null : Number(record.thinking), record.sessionId);
     }
 
     private persistEvent(record: CodeSessionRecord, event: CodeWireEvent, mode: EventBudgetMode,
@@ -596,9 +599,10 @@ export class CodeStore {
             const sessionId = input.sessionId ?? this.newId();
             this.database.prepare(`INSERT INTO code_sessions
                 (session_id, provider, cwd, title, model, effort, permission_mode, status,
-                 capabilities_json, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)`)
+                 capabilities_json, created_at, last_used_at, thinking) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?)`)
                 .run(sessionId, input.provider, input.cwd, input.title ?? null, input.model, input.effort,
-                    input.permissionMode, JSON.stringify(mapCapabilities(input.capabilities)), now, now);
+                    input.permissionMode, JSON.stringify(mapCapabilities(input.capabilities)), now, now,
+                    input.thinking === undefined ? null : Number(input.thinking));
             const record = this.requireRecord(sessionId);
             const events = [this.event(record)];
             return { session: toCodeSessionInfo(record), events };
@@ -814,7 +818,8 @@ export class CodeStore {
         return this.write(() => {
             const record = this.requireRecord(sessionId);
             if (record.revision !== patch.expectedRevision) throw new CodeStoreError('revision_conflict', 'Code metadata changed', 409);
-            const policyChange = patch.model !== undefined || patch.effort !== undefined || patch.permissionMode !== undefined;
+            const policyChange = patch.model !== undefined || patch.effort !== undefined || patch.permissionMode !== undefined
+                || patch.thinking !== undefined;
             if (isBusy(record.status) && (policyChange || patch.archived !== undefined)) {
                 throw new CodeStoreError('session_busy', 'Active Code sessions cannot change policy or archive', 409);
             }
@@ -822,6 +827,7 @@ export class CodeStore {
             if (patch.model !== undefined) record.model = patch.model;
             if (patch.effort !== undefined) record.effort = patch.effort;
             if (patch.permissionMode !== undefined) record.permissionMode = patch.permissionMode;
+            if (patch.thinking !== undefined) record.thinking = patch.thinking;
             if (patch.archived !== undefined) record.archivedAt = patch.archived ? record.archivedAt ?? this.now() : null;
             // Invalidates idle runtime callbacks after reconfiguration or archive.
             if (policyChange || patch.archived !== undefined) record.epoch += 1;
