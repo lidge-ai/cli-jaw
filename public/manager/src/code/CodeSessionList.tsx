@@ -57,7 +57,9 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
     const pinned = s.pinnedAt !== null;
     const count = active && c.synced ? c.permissions.length : s.pendingPermissionCount;
     const attention = codeSessionAttention(count);
-    const unread = !active && codeSessionUnread(s);
+    // An archived row never lights the completion-based unread rule, but an
+    // explicit mark still counts so it can be toggled back off.
+    const unread = !active && (s.markedUnread || codeSessionUnread(s));
     const working = c.workingIds?.has(s.sessionId) ?? false;
     const waiting = working && s.status === 'idle';
     const name = s.title || 'Untitled session';
@@ -101,9 +103,9 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) menu.openAt(event);
     }
     return <li className="code-session-row" onContextMenu={menu.openAt}>
-        <div className="code-session-item-wrap">
+        <div className="code-session-item-wrap" onKeyDown={openMenuFromKey}>
             <button ref={selectButton} type="button" className={`code-session-item${active ? ' active' : ''}`}
-                aria-current={active ? 'true' : undefined} onKeyDown={openMenuFromKey}
+                aria-current={active ? 'true' : undefined}
                 onClick={() => void action(() => c.selectSession(s.sessionId))}>
                 <span className="code-session-cwd">
                     {unread && <span className="code-session-unread-dot" role="img" aria-label="Unread" />}
