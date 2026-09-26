@@ -46,9 +46,10 @@ export function codeRollbackRows(items: readonly CodeItem[], sinceSequence: numb
         || item.kind === 'turn_cancelled').map(item => item.turnId));
     const turns = items.filter(item => item.kind === 'user_message' && item.turnId !== null
         && item.itemId === `${item.turnId}:user` && item.firstSequence !== undefined);
+    // One row per turn, so a later turn exists exactly when the row is not the newest one.
+    const newest = Math.max(...turns.map(row => row.firstSequence!));
     for (const row of turns) {
-        if (row.firstSequence! < sinceSequence || !settled.has(row.turnId)) continue;
-        if (turns.some(later => later.turnId !== row.turnId && later.firstSequence! > row.firstSequence!)) rows.add(row.itemId);
+        if (row.firstSequence! >= sinceSequence && row.firstSequence! < newest && settled.has(row.turnId)) rows.add(row.itemId);
     }
     return rows;
 }
