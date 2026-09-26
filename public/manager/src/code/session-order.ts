@@ -10,6 +10,8 @@ import type { CodeSessionInfo } from '../../../../src/code-mode/wire';
  * actually changes about it, so the list moves when a session is created or
  * archived and not merely because it is busy. Which session is running is
  * carried by the row's own status, which is where a changing fact belongs.
+ * The one exception is the Activity view the reader switches to on purpose,
+ * which is ordered by last activity with unread sessions on top.
  */
 export type CodeSessionSection = 'active' | 'archived';
 
@@ -67,3 +69,79 @@ export function codeSessionAttentionLabel(attention: CodeSessionAttention): stri
     return `${attention.count} pending approval${attention.count === 1 ? '' : 's'}`;
 }
 
+
+/**
+ * t3code's hasUnseenCompletion: a finished turn the reader has not opened since.
+ * A session never opened, or one archived, is never unread — an update must not
+ * light up every historical row.
+ */
+export function codeSessionUnread(session: CodeSessionInfo): boolean {
+    if (session.archivedAt !== null) return false;
+    const completed = session.lastTurnCompletedAt;
+    const visited = session.lastVisitedAt;
+    if (completed === null || visited === null) return false;
+    return completed > visited;
+}
+
+export type CodeWorkspaceGroup = { cwd: string; sessions: CodeSessionInfo[] };
+
+/**
+ * Projects view. Rows keep creation order inside their workspace, and a workspace
+ * is placed by its newest session: creating a session brings its workspace up,
+ * a busy session moves nothing.
+ */
+export function groupCodeSessionsByWorkspace(sessions: readonly CodeSessionInfo[]): CodeWorkspaceGroup[] {
+    const map = new Map<string, CodeSessionInfo[]>();
+    for (const session of [...sessions].sort(compareCodeSessions)) {
+        const rows = map.get(session.cwd) ?? [];
+        rows.push(session);
+        map.set(session.cwd, rows);
+    }
+    return [...map].map(([cwd, rows]) => ({ cwd, sessions: rows }));
+}
+
+export type CodeActivityBucket = 'priority' | 'today' | 'yesterday' | 'earlier';
+export type CodeActivityGroup = { bucket: CodeActivityBucket; sessions: CodeSessionInfo[] };
+
+const ACTIVITY_BUCKET_ORDER: CodeActivityBucket[] = ['priority', 'today', 'yesterday', 'earlier'];
+
+export const CODE_ACTIVITY_BUCKET_LABELS: Record<CodeActivityBucket, string> = {
+    priority: 'Priority', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier',
+};
+
+function startOfLocalDay(ms: number): number {
+    const day = new Date(ms);
+    day.setHours(0, 0, 0, 0);
+    return day.getTime();
+}
+
+/**
+ * Activity view, which the reader opts into: unread sessions first (newest
+ * completion first), then the rest by last activity in local-day buckets.
+ */
+export function groupCodeSessionsByActivity(sessions: readonly CodeSessionInfo[], now = Date.now()): CodeActivityGroup[] {
+    const today = startOfLocalDay(now);
+    const yesterday = startOfLocalDay(today - 1);
+    const byBucket = new Map<CodeActivityBucket, CodeSessionInfo[]>();
+    for (const session of sessions) {
+        const bucket: CodeActivityBucket = codeSessionUnread(session) ? 'priority'
+            : session.lastUsedAt >= today ? 'today'
+                : session.lastUsedAt >= yesterday ? 'yesterday' : 'earlier';
+        const rows = byBucket.get(bucket) ?? [];
+        rows.push(session);
+        byBucket.set(bucket, rows);
+    }
+    const key = (bucket: CodeActivityBucket, session: CodeSessionInfo) =>
+        bucket === 'priority' ? (session.lastTurnCompletedAt ?? session.lastUsedAt) : session.lastUsedAt;
+    return ACTIVITY_BUCKET_ORDER.filter(bucket => byBucket.has(bucket)).map(bucket => ({
+        bucket,
+        sessions: byBucket.get(bucket)!.sort((left, right) =>
+            key(bucket, right) - key(bucket, left) || left.sessionId.localeCompare(right.sessionId)),
+    }));
+}
+
+/** Last path segment for labels; callers keep the full path in a title attribute. */
+export function codeWorkspaceName(cwd: string): string {
+    const trimmed = cwd.replace(/[\\/]+$/, '');
+    return trimmed.split(/[\\/]/).pop() || cwd;
+}
