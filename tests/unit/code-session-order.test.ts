@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CodeSessionInfo } from '../../src/code-mode/wire.ts';
-import { codeSessionAttention, codeSessionAttentionLabel, codeSessionSection,
-    compareCodeSessions, groupCodeSessions } from '../../public/manager/src/code/session-order.ts';
+import { codeSessionAttention, codeSessionAttentionLabel, codeSessionSection, codeSessionUnread, codeWorkspaceName,
+    compareCodeSessions, groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace } from '../../public/manager/src/code/session-order.ts';
 
 function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return {
@@ -60,3 +60,44 @@ test('an unhydrated approval count is unknown, not zero', () => {
     assert.equal(codeSessionAttentionLabel({ kind: 'approvals', count: 3 }), '3 pending approvals');
 });
 
+test('unread means a finished turn after the last visit; never-visited and archived are not unread', () => {
+    assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: null, lastVisitedAt: null })), false);
+    assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: null })), false);
+    assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 5 })), true);
+    assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 10 })), false);
+    assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 5, archivedAt: 20 })), false);
+});
+
+test('projects view groups by workspace, newest first inside, placed by its newest session, ignoring activity', () => {
+    const rows = [
+        session({ sessionId: 'a1', cwd: '/a', createdAt: 100 }),
+        session({ sessionId: 'b1', cwd: '/b', createdAt: 300, status: 'streaming', lastUsedAt: 9999 }),
+        session({ sessionId: 'a2', cwd: '/a', createdAt: 200 }),
+    ];
+    assert.deepEqual(groupCodeSessionsByWorkspace(rows).map(g => [g.cwd, g.sessions.map(s => s.sessionId)]),
+        [['/b', ['b1']], ['/a', ['a2', 'a1']]]);
+});
+
+test('activity view: Priority by completion, then Today / Yesterday / Earlier by last use at local midnight', () => {
+    const now = new Date(2026, 8, 26, 10, 0, 0).getTime();
+    const today = new Date(2026, 8, 26, 0, 0, 0).getTime();
+    const yesterday = new Date(2026, 8, 25, 0, 0, 0).getTime();
+    const rows = [
+        session({ sessionId: 'p-old', lastUsedAt: today + 5, lastTurnCompletedAt: 50, lastVisitedAt: 10 }),
+        session({ sessionId: 'p-new', lastUsedAt: 1, lastTurnCompletedAt: 90, lastVisitedAt: 10 }),
+        session({ sessionId: 't', lastUsedAt: today }),
+        session({ sessionId: 'y', lastUsedAt: yesterday }),
+        session({ sessionId: 'e', lastUsedAt: yesterday - 1 }),
+    ];
+    assert.deepEqual(groupCodeSessionsByActivity(rows, now).map(g => [g.bucket, g.sessions.map(s => s.sessionId)]),
+        [['priority', ['p-new', 'p-old']], ['today', ['t']], ['yesterday', ['y']], ['earlier', ['e']]]);
+    assert.deepEqual(groupCodeSessionsByActivity([], now), [], 'empty buckets are omitted');
+    assert.deepEqual(groupCodeSessionsByActivity(rows, now, 'p-new').map(g => [g.bucket, g.sessions.map(s => s.sessionId)])[0],
+        ['priority', ['p-old']], 'the open session leaves Priority before its receipt lands');
+});
+
+test('workspace names are the last path segment', () => {
+    assert.equal(codeWorkspaceName('/work/alpha/'), 'alpha');
+    assert.equal(codeWorkspaceName('C:\\work\\beta'), 'beta');
+    assert.equal(codeWorkspaceName('/'), '/');
+});

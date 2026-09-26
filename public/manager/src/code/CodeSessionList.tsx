@@ -2,10 +2,35 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { CodeSessionInfo } from '../../../../src/code-mode/wire';
 import type { CodeControllerModel } from './code-controller-types';
 import { CODE_RUNTIME_LABELS, CODE_SESSION_LABELS, codeCanResume, codeSessionBusy } from './code-types';
-import { codeSessionAttention, codeSessionAttentionLabel, groupCodeSessions } from './session-order';
+import {
+    CODE_ACTIVITY_BUCKET_LABELS, codeSessionAttention, codeSessionAttentionLabel, codeSessionUnread, codeWorkspaceName,
+    groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace,
+} from './session-order';
 import { DEFAULT_MANAGER_SHORTCUT_KEYMAP, formatShortcut } from '../manager-shortcuts';
 
 const NEW_SESSION_SHORTCUT = DEFAULT_MANAGER_SHORTCUT_KEYMAP.newCodeSession;
+
+type CodeSidebarView = 'projects' | 'activity';
+const SIDEBAR_VIEW_KEY = 'jaw.code.sidebarView';
+
+function readSidebarView(): CodeSidebarView {
+    try { return localStorage.getItem(SIDEBAR_VIEW_KEY) === 'activity' ? 'activity' : 'projects'; }
+    catch { return 'projects'; }
+}
+
+function BellGlyph() {
+    return <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+        <path d="M8 2.5a3.5 3.5 0 0 0-3.5 3.5v2.3L3.3 10.6h9.4L11.5 8.3V6A3.5 3.5 0 0 0 8 2.5Z M6.6 12.4a1.5 1.5 0 0 0 2.8 0"
+            fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>;
+}
+
+function SearchGlyph() {
+    return <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+        <circle cx="7" cy="7" r="4.25" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M10.2 10.2 13.5 13.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>;
+}
 
 function PlusGlyph() {
     return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
@@ -13,7 +38,7 @@ function PlusGlyph() {
     </svg>;
 }
 
-function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; controller: CodeControllerModel }) {
+function SessionRow({ session: s, controller: c, view }: { session: CodeSessionInfo; controller: CodeControllerModel; view: CodeSidebarView }) {
     const [renaming, setRenaming] = useState(false);
     const [title, setTitle] = useState(s.title ?? '');
     const [pending, setPending] = useState(false);
@@ -25,6 +50,7 @@ function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; c
     const busy = codeSessionBusy(s);
     const count = active && c.synced ? c.permissions.length : s.pendingPermissionCount;
     const attention = codeSessionAttention(count);
+    const unread = !active && codeSessionUnread(s);
     async function action(run: () => Promise<void>, after?: () => void) {
         if (guard.current) return;
         guard.current = true; setPending(true); setError(null);
@@ -36,8 +62,13 @@ function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; c
     return <li className="code-session-row">
         <button ref={selectButton} type="button" className={`code-session-item${active ? ' active' : ''}`}
             aria-current={active ? 'true' : undefined} onClick={() => void action(() => c.selectSession(s.sessionId))}>
-            <span className="code-session-cwd">{s.title || 'Untitled session'}</span>
-            <span className="code-session-meta" title={s.cwd}>{CODE_RUNTIME_LABELS[s.provider]} · {s.cwd}</span>
+            <span className="code-session-cwd">
+                {unread && <span className="code-session-unread-dot" role="img" aria-label="Unread" />}
+                {s.title || 'Untitled session'}
+            </span>
+            {/* Projects view already names the workspace in the group heading. */}
+            <span className="code-session-meta" title={s.cwd}>{view === 'activity'
+                ? `${codeWorkspaceName(s.cwd)} · ${CODE_RUNTIME_LABELS[s.provider]}` : CODE_RUNTIME_LABELS[s.provider]}</span>
             {/* Ready is the common case and stays silent. A status on every row
                 is a status on no row, and it costs the one session that is
                 actually doing something its visibility. */}
@@ -74,26 +105,35 @@ function SessionRow({ session: s, controller: c }: { session: CodeSessionInfo; c
 
 export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSION_SHORTCUT }: { controller: CodeControllerModel; newSessionShortcut?: string | undefined }) {
     const [search, setSearch] = useState('');
+    const [searching, setSearching] = useState(false);
+    const searchInput = useRef<HTMLInputElement>(null);
+    function toggleSearch() {
+        // Closing clears the query so the list is never silently filtered by a hidden box.
+        if (searching) { setSearching(false); setSearch(''); return; }
+        setSearching(true);
+        queueMicrotask(() => searchInput.current?.focus());
+    }
     const draftBadgeId = useId();
-    const [grouped, setGrouped] = useState(false);
+    const [view, setViewState] = useState<CodeSidebarView>(readSidebarView);
+    function setView(next: CodeSidebarView) {
+        setViewState(next);
+        try { localStorage.setItem(SIDEBAR_VIEW_KEY, next); } catch { /* storage unavailable: the choice lasts for this page */ }
+    }
     const [error, setError] = useState<string | null>(null);
     const [paging, setPaging] = useState(false);
     const pagingRef = useRef(false);
     const visible = c.sessions.filter(s => `${s.title ?? ''} ${s.cwd} ${CODE_RUNTIME_LABELS[s.provider]}`.toLowerCase().includes(search.toLowerCase()));
-    // Two orderings, deliberately: by workspace when the reader asks for it,
-    // otherwise by lifecycle. Neither uses last activity, so answering a prompt
-    // in one session does not move it under the reader's cursor -- which is
-    // what the server's own last-used ordering would do.
-    const groups = grouped
-        ? [...visible.reduce((map, s) => {
-            const rows = map.get(s.cwd) ?? []; rows.push(s); map.set(s.cwd, rows); return map;
-        }, new Map<string, CodeSessionInfo[]>())].map(([cwd, sessions]) => ({ title: cwd, key: cwd, cwd, sessions }))
-        : groupCodeSessions(visible).map(group => ({
-            key: group.section,
-            title: group.section === 'archived' ? 'Archived' : '',
-            cwd: null,
-            sessions: group.sessions,
-        }));
+    // Projects (the default) keeps rows in creation order under their workspace, so
+    // answering a prompt never moves a row under the reader's cursor. Activity is the
+    // reader's explicit choice: unread first, then last activity by day.
+    const anyUnread = c.sessions.some(row => row.sessionId !== c.selectedId && codeSessionUnread(row));
+    const live = visible.filter(row => row.archivedAt === null);
+    const archived = visible.filter(row => row.archivedAt !== null);
+    const groups: { key: string; title: string; cwd: string | null; sessions: CodeSessionInfo[] }[] = view === 'activity'
+        ? groupCodeSessionsByActivity(live, Date.now(), c.selectedId).map(group => ({
+            key: group.bucket, title: CODE_ACTIVITY_BUCKET_LABELS[group.bucket], cwd: null, sessions: group.sessions }))
+        : groupCodeSessionsByWorkspace(live).map(group => ({ key: group.cwd, title: group.cwd, cwd: group.cwd, sessions: group.sessions }));
+    if (archived.length) groups.push({ key: 'archived', title: 'Archived', cwd: null, sessions: groupCodeSessions(archived).flatMap(group => group.sessions) });
     // The chord resolves through the manager shortcut system (rebindable in
     // Settings); the runner re-broadcasts it here so Code mode can be absent
     // without the event reaching a dead handler.
@@ -145,27 +185,42 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
             {c.hasUnsentDraft && <span id={draftBadgeId} className="code-session-draft-badge">Draft</span>}
             <kbd className="code-session-new-hint" aria-hidden="true">{formatShortcut(newSessionShortcut)}</kbd>
         </button>
-        <div className="code-session-list-header"><span className="code-session-list-title">Sessions</span></div>
-        <div className="code-session-view-toggle" aria-label="Session view">
-            <button type="button" aria-pressed={c.filter.scope === 'all'} className={`code-session-view-btn${c.filter.scope === 'all' ? ' active' : ''}`}
-                onClick={() => c.setFilter({ ...c.filter, scope: 'all' })}>All</button>
-            <button type="button" aria-pressed={c.filter.scope === 'cwd'} className={`code-session-view-btn${c.filter.scope === 'cwd' ? ' active' : ''}`}
-                onClick={() => c.setFilter({ ...c.filter, scope: 'cwd' })}>This cwd</button>
-            <button type="button" aria-pressed={grouped} className={`code-session-view-btn${grouped ? ' active' : ''}`} onClick={() => setGrouped(!grouped)}>Group</button>
+        <div className="code-session-list-header">
+            <span className="code-session-list-title">{view === 'activity' ? 'Recent activity' : 'Projects'}</span>
+            <span className="code-session-header-actions">
+            <button type="button" className={`code-session-header-btn code-session-search-btn${searching ? ' active' : ''}`}
+                aria-pressed={searching} aria-label="Search sessions" title="Search sessions" onClick={toggleSearch}>
+                <SearchGlyph />
+            </button>
+            <button type="button" className={`code-session-header-btn code-session-bell${view === 'activity' ? ' active' : ''}`}
+                aria-pressed={view === 'activity'}
+                aria-label={anyUnread ? 'Recent activity (unread sessions)' : 'Recent activity'}
+                title={view === 'activity' ? 'Back to projects' : 'Recent activity'}
+                onClick={() => setView(view === 'activity' ? 'projects' : 'activity')}>
+                <BellGlyph />
+                {anyUnread && <span className="code-session-unread-dot" aria-hidden="true" />}
+            </button>
+            </span>
         </div>
-        <label className="code-session-archive-filter"><input type="checkbox" checked={c.filter.archived}
-            onChange={event => c.setFilter({ ...c.filter, archived: event.target.checked })} />Archived</label>
-        <input className="code-session-search" type="search" aria-label="Search loaded sessions" placeholder="Search loaded sessions…"
-            value={search} onChange={event => setSearch(event.target.value)} />
+        {/* Projects already scopes by workspace, so the All / This cwd toggle is gone.
+            Search and the archived switch live behind the search icon. */}
+        {searching && <div className="code-session-search-row">
+            <input ref={searchInput} className="code-session-search" type="search" aria-label="Search loaded sessions"
+                placeholder="Search sessions…" value={search} onChange={event => setSearch(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); toggleSearch(); } }} />
+            <button type="button" className={`code-session-archived-btn${c.filter.archived ? ' active' : ''}`}
+                aria-pressed={c.filter.archived} title="Include archived sessions"
+                onClick={() => c.setFilter({ ...c.filter, archived: !c.filter.archived })}>Archived</button>
+        </div>}
         {c.loading && <div className="code-session-list-loading" role="status">Loading sessions…</div>}
         {groups.map(group => <section className="code-session-group" key={group.key}>
-            {group.title && <h3 className="code-session-group-title" title={group.title}>
-                <span>{group.title}</span>
+            {group.title && <h3 className={`code-session-group-title${group.key === 'priority' ? ' code-session-group-priority' : ''}`} title={group.title}>
+                <span>{group.cwd !== null ? codeWorkspaceName(group.cwd) : group.title}</span>
                 {group.cwd !== null && <button type="button" className="code-session-group-new"
                     aria-label={`New session in ${group.cwd}`} title={`New session in ${group.cwd}`}
                     onClick={() => void newInWorkspace(group.cwd!)}>+</button>}
             </h3>}
-            <ul className="code-session-list-items">{group.sessions.map(s => <SessionRow key={s.sessionId} session={s} controller={c} />)}</ul>
+            <ul className="code-session-list-items">{group.sessions.map(s => <SessionRow key={s.sessionId} session={s} controller={c} view={view} />)}</ul>
         </section>)}
         {!c.loading && !visible.length && <p className="code-session-list-empty">{search ? 'No loaded sessions match. Clear search or load more.' : 'No sessions here. Start a new session above.'}</p>}
         {c.hasMoreSessions && <button type="button" className="code-inline-action" disabled={paging} onClick={() => void loadMore()}>{paging ? 'Loading…' : 'Load more sessions'}</button>}

@@ -1,5 +1,6 @@
 @import './code-workbench.css';
 @import './code-composer.css';
+@import './code-session-sidebar.css';
 
 /* Code mode — uses Manager token system (manager-tokens.css) for dark/light parity */
 /* Boundary (slice 211): monitor panel CSS (goal-status/background-tasks/workers) is
