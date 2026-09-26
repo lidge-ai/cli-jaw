@@ -36,3 +36,28 @@
     display: flex; align-items: center; gap: 6px; padding: 8px 12px 12px;
     color: var(--text-dim); font-size: 12px;
 }
+
+/* Row hover actions: pin + archive replace the status text at the right edge,
+   Codex-style. Opacity (not display) keeps them in the tab order. */
+.code-session-item-wrap { position: relative; }
+.code-session-hover-actions {
+    position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+    display: inline-flex; align-items: center; gap: 2px;
+    opacity: 0; pointer-events: none;
+}
+.code-session-row:hover .code-session-hover-actions,
+.code-session-row:focus-within .code-session-hover-actions { opacity: 1; pointer-events: auto; }
+.code-session-hover-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; min-height: 22px; padding: 0;
+    border: none; border-radius: 5px;
+    background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.code-session-hover-btn:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+.code-session-hover-btn.is-on { color: var(--accent); }
+.code-session-row:hover .code-session-item,
+.code-session-row:focus-within .code-session-item { padding-right: 56px; }
+.code-session-row:hover .code-session-status,
+.code-session-row:focus-within .code-session-status,
+.code-session-row:hover .code-session-attention,
+.code-session-row:focus-within .code-session-attention { visibility: hidden; }

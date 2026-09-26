@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS code_sessions (
     revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
     last_turn_completed_at INTEGER, last_visited_at INTEGER, thinking INTEGER,
     replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0,
-    rollback_since INTEGER
+    rollback_since INTEGER,
+    pinned_at INTEGER, marked_unread INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
@@ -172,6 +173,7 @@ type SessionRow = {
     epoch: number; sequence: number; revision: number; created_at: number; last_used_at: number;
     last_turn_completed_at: number | null; last_visited_at: number | null; thinking: number | null;
     replay_floor_sequence: number; history_generation: number; rollback_since: number | null;
+    pinned_at: number | null; marked_unread: number;
 };
 type TurnRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
@@ -192,7 +194,8 @@ const ROLLBACK_SINCE_SQL = `(SELECT i.first_sequence FROM code_turns t
 const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permission_mode,
     status, active_turn_id, archived_at, error_json, native_cursor, native_started,
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
-    last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation, rollback_since`;
+    last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation, rollback_since,
+    pinned_at, marked_unread`;
 const TURN_COLUMNS = 'turn_id, client_turn_key, prompt_hash, status, accepted_sequence, removed_generation';
 type SteerRow = {
     turn_id: string; client_turn_key: string; prompt_hash: string;
@@ -295,7 +298,8 @@ export function toCodeSessionInfo(record: CodeSessionRecord): CodeSessionInfo {
         capabilities: mapCapabilities(record.capabilities), epoch: record.epoch,
         sequence: record.sequence, revision: record.revision, createdAt: record.createdAt,
         lastUsedAt: record.lastUsedAt, lastTurnCompletedAt: record.lastTurnCompletedAt,
-        lastVisitedAt: record.lastVisitedAt, thinking: record.thinking,
+        lastVisitedAt: record.lastVisitedAt, pinnedAt: record.pinnedAt, markedUnread: record.markedUnread,
+        thinking: record.thinking,
     };
 }
 
@@ -315,6 +319,7 @@ function rowToRecord(row: SessionRow): CodeSessionRecord {
         thinking: row.provider === 'claude' ? row.thinking !== 0 : null,
         replayFloorSequence: row.replay_floor_sequence, historyGeneration: row.history_generation,
         rollbackSince: row.rollback_since,
+        pinnedAt: row.pinned_at, markedUnread: row.marked_unread === 1,
     };
 }
 
@@ -350,6 +355,7 @@ export class CodeStore {
         this.ensureBudgetColumns();
         this.ensureActivityColumns();
         this.ensureRollbackColumns();
+        this.ensureSidebarColumns();
     }
 
     /** Rebuild the list index only when it does not already match the page key. */
@@ -398,6 +404,17 @@ export class CodeStore {
                 this.database.exec('ALTER TABLE code_sessions ADD COLUMN rollback_since INTEGER');
                 this.database.exec(`UPDATE code_sessions SET rollback_since = ${ROLLBACK_SINCE_SQL}`);
             }
+        }).immediate();
+    }
+
+    /** Adds the sidebar pin and mark-unread flags to databases created before them; both read unset. */
+    private ensureSidebarColumns(): void {
+        const names = new Set((this.database.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[])
+            .map(column => column.name));
+        if (names.has('pinned_at') && names.has('marked_unread')) return;
+        this.database.transaction(() => {
+            if (!names.has('pinned_at')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN pinned_at INTEGER');
+            if (!names.has('marked_unread')) this.database.exec('ALTER TABLE code_sessions ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0');
         }).immediate();
     }
 
@@ -643,14 +660,15 @@ export class CodeStore {
             status = ?, active_turn_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
             native_policy_json = ?, epoch = ?, sequence = ?, revision = ?, last_used_at = ?,
             last_turn_completed_at = ?, last_visited_at = ?, thinking = ?, replay_floor_sequence = ?,
-            history_generation = ?, rollback_since = ? WHERE session_id = ?`)
+            history_generation = ?, rollback_since = ?, pinned_at = ?, marked_unread = ? WHERE session_id = ?`)
             .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId,
                 record.archivedAt, record.error === null ? null : JSON.stringify(mapError(record.error)),
                 record.nativeCursor, Number(record.nativeStarted),
                 record.nativePolicy === null ? null : JSON.stringify(record.nativePolicy), record.epoch,
                 record.sequence, record.revision, record.lastUsedAt, record.lastTurnCompletedAt, record.lastVisitedAt,
                 record.thinking === null ? null : Number(record.thinking), record.replayFloorSequence,
-                record.historyGeneration, record.rollbackSince, record.sessionId);
+                record.historyGeneration, record.rollbackSince, record.pinnedAt, Number(record.markedUnread),
+                record.sessionId);
     }
 
     private persistEvent(record: CodeSessionRecord, event: CodeWireEvent, mode: EventBudgetMode,
@@ -940,6 +958,7 @@ export class CodeStore {
         return this.write(() => {
             const record = this.requireRecord(sessionId);
             record.lastVisitedAt = this.now();
+            record.markedUnread = false;
             const events = [this.event(record)];
             return { session: toCodeSessionInfo(record), events };
         });
@@ -1114,6 +1133,13 @@ export class CodeStore {
             if (patch.permissionMode !== undefined) record.permissionMode = patch.permissionMode;
             if (patch.thinking !== undefined) record.thinking = patch.thinking;
             if (patch.archived !== undefined) record.archivedAt = patch.archived ? record.archivedAt ?? this.now() : null;
+            // Sidebar metadata: neither touches a runtime, so both are allowed while busy.
+            if (patch.pinned !== undefined) record.pinnedAt = patch.pinned ? record.pinnedAt ?? this.now() : null;
+            if (patch.unread !== undefined) {
+                record.markedUnread = patch.unread;
+                // Marking read is a read receipt: it also settles a turn-completion unread.
+                if (!patch.unread) record.lastVisitedAt = this.now();
+            }
             // Invalidates idle runtime callbacks after reconfiguration or archive.
             if (policyChange || patch.archived !== undefined) record.epoch += 1;
             record.revision += 1;

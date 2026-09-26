@@ -8,6 +8,7 @@ const session: CodeSessionInfo = {
     status: 'idle', turnId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
     capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: true, efforts: [], permissionModes: ['ask', 'auto'] },
     epoch: 9, sequence: 17, revision: 3, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
+    pinnedAt: null, markedUnread: false,
 };
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });

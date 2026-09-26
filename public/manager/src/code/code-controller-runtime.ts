@@ -400,7 +400,7 @@ export class CodeController {
             newSession: this.newSession, selectSession: this.selectSession, setInput: this.setInput,
             setSelection: this.setSelection, pickWorkspace: this.pickWorkspace, send: this.send,
             retrySameSend: this.retrySameSend, stop: this.stop, resume: this.resume, rollbackSession: this.rollbackSession, rename: this.rename,
-            archive: this.archive, answer: this.answer, refresh: this.refresh, loadMoreSessions: this.loadMoreSessions,
+            archive: this.archive, pin: this.pin, markUnread: this.markUnread, answer: this.answer, refresh: this.refresh, loadMoreSessions: this.loadMoreSessions,
             loadOlderHistory: this.loadOlderHistory, setFilter: this.setFilter, clearError: this.clearError,
         };
     }
@@ -704,6 +704,26 @@ export class CodeController {
     // Other actions report handled failures through the controller model.
     rename = async (id: string, title: string): Promise<void> => { await this.patch(id, { title }, true); };
     archive = async (id: string, archived: boolean): Promise<void> => { await this.patch(id, { archived }, true); };
+    // Sidebar metadata is allowed while a session is busy, so it bypasses the operation gate.
+    private async sidebarPatch(id: string, input: { pinned?: boolean; unread?: boolean }): Promise<void> {
+        const session = this.info(id);
+        if (!session) throw new Error('Refresh this session before changing it.');
+        let failure: Error | null = null;
+        try {
+            this.accept(await this.client.patchSession(id, { ...input, expectedRevision: session.revision }));
+        } catch (error) {
+            if (error instanceof CodeClientError && error.session?.sessionId === id) {
+                // A revision conflict answers with the snapshot session, overlay included.
+                this.observe(error.session);
+                this.accept(error.session);
+            }
+            failure = error instanceof CodeClientError ? error : new Error(message(error));
+        }
+        this.notify(); this.scheduleIndex();
+        if (failure) throw failure;
+    }
+    pin = async (id: string, pinned: boolean): Promise<void> => { await this.sidebarPatch(id, { pinned }); };
+    markUnread = async (id: string, unread: boolean): Promise<void> => { await this.sidebarPatch(id, { unread }); };
     send = async (): Promise<void> => {
         let id = this.book.selectedId;
         let draft = this.draft(id);
