@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent, MouseEvent } from 'react';
+import type { FormEvent, KeyboardEvent, MouseEvent } from 'react';
 import type { DashboardInstance, DashboardLifecycleAction, DashboardProfile } from '../types';
 import { composeInstanceRowTitle, formatWorkingDurationLabel, resolveInstanceRowStatus } from './instance-row-status';
+import { ContextMenu, useContextMenu, type ContextMenuEntry } from './context-menu/ContextMenu';
+import {
+    ArchiveGlyph,
+    CopyGlyph,
+    ExternalGlyph,
+    EyeGlyph,
+    PencilGlyph,
+    PinGlyph,
+    PlayGlyph,
+    RestartGlyph,
+    StopGlyph,
+} from './context-menu/icons';
+import { copyText } from '../clipboard/copy-text';
 
 type InstanceRowProps = {
     instance: DashboardInstance;
@@ -29,6 +42,7 @@ type InstanceRowProps = {
     onPreview: (instance: DashboardInstance) => void;
     onMarkActivitySeen: (port: number) => void;
     onInstanceLabelSave: (port: number, label: string | null) => Promise<void>;
+    onToggleFavorite?: (instance: DashboardInstance) => void;
     onLifecycle: (action: DashboardLifecycleAction, instance: DashboardInstance) => void;
     jumpHint?: string | null;
 };
@@ -44,20 +58,6 @@ const TRANSITION_LABELS: Record<DashboardLifecycleAction, string> = {
 function statusClass(status: DashboardInstance['status']): string {
     return `instance-status status-${status}`;
 }
-
-const StopIcon = () => (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-        <rect x="3" y="3" width="10" height="10" rx="1.5" />
-    </svg>
-);
-
-const OpenIcon = () => (
-    <svg viewBox="0 0 16 16" width="12" height="12" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M6.5 3.5H4a1 1 0 0 0-1 1V12a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V9.5" />
-        <path d="M9.5 2.5h4v4" />
-        <path d="M13.5 2.5 8 8" />
-    </svg>
-);
 
 const ChevronIcon = ({ open }: { open: boolean }) => (
     <svg viewBox="0 0 16 16" width="12" height="12" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -88,6 +88,8 @@ export function InstanceRow(props: InstanceRowProps) {
     const [draft, setDraft] = useState(props.instance.label || props.profile?.label || props.label);
     const [savingLabel, setSavingLabel] = useState(false);
     const [labelError, setLabelError] = useState<string | null>(null);
+    const rowMenu = useContextMenu();
+    const labelInputRef = useRef<HTMLInputElement | null>(null);
 
     function stopAction(event: MouseEvent<HTMLElement>): void {
         event.stopPropagation();
@@ -113,6 +115,116 @@ export function InstanceRow(props: InstanceRowProps) {
     const hideStatusLine = props.density === 'compact' || props.density === 'rail';
     const dotClass = `${statusClass(props.instance.status)}${transitionLabel ? ' is-transitioning' : ''}${props.agentBusy ? ' is-busy' : ''} is-${rowStatus}`;
     const primaryLabel = props.instance.label || props.profile?.label || props.label;
+
+    useEffect(() => {
+        if (editing) labelInputRef.current?.focus();
+    }, [editing]);
+
+    function startEditing(): void {
+        setDraft(props.instance.label || props.profile?.label || props.label);
+        setLabelError(null);
+        setEditing(true);
+    }
+
+    function openMenuFromKey(event: KeyboardEvent<HTMLElement>): void {
+        if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+            rowMenu.openAt(event);
+        }
+    }
+
+    function menuEntries(): ContextMenuEntry[] {
+        const entries: ContextMenuEntry[] = [];
+        if (props.showInlineLabelEditor !== false) {
+            entries.push({
+                id: 'rename',
+                label: 'Rename',
+                icon: <PencilGlyph />,
+                onSelect: startEditing,
+            });
+        }
+        if (props.onToggleFavorite) {
+            entries.push({
+                id: 'pin',
+                label: props.instance.favorite ? 'Unpin' : 'Pin',
+                icon: <PinGlyph />,
+                onSelect: () => props.onToggleFavorite?.(props.instance),
+            });
+        }
+        if (entries.length) entries.push({ kind: 'separator', id: 'sep-edit' });
+        if (props.showSelectedActions !== false) {
+            entries.push({
+                id: 'preview',
+                label: 'Preview',
+                icon: <EyeGlyph />,
+                disabled: !props.instance.ok,
+                onSelect: () => props.onPreview(props.instance),
+            });
+        }
+        entries.push({
+            id: 'open',
+            label: 'Open in new tab',
+            icon: <ExternalGlyph />,
+            disabled: !props.instance.ok,
+            onSelect: () => {
+                props.onMarkActivitySeen(props.instance.port);
+                window.open(props.instance.url, '_blank', 'noreferrer');
+            },
+        });
+        entries.push({ kind: 'separator', id: 'sep-lifecycle' });
+        if (props.showSelectedActions !== false) {
+            const startTitle = lifecycle?.commandPreview?.join(' ');
+            entries.push(
+                {
+                    id: 'start',
+                    label: 'Start',
+                    icon: <PlayGlyph />,
+                    disabled: !lifecycle?.canStart || props.busy,
+                    ...(startTitle ? { title: startTitle } : {}),
+                    onSelect: () => props.onLifecycle('start', props.instance),
+                },
+                {
+                    id: 'restart',
+                    label: 'Restart',
+                    icon: <RestartGlyph />,
+                    disabled: !lifecycle?.canRestart || props.busy,
+                    onSelect: () => props.onLifecycle('restart', props.instance),
+                },
+                {
+                    id: 'perm',
+                    label: 'Register as persistent service',
+                    icon: <ArchiveGlyph />,
+                    disabled: !lifecycle?.canPerm || props.busy,
+                    onSelect: () => props.onLifecycle('perm', props.instance),
+                },
+            );
+        }
+        entries.push({
+            id: 'stop',
+            label: 'Stop',
+            icon: <StopGlyph />,
+            danger: true,
+            disabled: !lifecycle?.canStop || props.busy,
+            onSelect: () => props.onLifecycle('stop', props.instance),
+        });
+        entries.push({ kind: 'separator', id: 'sep-copy' });
+        entries.push(
+            {
+                id: 'copy-url',
+                label: 'Copy URL',
+                icon: <CopyGlyph />,
+                disabled: !props.instance.ok,
+                onSelect: () => void copyText(props.instance.url),
+            },
+            {
+                id: 'copy-port',
+                label: 'Copy port',
+                icon: <CopyGlyph />,
+                onSelect: () => void copyText(String(props.instance.port)),
+            },
+        );
+        return entries;
+    }
+
     async function submitLabel(event: FormEvent<HTMLFormElement>): Promise<void> {
         event.preventDefault();
         event.stopPropagation();
@@ -133,6 +245,8 @@ export function InstanceRow(props: InstanceRowProps) {
             className={`instance-row density-${props.density || 'comfortable'} priority-${props.priority || 'normal'} ${props.selected ? 'is-selected' : ''}${transitionLabel ? ' is-transitioning-row' : ''} is-${rowStatus}`}
             title={composeInstanceRowTitle(props.instance)}
             aria-current={props.selected ? 'true' : undefined}
+            onContextMenu={rowMenu.openAt}
+            onKeyDown={openMenuFromKey}
         >
             <div className="instance-row-body">
                 <button
@@ -201,7 +315,7 @@ export function InstanceRow(props: InstanceRowProps) {
                         title="Stop"
                         aria-label="Stop"
                     >
-                        <StopIcon />
+                        <StopGlyph />
                     </button>
                     <a
                         className={`quick-btn action-open${!props.instance.ok ? ' is-disabled' : ''}`}
@@ -218,14 +332,20 @@ export function InstanceRow(props: InstanceRowProps) {
                             props.onMarkActivitySeen(props.instance.port);
                         }}
                     >
-                        <OpenIcon />
+                        <ExternalGlyph />
                     </a>
                     <span className="port">:{props.instance.port}</span>
                 </div>
             </div>
             {props.showInlineLabelEditor !== false && editing ? (
-                <form className="instance-label-edit-form" onSubmit={(event) => void submitLabel(event)} onClick={stopAction}>
+                <form
+                    className="instance-label-edit-form"
+                    onSubmit={(event) => void submitLabel(event)}
+                    onClick={stopAction}
+                    onContextMenu={event => event.stopPropagation()}
+                >
                     <input
+                        ref={labelInputRef}
                         className="instance-label-input"
                         value={draft}
                         maxLength={120}
@@ -247,79 +367,14 @@ export function InstanceRow(props: InstanceRowProps) {
                     </button>
                     {labelError && <span className="instance-label-error">{labelError}</span>}
                 </form>
-            ) : props.showInlineLabelEditor !== false ? (
-                <button
-                    className="instance-label-edit-button"
-                    type="button"
-                    aria-label={`Rename ${primaryLabel}`}
-                    title="Rename"
-                    onClick={(event) => {
-                        stopAction(event);
-                        setDraft(props.instance.label || props.profile?.label || props.label);
-                        setLabelError(null);
-                        setEditing(true);
-                    }}
-                >
-                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M12 20h9" />
-                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                </button>
             ) : null}
             {props.jumpHint ? <span className="instance-jump-hint" aria-hidden="true">{props.jumpHint}</span> : null}
-            {props.showSelectedActions !== false && (
-            <div className="instance-actions">
-                <button
-                    type="button"
-                    aria-label="Preview"
-                    title="Preview"
-                    onClick={(event) => {
-                        stopAction(event);
-                        props.onPreview(props.instance);
-                    }}
-                    disabled={!props.instance.ok}
-                >
-                    Prev
-                </button>
-                <button
-                    type="button"
-                    className="action-start"
-                    aria-label="Start"
-                    onClick={(event) => {
-                        stopAction(event);
-                        props.onLifecycle('start', props.instance);
-                    }}
-                    disabled={!lifecycle?.canStart || props.busy}
-                    title={lifecycle?.commandPreview?.join(' ')}
-                >
-                    Start
-                </button>
-                <button
-                    type="button"
-                    aria-label="Register as persistent service"
-                    onClick={(event) => {
-                        stopAction(event);
-                        props.onLifecycle('perm', props.instance);
-                    }}
-                    disabled={!lifecycle?.canPerm || props.busy}
-                    title="Register as persistent service"
-                >
-                    Perm
-                </button>
-                <button
-                    type="button"
-                    aria-label="Restart"
-                    title="Restart"
-                    onClick={(event) => {
-                        stopAction(event);
-                        props.onLifecycle('restart', props.instance);
-                    }}
-                    disabled={!lifecycle?.canRestart || props.busy}
-                >
-                    Res
-                </button>
-            </div>
-            )}
+            <ContextMenu
+                state={rowMenu.state}
+                entries={menuEntries()}
+                label={`${primaryLabel} actions`}
+                onClose={rowMenu.close}
+            />
         </article>
     );
 }

@@ -182,17 +182,6 @@
     line-height: 1.4;
 }
 
-.manager-sidebar .instance-label-edit-button {
-    top: 6px;
-    right: 6px;
-    opacity: 0;
-}
-
-.manager-sidebar .instance-row:hover .instance-label-edit-button,
-.manager-sidebar .instance-row:focus-within .instance-label-edit-button {
-    opacity: 1;
-}
-
 .manager-sidebar .instance-label-edit-form {
     grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 4px;
@@ -209,32 +198,6 @@
 .manager-sidebar .instance-row-version,
 .manager-sidebar .instance-row-reason {
     display: none;
-}
-
-.manager-sidebar .instance-actions {
-    display: none;
-}
-
-.manager-sidebar .instance-row.priority-active .instance-actions,
-.manager-sidebar .instance-row:not(.priority-active):hover .instance-actions,
-.manager-sidebar .instance-row:not(.priority-active):focus-within .instance-actions {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    gap: 4px;
-}
-
-.manager-sidebar .instance-row:not(.priority-active):hover .instance-row-meta,
-.manager-sidebar .instance-row:not(.priority-active):focus-within .instance-row-meta {
-    display: none;
-}
-
-.manager-sidebar .instance-actions button,
-.manager-sidebar .instance-actions .open-link {
-    min-height: 24px;
-    border-radius: var(--control-radius);
-    padding-inline: 5px;
-    font-size: 10.5px;
 }
 
 .launch-home-control input.home-input {
