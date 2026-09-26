@@ -123,7 +123,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         const moves: Record<string, 1 | -1 | 'first' | 'last'> = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' };
         const move = moves[event.key];
         if (move !== undefined) { event.preventDefault(); moveFocus(move); }
-        else if (event.key === 'Tab') { event.preventDefault(); onClose(); }
+        else if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); onClose(); }
         event.stopPropagation();
     }
 

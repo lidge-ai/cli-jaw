@@ -78,7 +78,7 @@ test('arrow keys wrap over enabled items; Escape closes and restores focus to th
         assert.equal(document.activeElement, items()[0]);
         await key('End', document.activeElement!);
         assert.equal(document.activeElement, items()[2]);
-        await key('Escape', dom.window as unknown as Element);
+        await key('Escape', document.activeElement!);
         assert.equal(menu(), null);
         assert.equal(document.activeElement, opener);
     } finally { await cleanup(); }
