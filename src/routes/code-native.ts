@@ -13,7 +13,8 @@ export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'list' | 'sna
     | 'prompt' | 'cancel' | 'attach' | 'visit' | 'patch' | 'answerPermission' | 'models'>;
 
 const PROVIDERS: readonly CodeProviderId[] = ['codex-app', 'claude', 'cursor', 'grok'];
-const PERMISSION_MODES: readonly CodePermissionMode[] = ['ask', 'auto', 'read-only'];
+// Provider-agnostic parse; which provider accepts which mode is the manager's call.
+const PERMISSION_MODES: readonly CodePermissionMode[] = ['ask', 'auto', 'read-only', 'plan', 'accept-edits', 'dont-ask', 'auto-review'];
 
 function invalid(code: string): never {
     throw new CodeStoreError(code, code.replaceAll('_', ' '), 400);

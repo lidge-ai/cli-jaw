@@ -135,7 +135,7 @@ test('catalog is exhaustive, detached from native factories, and honest about re
     const catalogs = Object.values(providers).map(provider => provider.describe());
     assert.deepEqual(lookedUp, ['codex', 'claude', 'cursor-agent', 'grok']);
     assert.deepEqual(catalogs.map(c => c.capabilities.permissionModes), [
-        ['ask', 'auto', 'read-only'], ['ask', 'auto'], ['ask', 'auto'], ['auto'],
+        ['ask', 'auto', 'read-only'], ['ask', 'accept-edits', 'plan', 'auto-review', 'dont-ask', 'auto'], ['ask', 'auto'], ['auto'],
     ]);
     assert.ok(catalogs.every(c => c.available && c.modelSource === 'registry' && !c.capabilities.setModelMidSession));
     assert.ok(catalogs.every(c => c.models.includes(c.defaultModel)));
@@ -768,7 +768,7 @@ test('Claude idle root init uses the current captured opening context', async t 
     const initialized = cursorObserved(f, 'idle-native');
     const session = await createCodeProviders({ detect: detection, claude: native.create }).claude.open(f.options);
     t.after(() => session.close());
-    native.push({ type: 'system', subtype: 'init', session_id: 'idle-native', permissionMode: 'default' });
+    native.push({ type: 'system', subtype: 'init', session_id: 'idle-native', permissionMode: 'bypassPermissions' });
     await initialized;
     assert.deepEqual(f.cursors.map(entry => entry.cursor), ['idle-native']);
     assert.equal(f.cursors[0]?.context?.runId, 'code-run-1');
@@ -784,7 +784,7 @@ test('Claude idle init cannot revive a stale opening owner', async t => {
     const session = await providers.claude.open(f.options); t.after(() => session.close());
     assert.equal(session.closed, false);
     f.stale();
-    native.push({ type: 'system', subtype: 'init', session_id: 'late-idle-native', permissionMode: 'default' });
+    native.push({ type: 'system', subtype: 'init', session_id: 'late-idle-native', permissionMode: 'bypassPermissions' });
     await delivered;
     assert.deepEqual(f.cursors, []);
 });
@@ -805,7 +805,7 @@ test('Claude init callback invokes the Code persistence failure latch before nat
     const session = await createCodeProviders({ detect: detection, claude: native.create }).claude.open(f.options);
     t.after(() => session.close());
     const pending = session.send('prompt');
-    native.push({ type: 'system', subtype: 'init', session_id: 'unwritable-native', permissionMode: 'default' });
+    native.push({ type: 'system', subtype: 'init', session_id: 'unwritable-native', permissionMode: 'bypassPermissions' });
     await failureObserved;
     native.push({ type: 'result', subtype: 'success', is_error: false, result: 'late success', session_id: 'unwritable-native' });
     assert.notEqual((await pending).status, 'done');
@@ -820,12 +820,15 @@ for (const mode of ['ask', 'auto'] as const) test(`Claude ${mode} forwards metad
     const session = await providers.claude.open(f.options); t.after(() => session.close());
     const prepared = native.input[0]!;
     assert.equal(prepared.registry, f.registry); assert.equal(prepared.prepared.permissions, mode === 'ask' ? 'safe' : 'auto');
+    assert.equal(prepared.prepared.sdkMode, mode === 'ask' ? 'default' : 'bypassPermissions');
+    assert.equal(prepared.prepared.sessionGrants, true);
+    assert.equal(prepared.prepared.allowDangerouslySkipPermissions, true);
     assert.equal(prepared.resolveTranscriptParent, f.options.resolveTranscriptParent);
     assert.equal(f.cursors.length, 0, 'opening without input has not consumed a prompt');
     const pending = session.send('prompt');
     assert.equal(f.cursors[0]?.cursor, null);
     const captured = f.context(); f.next();
-    native.push({ type: 'system', subtype: 'init', session_id: 'claude-native', permissionMode: 'default' });
+    native.push({ type: 'system', subtype: 'init', session_id: 'claude-native', permissionMode: mode === 'ask' ? 'default' : 'bypassPermissions' });
     native.push({ type: 'result', subtype: 'success', is_error: false, session_id: 'claude-native', result: 'a'.repeat(6000) });
     const result = await pending;
     assert.equal(result.finalText, 'a'.repeat(6000));
@@ -893,7 +896,7 @@ for (const provider of ['codex-app', 'claude', 'cursor', 'grok'] as const) {
             });
             const pending = session.send(`prompt ${index}`);
             if (provider === 'claude') {
-                if (index === 1) claude.push({ type: 'system', subtype: 'init', session_id: 'claude-native', permissionMode: 'default' });
+                if (index === 1) claude.push({ type: 'system', subtype: 'init', session_id: 'claude-native', permissionMode: 'bypassPermissions' });
                 claude.push({ type: 'result', subtype: 'success', is_error: false,
                     session_id: 'claude-native', result: answer, uuid: `result-${index}` });
             }
