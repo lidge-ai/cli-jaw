@@ -1,13 +1,22 @@
 /* Code sidebar: Projects/Activity header, bell toggle, unread markers. */
 .code-session-list-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.code-session-bell {
+.code-session-header-actions { display: inline-flex; align-items: center; gap: 2px; }
+.code-session-header-btn {
     position: relative; display: inline-flex; align-items: center; justify-content: center;
     width: 24px; height: 24px; min-height: 24px; padding: 0; border: none; border-radius: 6px;
     background: transparent; color: var(--text-dim); cursor: pointer;
 }
-.code-session-bell:hover { background: var(--bg-raised); color: var(--text-primary); }
-.code-session-bell.active { color: var(--accent); background: var(--accent-soft); }
-.code-session-bell:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.code-session-header-btn:hover { background: var(--bg-raised); color: var(--text-primary); }
+.code-session-header-btn.active { color: var(--accent); background: var(--accent-soft); }
+.code-session-header-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.code-session-search-row { display: flex; align-items: center; gap: 6px; margin: 0 8px 6px; }
+.code-session-search-row .code-session-search { flex: 1 1 auto; width: auto; min-width: 0; margin: 0; }
+.code-session-archived-btn {
+    flex: none; padding: 3px 8px; min-height: 24px; border: 1px solid var(--border-subtle); border-radius: 4px;
+    background: transparent; color: var(--text-dim); font-size: 11px; cursor: pointer;
+}
+.code-session-archived-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.code-session-archived-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .code-session-bell .code-session-unread-dot { position: absolute; top: 3px; right: 3px; margin: 0; }
 .code-session-unread-dot {
     display: inline-block; flex: none; width: 7px; height: 7px; margin-right: 6px;

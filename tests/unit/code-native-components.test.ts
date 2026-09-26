@@ -1006,3 +1006,27 @@ test('the open session never shows as unread, even before its receipt lands', bo
     assert.equal(h.container.querySelector('.code-session-group-priority'), null, 'nor is it listed under Priority');
     assert.deepEqual([...h.container.querySelectorAll('.code-session-group-title')].map(node => node.textContent), ['Today']);
 });
+
+test('the search icon left of the bell opens search with an archived switch; closing clears the query', bounded, async t => {
+    const h = await surface(t); const filters: unknown[] = [];
+    const c = model({ sessions: [session({ sessionId: 's-a', title: 'Alpha' }), session({ sessionId: 's-b', title: 'Beta', cwd: '/work/beta' })],
+        filter: { scope: 'all', archived: false }, setFilter(next) { filters.push(next); } });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    assert.equal(h.container.querySelector('.code-session-view-toggle'), null, 'the All / This cwd toggle is gone');
+    assert.equal(h.container.querySelector('input[aria-label="Search loaded sessions"]'), null, 'search is closed by default');
+    const actions = [...h.container.querySelectorAll('.code-session-header-actions button')].map(b => b.getAttribute('aria-label'));
+    assert.equal(actions[0], 'Search sessions', 'search sits left of the bell');
+    assert.match(actions[1] ?? '', /Recent activity/);
+    await click(button(h.container, 'Search sessions'));
+    const input = h.container.querySelector<HTMLInputElement>('input[aria-label="Search loaded sessions"]'); assert.ok(input);
+    await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!;
+        setter.call(input, 'beta'); input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    });
+    assert.deepEqual([...h.container.querySelectorAll('.code-session-cwd')].map(n => n.textContent), ['Beta']);
+    await click(button(h.container, 'Archived'));
+    assert.deepEqual(filters, [{ scope: 'all', archived: true }]);
+    await click(button(h.container, 'Search sessions'));
+    assert.equal(h.container.querySelector('input[aria-label="Search loaded sessions"]'), null);
+    assert.equal(h.container.querySelectorAll('.code-session-cwd').length, 2, 'closing search clears the filter');
+});

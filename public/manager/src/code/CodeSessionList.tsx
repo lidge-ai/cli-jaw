@@ -25,6 +25,13 @@ function BellGlyph() {
     </svg>;
 }
 
+function SearchGlyph() {
+    return <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+        <circle cx="7" cy="7" r="4.25" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M10.2 10.2 13.5 13.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>;
+}
+
 function PlusGlyph() {
     return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
         <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
@@ -98,6 +105,14 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
 
 export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSION_SHORTCUT }: { controller: CodeControllerModel; newSessionShortcut?: string | undefined }) {
     const [search, setSearch] = useState('');
+    const [searching, setSearching] = useState(false);
+    const searchInput = useRef<HTMLInputElement>(null);
+    function toggleSearch() {
+        // Closing clears the query so the list is never silently filtered by a hidden box.
+        if (searching) { setSearching(false); setSearch(''); return; }
+        setSearching(true);
+        queueMicrotask(() => searchInput.current?.focus());
+    }
     const draftBadgeId = useId();
     const [view, setViewState] = useState<CodeSidebarView>(readSidebarView);
     function setView(next: CodeSidebarView) {
@@ -172,7 +187,12 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
         </button>
         <div className="code-session-list-header">
             <span className="code-session-list-title">{view === 'activity' ? 'Recent activity' : 'Projects'}</span>
-            <button type="button" className={`code-session-bell${view === 'activity' ? ' active' : ''}`}
+            <span className="code-session-header-actions">
+            <button type="button" className={`code-session-header-btn code-session-search-btn${searching ? ' active' : ''}`}
+                aria-pressed={searching} aria-label="Search sessions" title="Search sessions" onClick={toggleSearch}>
+                <SearchGlyph />
+            </button>
+            <button type="button" className={`code-session-header-btn code-session-bell${view === 'activity' ? ' active' : ''}`}
                 aria-pressed={view === 'activity'}
                 aria-label={anyUnread ? 'Recent activity (unread sessions)' : 'Recent activity'}
                 title={view === 'activity' ? 'Back to projects' : 'Recent activity'}
@@ -180,17 +200,18 @@ export function CodeSessionList({ controller: c, newSessionShortcut = NEW_SESSIO
                 <BellGlyph />
                 {anyUnread && <span className="code-session-unread-dot" aria-hidden="true" />}
             </button>
+            </span>
         </div>
-        <div className="code-session-view-toggle" aria-label="Session view">
-            <button type="button" aria-pressed={c.filter.scope === 'all'} className={`code-session-view-btn${c.filter.scope === 'all' ? ' active' : ''}`}
-                onClick={() => c.setFilter({ ...c.filter, scope: 'all' })}>All</button>
-            <button type="button" aria-pressed={c.filter.scope === 'cwd'} className={`code-session-view-btn${c.filter.scope === 'cwd' ? ' active' : ''}`}
-                onClick={() => c.setFilter({ ...c.filter, scope: 'cwd' })}>This cwd</button>
-        </div>
-        <label className="code-session-archive-filter"><input type="checkbox" checked={c.filter.archived}
-            onChange={event => c.setFilter({ ...c.filter, archived: event.target.checked })} />Archived</label>
-        <input className="code-session-search" type="search" aria-label="Search loaded sessions" placeholder="Search loaded sessions…"
-            value={search} onChange={event => setSearch(event.target.value)} />
+        {/* Projects already scopes by workspace, so the All / This cwd toggle is gone.
+            Search and the archived switch live behind the search icon. */}
+        {searching && <div className="code-session-search-row">
+            <input ref={searchInput} className="code-session-search" type="search" aria-label="Search loaded sessions"
+                placeholder="Search sessions…" value={search} onChange={event => setSearch(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); toggleSearch(); } }} />
+            <button type="button" className={`code-session-archived-btn${c.filter.archived ? ' active' : ''}`}
+                aria-pressed={c.filter.archived} title="Include archived sessions"
+                onClick={() => c.setFilter({ ...c.filter, archived: !c.filter.archived })}>Archived</button>
+        </div>}
         {c.loading && <div className="code-session-list-loading" role="status">Loading sessions…</div>}
         {groups.map(group => <section className="code-session-group" key={group.key}>
             {group.title && <h3 className={`code-session-group-title${group.key === 'priority' ? ' code-session-group-priority' : ''}`} title={group.title}>

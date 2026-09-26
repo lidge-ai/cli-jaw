@@ -699,7 +699,10 @@ the reader chose to see movement in: a **Priority** section with unread sessions
 local midnight, each row showing its workspace name. A session is unread when
 `lastTurnCompletedAt > lastVisitedAt`; never-opened, archived and the currently open
 session are never unread. Unread rows and the bell (when anything is unread) carry
-a blue dot. The chosen view persists in `localStorage` (`jaw.code.sidebarView`).
+a blue dot. The chosen view persists in `localStorage` (`jaw.code.sidebarView`). There is no All / This cwd toggle (Projects already
+scopes by workspace); a search icon left of the bell opens the search field together
+with an Archived switch, and closing it clears the query so nothing stays filtered
+by a hidden box.
 Archived sessions, when shown, form a trailing section ordered by when each was put
 away. A section with nothing in it is not rendered. Idle status and "no pending approvals" stay in the
 accessibility tree but are visually hidden, because a label on every row costs
