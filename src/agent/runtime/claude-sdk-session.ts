@@ -38,6 +38,8 @@ export interface ClaudeSessionOptions {
     registry?: RuntimeRequests;
     signal?: AbortSignal;
     deferTurnEnd?: boolean;
+    /** Code only: `steer()` offers one follow-up into the running turn. Jaw keeps the scoped follow-up policy. */
+    inBandSteer?: boolean;
     onMetadata?(context: Readonly<ClaudeTurnContext>, metadata: ClaudeResultMetadata): void;
     onNativeSessionId?(context: Readonly<ClaudeTurnContext> | null, id: string): void;
     /** Context occupancy a finished turn reported (compaction or result usage). */
@@ -53,11 +55,16 @@ type Turn = {
     context: Readonly<ClaudeTurnContext>; onEvent(event: RuntimeEvent): void;
     resolve(result: RuntimeTurnResult): void; timer: ReturnType<typeof setTimeout>;
     mapper: ClaudeSdkEvents; uuid: ReturnType<typeof randomUUID>; offered: boolean;
+    /** The primary uuid plus accepted follow-ups; results echoing them are consumed. */
+    inputs: Set<string>; consumed: Set<string>;
+    /** A top-level frame echoed `user_message_uuids` with the primary: the CLI runs this turn. */
+    echoed: boolean;
     owner: ClaudeChildOwner;
     terminalChildRecording: boolean;
     passiveFinalizing: boolean;
 };
 const MAX_PROMPT_BYTES = 1024 * 1024;
+export type ClaudeSteerRefusal = 'not-current' | 'not-ready' | 'queue-full';
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('claude_invalid_frame');
     return value as Record<string, unknown>;
@@ -71,7 +78,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     readonly capabilities: RuntimeCapabilities = Object.freeze({ transport: 'native', steer: 'queued', resume: true,
         tools: true, toolOutput: true, approvals: true, questions: true, images: true, subagents: true });
     readonly supportsInterrupt = true;
-    // One active turn can own at most one unconsumed, <=1MiB text message.
+    // The SDK drains this iterable continuously, so the slot only buffers input offered before it
+    // initializes. Follow-ups are bounded by the Code per-turn quota and the echo gate in steer().
     private readonly input = createClaudeInput<SDKUserMessage>(1);
     private readonly processes = createClaudeProcessOwner({ onMultipleRoots: () => this.fail('claude_multiple_root_processes') });
     private query: ClaudeQuery | undefined;
@@ -80,6 +88,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private reader: Promise<void> = Promise.resolve();
     private readonly exits = new Set<(code: number | null) => void>();
     private turn: Turn | null = null;
+    /** Delivery record of the current or most recent turn; the next send() replaces it. */
+    private recent: Pick<Turn, 'uuid' | 'inputs' | 'consumed'> | null = null;
     private finishing = false;
     private pendingFinal: { turn: Turn; outcome: RuntimeTurnResult; failed?: boolean; claimed?: Readonly<RuntimeTurnResult> } | null = null;
     private id = '';
@@ -194,13 +204,16 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         const projection = new RuntimeProjection(context, (_context, body) => this.recordEvent(turn, body),
             undefined, this.options.transcript?.(context), this.options.recordLoss
                 ?? ((this.options.record ?? recordRuntimeEvent) === recordRuntimeEvent ? recordRuntimeProjectionLoss : undefined));
-        const turn: Turn = { context, onEvent, resolve, mapper: new ClaudeSdkEvents(projection), uuid: randomUUID(), offered: false,
+        const uuid = randomUUID();
+        const turn: Turn = { context, onEvent, resolve, mapper: new ClaudeSdkEvents(projection), uuid, offered: false,
+            inputs: new Set([uuid]), consumed: new Set(), echoed: false,
             passiveFinalizing: false, terminalChildRecording: false,
             owner: { context, projection, isCurrent: () => this.current(context), isActive: () => this.turn === turn && !this.closing,
                 canRecordTerminal: () => turn.terminalChildRecording,
                 record: (ownerContext, body) => this.recordChildEvent(turn, ownerContext, body) },
             timer: setTimeout(() => this.fail('claude_prompt_timeout'), this.options.promptTimeoutMs) };
         this.turn = turn;
+        this.recent = { uuid, inputs: turn.inputs, consumed: turn.consumed };
         projection.start('claude');
         if (this.turn !== turn || this.closing) return result;
         if (!this.current(turn.context)) {
@@ -211,8 +224,38 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         if (!this.input.offer({ ...message, uuid: turn.uuid, session_id: this.id })) this.fail('claude_input_closed');
         return result;
     }
-    async steer(_prompt: RuntimePrompt): Promise<RuntimeInputAcceptance> {
-        return { accepted: false, mode: 'queued', turnId: this.turn?.context.turnId ?? '', reason: 'Use the scoped follow-up policy' };
+    /**
+     * Code in-band follow-up: one more user message for the running turn, never with a
+     * `priority` (the CLI default `next`; `now` would abort the turn). It is offered only
+     * once the CLI echoed the primary uuid, so the message cannot join an unstarted batch.
+     */
+    async steer(prompt: RuntimePrompt): Promise<RuntimeInputAcceptance & { nativeId?: string }> {
+        const turn = this.turn;
+        const refuse = (reason: string) => ({ accepted: false, mode: 'queued' as const, turnId: turn?.context.turnId ?? '', reason });
+        if (!this.options.inBandSteer) return refuse('Use the scoped follow-up policy');
+        if (!this.alive || !turn || !turn.offered || this.pendingFinal || this.finishing || !this.current(turn.context)) {
+            return refuse('not-current' satisfies ClaudeSteerRefusal);
+        }
+        if (!turn.echoed) return refuse('not-ready' satisfies ClaudeSteerRefusal);
+        if (turn.inputs.size >= 2) return refuse('queue-full' satisfies ClaudeSteerRefusal);
+        if (typeof prompt.text !== 'string' || Buffer.byteLength(prompt.text) > MAX_PROMPT_BYTES) throw new Error('claude_prompt_limit');
+        const message = makeClaudeUserMessage(prompt);
+        const uuid = randomUUID();
+        // Registered before the offer: the reader may see its echo synchronously.
+        turn.inputs.add(uuid);
+        if (!this.input.offer({ ...message, uuid, session_id: this.id })) {
+            turn.inputs.delete(uuid);
+            return refuse('not-current' satisfies ClaudeSteerRefusal);
+        }
+        // At most one follow-up per turn, so a logical turn is bounded by two windows.
+        clearTimeout(turn.timer);
+        turn.timer = setTimeout(() => this.fail('claude_prompt_timeout'), this.options.promptTimeoutMs);
+        return { accepted: true, mode: 'queued', turnId: turn.context.turnId, nativeId: uuid };
+    }
+    /** Accepted follow-ups of the current or most recent turn that no result has echoed. */
+    unconsumedFollowUps(): string[] {
+        const recent = this.recent;
+        return recent ? [...recent.inputs].filter(id => id !== recent.uuid && !recent.consumed.has(id)) : [];
     }
     async respond(requestId: string, response: unknown): Promise<void> {
         if (!this.turn || !this.alive) throw new Error('request_not_current');
@@ -346,6 +389,8 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
                 // answered a message this turn never sent (correlation).
                 if (turn && !this.current(turn.context)) { this.fail('claude_owner_stale'); break; }
                 if (turn && !childParent && !this.correlated(raw, turn)) { this.fail('claude_correlation_stale'); break; }
+                if (turn && !childParent && !turn.echoed && Array.isArray(raw['user_message_uuids'])
+                    && raw['user_message_uuids'].includes(turn.uuid)) turn.echoed = true;
                 if (turn) {
                     const childOwned = this.children.accept(raw);
                     if (this.closing || this.turn !== turn) continue;
@@ -425,9 +470,21 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
             const finalText = status === 'done' && typeof value === 'string' ? value : null;
             if (finalText !== null && finalText.length > FULLTEXT_MAX_CHARS) throw new Error('claude_final_limit');
         }
-        const outcome = turn.mapper.accept(raw);
+        let segment = false;
+        if (raw['type'] === 'result' && turn.inputs.size > 1) {
+            const ids = raw['user_message_uuids'], id = raw['user_message_uuid'];
+            const echoed = Array.isArray(ids) ? ids as string[] : typeof id === 'string' ? [id] : [];
+            // Without an echo this result could belong to either input; guessing would let a
+            // later orphan result settle the next turn.
+            if (!echoed.length) { this.fail('claude_followup_unconfirmed'); return; }
+            for (const value of echoed) if (turn.inputs.has(value)) turn.consumed.add(value);
+            // A follow-up the CLI queued behind this answer runs as its own CLI turn next.
+            segment = [...turn.inputs].some(value => !turn.consumed.has(value));
+        }
+        const outcome = turn.mapper.accept(raw, segment);
         if (this.closing || this.turn !== turn) return;
         if (!this.current(turn.context)) { this.fail('claude_owner_stale'); return; }
+        if (segment) { turn.mapper.continueAfterResult(); return; }
         if (!outcome) return;
         const nativeId = raw['session_id'];
         if (typeof nativeId === 'string' && nativeId && nativeId.length <= 1024) this.id = nativeId;
@@ -442,9 +499,9 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         const id = raw['user_message_uuid'], ids = raw['user_message_uuids'];
         if (ids !== undefined) {
             if (!Array.isArray(ids) || ids.length > 64 || ids.some(value => typeof value !== 'string')) return false;
-            return ids.includes(turn.uuid);
+            return ids.some(value => turn.inputs.has(value));
         }
-        return id === undefined || id === turn.uuid;
+        return id === undefined || (typeof id === 'string' && turn.inputs.has(id));
     }
     close(): Promise<void> {
         let outcome: RuntimeTurnResult;
