@@ -22,7 +22,8 @@ const OPTIONS: ReadonlyArray<{ value: DashboardUiTheme; label: string; hint: str
 export function ThemeSwitch(props: ThemeSwitchProps) {
     const trigger = useRef<HTMLButtonElement>(null);
     const menu = useContextMenu();
-    const openOnPress = useRef(false);
+    const closedAt = useRef(0);
+    const closeMenu = () => { closedAt.current = performance.now(); menu.close(); };
     const current = OPTIONS.find(option => option.value === props.theme) ?? OPTIONS[0]!;
     const entries: ContextMenuEntry[] = OPTIONS.map(option => ({
         id: option.value,
@@ -41,17 +42,15 @@ export function ThemeSwitch(props: ThemeSwitchProps) {
                 aria-haspopup="menu"
                 aria-expanded={menu.open}
                 title={`Theme: ${current.label}`}
-                onPointerDown={() => { openOnPress.current = menu.open; }}
                 onClick={() => {
-                    const wasOpen = openOnPress.current;
-                    openOnPress.current = false;
-                    if (wasOpen) return;
+                    if (menu.open) { menu.close(); return; }
+                    if (performance.now() - closedAt.current < 250) return;
                     if (trigger.current) menu.openAtElement(trigger.current);
                 }}
             >
                 {current.icon}
             </button>
-            <ContextMenu state={menu.state} entries={entries} label="Theme" onClose={menu.close} className="theme-switch-menu" />
+            <ContextMenu state={menu.state} entries={entries} label="Theme" onClose={closeMenu} className="theme-switch-menu" />
         </>
     );
 }
