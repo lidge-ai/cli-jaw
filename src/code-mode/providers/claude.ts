@@ -3,6 +3,7 @@ import type { PreparedClaudeOptions } from '../../agent/runtime/claude-sdk-optio
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { CodeLiveSettings, CodeProvider } from '../provider.js';
 import type { CodePermissionMode } from '../wire.js';
+import { CodeStoreError } from '../store.js';
 import { claudeModelGateMessage } from '../../cli/claude-default-model-boot.js';
 import { admitCodeOpen, captureCodeContext, CODE_PROMPT_TIMEOUT_MS, type CodeProviderDependencies } from './acp.js';
 
@@ -105,12 +106,14 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                     get nativeSessionId() { return runtime.nativeSessionId; },
                     get lastTurnFailureText() { return runtime.lastTurnFailureText; },
                     setPermissionMode: (mode: CodePermissionMode) => runtime.setPermissionMode(claudeCodePermissionMode(mode)),
-                    reconfigure: (next: CodeLiveSettings, previous: CodeLiveSettings) => {
-                        if (closing) throw new Error('code_claude_not_idle');
+                    reconfigure: async (next: CodeLiveSettings, previous: CodeLiveSettings) => {
+                        // Before any SDK call: a running turn or a close owns the query.
+                        if (closing || !runtime.idle) {
+                            throw new CodeStoreError('session_busy', 'Stop the current turn before changing session settings', 409);
+                        }
                         const refusal = claudeModelGateMessage(dependencies.binary(), next.model);
                         if (refusal) throw new Error(refusal);
-                        const tuple = (value: CodeLiveSettings) => ({ model: value.model,
-                            effort: claudeEffort(value.effort) ?? null, thinking: value.thinking });
+                        const tuple = (value: CodeLiveSettings) => ({ model: value.model, effort: claudeEffort(value.effort) ?? null });
                         return runtime.reconfigure(tuple(next), tuple(previous));
                     },
                     get alive() { return !closing && runtime.alive; },

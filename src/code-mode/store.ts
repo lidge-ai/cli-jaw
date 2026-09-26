@@ -288,7 +288,7 @@ export class CodeStore {
         })();
     }
 
-    /** Adds the sidebar activity clocks to databases created before them; both stay NULL. */
+    /** Adds the sidebar activity clocks and the thinking switch to databases created before them; all stay NULL. */
     private ensureActivityColumns(): void {
         const names = new Set((this.database.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[])
             .map(column => column.name));

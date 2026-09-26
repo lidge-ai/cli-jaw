@@ -1020,6 +1020,25 @@ test('databases created before the activity clocks gain both columns as null', t
     assert.equal(store.read('session-a').lastVisitedAt, null);
 });
 
+test('a database that already has the activity clocks gains only thinking; its legacy Claude row reads on', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    const schema = CREATE_CODE_SCHEMA_SQL.replace(', last_visited_at INTEGER, thinking INTEGER', ', last_visited_at INTEGER');
+    assert.notEqual(schema, CREATE_CODE_SCHEMA_SQL);
+    db.exec(schema);
+    const legacyColumns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.ok(legacyColumns.includes('last_turn_completed_at') && legacyColumns.includes('last_visited_at'));
+    assert.equal(legacyColumns.includes('thinking'), false);
+    db.prepare(`INSERT INTO code_sessions (session_id, provider, cwd, title, model, effort, permission_mode, status,
+        capabilities_json, created_at, last_used_at, last_visited_at) VALUES (?, ?, ?, NULL, ?, ?, ?, 'idle', ?, 1, 1, 7)`)
+        .run('session-legacy', 'claude', '/workspace/a', 'model-a', 'high', 'ask', JSON.stringify(capabilities));
+    const store = new CodeStore(db, { now: () => 1234, newId: () => 'turn-x' });
+    const columns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.ok(columns.includes('thinking'));
+    assert.equal(store.read('session-legacy').thinking, true);
+    assert.equal(store.read('session-legacy').lastVisitedAt, 7, 'the existing clock is kept');
+});
+
 test('thinking: Claude rows read on when unset, persist a switch, and fence the old owner', t => {
     const { store } = fixture(t);
     assert.equal(store.read('session-a').thinking, true);

@@ -91,13 +91,27 @@ export class CodeSession {
     private disposed = false;
     private disposePromise: Promise<void> | null = null;
     private persistenceError: CodeServiceError | null = null;
+    private settingsChange = false;
     lastUsedAt: number;
 
     constructor(private readonly options: CodeSessionOptions) {
         this.lastUsedAt = options.now();
     }
 
-    get busy(): boolean { return this.operation !== null && !this.operation.settled; }
+    get busy(): boolean { return this.settingsChange || (this.operation !== null && !this.operation.settled); }
+    get reconfiguring(): boolean { return this.settingsChange; }
+
+    /**
+     * Run a live settings change with admission held off: the session reads busy from this
+     * check through the caller's store write and any rollback, so no prompt, attach or
+     * second change lands between the runtime switch and the stored row.
+     */
+    async exclusive<T>(work: () => Promise<T>): Promise<T> {
+        if (this.busy) throw new CodeStoreError('session_busy', 'Stop the current turn before changing session settings', 409);
+        this.settingsChange = true;
+        try { return await work(); }
+        finally { this.settingsChange = false; this.options.changed(); }
+    }
 
     /**
      * Switch the resident runtime's permission mode in place. 'deferred' means there is
@@ -114,18 +128,21 @@ export class CodeSession {
     }
 
     /**
-     * Change model, effort and thinking on the resident runtime in place. The binding
-     * moves only once the runtime confirmed, so a refused change leaves it describing
-     * the process that is actually running. 'deferred' means no live handle.
+     * Change model and effort on the resident runtime in place. The binding moves only
+     * once the runtime confirmed, so a refused change leaves it describing the process
+     * that is actually running. 'deferred' means no live handle; 'unsupported' means a
+     * live handle that can only be retired.
      */
-    async reconfigure(next: CodeLiveSettings): Promise<'applied' | 'deferred'> {
+    async reconfigure(next: CodeLiveSettings): Promise<'applied' | 'deferred' | 'unsupported'> {
         const binding = this.binding;
         const handle = binding?.handle;
         if (!binding || !handle || handle.alive !== true || handle.closed === true || binding.retiring || binding.exited) return 'deferred';
-        if (!handle.reconfigure) throw new Error('code_reconfigure_unavailable');
+        if (!handle.reconfigure) return 'unsupported';
         const current = binding.configuration;
-        await handle.reconfigure(next, { model: current.model, effort: current.effort, thinking: current.thinking ?? true });
-        binding.configuration = Object.freeze({ ...current, model: next.model, effort: next.effort, thinking: next.thinking });
+        await handle.reconfigure(next, { model: current.model, effort: current.effort });
+        binding.configuration = Object.freeze({ ...current, model: next.model, effort: next.effort });
+        // The figure is a proportion of the previous model's window.
+        if (next.model !== current.model) this.usage = null;
         return 'applied';
     }
     get resident(): boolean {
