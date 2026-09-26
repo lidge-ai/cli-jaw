@@ -183,8 +183,8 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
     </article>;
 }
 
-export function CodeTranscript({ items, provider, sessionKey, workingDir, loading, hasOlderHistory, loadOlderHistory, permissionCount, onOpenLocalFile }: {
-    items: CodeItem[]; provider: CodeProviderId; sessionKey: string; workingDir: string; loading: boolean;
+export function CodeTranscript({ items, provider, sessionKey, workingDir, loading, hasOlderHistory, loadOlderHistory, permissionCount, onOpenLocalFile, working = false }: {
+    items: CodeItem[]; provider: CodeProviderId; sessionKey: string; workingDir: string; loading: boolean; working?: boolean;
     hasOlderHistory: boolean; loadOlderHistory(): Promise<void>; permissionCount: number;
     onOpenLocalFile?: ((path: string) => void) | undefined;
 }) {
@@ -284,6 +284,11 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
                         </div> : null;
                     })}
                 </div>}
+            {/* From Send until the turn ends. A running tool or reasoning row already
+                animates, so the line would only repeat it. */}
+            {working && visible[visible.length - 1]?.status !== 'running'
+                && <div className="code-transcript-working" role="status" aria-live="polite">
+                    <span className="code-session-spinner" aria-hidden="true" />Working…</div>}
         </div>
     </>;
 }

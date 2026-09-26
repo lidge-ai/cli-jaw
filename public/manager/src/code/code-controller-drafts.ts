@@ -18,6 +18,13 @@ export interface CodeDraft {
     requiredSequence: number;
     stopTarget: { turnId: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
     permissionOperations: CodeControllerModel['permissionOperations'];
+    /**
+     * The clientTurnKey of a send whose turn has not visibly started or ended yet.
+     * Bridges the gap between pressing Send and the server reporting the turn, so
+     * the session reads as working the whole time. In-memory only: a reloaded page
+     * must not show a phantom spinner.
+     */
+    awaitingTurn: string | null;
 }
 export interface CodeDraftBook {
     endpoint: string;
@@ -37,7 +44,7 @@ const tabBooks = new WeakMap<Storage, Map<string, CodeDraftBook>>();
 export function createCodeDraft(selection: CodeCreateSessionRequest): CodeDraft {
     return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0,
         operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, requiredSequence: 0,
-        stopTarget: null, permissionOperations: {} };
+        stopTarget: null, permissionOperations: {}, awaitingTurn: null };
 }
 function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     const draft = createCodeDraft(saved.selection);

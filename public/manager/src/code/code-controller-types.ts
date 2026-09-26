@@ -23,6 +23,10 @@ export interface CodeControllerModel {
     loading: boolean;
     pending: boolean;
     busy: boolean;
+    /** The selected session is working: a send awaiting its turn, or a busy runtime. */
+    working: boolean;
+    /** Rows that are working, by session id. */
+    workingIds: ReadonlySet<string>;
     workspacePicking: boolean;
     synced: boolean;
     error: string | null;

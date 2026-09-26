@@ -10,6 +10,7 @@ import {
     type CodeDraft, type CodeDraftBook,
 } from './code-controller-drafts';
 import { withPendingUserItem } from './pending-user-item';
+import { codeCanResume } from './code-types';
 
 const MAX_DETAILS = 6;
 const MAX_INDEX = 1000;
@@ -233,6 +234,8 @@ export class CodeController {
             if (victim) { this.summaries.delete(victim); this.attention.delete(victim); }
         }
         const draft = this.book.sessions.get(session.sessionId);
+        // Once the server reports the turn, its own status carries the working state.
+        if (draft?.awaitingTurn && codeSessionBusy(session)) draft.awaitingTurn = null;
         if (draft?.stopTarget && (session.turnId !== draft.stopTarget.turnId || session.epoch !== draft.stopTarget.epoch
             || !codeSessionBusy(session))) {
             draft.stopTarget = null;
@@ -267,6 +270,15 @@ export class CodeController {
         if (draft?.retry && state.items.some(item => item.kind === 'user_message' && item.clientTurnKey === draft.retry!.key)) {
             if (deadSend(state, draft.retry.key)) this.requireNewKey(draft);
             else acknowledgeCodeSend(draft, draft.retry.key);
+        }
+        if (draft?.awaitingTurn) {
+            // Only this send's own turn ending clears the marker: a stale read receipt or
+            // an older sequence must not switch a fresh send's spinner off.
+            const turnId = state.items.find(item => item.kind === 'user_message' && item.clientTurnKey === draft.awaitingTurn)?.turnId;
+            if (turnId && state.items.some(item => item.turnId === turnId
+                && (item.kind === 'turn_completed' || item.kind === 'turn_failed' || item.kind === 'turn_cancelled'))) {
+                draft.awaitingTurn = null;
+            }
         }
         if (draft && state.synced) {
             const current = new Set(state.permissions.map(p => p.permissionId));
@@ -315,7 +327,11 @@ export class CodeController {
             permissions: detail?.permissions ?? [],
             input: draft.input, selection: session ? sessionSelection(session) : draft.selection,
             gitInfo: this.gitInfo, loading: this.indexLoading || !!detail?.hydrating || (!!id && !detail?.hydrated && !detail?.error),
-            pending, busy: codeSessionBusy(session), synced, transport: this.transport, workspacePicking: this.workspacePicking,
+            pending, busy: codeSessionBusy(session), working: !!draft.awaitingTurn || codeSessionBusy(session),
+            workingIds: new Set(this.rows.filter(rowId => {
+                const row = this.info(rowId);
+                return !!this.book.sessions.get(rowId)?.awaitingTurn || (!!row && codeSessionBusy(row));
+            })), synced, transport: this.transport, workspacePicking: this.workspacePicking,
             error: [operation.error ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
             canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
@@ -628,7 +644,17 @@ export class CodeController {
         let id = this.book.selectedId;
         let draft = this.draft(id);
         if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim()) return;
-        const session = this.info(id);
+        let session = this.info(id);
+        // t3code continues a session on the next send; a suspended (or recoverably
+        // failed) session attaches first instead of asking for a separate Resume.
+        if (id && session && codeCanResume(session) && this.model.synced) {
+            draft.operation = { kind: 'resuming', error: null }; this.notify();
+            try { this.accept(await this.client.attachSession(id)); draft.operation = { kind: 'idle', error: null }; }
+            catch (error) { draft.operation = { kind: 'idle', error: message(error) }; this.notify(); this.scheduleIndex(); return; }
+            this.notify(); this.scheduleIndex();
+            if (this.active) await this.sync(id, true);
+            session = this.info(id);
+        }
         if (id && (!session || session.status !== 'idle' || session.archivedAt !== null || !this.model.synced)) {
             draft.operation.error = 'Wait for the session to be idle and synchronized before sending.'; this.notify(); return;
         }
@@ -670,7 +696,9 @@ export class CodeController {
     private async submit(id: string, draft: CodeDraft): Promise<void> {
         const attempt = draft.retry;
         if (!attempt) return;
-        draft.operation = { kind: 'sending', error: null }; this.notify();
+        draft.operation = { kind: 'sending', error: null };
+        draft.awaitingTurn = attempt.key;
+        this.notify();
         try {
             const receipt = await this.client.sendPrompt(id, { text: attempt.text, clientTurnKey: attempt.key });
             if (receipt.clientTurnKey !== attempt.key) throw new Error('Mismatched prompt receipt');
@@ -679,14 +707,14 @@ export class CodeController {
             if (state) this.details.set(id, reduceCodeSession(state, { type: 'stale' }));
             // A duplicate receipt for a spent key is a report about a turn that is
             // already over, not an admission of this one.
-            if (spent(receipt.status)) this.requireNewKey(draft);
+            if (spent(receipt.status)) { this.requireNewKey(draft); draft.awaitingTurn = null; }
             else acknowledgeCodeSend(draft, attempt.key);
         } catch (error) {
             // The committed user event may already have acknowledged a lost HTTP response.
             if (draft.retry?.key === attempt.key) {
                 draft.operation = { kind: rejected(error) ? 'idle' : 'unknown-send', error: rejected(error) ? message(error)
                     : 'Message acceptance is unknown. Refresh, or explicitly retry the original message with the same key.' };
-                if (rejected(error)) draft.retry = null;
+                if (rejected(error)) { draft.retry = null; draft.awaitingTurn = null; }
             }
         }
         this.notify(); this.scheduleIndex();

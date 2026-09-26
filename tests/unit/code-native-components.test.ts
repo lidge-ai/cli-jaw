@@ -1030,3 +1030,36 @@ test('the search icon left of the bell opens search with an archived switch; clo
     assert.equal(h.container.querySelector('input[aria-label="Search loaded sessions"]'), null);
     assert.equal(h.container.querySelectorAll('.code-session-cwd').length, 2, 'closing search clears the filter');
 });
+
+test('a working row shows a spinner and reads Starting before the server reports the turn', bounded, async t => {
+    const h = await surface(t);
+    const c = model({ sessions: [session({ sessionId: 's-a', status: 'idle' })], workingIds: new Set(['s-a']) });
+    await h.render(createElement(CodeSessionList, { controller: c }));
+    const status = h.container.querySelector('.code-session-status');
+    assert.ok(status?.querySelector('.code-session-spinner'));
+    assert.match(status?.textContent ?? '', /Starting/);
+    assert.equal(status?.getAttribute('data-quiet'), null, 'a working row is not visually quiet');
+});
+
+test('the transcript shows Working… while the session works, unless a running row already animates', bounded, async t => {
+    const h = await surface(t);
+    const done = { itemId: 'm1', turnId: 't', kind: 'assistant_message', status: 'done', text: 'hi', createdAt: 1, updatedAt: 1, firstSequence: 1 } as CodeItem;
+    await h.render(createElement(CodeWorkbench, { controller: model({ items: [done], working: true, busy: true }), endpointKey: '43225' }));
+    assert.match(h.container.querySelector('.code-transcript-working')?.textContent ?? '', /Working/);
+    const running = { ...done, itemId: 'tool', kind: 'tool_call', status: 'running' } as CodeItem;
+    await h.render(createElement(CodeWorkbench, { controller: model({ items: [done, running], working: true, busy: true }), endpointKey: '43225' }));
+    assert.equal(h.container.querySelector('.code-transcript-working'), null);
+    await h.render(createElement(CodeWorkbench, { controller: model({ items: [done], working: false }), endpointKey: '43225' }));
+    assert.equal(h.container.querySelector('.code-transcript-working'), null);    await h.render(createElement(CodeWorkbench, { controller: model({ items: [], working: true, busy: true }), endpointKey: '43225' }));
+    assert.match(h.container.querySelector('.code-transcript-working')?.textContent ?? '', /Working/, 'an empty transcript still shows the session working');
+});
+
+test('Send is enabled on a resumable suspended session and not on a non-recoverable failure', bounded, async t => {
+    const h = await surface(t);
+    const suspended = session({ status: 'suspended', resume: { available: true, reason: null } });
+    await h.render(createElement(CodeWorkbench, { controller: model({ session: suspended, sessions: [suspended], input: 'continue', synced: true }), endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send prompt').disabled, false, 'send attaches the session first');
+    const failed = session({ status: 'failed', error: { code: 'x', message: 'x', at: 1, recoverable: false } });
+    await h.render(createElement(CodeWorkbench, { controller: model({ session: failed, sessions: [failed], input: 'continue', synced: true }), endpointKey: '43225' }));
+    assert.equal(button(h.container, 'Send prompt').disabled, true);
+});
