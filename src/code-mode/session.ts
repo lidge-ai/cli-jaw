@@ -522,7 +522,7 @@ export class CodeSession {
             op.normalizer?.finish(outcome ?? { status: op.stopped ? 'stopped' : 'error', finalText: null, partialText: '' });
         } catch (error) { this.failPersistence(op, error); }
         if (outcome?.status === 'error' && !op.failure) {
-            op.failure = this.diagnostic('native_failed', 'Code provider turn failed');
+            op.failure = this.diagnostic('native_failed', op.binding.handle?.lastTurnFailureText ?? 'Code provider turn failed');
         }
         // Normalization can publish to a subscriber that cancels this very turn.
         if (op.failure || op.stopped || op.persistenceFailure || outcome?.status === 'stopped') {

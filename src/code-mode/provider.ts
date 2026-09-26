@@ -46,6 +46,8 @@ export interface CodeProviderSession extends CodeRuntimeResource {
     /** True only when owned native resources have actually exited/drained. */
     readonly closed: boolean;
     send(text: string): Promise<RuntimeTurnOutcome>;
+    /** Optional: the specific reason the last turn failed, when the runtime names one. */
+    readonly lastTurnFailureText?: string | null;
     cancel(): Promise<void>;
     close(): Promise<void>;
 }

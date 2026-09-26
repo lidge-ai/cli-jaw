@@ -50,6 +50,11 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                     const captured = context ?? opening;
                     if (captured.isCurrent()) options.onNativeCursor(id, captured);
                 },
+                onContextUsage(usage) {
+                    options.onContextUsage({ totalTokens: usage.totalTokens, inputTokens: null, cachedInputTokens: null,
+                        outputTokens: null, reasoningOutputTokens: null, processedTokens: null,
+                        modelContextWindow: usage.modelContextWindow, updatedAt: usage.updatedAt });
+                },
                 onMetadata(context, metadata) {
                     if (context.isCurrent() && metadata.sessionId) options.onNativeCursor(metadata.sessionId, context);
                 },
@@ -78,6 +83,7 @@ export function createClaudeCodeProvider(dependencies: CodeProviderDependencies,
                 if (runtime.nativeSessionId) options.onNativeCursor(runtime.nativeSessionId, opening);
                 return {
                     get nativeSessionId() { return runtime.nativeSessionId; },
+                    get lastTurnFailureText() { return runtime.lastTurnFailureText; },
                     get alive() { return !closing && runtime.alive; },
                     get closed() { return !runtime.alive && runtime.activeProcessCount === 0; },
                     send(text) {
