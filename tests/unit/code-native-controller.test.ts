@@ -1000,6 +1000,25 @@ test('an unconfirmed follow-up is not resent and settles when its own message ar
     assert.equal(g.posts().length, 1);
 });
 
+test('a follow-up lost in transit settles from the next snapshot that holds it', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(streamingClaude()));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const pending = deferred<Response>();
+    f.intercept(call => call.path.endsWith('/steer') ? pending.promise : undefined);
+    f.controller.setInput('did this arrive?');
+    const sending = f.controller.send();
+    const key = String(f.posts()[0]!.body['clientTurnKey']);
+    // The server committed it; only the response was lost, and no event reaches this client.
+    f.snapshots.set('a', snap(streamingClaude({ sequence: 4 }), [steerItem(key, 4)]));
+    pending.reject(new TypeError('connection dropped'));
+    await sending;
+    const model = f.controller.getModel();
+    assert.deepEqual({ input: model.input, steering: model.steering }, { input: '', steering: false });
+    assert.doesNotMatch(model.error ?? '', /not confirmed/);
+    assert.equal(f.posts().length, 1);
+});
+
 test('Send follow-up closes once the running turn\'s follow-up is in the transcript', async t => {
     const f = fixture(t);
     f.snapshots.set('a', snap(streamingClaude({ sequence: 4 }), [steerItem('earlier', 4)]));
