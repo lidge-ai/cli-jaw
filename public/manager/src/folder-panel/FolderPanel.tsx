@@ -56,6 +56,7 @@ export function FolderPanel(props: FolderPanelProps) {
     const [actionStatus, setActionStatus] = useState<string | null>(null);
     const [gitRefreshToken, setGitRefreshToken] = useState(0);
     const treeRef = useRef<HTMLDivElement | null>(null);
+    const wasContextMenuOpen = useRef(false);
     const restoredRootLoadRef = useRef<string | null>(null);
     const { folderChordActive, startFolderChord, cancelFolderChord } = useFolderChord();
     const onPreviewFile = props.onPreviewFile;
@@ -403,13 +404,18 @@ export function FolderPanel(props: FolderPanelProps) {
     }, [cancelFolderChord, copyEntryPath, copySelectedPath, expanded, folderChordActive, folderSelection, revealEntryPath, revealSelectedPath, selectEntry, startFolderChord, toggleEntryExpansion]);
 
     useEffect(() => {
-        if (folderContextMenu.contextMenu) return;
+        const menuOpen = folderContextMenu.contextMenu !== null;
+        const menuJustClosed = wasContextMenuOpen.current && !menuOpen;
+        wasContextMenuOpen.current = menuOpen;
+        if (menuOpen) return;
+        if (menuJustClosed && document.activeElement !== document.body
+            && !document.activeElement?.matches('.folder-entry-btn[data-folder-path]')) return;
         const focusedPath = folderSelection.selection.focusedPath;
         if (!focusedPath) return;
         const buttons = treeRef.current?.querySelectorAll<HTMLButtonElement>('.folder-entry-btn[data-folder-path]');
         const nextButton = Array.from(buttons ?? []).find(button => button.dataset['folderPath'] === focusedPath);
         nextButton?.focus();
-    }, [folderSelection.selection.focusedPath]);
+    }, [folderSelection.selection.focusedPath, folderContextMenu.contextMenu]);
 
     return (
         <div className="folder-panel">

@@ -144,6 +144,27 @@ test('opening a folder menu on another row keeps focus inside the menu', async (
             })));
             assert.equal(container.querySelector('[aria-selected="true"]')?.querySelector('[data-folder-path]'), second);
             assert.equal(document.activeElement?.getAttribute('role'), 'menuitem');
+            await act(async () => document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+                key: 'Escape', bubbles: true, cancelable: true,
+            })));
+            assert.equal(document.querySelector('[role="menu"]'), null);
+            assert.equal(document.activeElement, second);
+            await act(async () => second.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+            })));
+            const otherInput = document.createElement('input');
+            document.body.append(otherInput);
+            const copy = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+                .find(button => button.textContent?.includes('Copy Path'))!;
+            copy.addEventListener('click', () => otherInput.focus());
+            await act(async () => copy.click());
+            assert.equal(document.activeElement, otherInput, 'a control focused by an action keeps focus');
+            otherInput.remove();
+            await act(async () => second.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+            })));
+            await act(async () => document.body.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true })));
+            assert.equal(document.activeElement, second, 'outside dismissal restores the selected row');
         } finally {
             await act(async () => root.unmount());
             container.remove();
