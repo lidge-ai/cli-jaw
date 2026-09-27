@@ -43,6 +43,7 @@ type InstanceGroupsProps = {
     onPreview: (instance: DashboardInstance) => void;
     onMarkActivitySeen: (port: number) => void;
     onInstanceLabelSave: (port: number, label: string | null) => Promise<void>;
+    onToggleFavorite?: (instance: DashboardInstance) => void;
     onLifecycle: (action: DashboardLifecycleAction, instance: DashboardInstance) => void;
 };
 
@@ -139,6 +140,7 @@ function renderInstanceRow(
             onPreview={props.onPreview}
             onMarkActivitySeen={props.onMarkActivitySeen}
             onInstanceLabelSave={props.onInstanceLabelSave}
+            {...(props.onToggleFavorite !== undefined ? { onToggleFavorite: props.onToggleFavorite } : {})}
             onLifecycle={props.onLifecycle}
             jumpHint={jumpHint ?? null}
         />

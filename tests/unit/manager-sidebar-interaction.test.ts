@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, test, type TestContext } from 'node:test';
 import type { ComponentProps, ReactNode } from 'react';
 import { JSDOM } from 'jsdom';
-import type { DashboardInstance } from '../../public/manager/src/types';
+import type { DashboardInstance, DashboardRegistryLoadResult, DashboardRegistryPatch } from '../../public/manager/src/types';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://sidebar.test/' });
 const replacements = {
@@ -20,6 +20,7 @@ const { createRoot } = await import('react-dom/client');
 const { InstanceRow } = await import('../../public/manager/src/components/InstanceRow');
 const { InstanceNavigator } = await import('../../public/manager/src/components/InstanceNavigator');
 const { InstanceGroups } = await import('../../public/manager/src/components/InstanceGroups');
+const { useFavoriteToggle } = await import('../../public/manager/src/hooks/useDashboardRegistry');
 
 after(() => {
     dom.window.close();
@@ -169,7 +170,11 @@ test('row navigation moves focus only, while rename and action controls retain H
         assert.equal((await key(from, name)).defaultPrevented, true);
         assert.equal(dom.window.document.activeElement, to);
     }
-    await act(async () => view.get('.instance-label-edit-button').click());
+    await key(first, 'F10', { shiftKey: true });
+    const renameItem = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.jaw-context-menu [role="menuitem"]')]
+        .find(el => el.textContent === 'Rename');
+    assert.ok(renameItem, 'context menu must expose Rename');
+    await act(async () => renameItem.click());
     const input = view.get<HTMLInputElement>('.instance-label-input');
     for (const name of ['Home', 'End', 'ArrowDown', 'ArrowUp']) {
         assert.equal((await key(input, name)).defaultPrevented, false);
@@ -215,6 +220,125 @@ test('offline and busy row actions keep their disabled contracts without selecti
     assert.equal(selected.mock.callCount(), 0);
     assert.equal(lifecycle.mock.callCount(), 0);
     assert.equal(seen.mock.callCount(), 0);
+});
+
+test('row context menu groups edit, preview, lifecycle and copy actions', async t => {
+    const lifecycle = t.mock.fn();
+    const favorite = t.mock.fn();
+    const preview = t.mock.fn();
+    const props = { ...rowProps(t), onLifecycle: lifecycle, onToggleFavorite: favorite, onPreview: preview };
+    const view = await mount(t, navigator(createElement(InstanceRow, props), () => {}));
+    const row = view.get('article.instance-row');
+    assert.equal(view.container.querySelector('.instance-actions'), null, 'the actions strip is removed');
+    assert.equal(view.container.querySelector('.instance-label-edit-button'), null, 'the standalone rename button is removed');
+
+    const openMenu = async () => {
+        await act(async () => {
+            row.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 140 }));
+        });
+        const menu = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+        assert.ok(menu, 'right-click must open the row context menu');
+        return menu;
+    };
+    const item = (menu: HTMLElement, label: string) => {
+        const node = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+            .find(el => el.textContent?.trim() === label);
+        assert.ok(node, `context menu must include ${label}`);
+        return node;
+    };
+
+    const menu = await openMenu();
+    assert.deepEqual(
+        [...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent?.trim()),
+        ['Rename', 'Pin', 'Preview', 'Open in new tab', 'Start', 'Restart', 'Register as persistent service', 'Stop', 'Copy URL', 'Copy port'],
+    );
+    assert.equal(menu.querySelectorAll('[role="separator"]').length, 3, 'menu groups stay separated');
+    assert.equal(item(menu, 'Start').disabled, true, 'canStart=false keeps Start disabled');
+    assert.equal(item(menu, 'Stop').disabled, false, 'canStop=true keeps Stop enabled');
+    assert.equal(item(menu, 'Stop').classList.contains('is-danger'), true, 'Stop is the destructive entry');
+    assert.equal(dom.window.document.activeElement, item(menu, 'Rename'), 'menu focuses its first item');
+
+    await act(async () => item(menu, 'Stop').click());
+    assert.deepEqual(lifecycle.mock.calls.map(call => call.arguments), [['stop', props.instance]]);
+    assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null, 'selecting an item closes the menu');
+
+    const keyboardMenu = await key(view.get('[data-instance-port="3457"]'), 'ContextMenu');
+    assert.equal(keyboardMenu.defaultPrevented, true);
+    const reopened = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+    assert.ok(reopened, 'ContextMenu key must reopen the row menu');
+    await act(async () => item(reopened, 'Pin').click());
+    assert.deepEqual(favorite.mock.calls.map(call => call.arguments), [[props.instance]]);
+
+    const third = await openMenu();
+    await act(async () => item(third, 'Preview').click());
+    assert.deepEqual(preview.mock.calls.map(call => call.arguments), [[props.instance]]);
+});
+
+test('row context menu drops the entries hidden by display props', async t => {
+    const props = { ...rowProps(t), showSelectedActions: false, showInlineLabelEditor: false };
+    const view = await mount(t, navigator(createElement(InstanceRow, props), () => {}));
+    const row = view.get('article.instance-row');
+    await act(async () => {
+        row.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+    });
+    const menu = dom.window.document.querySelector<HTMLElement>('.jaw-context-menu');
+    assert.ok(menu);
+    assert.deepEqual(
+        [...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent?.trim()),
+        ['Open in new tab', 'Stop', 'Copy URL', 'Copy port'],
+        'rename and selected-row actions stay out of the menu when their props hide them',
+    );
+});
+
+test('row keyboard menu stays closed while editing a label or another editable control', async t => {
+    const view = await mount(t, navigator(createElement(InstanceRow, rowProps(t)), () => {}));
+    const row = view.get('article.instance-row');
+    await key(view.get('[data-instance-port="3457"]'), 'ContextMenu');
+    const rename = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find(item => item.textContent?.trim() === 'Rename');
+    assert.ok(rename);
+    await act(async () => rename.click());
+    assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null);
+
+    const input = view.get<HTMLInputElement>('.instance-label-input');
+    const textarea = dom.window.document.createElement('textarea');
+    const select = dom.window.document.createElement('select');
+    const editable = dom.window.document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    editable.tabIndex = 0;
+    row.append(textarea, select, editable);
+    for (const target of [input, textarea, select, editable]) {
+        for (const [keyName, init] of [['ContextMenu', {}], ['F10', { shiftKey: true }]] as const) {
+            const event = await key(target, keyName, init);
+            assert.equal(event.defaultPrevented, false, `${target.tagName} ${keyName} keeps native editing behavior`);
+            assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null,
+                `${target.tagName} ${keyName} must not open the row menu`);
+        }
+    }
+});
+
+test('favorite toggle stays pending until its instance reload settles', async t => {
+    let finishReload!: () => void;
+    const save = t.mock.fn(async (_patch: DashboardRegistryPatch) => ({} as DashboardRegistryLoadResult));
+    const reload = t.mock.fn(() => new Promise<void>(resolve => { finishReload = resolve; }));
+    let toggle!: ReturnType<typeof useFavoriteToggle>;
+    function Harness() {
+        toggle = useFavoriteToggle({ save, reload });
+        return null;
+    }
+    await mount(t, createElement(Harness));
+    const original = instance(3457, { favorite: false });
+    await act(async () => { toggle(original); await Promise.resolve(); });
+    assert.equal(reload.mock.callCount(), 1);
+    toggle(original);
+    assert.equal(save.mock.callCount(), 1, 'a second click cannot resend the stale favorite value');
+    await act(async () => { finishReload(); await Promise.resolve(); });
+    toggle(instance(3457, { favorite: true }));
+    assert.deepEqual(save.mock.calls.map(call => call.arguments[0]), [
+        { instances: { '3457': { favorite: true } } },
+        { instances: { '3457': { favorite: false } } },
+    ]);
+    await act(async () => { finishReload(); await Promise.resolve(); });
 });
 
 test('Selected summary retains group identity, session linkage while closed, and lifecycle grouping/paging', async t => {
@@ -399,4 +523,3 @@ test('groups order rows by ascending port even when custom labels are set', asyn
     assert.deepEqual(portsIn('Pinned'), [3459], 'favorites keep their own section');
     assert.equal(selected.mock.callCount(), 0);
 });
-
