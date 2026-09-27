@@ -4,6 +4,7 @@ import './manager-tokens.css';
 import './styles.css';
 import './manager-layout.css';
 import './manager-components.css';
+import './components/context-menu/context-menu.css';
 import './manager-emerging.css';
 import './manager-persistence.css';
 import './manager-profiles.css';
