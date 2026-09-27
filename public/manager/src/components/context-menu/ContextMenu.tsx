@@ -86,12 +86,20 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     const menu = useRef<HTMLDivElement>(null);
     /** Dismissal hands focus back to the captured opener. */
     const restoreOnClose = useRef(true);
+    const pendingRestoreFrame = useRef<number | null>(null);
+    const cancelPendingRestore = useCallback(() => {
+        if (pendingRestoreFrame.current === null) return;
+        window.cancelAnimationFrame(pendingRestoreFrame.current);
+        pendingRestoreFrame.current = null;
+    }, []);
     const [position, setPosition] = useState<ContextMenuState | null>(null);
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
     const anchorX = state?.x;
     const anchorY = state?.y;
     const opener = state?.opener;
+
+    useEffect(() => cancelPendingRestore, [cancelPendingRestore]);
 
     useLayoutEffect(() => {
         if (anchorX === undefined || anchorY === undefined) { setPosition(null); return; }
@@ -108,6 +116,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
 
     useEffect(() => {
         if (anchorX === undefined || anchorY === undefined) return;
+        cancelPendingRestore();
         const onClose = () => onCloseRef.current();
         restoreOnClose.current = true;
         const first = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
@@ -135,7 +144,7 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
             window.removeEventListener('scroll', onScroll, true);
             if (restoreOnClose.current && opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
         };
-    }, [anchorX, anchorY, opener]);
+    }, [anchorX, anchorY, opener, cancelPendingRestore]);
 
     if (!state) return null;
 
@@ -176,7 +185,9 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
                     restoreOnClose.current = false;
                     onClose();
                     entry.onSelect();
-                    window.requestAnimationFrame(() => {
+                    cancelPendingRestore();
+                    pendingRestoreFrame.current = window.requestAnimationFrame(() => {
+                        pendingRestoreFrame.current = null;
                         const active = document.activeElement;
                         if ((!active || active === document.body || !active.isConnected || (previousMenu?.contains(active) ?? false))
                             && previousOpener instanceof HTMLElement && previousOpener.isConnected) {

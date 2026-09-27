@@ -119,6 +119,46 @@ test('selection restores the captured opener when the action does not move focus
     } finally { await cleanup(); }
 });
 
+test('unmounting before the selection frame does not refocus an opener left in the document', async () => {
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const pending = new Map<number, FrameRequestCallback>();
+    const originalRequest = dom.window.requestAnimationFrame;
+    const originalCancel = dom.window.cancelAnimationFrame;
+    let nextId = 1;
+    dom.window.requestAnimationFrame = callback => { const id = nextId++; pending.set(id, callback); return id; };
+    dom.window.cancelAnimationFrame = id => { pending.delete(id); };
+    let unmountMenu: () => void = () => {};
+    function Host() {
+        const [mounted, setMounted] = useState(true);
+        const contextMenu = useContextMenu();
+        unmountMenu = () => setMounted(false);
+        return createElement('div', null,
+            createElement('button', { id: 'staying-opener', onContextMenu: contextMenu.openAt }, 'Row'),
+            mounted ? createElement(ContextMenu, { state: contextMenu.state,
+                entries: [{ id: 'copy', label: 'Copy', onSelect: () => {} }], label: 'Row actions', onClose: contextMenu.close }) : null);
+    }
+    try {
+        await act(async () => root.render(createElement(Host)));
+        const opener = document.getElementById('staying-opener') as HTMLButtonElement;
+        await act(async () => {
+            opener.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 50 }));
+        });
+        await act(async () => { items()[0]!.click(); });
+        assert.equal(pending.size, 1);
+        await act(async () => unmountMenu());
+        assert.equal(opener.isConnected, true);
+        assert.ok(document.activeElement === document.body, 'focus is on the body before the pending frame');
+        assert.equal(pending.size, 0, 'unmount cancels the scheduled frame');
+        for (const callback of pending.values()) callback(0);
+        assert.ok(document.activeElement === document.body, 'the unmounted menu must not refocus its opener');
+    } finally {
+        dom.window.requestAnimationFrame = originalRequest;
+        dom.window.cancelAnimationFrame = originalCancel;
+        await act(async () => root.unmount()); container.remove();
+    }
+});
+
 test('scrolling a tall menu keeps it open while page scrolling dismisses it', async () => {
     const { opener, cleanup } = await mount(() => [{ id: 'copy', label: 'Copy', onSelect: () => {} }]);
     try {
