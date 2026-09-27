@@ -87,6 +87,7 @@ export class CodeController {
     private book: CodeDraftBook;
     private details = new Map<string, CodeSessionState>();
     private summaries = new Map<string, CodeSessionInfo>();
+    private pinnedOverlay: CodeSessionInfo[] = [];
     private attention = new Map<string, CodeSessionAttention>();
     private rows: string[] = [];
     private catalog: CodeModelCatalog | null = null;
@@ -162,6 +163,7 @@ export class CodeController {
             this.book.listeners.delete(this.changed);
             this.details.clear();
             this.summaries.clear();
+            this.pinnedOverlay = [];
             this.attention.clear();
             this.rows = [];
             this.cursor = null;
@@ -196,7 +198,9 @@ export class CodeController {
         if (!id) return null;
         const detail = this.details.get(id)?.session;
         const summary = this.summaries.get(id);
-        return summary && newer(summary, detail) ? summary : detail ?? summary ?? null;
+        const overlay = this.pinnedOverlay.find(row => row.sessionId === id);
+        return [detail, summary, overlay].reduce<CodeSessionInfo | null>((best, row) =>
+            row && newer(row, best) ? row : best, null);
     }
     /**
      * Record what an owning read saw. Call this BEFORE accept() on the same object:
@@ -236,9 +240,15 @@ export class CodeController {
         // observe(), and update() hands over details.session, which the reducer may
         // still be holding (code-session-state.ts snapshot replace).
         const { contextUsage: _usage, pendingPermissionCount: _count, ...session } = incoming;
+        const overlayIndex = this.pinnedOverlay.findIndex(row => row.sessionId === session.sessionId);
+        if (overlayIndex !== -1) {
+            if (session.pinnedAt === null || session.archivedAt !== null) this.pinnedOverlay.splice(overlayIndex, 1);
+            else this.pinnedOverlay[overlayIndex] = session;
+        }
         this.summaries.set(session.sessionId, session);
         if (this.summaries.size > MAX_INDEX + MAX_DETAILS) {
-            const victim = [...this.summaries.keys()].find(id => id !== this.book.selectedId && !this.details.has(id) && !this.rows.includes(id));
+            const victim = [...this.summaries.keys()].find(id => id !== this.book.selectedId && !this.details.has(id)
+                && !this.rows.includes(id) && !this.pinnedOverlay.some(row => row.sessionId === id));
             if (victim) { this.summaries.delete(victim); this.attention.delete(victim); }
         }
         const draft = this.book.sessions.get(session.sessionId);
@@ -376,7 +386,7 @@ export class CodeController {
             && item.itemId.startsWith(`${session.turnId}:steer:`));
         const unconfirmed = draft.steer?.state !== 'unknown' ? null : draft.steer.unrecorded ? FOLLOW_UP_UNRECORDED : FOLLOW_UP_UNCONFIRMED;
         return {
-            catalog: this.catalog, sessions: this.rows.map(id => {
+            catalog: this.catalog, sessions: [...this.rows, ...this.pinnedOverlay.map(row => row.sessionId).filter(id => !this.rows.includes(id))].map(id => {
                 const row = this.info(id), detail = this.details.get(id);
                 return row ? publish(row, detail) : row;
             }).filter((row): row is CodeSessionInfo => !!row),
@@ -386,7 +396,7 @@ export class CodeController {
             input: draft.input, selection: session ? sessionSelection(session) : draft.selection,
             gitInfo: this.gitInfo, loading: this.indexLoading || !!detail?.hydrating || (!!id && !detail?.hydrated && !detail?.error),
             pending, busy: codeSessionBusy(session), working: !!draft.awaitingTurn || codeSessionBusy(session),
-            workingIds: new Set(this.rows.filter(rowId => {
+            workingIds: new Set([...this.rows, ...this.pinnedOverlay.map(row => row.sessionId)].filter(rowId => {
                 const row = this.info(rowId);
                 return !!this.book.sessions.get(rowId)?.awaitingTurn || (!!row && codeSessionBusy(row));
             })), followUp, followUpSent, steering: draft.steer?.state === 'sending', synced, transport: this.transport, workspacePicking: this.workspacePicking,
@@ -400,7 +410,7 @@ export class CodeController {
             newSession: this.newSession, selectSession: this.selectSession, setInput: this.setInput,
             setSelection: this.setSelection, pickWorkspace: this.pickWorkspace, send: this.send,
             retrySameSend: this.retrySameSend, stop: this.stop, resume: this.resume, rollbackSession: this.rollbackSession, rename: this.rename,
-            archive: this.archive, answer: this.answer, refresh: this.refresh, loadMoreSessions: this.loadMoreSessions,
+            archive: this.archive, pin: this.pin, markUnread: this.markUnread, answer: this.answer, refresh: this.refresh, loadMoreSessions: this.loadMoreSessions,
             loadOlderHistory: this.loadOlderHistory, setFilter: this.setFilter, clearError: this.clearError,
         };
     }
@@ -434,7 +444,13 @@ export class CodeController {
             const page = await this.client.listSessions({ ...this.filter, limit,
                 ...(cursor === null ? {} : { cursor }),
                 ...(this.filter.scope === 'cwd' ? { cwd: this.workingDir } : {}) }, this.abort.signal);
+            const overlay = more || this.filter.archived ? null : await this.client.listSessions({
+                ...(this.filter.scope === 'cwd' ? { cwd: this.workingDir } : {}),
+                archived: false, pinned: true, limit: MAX_INDEX,
+            }, this.abort.signal).catch(() => null);
             if (!this.active || life !== this.lifetime || generation !== this.indexGeneration) return;
+            if (!more && !overlay) this.pinnedOverlay = [];
+            this.rows = [...new Set([...(more ? this.rows : []), ...page.sessions.map(row => row.sessionId)])].slice(0, MAX_INDEX);
             for (const session of page.sessions) {
                 // A listing is one of the two reads that can see the live runtime.
                 this.observe(session);
@@ -445,12 +461,23 @@ export class CodeController {
                     void this.sync(session.sessionId);
                 }
             }
-            this.rows = [...new Set([...(more ? this.rows : []), ...page.sessions.map(row => row.sessionId)])].slice(0, MAX_INDEX);
+            if (overlay) {
+                const retained: CodeSessionInfo[] = [];
+                for (const remote of overlay.sessions) {
+                    const local = this.info(remote.sessionId);
+                    const session = local && !newer(remote, local) ? local : remote;
+                    if (session.pinnedAt === null || session.archivedAt !== null) continue;
+                    retained.push(session);
+                    if (session === remote) { this.observe(session); this.accept(session); }
+                }
+                this.pinnedOverlay = retained;
+            }
             this.cursor = page.nextCursor;
             this.fetched = (more ? this.fetched : 0) + page.sessions.length;
             this.moreSessions = page.hasMore && this.rows.length < MAX_INDEX;
             this.indexError = null;
-            const retained = new Set([...this.rows, ...this.details.keys(), ...(this.book.selectedId ? [this.book.selectedId] : [])]);
+            const retained = new Set([...this.rows, ...this.pinnedOverlay.map(row => row.sessionId),
+                ...this.details.keys(), ...(this.book.selectedId ? [this.book.selectedId] : [])]);
             for (const id of this.summaries.keys()) if (!retained.has(id)) { this.summaries.delete(id); this.attention.delete(id); }
         } catch (error) {
             if (this.active && life === this.lifetime && generation === this.indexGeneration) this.indexError = message(error);
@@ -557,7 +584,7 @@ export class CodeController {
         await Promise.all([this.readCatalog(), this.readIndex(), id ? this.sync(id, true) : Promise.resolve(), this.readGit()]);
     };
     loadMoreSessions = async (): Promise<void> => { if (this.moreSessions && !this.indexLoading) await this.readIndex(true); };
-    setFilter = (filter: CodeSessionFilter): void => { this.filter = { ...filter }; this.cursor = null; this.fetched = 0; this.rows = []; this.moreSessions = false; this.notify(); void this.readIndex(); };
+    setFilter = (filter: CodeSessionFilter): void => { this.filter = { ...filter }; this.cursor = null; this.fetched = 0; this.rows = []; this.pinnedOverlay = []; this.moreSessions = false; this.notify(); void this.readIndex(); };
     // Explicitly abandon only the local uncertain attempt. The server session may exist.
     startAnotherSession = (): void => {
         const previous = this.book.fresh;
@@ -704,6 +731,37 @@ export class CodeController {
     // Other actions report handled failures through the controller model.
     rename = async (id: string, title: string): Promise<void> => { await this.patch(id, { title }, true); };
     archive = async (id: string, archived: boolean): Promise<void> => { await this.patch(id, { archived }, true); };
+    // Sidebar metadata is allowed while a session is busy, but it still shares
+    // the per-session operation slot: two PATCHes would race on the same
+    // expectedRevision and one would lose.
+    private async sidebarPatch(id: string, input: { pinned?: boolean; unread?: boolean }): Promise<void> {
+        const draft = this.draft(id);
+        const session = this.info(id);
+        if (!session || draft.operation.kind !== 'idle') {
+            const error = new Error(!session ? 'Refresh this session before changing it.'
+                : 'Wait for the current session action to finish before changing it.');
+            draft.operation.error = error.message; this.notify();
+            throw error;
+        }
+        let failure: Error | null = null;
+        draft.operation = { kind: 'patching', error: null }; this.notify();
+        try {
+            this.accept(await this.client.patchSession(id, { ...input, expectedRevision: session.revision }));
+            draft.operation = { kind: 'idle', error: null };
+        } catch (error) {
+            if (error instanceof CodeClientError && error.session?.sessionId === id) {
+                // A revision conflict answers with the snapshot session, overlay included.
+                this.observe(error.session);
+                this.accept(error.session);
+            }
+            failure = error instanceof CodeClientError ? error : new Error(message(error));
+            draft.operation = { kind: 'idle', error: failure.message };
+        }
+        this.notify(); this.scheduleIndex();
+        if (failure) throw failure;
+    }
+    pin = async (id: string, pinned: boolean): Promise<void> => { await this.sidebarPatch(id, { pinned }); };
+    markUnread = async (id: string, unread: boolean): Promise<void> => { await this.sidebarPatch(id, { unread }); };
     send = async (): Promise<void> => {
         let id = this.book.selectedId;
         let draft = this.draft(id);

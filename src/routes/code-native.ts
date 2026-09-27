@@ -101,7 +101,8 @@ function bool(value: unknown, code: string): boolean {
 }
 
 function patchInput(value: unknown): CodePatchSessionRequest {
-    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived']);
+    const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived',
+        'pinned', 'unread']);
     const patch: CodePatchSessionRequest = { expectedRevision: integer(input['expectedRevision'], 'revision') };
     if ('title' in input) {
         if (input['title'] !== null && (typeof input['title'] !== 'string' || input['title'].length > 240 || input['title'].includes('\0'))) return invalid('invalid_title');
@@ -115,6 +116,8 @@ function patchInput(value: unknown): CodePatchSessionRequest {
         if (typeof input['archived'] !== 'boolean') return invalid('invalid_archived');
         patch.archived = input['archived'];
     }
+    if ('pinned' in input) patch.pinned = bool(input['pinned'], 'invalid_pinned');
+    if ('unread' in input) patch.unread = bool(input['unread'], 'invalid_unread');
     if (Object.keys(patch).length === 1) return invalid('empty_patch');
     return patch;
 }
@@ -152,12 +155,15 @@ export function registerNativeCodeRoutes(
         if (scope === 'cwd' && directory === undefined) return invalid('absolute_cwd_required');
         const archived = req.query['archived'];
         if (archived !== undefined && archived !== 'true' && archived !== 'false') return invalid('invalid_archived');
+        const pinned = req.query['pinned'];
+        if (pinned !== undefined && pinned !== 'true' && pinned !== 'false') return invalid('invalid_pinned');
         if (req.query['offset'] !== undefined) return invalid('offset_unsupported');
         const limit = Math.min(queryInteger(req.query['limit'], 'limit', 100, 1), 1000);
         const cursor = req.query['cursor'] === undefined ? undefined : sessionCursor(req.query['cursor']);
         const sessions = getService().list({ limit, ...(cursor === undefined ? {} : { cursor }),
             ...(directory === undefined ? {} : { cwd: directory }),
-            ...(archived === undefined ? {} : { archived: archived === 'true' }) });
+            ...(archived === undefined ? {} : { archived: archived === 'true' }),
+            ...(pinned === undefined ? {} : { pinned: pinned === 'true' }) });
         const last = sessions.at(-1);
         const hasMore = sessions.length === limit;
         res.json({ ok: true, sessions, limit, hasMore,

@@ -23,7 +23,7 @@ const creation: CodeSessionCreate = {
 const dtoKeys = [
     'sessionId', 'provider', 'cwd', 'title', 'model', 'effort', 'permissionMode', 'status',
     'turnId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
-    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'thinking', 'rollback', 'historyGeneration',
+    'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'pinnedAt', 'markedUnread', 'thinking', 'rollback', 'historyGeneration',
 ].sort();
 
 function fixture(t: { after(fn: () => void): void }, options: CodeStoreOptions = {}) {
@@ -423,7 +423,8 @@ test('full row mapping includes every field and public surfaces exclude private 
         model: 'stored-model', effort: 'low', permissionMode: 'auto', status: 'suspended', turnId: null,
         archivedAt: null, error: { code: 'stored_error', message: 'diagnostic', at: 56, recoverable: true },
         resume: { available: true, reason: null }, capabilities, epoch: 7, sequence: 1, revision: 8,
-        createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: true,
+        createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null, pinnedAt: null, markedUnread: false,
+        thinking: true,
         rollback: { available: false, reason: 'no_boundary', sinceSequence: null }, historyGeneration: 0,
     };
     assert.deepEqual(store.read('session-a'), expected);
@@ -444,7 +445,8 @@ test('public mapper also strips future private properties nested in capabilities
     const record: CodeSessionRecord = {
         ...creation, sessionId: 's', title: null, status: 'idle', turnId: null,
         archivedAt: null, error: null, epoch: 0, sequence: 0, revision: 0, createdAt: 1, lastUsedAt: 2,
-        lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
+        lastTurnCompletedAt: null, lastVisitedAt: null, pinnedAt: null, markedUnread: false,
+        thinking: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
         replayFloorSequence: 0, historyGeneration: 0, rollbackSince: null,
     };
     const extra = { ...record, privateFutureField: 'private', capabilities: { ...capabilities, nativeCursor: 'hidden' } };
@@ -708,6 +710,54 @@ test('metadata revision prevents lost edits; busy rename works and busy archive/
     expectError(() => store.admitTurn({ sessionId: 'session-a', text: 'new', clientTurnKey: 'new', expectedRevision: 0 }), 'revision_conflict');
     assert.equal(store.read('session-a')?.title, 'User title');
     assert.equal(store.read('session-a')?.revision, 1);
+});
+
+test('pin and mark-unread are sidebar metadata: allowed while busy, and never bump the epoch', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store);
+    const epoch = admitted.session.epoch;
+    const pinned = store.patchSession('session-a', { expectedRevision: 0, pinned: true });
+    assert.equal(pinned.session.pinnedAt, 1234);
+    assert.equal(pinned.session.revision, 1);
+    assert.equal(pinned.session.epoch, epoch, 'sidebar metadata does not invalidate runtime callbacks');
+    const repinned = store.patchSession('session-a', { expectedRevision: 1, pinned: true });
+    assert.equal(repinned.session.pinnedAt, 1234, 're-pinning keeps the first pin time');
+    const unread = store.patchSession('session-a', { expectedRevision: 2, unread: true });
+    assert.equal(unread.session.markedUnread, true);
+    assert.equal(unread.session.epoch, epoch);
+    const unpinned = store.patchSession('session-a', { expectedRevision: 3, pinned: false });
+    assert.equal(unpinned.session.pinnedAt, null);
+    expectError(() => store.patchSession('session-a', { expectedRevision: 3, pinned: true }), 'revision_conflict');
+    assert.equal(store.read('session-a')?.markedUnread, true);
+});
+
+test('a visit clears an explicit mark-unread, and mark-read is itself a read receipt', t => {
+    const { store } = fixture(t);
+    const marked = store.patchSession('session-a', { expectedRevision: 0, unread: true });
+    assert.equal(marked.session.markedUnread, true);
+    const visited = store.markVisited('session-a');
+    assert.equal(visited.session.markedUnread, false);
+    assert.equal(visited.session.lastVisitedAt, 1234);
+    // Completion unread then an explicit mark-read: the receipt settles both.
+    store.patchSession('session-a', { expectedRevision: visited.session.revision, unread: true });
+    const read = store.patchSession('session-a', { expectedRevision: visited.session.revision + 1, unread: false });
+    assert.equal(read.session.markedUnread, false);
+    assert.equal(read.session.lastVisitedAt, 1234, 'mark-read stamps the visit clock so a settled turn stays read');
+});
+
+test('databases created before the sidebar flags gain both columns reading unset', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    db.exec(CREATE_CODE_SCHEMA_SQL.replace(',\n    pinned_at INTEGER, marked_unread INTEGER NOT NULL DEFAULT 0', ''));
+    const before = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.equal(before.includes('pinned_at'), false);
+    const store = new CodeStore(db, { now: () => 1234, newId: () => 'turn-x' });
+    store.create(creation);
+    const columns = (db.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).map(c => c.name);
+    assert.ok(columns.includes('pinned_at') && columns.includes('marked_unread'));
+    const row = store.read('session-a');
+    assert.equal(row.pinnedAt, null);
+    assert.equal(row.markedUnread, false);
 });
 
 test('terminal settlement is atomic and preserves accepted receipt sequence', t => {
@@ -984,6 +1034,22 @@ test('cursor streams stay inside the archived and cwd filters and creation ties 
     assert.deepEqual(store.list({ cwd: '/another/workspace' }), []);
     expectError(() => store.list({ cursor: { createdAt: -1, sessionId: 'x' } }), 'invalid_cursor', 400);
     expectError(() => store.list({ cursor: { createdAt: 1, sessionId: '' } }), 'invalid_cursor', 400);
+});
+
+test('pinned filter composes with archive and keyset cursor without changing creation order', t => {
+    const db = new Database(':memory:'); t.after(() => db.close());
+    let now = 0;
+    const store = new CodeStore(db, { now: () => ++now });
+    for (const sessionId of ['old', 'middle', 'new', 'archived']) store.create({ ...creation, sessionId });
+    for (const sessionId of ['old', 'middle', 'archived']) store.patchSession(sessionId, { expectedRevision: 0, pinned: true });
+    store.patchSession('archived', { expectedRevision: 1, archived: true });
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: false })), ['middle', 'old']);
+    assert.deepEqual(sessionIds(store.list({ pinned: false, archived: false })), ['new']);
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: true })), ['archived']);
+    assert.deepEqual(sessionIds(store.list({ pinned: false, archived: true })), []);
+    const first = store.list({ pinned: true, archived: false, limit: 1 });
+    assert.deepEqual(sessionIds(first), ['middle']);
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: false, cursor: cursorOf(first) })), ['old']);
 });
 
 test('session list index is upgraded once and left alone when it already matches', t => {

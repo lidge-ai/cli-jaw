@@ -14,7 +14,8 @@ function session(id: string, patch: Partial<CodeSessionInfo> = {}): CodeSessionI
     return { sessionId: id, provider: 'codex-app', cwd: `/workspace/${id}`, title: id, model: 'native-model', effort: null,
         permissionMode: 'ask', status: 'idle', turnId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
         resume: { available: true, reason: null }, capabilities: { resume: true, interrupt: true, permissions: true,
-            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null, ...patch };
+            setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null,
+        pinnedAt: null, markedUnread: false, ...patch };
 }
 function snap(info: CodeSessionInfo, items: CodeItem[] = [], pendingPermissions: CodePermissionRequest[] = []): CodeSnapshot {
     return { session: info, items, sequence: info.sequence, pendingPermissions, truncated: false };
@@ -259,6 +260,57 @@ test('rename and archive reject row failures after recording the target error', 
     await assert.rejects(f.controller.archive('a', true), /busy/);
     assert.equal(f.controller.getModel().session?.archivedAt, null);
     assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 2);
+});
+
+test('pin and mark-unread still PATCH a busy session; rename and archive stay gated', async t => {
+    const f = fixture(t);
+    f.snapshots.set('a', snap(session('a', { status: 'streaming', turnId: 't', revision: 4 })));
+    await f.controller.refresh(); await f.controller.selectSession('b');
+    let stored = session('a', { status: 'streaming', turnId: 't', revision: 4 });
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        // The store only touches the fields the patch names.
+        stored = { ...stored, revision: stored.revision + 1,
+            ...('pinned' in call.body ? { pinnedAt: call.body['pinned'] === true ? 7 : null } : {}),
+            ...('unread' in call.body ? { markedUnread: call.body['unread'] === true } : {}) };
+        return response({ ok: true, session: stored });
+    });
+    await f.controller.pin('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 4, pinned: true });
+    await f.controller.markUnread('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 5, unread: true });
+    const row = f.controller.getModel().sessions.find(item => item.sessionId === 'a')!;
+    assert.equal(row.pinnedAt, 7);
+    assert.equal(row.markedUnread, true);
+    await assert.rejects(f.controller.rename('a', 'renamed'), /busy|finish/);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 2, 'rename never reached the wire');
+    f.intercept(call => call.method === 'PATCH' ? response({ ok: false, error: 'revision_conflict', session: session('a', { revision: 9 }) }, 409) : undefined);
+    await assert.rejects(f.controller.pin('a', false), /changed|conflict/i);
+    assert.equal(f.controller.getModel().sessions.find(item => item.sessionId === 'a')!.revision, 9, 'a conflict accepts the answered revision');
+});
+
+test('pin and mark-unread share the mutation slot: they wait out an in-flight rename', async t => {
+    const f = fixture(t);
+    await f.controller.refresh(); await f.controller.selectSession('b');
+    let patchSeen = false;
+    let release: (value: Response) => void = () => {};
+    f.intercept(call => {
+        if (call.method !== 'PATCH' || !call.path.endsWith('/a')) return undefined;
+        if ('title' in call.body) {
+            patchSeen = true;
+            return new Promise<Response>(yes => { release = yes; });
+        }
+        return response({ ok: true, session: session('a', { title: 'later', revision: 4, pinnedAt: 7 }) });
+    });
+    const renaming = f.controller.rename('a', 'later');
+    while (!patchSeen) await new Promise(yes => setImmediate(yes));
+    await assert.rejects(f.controller.pin('a', true), /finish/);
+    await assert.rejects(f.controller.markUnread('a', true), /finish/);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1, 'the sidebar patches never reached the wire');
+    release(response({ ok: true, session: session('a', { title: 'later', revision: 3 }) }));
+    await renaming;
+    await f.controller.pin('a', true);
+    assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 3, pinned: true });
 });
 
 test('unknown creation remains frozen and is never automatically retried', async t => {
@@ -705,6 +757,114 @@ test('loadMoreSessions continues the index from the server cursor without refetc
     assert.equal(page.url.searchParams.get('cursor'), nextCursor);
     assert.deepEqual(f.controller.getModel().sessions.map(s => s.sessionId), ['s1', 's2', 's3', 's4', 's5']);
     assert.equal(f.controller.getModel().hasMoreSessions, false);
+});
+
+test('older pins survive a full index page and retain revision for row actions', async t => {
+    const f = fixture(t);
+    const page = Array.from({ length: 1000 }, (_, i) => session(`page-${i}`, { createdAt: 2000 - i }));
+    const pins = Array.from({ length: 7 }, (_, i) => session(`pin-${i}`, { createdAt: 100 - i, pinnedAt: i + 1 }));
+    for (const pin of pins) f.snapshots.set(pin.sessionId, snap(pin));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'GET') return response({ ok: true,
+            sessions: call.url.searchParams.get('pinned') === 'true' ? pins : page,
+            limit: Number(call.url.searchParams.get('limit')), nextCursor: null, hasMore: false });
+        if (call.method === 'PATCH' && call.path.startsWith('/sessions/')) {
+            const id = call.path.split('/')[2]!;
+            const before = f.snapshots.get(id)!.session;
+            assert.equal(call.body.expectedRevision, before.revision);
+            const patched = { ...before, revision: before.revision + 1,
+                pinnedAt: call.body.pinned === false ? null : before.pinnedAt,
+                title: typeof call.body.title === 'string' ? call.body.title : before.title,
+                archivedAt: call.body.archived === true ? 9000 : before.archivedAt };
+            f.snapshots.set(id, snap(patched));
+            return response({ ok: true, session: patched });
+        }
+        return undefined;
+    });
+    await f.controller.refresh();
+    const all = f.controller.getModel().sessions;
+    assert.equal(all.length, 1007, `missing ${pins.filter(pin => !all.some(row => row.sessionId === pin.sessionId)).map(pin => pin.sessionId).join(',')}`);
+    assert.equal(new Set(all.map(row => row.sessionId)).size, 1007);
+    const overlayRequest = f.calls.find(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true');
+    assert.equal(overlayRequest?.url.searchParams.get('archived'), 'false');
+    assert.equal(overlayRequest?.url.searchParams.get('limit'), '1000');
+    assert.equal(overlayRequest?.url.searchParams.has('cwd'), false);
+    await f.controller.pin('pin-0', false);
+    assert.equal(row(f.controller, 'pin-0'), undefined, 'unpin removes an overlay-only row immediately');
+    await f.controller.rename('pin-1', 'Renamed pin');
+    assert.equal(row(f.controller, 'pin-1')?.title, 'Renamed pin');
+    const prior = f.calls.length;
+    f.controller.setFilter({ scope: 'all', archived: true });
+    assert.equal(f.controller.getModel().sessions.length, 0, 'filter clears the overlay before the request settles');
+    await until(f.controller, () => !f.controller.getModel().loading);
+    assert.equal(f.calls.slice(prior).some(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true'), false);
+    f.controller.setFilter({ scope: 'cwd', archived: false });
+    await until(f.controller, () => !f.controller.getModel().loading);
+    const cwdOverlay = f.calls.filter(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true').at(-1);
+    assert.equal(cwdOverlay?.url.searchParams.get('cwd'), f.options.workingDir);
+});
+
+test('an older pinned response cannot restore a session unpinned while it was in flight', async t => {
+    const f = fixture(t);
+    await f.controller.refresh();
+    const old = session('older-pin', { pinnedAt: 10 });
+    const pending = deferred<Response>();
+    const started = deferred<void>();
+    let pinnedReads = 0;
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'GET') {
+            if (call.url.searchParams.get('pinned') === 'true') {
+                if (++pinnedReads === 1) return response({ ok: true, sessions: [old], nextCursor: null, hasMore: false });
+                started.resolve(); return pending.promise;
+            }
+            return response({ ok: true, sessions: [], nextCursor: null, hasMore: false });
+        }
+        if (call.path === '/sessions/older-pin' && call.method === 'PATCH') {
+            assert.equal(call.body.expectedRevision, old.revision);
+            return response({ ok: true, session: { ...old, revision: old.revision + 1, pinnedAt: null } });
+        }
+        return undefined;
+    });
+    await f.controller.refresh();
+    assert.ok(row(f.controller, old.sessionId));
+    const refresh = f.controller.refresh();
+    await started.promise;
+    await f.controller.pin(old.sessionId, false);
+    assert.equal(row(f.controller, old.sessionId), undefined);
+    pending.resolve(response({ ok: true, sessions: [old], nextCursor: null, hasMore: false }));
+    await refresh;
+    assert.equal(row(f.controller, old.sessionId), undefined, 'stale overlay cannot resurrect an unpinned row');
+});
+
+test('equal-version overlay reads refresh attention for pins outside the page', async t => {
+    const f = fixture(t);
+    await f.controller.refresh();
+    const first = session('overlay-attention', { pinnedAt: 10, pendingPermissionCount: 1, contextUsage: usage(111) });
+    const second = { ...first, pendingPermissionCount: 3, contextUsage: usage(222) };
+    let reads = 0;
+    f.intercept(call => {
+        if (call.path !== '/sessions' || call.method !== 'GET') return undefined;
+        return response({ ok: true, sessions: call.url.searchParams.get('pinned') === 'true'
+            ? [++reads === 1 ? first : second] : [], nextCursor: null, hasMore: false });
+    });
+    await f.controller.refresh();
+    assert.equal(row(f.controller, first.sessionId)?.pendingPermissionCount, 1);
+    assert.equal(row(f.controller, first.sessionId)?.contextUsage?.totalTokens, 111);
+    await f.controller.refresh();
+    assert.equal(row(f.controller, first.sessionId)?.pendingPermissionCount, 3);
+    assert.equal(row(f.controller, first.sessionId)?.contextUsage?.totalTokens, 222);
+});
+
+test('a failed pinned request leaves the ordinary index page visible', async t => {
+    const f = fixture(t);
+    f.intercept(call => {
+        if (call.path !== '/sessions' || call.method !== 'GET') return undefined;
+        if (call.url.searchParams.get('pinned') === 'true') return response({ ok: false, error: 'pin_read_failed' }, 503);
+        return response({ ok: true, sessions: [session('page-row')], nextCursor: null, hasMore: false });
+    });
+    await f.controller.refresh();
+    assert.deepEqual(f.controller.getModel().sessions.map(row => row.sessionId), ['page-row']);
+    assert.equal(f.controller.getModel().loading, false);
 });
 
 // --- #703: a spent clientTurnKey is a report, not an admission ---

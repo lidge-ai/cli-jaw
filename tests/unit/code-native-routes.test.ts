@@ -140,15 +140,18 @@ test('index, snapshot and replay reads preserve filters, caps and exact returned
     await server(async (url, f) => {
         assert.equal((await request(`${url}/sessions?scope=cwd`)).status, 400);
         assert.equal((await request(`${url}/sessions?archived=perhaps`)).status, 400);
+        const badPinned = await request(`${url}/sessions?pinned=yes`);
+        assert.equal(badPinned.status, 400);
+        assert.equal((await badPinned.json()).error, 'invalid_pinned');
         assert.equal((await request(`${url}/sessions?limit=0`)).status, 400);
         assert.equal((await request(`${url}/sessions?cursor=not-json`)).status, 400);
         assert.equal((await request(`${url}/sessions?offset=10`)).status, 400);
         assert.equal((await request(`${url}/sessions?offset=abc`)).status, 400);
         assert.equal((await request(`${url}/sessions?cursor=${encodeURIComponent('{"createdAt":-1,"sessionId":"s3"}')}`)).status, 400);
         const cursor = encodeURIComponent(JSON.stringify({ createdAt: 3, sessionId: 's3' }));
-        const listing = await request(`${url}/sessions?cwd=${encodeURIComponent(tmpdir())}&archived=false&limit=25&cursor=${cursor}`);
+        const listing = await request(`${url}/sessions?cwd=${encodeURIComponent(tmpdir())}&archived=false&pinned=true&limit=25&cursor=${cursor}`);
         assert.equal(listing.status, 200);
-        assert.deepEqual(f.calls.at(-1), { method: 'list', args: [{ cwd: realpathSync(tmpdir()), archived: false, limit: 25,
+        assert.deepEqual(f.calls.at(-1), { method: 'list', args: [{ cwd: realpathSync(tmpdir()), archived: false, pinned: true, limit: 25,
             cursor: { createdAt: 3, sessionId: 's3' } }] });
         assert.deepEqual(await listing.json(), { ok: true, sessions: [f.session], limit: 25, hasMore: false, nextCursor: null });
         assert.equal((await request(`${url}/sessions/session-one`)).status, 200);
@@ -480,6 +483,26 @@ test('POST and PATCH carry a boolean thinking switch and refuse anything else', 
         assert.equal((f.calls.at(-1)?.args[1] as { thinking?: boolean }).thinking, true);
         const badPatch = await request(`${url}/sessions/session-one`, 'PATCH', { expectedRevision: 2, thinking: 1 });
         assert.equal((await badPatch.json()).error, 'invalid_thinking');
+    });
+});
+
+test('PATCH carries boolean pinned and unread sidebar flags and refuses anything else', async () => {
+    await server(async (url, f) => {
+        for (const flag of [{ pinned: true }, { pinned: false }, { unread: true }, { unread: false }]) {
+            const input = { expectedRevision: 2, ...flag };
+            const response = await request(`${url}/sessions/session-one`, 'PATCH', input);
+            assert.equal(response.status, 200);
+            assert.deepEqual(f.calls.at(-1), { method: 'patch', args: ['session-one', input] });
+        }
+        for (const [body, code] of [
+            [{ expectedRevision: 2, pinned: 'yes' }, 'invalid_pinned'],
+            [{ expectedRevision: 2, unread: 1 }, 'invalid_unread'],
+            [{ expectedRevision: 2, pinned: true, extra: 1 }, 'unknown_field'],
+        ] as const) {
+            const refused = await request(`${url}/sessions/session-one`, 'PATCH', body);
+            assert.equal(refused.status, 400);
+            assert.equal((await refused.json()).error, code);
+        }
     });
 });
 

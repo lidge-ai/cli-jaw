@@ -104,10 +104,17 @@ async function selectSession(page: Page, title: string) {
     await button.click();
     await page.waitForFunction(title => document.querySelector('.code-session-header .code-session-title')?.textContent === title, title);
 }
+// The row menu is a right-click ContextMenu portaled to document.body; no row disclosure exists.
+async function rowMenu(page: Page, title: string) {
+    await sessionRow(page, title).locator('button.code-session-item').click({ button: 'right' });
+    const menu = page.getByRole('menu', { name: `Actions for ${title}`, exact: true });
+    await menu.waitFor({ state: 'visible' });
+    return menu;
+}
 async function rename(page: Page, oldTitle: string, newTitle: string) {
+    const menu = await rowMenu(page, oldTitle);
+    await menu.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     const row = sessionRow(page, oldTitle);
-    await row.getByLabel(`Actions for ${oldTitle}`, { exact: true }).click();
-    await row.getByRole('button', { name: 'Rename', exact: true }).click();
     await row.getByRole('textbox', { name: 'Session title', exact: true }).fill(newTitle);
     await row.getByRole('button', { name: 'Save', exact: true }).click();
     await sessionRow(page, newTitle).waitFor({ state: 'visible' });
@@ -334,16 +341,14 @@ test('native Code workbench on isolated real Manager', { timeout: 240_000 }, asy
                 await rename(p, 'Beta Claude', 'Reviewed Claude');
                 await p.getByRole('textbox', { name: 'Code prompt' }).fill('Reload keeps this exact draft');
                 const row = sessionRow(p, 'Reviewed Claude');
-                await row.getByLabel('Actions for Reviewed Claude', { exact: true }).click();
-                await row.getByRole('button', { name: 'Archive', exact: true }).click();
+                await (await rowMenu(p, 'Reviewed Claude')).getByRole('menuitem', { name: 'Archive', exact: true }).click();
                 await row.waitFor({ state: 'detached' });
                 const archived = await api<CodeSnapshot>(p, `/api/code/sessions/${b.sessionId}`);
                 assert.ok(archived.session.archivedAt !== null);
                 await p.getByRole('checkbox', { name: 'Archived', exact: true }).check();
                 await selectSession(p, 'Reviewed Claude');
                 assert.equal(await p.getByRole('textbox', { name: 'Code prompt' }).getAttribute('readonly'), '');
-                await row.getByLabel('Actions for Reviewed Claude', { exact: true }).click();
-                await row.getByRole('button', { name: 'Restore', exact: true }).click();
+                await (await rowMenu(p, 'Reviewed Claude')).getByRole('menuitem', { name: 'Restore', exact: true }).click();
                 await row.waitFor({ state: 'detached' });
                 await p.getByRole('checkbox', { name: 'Archived', exact: true }).uncheck();
                 await selectSession(p, 'Reviewed Claude');

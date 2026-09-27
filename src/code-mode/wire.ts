@@ -53,6 +53,10 @@ export interface CodeSessionInfo {
     lastTurnCompletedAt: number | null;
     /** When the Manager last opened this session; null if it never has (never counts as unread). */
     lastVisitedAt: number | null;
+    /** Sidebar pin, set when the row was pinned; null while unpinned. */
+    pinnedAt: number | null;
+    /** Sidebar-only unread marker the reader set explicitly; a visit clears it. */
+    markedUnread: boolean;
     /** Claude only: adaptive summarized thinking on/off. Null for other providers. */
     thinking: boolean | null;
     /** Current index/snapshot attention, absent when not hydrated. */
@@ -220,6 +224,10 @@ export interface CodePatchSessionRequest {
     /** Claude only. */
     thinking?: boolean;
     archived?: boolean;
+    /** Sidebar pin/unpin; sidebar metadata, so allowed while the session is busy. */
+    pinned?: boolean;
+    /** Sidebar mark-unread/read; sidebar metadata, so allowed while the session is busy. */
+    unread?: boolean;
 }
 
 export interface CodePromptRequest { text: string; clientTurnKey: string }

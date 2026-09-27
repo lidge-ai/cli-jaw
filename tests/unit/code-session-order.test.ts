@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CodeSessionInfo } from '../../src/code-mode/wire.ts';
 import { codeSessionAttention, codeSessionAttentionLabel, codeSessionSection, codeSessionUnread, codeWorkspaceName,
-    compareCodeSessions, groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace } from '../../public/manager/src/code/session-order.ts';
+    compareCodeSessions, comparePinnedCodeSessions, groupCodeSessions, groupCodeSessionsByActivity, groupCodeSessionsByWorkspace } from '../../public/manager/src/code/session-order.ts';
 
 function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return {
@@ -10,7 +10,8 @@ function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
         permissionMode: 'ask', status: 'idle', turnId: null, archivedAt: null, error: null,
         resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false, efforts: [], permissionModes: ['ask'] },
-        epoch: 1, sequence: 1, revision: 1, createdAt: 100, lastUsedAt: 100, lastTurnCompletedAt: null, lastVisitedAt: null, ...patch,
+        epoch: 1, sequence: 1, revision: 1, createdAt: 100, lastUsedAt: 100, lastTurnCompletedAt: null, lastVisitedAt: null,
+        pinnedAt: null, markedUnread: false, ...patch,
     };
 }
 
@@ -66,6 +67,19 @@ test('unread means a finished turn after the last visit; never-visited and archi
     assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 5 })), true);
     assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 10 })), false);
     assert.equal(codeSessionUnread(session({ lastTurnCompletedAt: 10, lastVisitedAt: 5, archivedAt: 20 })), false);
+});
+
+test('an explicit mark-unread reads unread even without a newer completion, except while archived', () => {
+    assert.equal(codeSessionUnread(session({ markedUnread: true })), true);
+    assert.equal(codeSessionUnread(session({ markedUnread: true, lastTurnCompletedAt: 10, lastVisitedAt: 99 })), true);
+    assert.equal(codeSessionUnread(session({ markedUnread: true, archivedAt: 20 })), false);
+});
+
+test('pinned rows order by newest pin first and fall back to creation order', () => {
+    const old = session({ sessionId: 'old', pinnedAt: 100, createdAt: 5 });
+    const fresh = session({ sessionId: 'fresh', pinnedAt: 300, createdAt: 1 });
+    const pinned = [old, fresh].sort(comparePinnedCodeSessions);
+    assert.deepEqual(pinned.map(s => s.sessionId), ['fresh', 'old']);
 });
 
 test('projects view groups by workspace, newest first inside, placed by its newest session, ignoring activity', () => {
