@@ -85,6 +85,11 @@ test('background task monitor panel exposes state, detail, cancel, retry, and re
     assert.ok(panel.includes('BrowserPanel state and Code transcript stay separate.'), 'web-ai bridge note must preserve surface boundaries');
     assert.ok(css.includes('.code-bg-task-list'), 'monitor must have bounded list styles');
     assert.ok(css.includes('max-height: min(30vh, 300px);'), 'monitor list must not push composer off screen');
+    assert.ok(panel.includes('useContextMenu'), 'rows must expose the shared right-click context menu');
+    assert.ok(panel.includes('jaw-row-hover-actions'), 'row actions must be hover/focus-revealed icon buttons');
+    assert.ok(panel.includes("'Show details'"), 'row menu must toggle the detail pane');
+    assert.ok(panel.includes("'Copy result'"), 'row menu must expose result copy');
+    assert.equal(css.includes('.code-bg-task-actions button'), false, 'rows must not keep always-visible text action buttons');
     assert.equal(workbench.includes('<BackgroundTaskMonitorPanel />'), false, 'Code session transcript lane must not inline the background task monitor');
     assert.equal(cssEntry.includes("@import '../background-tasks/background-task-monitor.css';"), false, 'Code CSS entry must NOT import monitor CSS (slice 211 boundary)');
 });

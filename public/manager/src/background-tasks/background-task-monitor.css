@@ -60,7 +60,6 @@
 }
 
 .code-bg-task-refresh,
-.code-bg-task-actions button,
 .code-bg-task-result-head button {
     min-height: 24px;
     padding: 0 8px;
@@ -75,7 +74,6 @@
 }
 
 .code-bg-task-refresh:disabled,
-.code-bg-task-actions button:disabled,
 .code-bg-task-result-head button:disabled {
     opacity: 0.45;
     cursor: not-allowed;
@@ -176,8 +174,7 @@
 }
 
 .code-bg-task-actions {
-    display: flex;
-    gap: 5px;
+    justify-content: flex-end;
 }
 
 .code-bg-task-detail {

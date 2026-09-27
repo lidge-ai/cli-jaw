@@ -37,3 +37,12 @@ export function StopGlyph() {
 export function RestartGlyph() {
     return <svg {...base}><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" /></svg>;
 }
+export function CheckGlyph() {
+    return <svg {...base}><path d="M3 8.8l3.2 3.2L13 5.2" /></svg>;
+}
+export function SpeakerGlyph() {
+    return <svg {...base}><path d="M8.7 3.2 5.3 6H3v4h2.3l3.4 2.8Z" /><path d="M11 6a3 3 0 0 1 0 4M12.9 4a5.4 5.4 0 0 1 0 8" /></svg>;
+}
+export function DocGlyph() {
+    return <svg {...base}><path d="M4.3 2.5H9l2.7 2.7v8.3H4.3Z" /><path d="M9 2.5v2.7h2.7M6.2 8.6h3.6M6.2 10.8h2.6" /></svg>;
+}

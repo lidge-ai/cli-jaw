@@ -649,39 +649,6 @@
     justify-content: flex-end;
     gap: 6px;
 }
-.folder-context-menu {
-    position: fixed;
-    z-index: 80;
-    min-width: 156px;
-    max-width: min(240px, calc(100vw - 16px));
-    padding: 4px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 5px;
-    background: var(--bg-elevated);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.26);
-}
-.folder-context-menu button {
-    all: unset;
-    box-sizing: border-box;
-    display: block;
-    width: 100%;
-    padding: 5px 8px;
-    border-radius: 3px;
-    color: var(--text-base);
-    font-size: 12px;
-    line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.folder-context-menu button:hover:not(:disabled),
-.folder-context-menu button:focus-visible {
-    background: var(--bg-hover);
-}
-.folder-context-menu button:disabled {
-    color: var(--text-dim);
-    opacity: 0.45;
-}
 .folder-empty {
     padding: 12px;
     color: var(--text-dim);
