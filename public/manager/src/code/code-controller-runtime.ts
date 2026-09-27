@@ -447,10 +447,9 @@ export class CodeController {
             const overlay = more || this.filter.archived ? null : await this.client.listSessions({
                 ...(this.filter.scope === 'cwd' ? { cwd: this.workingDir } : {}),
                 archived: false, pinned: true, limit: MAX_INDEX,
-            }, this.abort.signal);
+            }, this.abort.signal).catch(() => null);
             if (!this.active || life !== this.lifetime || generation !== this.indexGeneration) return;
-            if (overlay) this.pinnedOverlay = overlay.sessions;
-            else if (!more) this.pinnedOverlay = [];
+            if (!more && !overlay) this.pinnedOverlay = [];
             this.rows = [...new Set([...(more ? this.rows : []), ...page.sessions.map(row => row.sessionId)])].slice(0, MAX_INDEX);
             for (const session of page.sessions) {
                 // A listing is one of the two reads that can see the live runtime.
@@ -462,7 +461,17 @@ export class CodeController {
                     void this.sync(session.sessionId);
                 }
             }
-            if (overlay) for (const session of overlay.sessions) { this.observe(session); this.accept(session); }
+            if (overlay) {
+                const retained: CodeSessionInfo[] = [];
+                for (const remote of overlay.sessions) {
+                    const local = this.info(remote.sessionId);
+                    const session = local && newer(local, remote) ? local : remote;
+                    if (session.pinnedAt === null || session.archivedAt !== null) continue;
+                    retained.push(session);
+                    if (session === remote) { this.observe(session); this.accept(session); }
+                }
+                this.pinnedOverlay = retained;
+            }
             this.cursor = page.nextCursor;
             this.fetched = (more ? this.fetched : 0) + page.sessions.length;
             this.moreSessions = page.hasMore && this.rows.length < MAX_INDEX;

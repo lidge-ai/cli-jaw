@@ -804,6 +804,50 @@ test('older pins survive a full index page and retain revision for row actions',
     assert.equal(cwdOverlay?.url.searchParams.get('cwd'), f.options.workingDir);
 });
 
+test('an older pinned response cannot restore a session unpinned while it was in flight', async t => {
+    const f = fixture(t);
+    await f.controller.refresh();
+    const old = session('older-pin', { pinnedAt: 10 });
+    const pending = deferred<Response>();
+    const started = deferred<void>();
+    let pinnedReads = 0;
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'GET') {
+            if (call.url.searchParams.get('pinned') === 'true') {
+                if (++pinnedReads === 1) return response({ ok: true, sessions: [old], nextCursor: null, hasMore: false });
+                started.resolve(); return pending.promise;
+            }
+            return response({ ok: true, sessions: [], nextCursor: null, hasMore: false });
+        }
+        if (call.path === '/sessions/older-pin' && call.method === 'PATCH') {
+            assert.equal(call.body.expectedRevision, old.revision);
+            return response({ ok: true, session: { ...old, revision: old.revision + 1, pinnedAt: null } });
+        }
+        return undefined;
+    });
+    await f.controller.refresh();
+    assert.ok(row(f.controller, old.sessionId));
+    const refresh = f.controller.refresh();
+    await started.promise;
+    await f.controller.pin(old.sessionId, false);
+    assert.equal(row(f.controller, old.sessionId), undefined);
+    pending.resolve(response({ ok: true, sessions: [old], nextCursor: null, hasMore: false }));
+    await refresh;
+    assert.equal(row(f.controller, old.sessionId), undefined, 'stale overlay cannot resurrect an unpinned row');
+});
+
+test('a failed pinned request leaves the ordinary index page visible', async t => {
+    const f = fixture(t);
+    f.intercept(call => {
+        if (call.path !== '/sessions' || call.method !== 'GET') return undefined;
+        if (call.url.searchParams.get('pinned') === 'true') return response({ ok: false, error: 'pin_read_failed' }, 503);
+        return response({ ok: true, sessions: [session('page-row')], nextCursor: null, hasMore: false });
+    });
+    await f.controller.refresh();
+    assert.deepEqual(f.controller.getModel().sessions.map(row => row.sessionId), ['page-row']);
+    assert.equal(f.controller.getModel().loading, false);
+});
+
 // --- #703: a spent clientTurnKey is a report, not an admission ---
 // The server consumes a key once. After a restart seals the turn, the same key
 // returns HTTP 200 with the stored status and starts nothing, and the orphaned
