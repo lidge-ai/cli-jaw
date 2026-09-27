@@ -579,6 +579,7 @@ cli-jaw/
 │   │   ├── native-requests.css ← live decision form, focus and bounded responsive scrolling
 │   │   └── activity.css      ← scoped live Activity disclosure and reversible Legacy visibility
 │   ├── manager/src/settings-standalone.tsx ← shared instance settings root
+│   ├── manager/src/manager-desktop-titlebar.css ← Electron titlebar rail and zoom-aware traffic-light spacing
 │   ├── manager/src/settings/ ← unified instance and Manager settings
 │   │   ├── SettingsPage.tsx ← full workspace Back/navigation layout
 │   │   ├── settings-icons.ts ← category glyph mapping

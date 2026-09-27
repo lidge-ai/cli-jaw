@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { getLatestMetrics, setupMetricsBridge } from './metrics.js';
 
 const DESKTOP_IDENTITY = {
@@ -29,17 +29,25 @@ function installDesktopFetchHeader(): void {
   };
 }
 
+function updateDesktopZoom(): void {
+  document.documentElement?.style.setProperty('--desktop-zoom', String(webFrame.getZoomFactor()));
+}
+
 function markDesktopDocument(): void {
   try {
     const root = document?.documentElement;
     if (root) {
       root.dataset.cliJawDesktop = 'true';
+      root.dataset.cliJawPlatform = process.platform;
+      updateDesktopZoom();
       return;
     }
     // Guest webviews can run this preload before documentElement exists.
     document?.addEventListener?.('DOMContentLoaded', () => {
       try {
         document.documentElement.dataset.cliJawDesktop = 'true';
+        document.documentElement.dataset.cliJawPlatform = process.platform;
+        updateDesktopZoom();
       } catch { /* ignore */ }
     }, { once: true });
   } catch (err) {
@@ -198,5 +206,7 @@ contextBridge.exposeInMainWorld('cliJawDesktop', {
 });
 
 markDesktopDocument();
+window.addEventListener('resize', updateDesktopZoom);
+ipcRenderer.on('manager:zoom-changed', updateDesktopZoom);
 installDesktopFetchHeader();
 setupMetricsBridge();
