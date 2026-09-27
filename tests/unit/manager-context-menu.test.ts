@@ -10,7 +10,7 @@ const previous = new Map(Object.keys(replacements).map(key => [key, Object.getOw
 for (const [key, value] of Object.entries(replacements)) globals[key] = value;
 const { act, createElement, useState } = await import('react');
 const { createRoot } = await import('react-dom/client');
-const { ContextMenu } = await import('../../public/manager/src/components/context-menu/ContextMenu');
+const { ContextMenu, useContextMenu } = await import('../../public/manager/src/components/context-menu/ContextMenu');
 type Entry = import('../../public/manager/src/components/context-menu/ContextMenu').ContextMenuEntry;
 after(() => {
     dom.window.close();
@@ -24,13 +24,14 @@ async function mount(entries: (setInput: (v: boolean) => void) => Entry[], at = 
     const root = createRoot(container);
     let openMenu: () => void = () => {};
     function Host() {
-        const [state, setState] = useState<{ x: number; y: number } | null>(null);
+        const contextMenu = useContextMenu();
         const [input, setInput] = useState(false);
-        openMenu = () => setState(at);
+        openMenu = () => contextMenu.openAtElement(document.getElementById('opener') as HTMLElement);
         return createElement('div', null,
             createElement('button', { id: 'opener', type: 'button' }, 'row'),
             input ? createElement('input', { id: 'rename', autoFocus: true }) : null,
-            createElement(ContextMenu, { state, entries: entries(setInput), label: 'Row actions', onClose: () => setState(null) }));
+            createElement(ContextMenu, { state: contextMenu.state && { ...contextMenu.state, ...at }, entries: entries(setInput),
+                label: 'Row actions', onClose: contextMenu.close }));
     }
     await act(async () => root.render(createElement(Host)));
     const opener = document.getElementById('opener') as HTMLButtonElement;
@@ -40,6 +41,7 @@ async function mount(entries: (setInput: (v: boolean) => void) => Entry[], at = 
 }
 const menu = () => document.querySelector<HTMLElement>('.jaw-context-menu');
 const items = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.jaw-context-menu [role="menuitem"]'));
+const nextFrame = () => act(async () => { await new Promise<void>(resolve => dom.window.requestAnimationFrame(() => resolve())); });
 
 test('renders into document.body with icons, shortcuts, separators and focuses the first enabled item', async () => {
     const { container, cleanup } = await mount(() => [
@@ -91,6 +93,7 @@ test('outside pointerdown dismisses; choosing an item runs it and leaves focus t
     ]);
     try {
         await act(async () => { items()[0]!.click(); });
+        await nextFrame();
         assert.equal(picked, 1);
         assert.equal(menu(), null);
         assert.equal(document.activeElement, document.getElementById('rename'), 'focus stays on the input the action opened');
@@ -103,6 +106,100 @@ test('outside pointerdown dismisses; choosing an item runs it and leaves focus t
         assert.equal(document.activeElement, second.opener);
     } finally { await second.cleanup(); }
 });
+
+test('selection restores the captured opener when the action does not move focus', async () => {
+    let picked = 0;
+    const { opener, cleanup } = await mount(() => [{ id: 'copy', label: 'Copy', onSelect: () => { picked += 1; } }]);
+    try {
+        await act(async () => { items()[0]!.click(); });
+        await nextFrame();
+        assert.equal(picked, 1);
+        assert.equal(menu(), null);
+        assert.equal(document.activeElement, opener);
+    } finally { await cleanup(); }
+});
+
+test('scrolling a tall menu keeps it open while page scrolling dismisses it', async () => {
+    const { opener, cleanup } = await mount(() => [{ id: 'copy', label: 'Copy', onSelect: () => {} }]);
+    try {
+        await act(async () => { menu()!.dispatchEvent(new dom.window.Event('scroll')); });
+        assert.ok(menu());
+        await act(async () => { document.dispatchEvent(new dom.window.Event('scroll')); });
+        assert.equal(menu(), null);
+        assert.equal(document.activeElement, opener);
+    } finally { await cleanup(); }
+});
+
+test('right-click captures the row control even when an unrelated input has focus', async () => {
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    function Host() {
+        const contextMenu = useContextMenu();
+        return createElement('div', null,
+            createElement('input', { id: 'unrelated' }),
+            createElement('div', { id: 'row', onContextMenu: contextMenu.openAt },
+                createElement('button', { id: 'row-control', type: 'button' }, 'Row')),
+            createElement(ContextMenu, { state: contextMenu.state, entries: [{ id: 'copy', label: 'Copy', onSelect: () => {} }],
+                label: 'Row actions', onClose: contextMenu.close }));
+    }
+    try {
+        await act(async () => root.render(createElement(Host)));
+        (document.getElementById('unrelated') as HTMLInputElement).focus();
+        await act(async () => {
+            document.getElementById('row')!.dispatchEvent(new dom.window.MouseEvent('contextmenu',
+                { bubbles: true, clientX: 40, clientY: 50 }));
+        });
+        assert.equal(document.activeElement, items()[0]);
+        await act(async () => {
+            items()[0]!.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        assert.equal(menu(), null);
+        assert.equal(document.activeElement, document.getElementById('row-control'));
+    } finally { await act(async () => root.unmount()); container.remove(); }
+});
+
+for (const [key, shiftKey, destination] of [
+    ['Tab', false, 'after-one'], ['Shift+Tab', true, 'before-one'],
+] as const) {
+    test(`${key} closes and focuses the opener's immediate tabbable neighbour`, async () => {
+        const container = document.createElement('div'); document.body.append(container);
+        const root = createRoot(container);
+        function Host() {
+            const contextMenu = useContextMenu();
+            return createElement('div', null,
+                createElement('button', { id: 'before-two' }, 'Before two'),
+                createElement('button', { id: 'before-one' }, 'Before one'),
+                createElement('button', { hidden: true }, 'Hidden before'),
+                createElement('button', { disabled: true }, 'Disabled before'),
+                createElement('button', { tabIndex: -1 }, 'Untabbable before'),
+                createElement('button', { id: 'tab-opener', onContextMenu: contextMenu.openAt }, 'Opener'),
+                createElement('button', { hidden: true }, 'Hidden after'),
+                createElement('button', { disabled: true }, 'Disabled after'),
+                createElement('button', { tabIndex: -1 }, 'Untabbable after'),
+                createElement('button', { id: 'after-one' }, 'After one'),
+                createElement('button', { id: 'after-two' }, 'After two'),
+                createElement(ContextMenu, { state: contextMenu.state,
+                    entries: [{ id: 'copy', label: 'Copy', onSelect: () => {} }], label: 'Row actions', onClose: contextMenu.close }));
+        }
+        try {
+            await act(async () => root.render(createElement(Host)));
+            const opener = document.getElementById('tab-opener') as HTMLButtonElement;
+            const neighbour = document.getElementById(destination)!;
+            let focusCount = 0;
+            neighbour.addEventListener('focus', () => { focusCount += 1; });
+            opener.focus();
+            await act(async () => {
+                opener.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 50 }));
+            });
+            const event = new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+            await act(async () => { items()[0]!.dispatchEvent(event); });
+            assert.equal(event.defaultPrevented, true);
+            assert.equal(menu(), null);
+            assert.equal(document.activeElement, neighbour);
+            assert.equal(focusCount, 1);
+        } finally { await act(async () => root.unmount()); container.remove(); }
+    });
+}
 
 test('clamps to the viewport near the right and bottom edges', async () => {
     const { cleanup } = await mount(() => [{ id: 'x', label: 'X', onSelect: () => {} }], { x: 5000, y: 5000 });

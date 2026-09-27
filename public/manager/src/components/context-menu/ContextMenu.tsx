@@ -16,12 +16,34 @@ export type ContextMenuAction = {
 export type ContextMenuSeparator = { kind: 'separator'; id: string };
 export type ContextMenuEntry = ContextMenuAction | ContextMenuSeparator;
 
-export type ContextMenuState = { x: number; y: number };
+export type ContextMenuState = { x: number; y: number; opener?: Element | null };
 
 const VIEWPORT_MARGIN = 8;
 
 function isAction(entry: ContextMenuEntry): entry is ContextMenuAction {
     return entry.kind !== 'separator';
+}
+
+function isFocusable(element: HTMLElement): boolean {
+    if (element.matches(':disabled') || element.closest('[hidden], [inert]')) return false;
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+        const style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    }
+    return element.tabIndex >= 0 || element.hasAttribute('tabindex') || element.isContentEditable;
+}
+
+function isTabbable(element: HTMLElement): boolean {
+    return element.tabIndex >= 0 && isFocusable(element);
+}
+
+function nextTabbable(opener: Element | null, menu: HTMLElement | null, direction: 1 | -1): HTMLElement | null {
+    if (!(opener instanceof HTMLElement)) return null;
+    const tabbables = Array.from(document.querySelectorAll<HTMLElement>('*'))
+        .filter(element => !menu?.contains(element) && isTabbable(element));
+    const index = tabbables.indexOf(opener);
+    if (index < 0 || tabbables.length < 2) return null;
+    return tabbables[(index + direction + tabbables.length) % tabbables.length] ?? null;
 }
 
 /**
@@ -35,16 +57,21 @@ export function useContextMenu() {
     const openAt = useCallback((event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
         event.preventDefault();
         event.stopPropagation();
+        const target = event.currentTarget;
+        const active = document.activeElement;
+        const opener = active && target.contains(active) ? active
+            : isFocusable(target) ? target
+                : Array.from(target.querySelectorAll<HTMLElement>('*')).find(isFocusable) ?? active;
         if ('clientX' in event && (event.clientX !== 0 || event.clientY !== 0)) {
-            setState({ x: event.clientX, y: event.clientY });
+            setState({ x: event.clientX, y: event.clientY, opener });
             return;
         }
-        const rect = event.currentTarget.getBoundingClientRect();
-        setState({ x: rect.left + 8, y: rect.bottom });
+        const rect = target.getBoundingClientRect();
+        setState({ x: rect.left + 8, y: rect.bottom, opener });
     }, []);
     const openAtElement = useCallback((element: HTMLElement) => {
         const rect = element.getBoundingClientRect();
-        setState({ x: rect.left, y: rect.bottom + 2 });
+        setState({ x: rect.left, y: rect.bottom + 2, opener: element });
     }, []);
     return { state, open: state !== null, openAt, openAtElement, close };
 }
@@ -57,14 +84,14 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     className?: string;
 }) {
     const menu = useRef<HTMLDivElement>(null);
-    const restoreFocus = useRef<Element | null>(null);
-    /** Dismissal hands focus back to the opener; choosing an item leaves focus to the action. */
+    /** Dismissal hands focus back to the captured opener. */
     const restoreOnClose = useRef(true);
     const [position, setPosition] = useState<ContextMenuState | null>(null);
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
     const anchorX = state?.x;
     const anchorY = state?.y;
+    const opener = state?.opener;
 
     useLayoutEffect(() => {
         if (anchorX === undefined || anchorY === undefined) { setPosition(null); return; }
@@ -82,7 +109,6 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
     useEffect(() => {
         if (anchorX === undefined || anchorY === undefined) return;
         const onClose = () => onCloseRef.current();
-        restoreFocus.current = document.activeElement;
         restoreOnClose.current = true;
         const first = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
         first?.focus({ preventScroll: true });
@@ -92,21 +118,24 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         };
         const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } };
         const onDismiss = () => onClose();
+        const onScroll = (event: Event) => {
+            if (menu.current && event.target instanceof Node && menu.current.contains(event.target)) return;
+            onClose();
+        };
         window.addEventListener('pointerdown', onPointerDown, true);
         window.addEventListener('keydown', onKey);
         window.addEventListener('blur', onDismiss);
         window.addEventListener('resize', onDismiss);
-        window.addEventListener('scroll', onDismiss, true);
+        window.addEventListener('scroll', onScroll, true);
         return () => {
             window.removeEventListener('pointerdown', onPointerDown, true);
             window.removeEventListener('keydown', onKey);
             window.removeEventListener('blur', onDismiss);
             window.removeEventListener('resize', onDismiss);
-            window.removeEventListener('scroll', onDismiss, true);
-            const previous = restoreFocus.current;
-            if (restoreOnClose.current && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+            window.removeEventListener('scroll', onScroll, true);
+            if (restoreOnClose.current && opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
         };
-    }, [anchorX, anchorY]);
+    }, [anchorX, anchorY, opener]);
 
     if (!state) return null;
 
@@ -123,7 +152,14 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         const moves: Record<string, 1 | -1 | 'first' | 'last'> = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' };
         const move = moves[event.key];
         if (move !== undefined) { event.preventDefault(); moveFocus(move); }
-        else if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); onClose(); }
+        else if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+        else if (event.key === 'Tab') {
+            event.preventDefault();
+            const next = nextTabbable(opener ?? null, menu.current, event.shiftKey ? -1 : 1);
+            restoreOnClose.current = false;
+            onClose();
+            next?.focus({ preventScroll: true });
+        }
         event.stopPropagation();
     }
 
@@ -134,7 +170,20 @@ export function ContextMenu({ state, entries, label, onClose, className }: {
         {entries.map(entry => isAction(entry)
             ? <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled} title={entry.title}
                 className={`jaw-context-menu-item${entry.danger ? ' is-danger' : ''}`}
-                onClick={() => { restoreOnClose.current = false; onClose(); entry.onSelect(); }}>
+                onClick={() => {
+                    const previousMenu = menu.current;
+                    const previousOpener = state.opener;
+                    restoreOnClose.current = false;
+                    onClose();
+                    entry.onSelect();
+                    window.requestAnimationFrame(() => {
+                        const active = document.activeElement;
+                        if ((!active || active === document.body || !active.isConnected || (previousMenu?.contains(active) ?? false))
+                            && previousOpener instanceof HTMLElement && previousOpener.isConnected) {
+                            previousOpener.focus({ preventScroll: true });
+                        }
+                    });
+                }}>
                 <span className="jaw-context-menu-icon" aria-hidden="true">{entry.icon}</span>
                 <span className="jaw-context-menu-label">{entry.label}</span>
                 {entry.shortcut && <kbd className="jaw-context-menu-shortcut" aria-hidden="true">{entry.shortcut}</kbd>}
