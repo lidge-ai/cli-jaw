@@ -58,7 +58,7 @@ export function useDashboardRegistry(): DashboardRegistryState {
 
 type FavoriteToggleDeps = {
     save: (patch: DashboardRegistryPatch) => Promise<DashboardRegistryLoadResult | null>;
-    reload: () => void;
+    reload: () => Promise<void>;
 };
 
 export function useFavoriteToggle({ save, reload }: FavoriteToggleDeps): (instance: DashboardInstance) => void {
@@ -68,9 +68,9 @@ export function useFavoriteToggle({ save, reload }: FavoriteToggleDeps): (instan
         if (pending.current.has(port)) return;
         pending.current.add(port);
         void save({ instances: { [String(port)]: { favorite: !instance.favorite } } })
-            .then(result => {
+            .then(async result => {
                 if (!result) return;
-                reload();
+                await reload();
                 publishInvalidation({ topics: ['instances'], reason: 'instance:favorite-toggled', source: 'ui', sourceId: 'app' });
             })
             .finally(() => pending.current.delete(port));

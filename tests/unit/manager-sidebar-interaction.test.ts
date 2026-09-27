@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, test, type TestContext } from 'node:test';
 import type { ComponentProps, ReactNode } from 'react';
 import { JSDOM } from 'jsdom';
-import type { DashboardInstance } from '../../public/manager/src/types';
+import type { DashboardInstance, DashboardRegistryLoadResult, DashboardRegistryPatch } from '../../public/manager/src/types';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://sidebar.test/' });
 const replacements = {
@@ -20,6 +20,7 @@ const { createRoot } = await import('react-dom/client');
 const { InstanceRow } = await import('../../public/manager/src/components/InstanceRow');
 const { InstanceNavigator } = await import('../../public/manager/src/components/InstanceNavigator');
 const { InstanceGroups } = await import('../../public/manager/src/components/InstanceGroups');
+const { useFavoriteToggle } = await import('../../public/manager/src/hooks/useDashboardRegistry');
 
 after(() => {
     dom.window.close();
@@ -289,6 +290,57 @@ test('row context menu drops the entries hidden by display props', async t => {
     );
 });
 
+test('row keyboard menu stays closed while editing a label or another editable control', async t => {
+    const view = await mount(t, navigator(createElement(InstanceRow, rowProps(t)), () => {}));
+    const row = view.get('article.instance-row');
+    await key(view.get('[data-instance-port="3457"]'), 'ContextMenu');
+    const rename = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find(item => item.textContent?.trim() === 'Rename');
+    assert.ok(rename);
+    await act(async () => rename.click());
+    assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null);
+
+    const input = view.get<HTMLInputElement>('.instance-label-input');
+    const textarea = dom.window.document.createElement('textarea');
+    const select = dom.window.document.createElement('select');
+    const editable = dom.window.document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    editable.tabIndex = 0;
+    row.append(textarea, select, editable);
+    for (const target of [input, textarea, select, editable]) {
+        for (const [keyName, init] of [['ContextMenu', {}], ['F10', { shiftKey: true }]] as const) {
+            const event = await key(target, keyName, init);
+            assert.equal(event.defaultPrevented, false, `${target.tagName} ${keyName} keeps native editing behavior`);
+            assert.equal(dom.window.document.querySelector('.jaw-context-menu'), null,
+                `${target.tagName} ${keyName} must not open the row menu`);
+        }
+    }
+});
+
+test('favorite toggle stays pending until its instance reload settles', async t => {
+    let finishReload!: () => void;
+    const save = t.mock.fn(async (_patch: DashboardRegistryPatch) => ({} as DashboardRegistryLoadResult));
+    const reload = t.mock.fn(() => new Promise<void>(resolve => { finishReload = resolve; }));
+    let toggle!: ReturnType<typeof useFavoriteToggle>;
+    function Harness() {
+        toggle = useFavoriteToggle({ save, reload });
+        return null;
+    }
+    await mount(t, createElement(Harness));
+    const original = instance(3457, { favorite: false });
+    await act(async () => { toggle(original); await Promise.resolve(); });
+    assert.equal(reload.mock.callCount(), 1);
+    toggle(original);
+    assert.equal(save.mock.callCount(), 1, 'a second click cannot resend the stale favorite value');
+    await act(async () => { finishReload(); await Promise.resolve(); });
+    toggle(instance(3457, { favorite: true }));
+    assert.deepEqual(save.mock.calls.map(call => call.arguments[0]), [
+        { instances: { '3457': { favorite: true } } },
+        { instances: { '3457': { favorite: false } } },
+    ]);
+    await act(async () => { finishReload(); await Promise.resolve(); });
+});
+
 test('Selected summary retains group identity, session linkage while closed, and lifecycle grouping/paging', async t => {
     const values = [instance(3457), instance(3458), ...Array.from({ length: 12 }, (_, i) => instance(3500 + i, { ok: false, status: 'offline' }))];
     const selected = t.mock.fn();
@@ -471,4 +523,3 @@ test('groups order rows by ascending port even when custom labels are set', asyn
     assert.deepEqual(portsIn('Pinned'), [3459], 'favorites keep their own section');
     assert.equal(selected.mock.callCount(), 0);
 });
-

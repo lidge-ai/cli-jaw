@@ -278,7 +278,7 @@ test('App host guards real settings drafts through document and desktop subscrip
     const mocks: Array<[string, Record<string, unknown>]> = [
         ['../../public/manager/src/AppChrome.tsx', { AppChrome: TestChrome }],
         ['../../public/manager/src/api.ts', { fetchInstances: async () => { reads++; return scan; }, fetchInstanceStatus: async () => null, runLifecycleAction: noop }],
-        ['../../public/manager/src/hooks/useDashboardRegistry.ts', { useDashboardRegistry: () => registry }],
+        ['../../public/manager/src/hooks/useDashboardRegistry.ts', { useDashboardRegistry: () => registry, useFavoriteToggle: () => noop }],
         ['../../public/manager/src/lib/use-hidden-unload.ts', { useHiddenUnload: noop }],
         ['../../public/manager/src/hooks/useTheme.ts', { useTheme: () => ({ theme: 'dark', resolved: 'dark', setTheme: noop, syncFromRegistry: noop }) }],
         ['../../public/manager/src/hooks/useCommandPalette.ts', { useCommandPalette: () => ({}) }],

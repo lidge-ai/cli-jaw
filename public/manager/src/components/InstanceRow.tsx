@@ -128,6 +128,8 @@ export function InstanceRow(props: InstanceRowProps) {
 
     function openMenuFromKey(event: KeyboardEvent<HTMLElement>): void {
         if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+            const target = event.target;
+            if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable]')) return;
             rowMenu.openAt(event);
         }
     }
