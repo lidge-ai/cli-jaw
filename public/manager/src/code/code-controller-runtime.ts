@@ -465,7 +465,7 @@ export class CodeController {
                 const retained: CodeSessionInfo[] = [];
                 for (const remote of overlay.sessions) {
                     const local = this.info(remote.sessionId);
-                    const session = local && newer(local, remote) ? local : remote;
+                    const session = local && !newer(remote, local) ? local : remote;
                     if (session.pinnedAt === null || session.archivedAt !== null) continue;
                     retained.push(session);
                     if (session === remote) { this.observe(session); this.accept(session); }

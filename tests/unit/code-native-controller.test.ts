@@ -836,6 +836,25 @@ test('an older pinned response cannot restore a session unpinned while it was in
     assert.equal(row(f.controller, old.sessionId), undefined, 'stale overlay cannot resurrect an unpinned row');
 });
 
+test('equal-version overlay reads refresh attention for pins outside the page', async t => {
+    const f = fixture(t);
+    await f.controller.refresh();
+    const first = session('overlay-attention', { pinnedAt: 10, pendingPermissionCount: 1, contextUsage: usage(111) });
+    const second = { ...first, pendingPermissionCount: 3, contextUsage: usage(222) };
+    let reads = 0;
+    f.intercept(call => {
+        if (call.path !== '/sessions' || call.method !== 'GET') return undefined;
+        return response({ ok: true, sessions: call.url.searchParams.get('pinned') === 'true'
+            ? [++reads === 1 ? first : second] : [], nextCursor: null, hasMore: false });
+    });
+    await f.controller.refresh();
+    assert.equal(row(f.controller, first.sessionId)?.pendingPermissionCount, 1);
+    assert.equal(row(f.controller, first.sessionId)?.contextUsage?.totalTokens, 111);
+    await f.controller.refresh();
+    assert.equal(row(f.controller, first.sessionId)?.pendingPermissionCount, 3);
+    assert.equal(row(f.controller, first.sessionId)?.contextUsage?.totalTokens, 222);
+});
+
 test('a failed pinned request leaves the ordinary index page visible', async t => {
     const f = fixture(t);
     f.intercept(call => {
