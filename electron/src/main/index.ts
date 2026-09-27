@@ -1016,6 +1016,7 @@ function applyMainWindowZoom(direction: 'in' | 'out' | 'reset'): void {
     ? 1
     : Math.min(MAIN_ZOOM_MAX, Math.max(MAIN_ZOOM_MIN, current + (direction === 'in' ? MAIN_ZOOM_STEP : -MAIN_ZOOM_STEP)));
   win.webContents.setZoomFactor(next);
+  win.webContents.send('manager:zoom-changed');
 }
 
 function installManagerApplicationMenu(): void {

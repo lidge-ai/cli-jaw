@@ -806,11 +806,24 @@ test('Electron titlebar row keeps only the sidebar toggle beside traffic lights;
     assert.ok(chrome.includes('TRAFFIC_LIGHT_POSITION = { x: 16, y: 20 }'), 'titlebar reserve assumes lights at x=16');
     const preload = read('electron/src/preload/index.ts');
     assert.ok(preload.includes('dataset.cliJawPlatform = process.platform'), 'preload must expose the host platform');
-    assert.ok(/data-cli-jaw-platform="darwin"\] \{\s*--desktop-traffic-light-reserve: 76px/.test(css), 'traffic-light reserve applies on macOS only');
+    assert.ok(/data-cli-jaw-platform="darwin"\] \{\s*--desktop-traffic-light-reserve: calc\(76px \/ var\(--desktop-zoom, 1\)\)/.test(css), 'macOS traffic-light reserve must account for Manager zoom');
     assert.ok(/:root\[data-cli-jaw-desktop="true"\] \{\s*--desktop-traffic-light-reserve: 12px/.test(css), 'non-macOS desktops keep a small left inset');
     assert.ok(css.includes('left: var(--desktop-traffic-light-reserve)'), 'sidebar toggle must sit in the titlebar row');
     assert.ok(css.includes('width: var(--desktop-rail-width)'), 'workspace rail must be a fixed-width left column');
     assert.ok(css.includes('flex-direction: column'), 'workspace rail buttons must stack vertically');
     assert.ok(css.includes('padding-left: var(--desktop-rail-width)'), 'sidebar content must clear the fixed rail');
     assert.ok(css.includes('calc(var(--desktop-traffic-light-reserve) + var(--desktop-titlebar-control) + 12px)'), 'command bar must start after lights and toggle');
+});
+
+test('Electron Manager zoom keeps the native traffic-light clearance in CSS pixels', () => {
+    const preload = read('electron/src/preload/index.ts');
+    const shell = read('electron/src/main/index.ts');
+    const css = read('public/manager/src/manager-desktop-titlebar.css');
+
+    assert.ok(preload.includes("document.documentElement?.style.setProperty('--desktop-zoom', String(webFrame.getZoomFactor()))"), 'preload must publish the actual Electron zoom factor');
+    assert.ok(preload.includes('markDesktopDocument();'), 'document marking must initialize the zoom factor');
+    assert.ok(preload.includes("window.addEventListener('resize', updateDesktopZoom)"), 'viewport zoom must refresh the factor');
+    assert.ok(preload.includes("ipcRenderer.on('manager:zoom-changed', updateDesktopZoom)"), 'menu zoom must refresh the factor');
+    assert.ok(/setZoomFactor\(next\);\s*win\.webContents\.send\('manager:zoom-changed'\)/.test(shell), 'main must notify preload after applying menu zoom');
+    assert.ok(css.includes('--desktop-traffic-light-reserve: calc(76px / var(--desktop-zoom, 1))'), 'native traffic-light clearance must remain 76 physical pixels at any zoom');
 });

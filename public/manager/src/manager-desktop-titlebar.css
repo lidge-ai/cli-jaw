@@ -10,7 +10,7 @@
     }
 
     :root[data-cli-jaw-desktop="true"][data-cli-jaw-platform="darwin"] {
-        --desktop-traffic-light-reserve: 76px;
+        --desktop-traffic-light-reserve: calc(76px / var(--desktop-zoom, 1));
     }
 
     :root[data-cli-jaw-desktop="true"][data-window-fullscreen="true"] {
