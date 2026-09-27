@@ -102,3 +102,57 @@ test('FolderPanel focus and context menu styles stay compact', () => {
     assert.ok(sharedContextMenuCss.includes('position: fixed'), 'context menu must not resize tree rows');
     assert.ok(sharedContextMenuCss.includes('text-overflow: ellipsis'), 'menu text must not overflow');
 });
+
+test('opening a folder menu on another row keeps focus inside the menu', async () => {
+    const { registerHooks } = await import('node:module');
+    const { JSDOM } = await import('jsdom');
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+    const globals = globalThis as Record<string, unknown>;
+    const replacements = {
+        window: dom.window, document: dom.window.document, Node: dom.window.Node,
+        HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true,
+        React: await import('react'),
+    };
+    const previous = new Map(Object.keys(replacements).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    for (const [key, value] of Object.entries(replacements)) globals[key] = value;
+    const cssUrl = new URL('../../public/manager/src/folder-panel/folder-panel.css', import.meta.url).href;
+    const hooks = registerHooks({ load(url, context, nextLoad) {
+        return url === cssUrl ? { format: 'module', source: 'export {};', shortCircuit: true } : nextLoad(url, context);
+    } });
+    const { act, createElement } = await import('react');
+    const { createRoot } = await import('react-dom/client');
+    try {
+        const { FolderPanel } = await import('../../public/manager/src/folder-panel/FolderPanel');
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const entries = [
+            { name: 'first.md', path: '/notes/first.md', kind: 'file' as const, size: 1 },
+            { name: 'second.md', path: '/notes/second.md', kind: 'file' as const, size: 1 },
+        ];
+        try {
+            await act(async () => root.render(createElement(FolderPanel, {
+                notesTree: [],
+                sessionState: { rootPath: '/notes', entries, expandedPaths: [], childrenCache: [],
+                    selection: { selectedPaths: ['/notes/first.md'], focusedPath: '/notes/first.md', anchorPath: '/notes/first.md' } },
+            })));
+            const first = container.querySelector<HTMLButtonElement>('[data-folder-path="/notes/first.md"]')!;
+            const second = container.querySelector<HTMLButtonElement>('[data-folder-path="/notes/second.md"]')!;
+            assert.equal(document.activeElement, first);
+            await act(async () => second.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+            })));
+            assert.equal(container.querySelector('[aria-selected="true"]')?.querySelector('[data-folder-path]'), second);
+            assert.equal(document.activeElement?.getAttribute('role'), 'menuitem');
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    } finally {
+        hooks.deregister();
+        dom.window.close();
+        for (const [key, descriptor] of previous) {
+            if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globals[key];
+        }
+    }
+});

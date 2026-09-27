@@ -304,6 +304,10 @@
     align-items: start;
     padding: 4px 0;
 }
+.jaw-ceo-activity-row:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+}
 .jaw-ceo-activity-icon {
     width: 22px;
     height: 22px;

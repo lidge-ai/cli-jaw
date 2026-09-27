@@ -403,6 +403,7 @@ export function FolderPanel(props: FolderPanelProps) {
     }, [cancelFolderChord, copyEntryPath, copySelectedPath, expanded, folderChordActive, folderSelection, revealEntryPath, revealSelectedPath, selectEntry, startFolderChord, toggleEntryExpansion]);
 
     useEffect(() => {
+        if (folderContextMenu.contextMenu) return;
         const focusedPath = folderSelection.selection.focusedPath;
         if (!focusedPath) return;
         const buttons = treeRef.current?.querySelectorAll<HTMLButtonElement>('.folder-entry-btn[data-folder-path]');
