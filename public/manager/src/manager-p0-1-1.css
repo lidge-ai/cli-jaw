@@ -164,12 +164,6 @@
     padding: 0 8px 0 32px;
     font-size: 12px;
 }
-.command-palette-trigger {
-    height: 28px;
-    min-height: 28px;
-    border-radius: var(--control-radius);
-}
-
 .workbench-preview .workbench-header {
     padding: 4px 8px;
 }

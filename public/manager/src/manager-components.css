@@ -1270,5 +1270,5 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
 
 @media (max-width: 639px) {
     .command-center .command-title { display: none; }
-    .command-center .command-actions :is(.desktop-open-button, .desktop-status-badge, .command-palette-trigger) { display: none; }
+    .command-center .command-actions :is(.desktop-open-button, .desktop-status-badge) { display: none; }
 }

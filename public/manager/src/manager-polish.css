@@ -407,57 +407,6 @@
     color: var(--accent);
 }
 
-.theme-switch {
-    display: inline-flex;
-    background: var(--segment-track);
-    border: 1px solid var(--segment-border);
-    border-radius: 7px;
-    padding: 2px;
-    gap: 2px;
-}
-
-.theme-switch button {
-    min-height: 26px;
-    padding: 0 9px;
-    border: 0;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-weight: 500;
-    border-radius: 5px;
-    transition: background 160ms ease, color 160ms ease;
-}
-
-.theme-switch button:hover:not(:disabled) {
-    background: var(--segment-hover);
-    color: var(--text-primary);
-    border-color: transparent;
-}
-
-.theme-switch button.is-active {
-    background: var(--accent-soft);
-    color: var(--accent);
-}
-
-/* 10.6.10 — Command palette trigger button (⌘K hint) */
-.command-palette-trigger {
-    min-height: 26px;
-    min-width: 32px;
-    padding: 0 8px;
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-raised);
-    color: var(--ink-secondary);
-    border-radius: 6px;
-    font-family: "Geist Mono", "JetBrains Mono", monospace;
-    font-size: 11px;
-    font-weight: 500;
-}
-.command-palette-trigger:hover:not(:disabled) {
-    background: var(--segment-hover);
-    border-color: var(--border-strong);
-    color: var(--ink-primary);
-}
-
 /* 10.6.10 — Command palette modal */
 .command-palette-backdrop {
     position: fixed;

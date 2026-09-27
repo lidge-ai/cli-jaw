@@ -89,7 +89,8 @@ test('the command centre carries no settings gear', async () => {
         assert.equal(container.querySelector('.workbench-settings-toggle'), null);
         assert.equal(container.querySelector('#command-settings-slot'), null,
             'the portal slot must go with the gear it existed for');
-        assert.ok(container.querySelector('[aria-label="Theme"]'), 'the theme control stays');
+        assert.ok(container.querySelector('button[aria-label="Theme: Dark"][aria-haspopup="menu"]'),
+            'the theme menu control stays and names the current theme');
     } finally { await act(async () => root.unmount()); container.remove(); }
 });
 
