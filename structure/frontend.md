@@ -703,6 +703,9 @@ focus-within instead shows small Pin and Archive icon buttons at the row's right
 edge, replacing the status text. Rows also support current-workspace filtering and paging.
 A **Pinned** section sits above every group in both views, newest pin first;
 pinned rows leave their workspace or day group rather than duplicating.
+The sidebar merges the paged index with up to 1,000 non-archived pinned rows from
+the same scope, keeping older pins visible beyond the loaded page. Archived-only
+views omit that pinned overlay. Row actions include a touch-visible More menu.
 
 The session list has two views, modeled on the Codex desktop sidebar. **Projects**
 (the default) groups sessions under their workspace folder, newest session first

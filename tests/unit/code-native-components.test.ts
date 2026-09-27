@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { after, test, type TestContext } from 'node:test';
 import { JSDOM } from 'jsdom';
 import type { ReactNode } from 'react';
@@ -337,6 +338,34 @@ test('an archived session that was marked unread can be marked read again', boun
     const menu = await openRowMenu(h);
     await click(button(menu, 'Mark as read'));
     assert.deepEqual(calls, [['s-a', false]]);
+});
+
+test('More actions opens the row menu and rename form owns its context click', bounded, async t => {
+    const h = await surface(t);
+    await h.render(createElement(CodeSessionList, { controller: model() }));
+    const more = button(h.container, 'More actions for Alpha');
+    assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+    await click(more);
+    assert.ok(button(rowMenu()!, 'Rename'));
+    await click(button(rowMenu()!, 'Rename'));
+    const form = h.container.querySelector('.code-session-rename'); assert.ok(form);
+    await act(async () => form.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
+    assert.equal(rowMenu(), null, 'right-clicking the rename form leaves the row menu closed');
+});
+
+test('non-hover devices expose the row action buttons', () => {
+    const style = document.createElement('style');
+    style.textContent = readFileSync(new URL('../../public/manager/src/code/code-session-sidebar.css', import.meta.url), 'utf8');
+    document.head.append(style);
+    try {
+        const touch = [...style.sheet!.cssRules].find(rule => rule instanceof dom.window.CSSMediaRule
+            && rule.conditionText === '(hover: none)') as CSSMediaRule | undefined;
+        assert.ok(touch);
+        const actions = [...touch.cssRules].find(rule => rule instanceof dom.window.CSSStyleRule
+            && rule.selectorText === '.code-session-hover-actions') as CSSStyleRule | undefined;
+        assert.equal(actions?.style.getPropertyValue('opacity').trim(), '1');
+        assert.equal(actions?.style.getPropertyValue('pointer-events').trim(), 'auto');
+    } finally { style.remove(); }
 });
 
 test('hover buttons pin and archive the row without an extra click target on the surface', bounded, async t => {

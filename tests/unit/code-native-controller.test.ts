@@ -759,6 +759,51 @@ test('loadMoreSessions continues the index from the server cursor without refetc
     assert.equal(f.controller.getModel().hasMoreSessions, false);
 });
 
+test('older pins survive a full index page and retain revision for row actions', async t => {
+    const f = fixture(t);
+    const page = Array.from({ length: 1000 }, (_, i) => session(`page-${i}`, { createdAt: 2000 - i }));
+    const pins = Array.from({ length: 7 }, (_, i) => session(`pin-${i}`, { createdAt: 100 - i, pinnedAt: i + 1 }));
+    for (const pin of pins) f.snapshots.set(pin.sessionId, snap(pin));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'GET') return response({ ok: true,
+            sessions: call.url.searchParams.get('pinned') === 'true' ? pins : page,
+            limit: Number(call.url.searchParams.get('limit')), nextCursor: null, hasMore: false });
+        if (call.method === 'PATCH' && call.path.startsWith('/sessions/')) {
+            const id = call.path.split('/')[2]!;
+            const before = f.snapshots.get(id)!.session;
+            assert.equal(call.body.expectedRevision, before.revision);
+            const patched = { ...before, revision: before.revision + 1,
+                pinnedAt: call.body.pinned === false ? null : before.pinnedAt,
+                title: typeof call.body.title === 'string' ? call.body.title : before.title,
+                archivedAt: call.body.archived === true ? 9000 : before.archivedAt };
+            f.snapshots.set(id, snap(patched));
+            return response({ ok: true, session: patched });
+        }
+        return undefined;
+    });
+    await f.controller.refresh();
+    const all = f.controller.getModel().sessions;
+    assert.equal(all.length, 1007, `missing ${pins.filter(pin => !all.some(row => row.sessionId === pin.sessionId)).map(pin => pin.sessionId).join(',')}`);
+    assert.equal(new Set(all.map(row => row.sessionId)).size, 1007);
+    const overlayRequest = f.calls.find(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true');
+    assert.equal(overlayRequest?.url.searchParams.get('archived'), 'false');
+    assert.equal(overlayRequest?.url.searchParams.get('limit'), '1000');
+    assert.equal(overlayRequest?.url.searchParams.has('cwd'), false);
+    await f.controller.pin('pin-0', false);
+    assert.equal(row(f.controller, 'pin-0'), undefined, 'unpin removes an overlay-only row immediately');
+    await f.controller.rename('pin-1', 'Renamed pin');
+    assert.equal(row(f.controller, 'pin-1')?.title, 'Renamed pin');
+    const prior = f.calls.length;
+    f.controller.setFilter({ scope: 'all', archived: true });
+    assert.equal(f.controller.getModel().sessions.length, 0, 'filter clears the overlay before the request settles');
+    await until(f.controller, () => !f.controller.getModel().loading);
+    assert.equal(f.calls.slice(prior).some(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true'), false);
+    f.controller.setFilter({ scope: 'cwd', archived: false });
+    await until(f.controller, () => !f.controller.getModel().loading);
+    const cwdOverlay = f.calls.filter(call => call.path === '/sessions' && call.url.searchParams.get('pinned') === 'true').at(-1);
+    assert.equal(cwdOverlay?.url.searchParams.get('cwd'), f.options.workingDir);
+});
+
 // --- #703: a spent clientTurnKey is a report, not an admission ---
 // The server consumes a key once. After a restart seals the turn, the same key
 // returns HTTP 200 with the stored status and starts nothing, and the orphaned

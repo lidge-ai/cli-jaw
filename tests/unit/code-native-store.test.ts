@@ -1036,6 +1036,22 @@ test('cursor streams stay inside the archived and cwd filters and creation ties 
     expectError(() => store.list({ cursor: { createdAt: 1, sessionId: '' } }), 'invalid_cursor', 400);
 });
 
+test('pinned filter composes with archive and keyset cursor without changing creation order', t => {
+    const db = new Database(':memory:'); t.after(() => db.close());
+    let now = 0;
+    const store = new CodeStore(db, { now: () => ++now });
+    for (const sessionId of ['old', 'middle', 'new', 'archived']) store.create({ ...creation, sessionId });
+    for (const sessionId of ['old', 'middle', 'archived']) store.patchSession(sessionId, { expectedRevision: 0, pinned: true });
+    store.patchSession('archived', { expectedRevision: 1, archived: true });
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: false })), ['middle', 'old']);
+    assert.deepEqual(sessionIds(store.list({ pinned: false, archived: false })), ['new']);
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: true })), ['archived']);
+    assert.deepEqual(sessionIds(store.list({ pinned: false, archived: true })), []);
+    const first = store.list({ pinned: true, archived: false, limit: 1 });
+    assert.deepEqual(sessionIds(first), ['middle']);
+    assert.deepEqual(sessionIds(store.list({ pinned: true, archived: false, cursor: cursorOf(first) })), ['old']);
+});
+
 test('session list index is upgraded once and left alone when it already matches', t => {
     const db = new Database(':memory:');
     t.after(() => db.close());

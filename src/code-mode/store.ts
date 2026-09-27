@@ -152,6 +152,7 @@ export interface CodeSteerReservation { reservationId: string; receipt: CodeProm
 export interface CodeSessionListOptions {
     cwd?: string;
     archived?: boolean;
+    pinned?: boolean;
     limit?: number;
     /** Keyset cursor: resume strictly after this row in the stable creation order. */
     cursor?: CodeSessionCursor;
@@ -499,11 +500,14 @@ export class CodeStore {
         }
         const rows = this.database.prepare(`SELECT ${SESSION_COLUMNS} FROM code_sessions
             WHERE (? IS NULL OR cwd = ?) AND (? IS NULL OR (archived_at IS NOT NULL) = ?)
+            AND (? IS NULL OR (pinned_at IS NOT NULL) = ?)
             AND (? IS NULL OR created_at < ? OR (created_at = ? AND session_id > ?))
             ORDER BY created_at DESC, session_id ASC LIMIT ?`)
             .all(options.cwd ?? null, options.cwd ?? null,
                 options.archived === undefined ? null : Number(options.archived),
                 options.archived === undefined ? null : Number(options.archived),
+                options.pinned === undefined ? null : Number(options.pinned),
+                options.pinned === undefined ? null : Number(options.pinned),
                 cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null,
                 cursor?.sessionId ?? null, limit) as SessionRow[];
         return rows.map(row => toCodeSessionInfo(rowToRecord(row)));

@@ -102,7 +102,10 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
     function openMenuFromKey(event: ReactKeyboardEvent<HTMLElement>) {
         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) menu.openAt(event);
     }
-    return <li className="code-session-row" onContextMenu={menu.openAt}>
+    return <li className="code-session-row" onContextMenu={event => {
+        if ((event.target as Element).closest('.code-session-rename')) return;
+        menu.openAt(event);
+    }}>
         <div className="code-session-item-wrap" onKeyDown={openMenuFromKey}>
             <button ref={selectButton} type="button" className={`code-session-item${active ? ' active' : ''}`}
                 aria-current={active ? 'true' : undefined}
@@ -124,7 +127,7 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
                 <span className={`code-session-attention code-session-attention-${attention.kind}`}
                     data-quiet={attention.kind === 'none' ? 'true' : undefined}>{codeSessionAttentionLabel(attention)}</span>
             </button>
-            {/* Pin and archive replace the status text on hover or keyboard focus,
+            {/* Row actions replace the status text on hover or keyboard focus,
                 Codex-style; opacity keeps them tabbable instead of display:none. */}
             <span className="code-session-hover-actions">
                 <button type="button" className={`code-session-hover-btn${pinned ? ' is-on' : ''}`}
@@ -138,6 +141,11 @@ function SessionRow({ session: s, controller: c, view }: { session: CodeSessionI
                     title={busy ? 'Stop before archiving' : archived ? 'Restore' : 'Archive'} disabled={pending || busy}
                     onClick={event => { event.stopPropagation(); void action(() => c.archive(s.sessionId, !archived)); }}>
                     <ArchiveGlyph />
+                </button>
+                <button type="button" className="code-session-hover-btn"
+                    aria-label={`More actions for ${name}`} aria-haspopup="menu" title="More actions"
+                    onClick={event => { event.stopPropagation(); menu.openAtElement(event.currentTarget); }}>
+                    <span aria-hidden="true">⋯</span>
                 </button>
             </span>
         </div>

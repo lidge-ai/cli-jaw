@@ -155,12 +155,15 @@ export function registerNativeCodeRoutes(
         if (scope === 'cwd' && directory === undefined) return invalid('absolute_cwd_required');
         const archived = req.query['archived'];
         if (archived !== undefined && archived !== 'true' && archived !== 'false') return invalid('invalid_archived');
+        const pinned = req.query['pinned'];
+        if (pinned !== undefined && pinned !== 'true' && pinned !== 'false') return invalid('invalid_pinned');
         if (req.query['offset'] !== undefined) return invalid('offset_unsupported');
         const limit = Math.min(queryInteger(req.query['limit'], 'limit', 100, 1), 1000);
         const cursor = req.query['cursor'] === undefined ? undefined : sessionCursor(req.query['cursor']);
         const sessions = getService().list({ limit, ...(cursor === undefined ? {} : { cursor }),
             ...(directory === undefined ? {} : { cwd: directory }),
-            ...(archived === undefined ? {} : { archived: archived === 'true' }) });
+            ...(archived === undefined ? {} : { archived: archived === 'true' }),
+            ...(pinned === undefined ? {} : { pinned: pinned === 'true' }) });
         const last = sessions.at(-1);
         const hasMore = sessions.length === limit;
         res.json({ ok: true, sessions, limit, hasMore,

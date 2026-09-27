@@ -484,7 +484,7 @@ policy on both the worker and Manager. Responses use `{ok:true,...}` or
 | Method and suffix | Contract |
 |---|---|
 | GET `/models` | Four CLI catalogs, availability and honest per-provider capabilities |
-| GET `/sessions` | Durable index; canonical cwd, archive, limit and offset filters; current pending permission counts; each row carries `lastTurnCompletedAt` (completed/failed turns), `lastVisitedAt`, sidebar `pinnedAt`/`markedUnread` and `thinking` (a Claude boolean, where a legacy or unset Claude row reads `true`; `null` for other providers) |
+| GET `/sessions` | Durable index; optional canonical `cwd`, strict `archived`/`pinned` booleans, `limit` and keyset `cursor` filters (offset unsupported); current pending permission counts; each row carries `lastTurnCompletedAt` (completed/failed turns), `lastVisitedAt`, sidebar `pinnedAt`/`markedUnread` and `thinking` (a Claude boolean, where a legacy or unset Claude row reads `true`; `null` for other providers) |
 | GET `/sessions/:id` | Full-item snapshot, session watermark and current pending permissions |
 | GET `/sessions/:id/items` | Byte-bounded older materialized items before `beforeSequence`; never advances the live replay cursor |
 | GET `/sessions/:id/events` | Contiguous replay after `afterSequence`; byte/row-bounded page with `nextSequence`, `throughSequence`, `hasMore` |
