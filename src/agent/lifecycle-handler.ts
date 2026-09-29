@@ -757,12 +757,17 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 nativeFallbackCli = pickNativeFallbackCli(cli, opts, ctx.toolLog);
                 if (nativeFallbackCli) console.log(`[jaw:fallback] native ${cli} failed → ${nativeFallbackCli}`);
             }
-            if (finalContent !== null && !nativeFallbackCli) {
+            if (finalContent !== null) {
                 finalContent = applyOutputPolicy(finalContent, { scope: 'main' }).text;
                 rawFinalContent = finalContent;
                 // The sanitizer also trims; a final with no tracker keeps its exact text.
                 const withoutTracker = stripInterviewTracker(finalContent);
                 if (withoutTracker !== finalContent.trim()) finalContent = withoutTracker;
+            }
+            // Only the durable record and what follows it are skipped for a turn
+            // handed to a fallback; the policy/tracker pass above still runs so
+            // observers never see text a reader would not.
+            if (finalContent !== null && rawFinalContent !== null && !nativeFallbackCli) {
                 evaluateRecordPending(ctx.toolLog, rawFinalContent);
                 const structuredFence = scanStructuredFence(finalContent);
                 if (structuredFence.status === 'incomplete') {

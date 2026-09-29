@@ -571,7 +571,7 @@ export async function orchestrate(
         // ends with the original failure rather than silence.
         try {
             broadcast('agent_fallback', {
-                from: overrides?.cli ?? resolveMainCli(null, settings, getSession() as MainSessionRecord | undefined),
+                from: resolveMainCli(overrides?.cli || null, settings, getSession() as MainSessionRecord | undefined),
                 to: fallbackCli, reason: 'native_runtime_error', native: true,
                 origin, scope, sessionId: chatSessionId,
                 ...(requestId ? { requestId } : {}),
