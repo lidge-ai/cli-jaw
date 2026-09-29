@@ -12,7 +12,7 @@ aliases: [Telegram and Heartbeat, CLI-JAW Telegram, messaging runtime]
 > 현재 Telegram/Discord/Slack은 `src/messaging/`을 공유하며, settings restart는 `core/runtime-settings.ts`에서 한 번에 처리된다
 > Slack 설정 명령과 API는 [Commands](commands.md)와 [Server API](server_api.md)를 참조
 
-Slack Socket Mode의 app-level token은 사용자 공용 `~/.cli-jaw-shared/slack-claims` lease로 home 간 단일 connected consumer를 선출한다. 다른 canonical home의 `connected:true` claim이 90초 이내이고 PID가 살아 있다는 positive evidence가 모두 있을 때만 inbound를 거절하며, realpath·파일 IO·PID probe가 불확실하면 fail-open한다. 연결 전/재연결 중 `connected:false` presence는 다른 home을 막지 않고, lease는 exact `claimId` generation만 해제한다. 충돌한 home은 inbound만 끄고 Slack Web API outbound는 유지하며 `CLI_JAW_SLACK_ALLOW_SHARED_TOKEN=1`이 명시적 process-level opt-out이다. 장기 서버의 Socket 재접속 한도는 기본 unlimited다 — 유한 `maxReconnectAttempts`는 테스트/원샷 호출자 opt-in이고, `link_disabled`는 여전히 terminal이다.
+Slack Socket Mode의 app-level token은 사용자 공용 `~/.cli-jaw-shared/slack-claims` lease로 home 간 단일 connected consumer를 선출한다. 다른 canonical home의 `connected:true` claim이 90초 이내이고 PID가 살아 있다는 positive evidence가 모두 있을 때만 inbound를 거절하며, realpath·파일 IO·PID probe가 불확실하면 fail-open한다. 연결 전/재연결 중 `connected:false` presence는 다른 home을 막지 않고, lease는 exact `claimId` generation만 해제한다. 충돌한 home은 inbound만 끄고 Slack Web API outbound는 유지하며 `CLI_JAW_SLACK_ALLOW_SHARED_TOKEN=1`이 명시적 process-level opt-out이다. 장기 서버의 Socket 재접속 한도는 기본 unlimited다 — 유한 `maxReconnectAttempts`는 테스트/원샷 호출자 opt-in이고, `link_disabled`는 여전히 terminal이다. `disconnect` reason `warning`은 곧 있을 교체의 예고라서 현재 소켓을 그대로 두고 계속 ack·디스패치한다. 실제 교체는 뒤따르는 `refresh_requested`나 그 밖의 reason, 또는 `close`에서 시작한다 — warning에서 바로 재연결하면 교체 창 동안 들어온 프레임이 ack되지 않은 채 재전송을 기다린다.
 > v5 Update: `forwardAll` 토글은 Telegram/Discord 각각의 channel setting으로 분리됨
 > v6 Update: forum **topic-aware** programmatic send (P0) + Dashboard **Telegram Hub** — one bot, many topics → many instances (P0–P4; per-topic `model`/`systemPrompt` overrides)
 
@@ -258,6 +258,9 @@ the reply ledger still protects a later orphan completion.
 
 - 세 채널 inbound가 공유하는 SQLite journal. Telegram poller는 handler 전에 `admitIngress`, offset 전진 전에 `settleIngress`를 부른다. Slack ACK는 preflight admit 뒤이고, settle은 handle early-return과 ingress lane(`processSlackMessageEvent`)이다. ACK 뒤 Slack 실패는 `dead_letter`다. `oldestOpenReceivedAt`은 `received`/`processing`만 본다.
 - 실행 중인 Slack lane이 취소되면 handler가 정상 반환해도 성공 처리하지 않고 `dead_letter`로 남긴다. Slack의 digest-only 보관 정책은 그대로이며, 원문 보관이나 자동 재전송을 추가하지 않는다.
+- 재시작으로 끊긴 Slack 요청은 조용히 사라지지 않는다. 부팅 때 Slack 연결 전에 `received`/`processing`으로 남은 Slack 행을 한 트랜잭션으로 닫는다: 6시간 안에 받은 행은 `dead_letter` + `interrupted_by_restart`, 그보다 오래된 행은 기존처럼 `abandoned_stale_processing`. Telegram·Discord 행은 이 경로를 타지 않고 기존 1시간 age-only 규칙을 따른다(Telegram은 재시도 뒤 offset을 전진시킨다). `interrupted_by_restart`로 닫힌 행을 Slack이 다시 보내면 ACK만 하고 디스패치하지 않는다.
+- 닫힌 행에는 자동 재처리를 하지 않는다. Slack 답장은 outbox를 거치지 않아 로컬 기록으로 "아직 답하지 않음"을 증명할 수 없고, 끊긴 작업 상당수가 유료 생성이기 때문이다. 대신 token claim이 긍정으로 끝난 연결에서 10분 뒤 한 번, 저장된 답장 주소에 thread가 있고 같은 대화에 대기열·실행 중 run·미알림 background task가 없으며 thread를 끝까지 읽어 봇 답장이 없을 때만 재요청 안내를 게시한다. 하나라도 불확실하면 침묵하고 사유를 `interrupted_by_restart:skipped:<reason>`으로 남긴다.
+- preflight 스태시(10분 TTL, 256개)를 잃은 envelope도 journal 행으로 admission을 재구성해 settle한다.
 - 운영 조회/재생은 `jaw messaging ingress`. replay는 row를 `received`로 표시할 뿐이고, 재실행은 vendor 재전송이다.
 - 운영자 Telegram DM의 dispatch approval은 Approve/Deny 버튼(`appr:`/`aprd:` opaque id)을 붙인다. Discord·Slack 운영자 DM도 같은 opaque 버튼을 붙인다. Slack 일반 keyboard send는 여전히 unsupported다.
 

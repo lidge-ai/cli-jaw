@@ -295,7 +295,7 @@ test('a delayed preflight cannot ack or dispatch through a replacement socket', 
         const envelope = eventsEnvelope('LATE', { type: 'message', channel: 'D1', text: 'hi' });
         sockets[0]!.listeners.get('message')!({ data: JSON.stringify(envelope) });
         await preflightEntered.promise;
-        sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'warning' }) });
+        sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'refresh_requested' }) });
         firstPreflight.resolve('committed');
         await new Promise(resolve => setImmediate(resolve));
 
@@ -508,10 +508,15 @@ test('a frame redelivered after hello IS acked and dispatched exactly once', asy
 
 // ─── disconnect semantics ───────────────────────────
 
-test('a disconnect warning schedules a reconnect', async () => {
+test('a disconnect warning retains the socket for ack and dispatch until refresh_requested', async () => {
     const h = await makeHarness();
     await h.emit({ type: 'hello' });
     await h.emit({ type: 'disconnect', reason: 'warning' });
+    assert.equal(h.client.getState(), 'connected');
+    await h.emit(eventsEnvelope('WARNING-DELIVERY', { type: 'message', channel: 'D1', text: 'hi' }));
+    assert.equal(h.sent.length, 1);
+    assert.equal(h.handled.length, 1);
+    await h.emit({ type: 'disconnect', reason: 'refresh_requested' });
     assert.equal(h.client.getState(), 'reconnecting');
     h.client.stop();
 });

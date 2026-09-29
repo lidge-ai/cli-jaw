@@ -371,7 +371,9 @@ cli-jaw/
 │   ├── slack/                ← Slack 인터페이스 (Socket Mode + Web API, SDK 없음)
 │   │   ├── socket.ts         ← Socket Mode client (apps.connections.open → wss, ack-before-work, envelope dedupe TTL, hello deadline, backoff 재연결)
 │   │   ├── bot.ts            ← Slack 봇 lifecycle + attachPort 성공 후 best-effort 자기선출/영속화 + envelope routing + orchestrate 경로 + queued-result waiter + top-level/thread 1회 context prefetch
+│   │   ├── interrupt-notice.ts ← 재시작 중단 Slack 요청의 보수적 안내 판정과 1회 게시
 │   │   ├── api.ts            ← Slack Web API fetch wrapper (HTTP 200 + ok:false를 실패로 처리, credential/URL redaction, Retry-After)
+│   │   ├── membership.ts     ← 명시 채널 발신의 봇 멤버십 확인 (토큰별 TTL 캐시 + 동시 조회 합치기)
 │   │   ├── format.ts         ← CommonMark → mrkdwn 변환 + code-fence 보존 chunking
 │   │   ├── blocks.ts         ← Block Kit validation and per-table message splitting
 │   │   ├── table-content.ts ← Bounded ordered-cell comparison and CommonMark character references

@@ -340,6 +340,10 @@ export class SlackSocketClient {
                 this.stop('disabled');
                 return;
             }
+            if (envelope.reason === 'warning') {
+                log.info('[slack:socket] disconnect warning; continuing on current socket');
+                return;
+            }
             log.info(`[slack:socket] disconnect (${envelope.reason || 'unspecified'}), reconnecting`);
             this.scheduleReconnect();
             return;

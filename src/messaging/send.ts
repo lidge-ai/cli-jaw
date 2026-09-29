@@ -8,6 +8,7 @@ import { isRemoteTarget, type MessengerChannel, type OutboundType, type RemoteTa
 import { getLastActiveTarget, getLatestSeenTarget, clearTargetState, getHomeChannel } from './runtime.js';
 import { slackTargetFromId, slackPeerKind } from './slack-target.js';
 import { readSlackAllowlist, MALFORMED_SLACK_ALLOWLIST } from '../slack/events.js';
+import { slackBotTokenKey, verifySlackChannelMembership } from '../slack/membership.js';
 import { buildRemoteBindingKey } from './session-key.js';
 import { decodeTurnConversation, turnConversationForChannel } from './turn-conversation.js';
 import { getRemoteBoundSessionId } from '../core/chat-sessions.js';
@@ -370,7 +371,12 @@ function isRemoteBoundConversation(target: RemoteTarget): boolean {
     }
 }
 
-function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerChannel, fullAccess = false): RemoteTarget | null {
+function slackMembershipRefusal(target: RemoteTarget, channel: MessengerChannel): string | null {
+    if (channel !== 'slack' || !/^[CG][A-Z0-9]+$/.test(target.targetId) || slackAllowlist().ids.length) return null;
+    return `Slack target ${target.targetId} is not a channel this bot is verified to be in. Invite the bot there and retry. Do not edit slack.channelIds — it controls which conversations the bot hears.`;
+}
+
+async function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerChannel, fullAccess = false): Promise<RemoteTarget | null> {
     if (!isRemoteTarget(target) || target.channel !== channel) return null;
     if (fullAccess) return target;
     if (validateTarget(target, channel, { requireConfiguredAllowlist: true })) return target;
@@ -397,6 +403,16 @@ function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerChannel
     // been addressed there, so this widens nothing an allowlist would have closed;
     // with a configured allowlist we never reach this line at all.
     if (isRemoteBoundConversation(target)) return target;
+    // Only a genuinely empty inbound list opens this extra evidence path.
+    if (!/^[CG][A-Z0-9]+$/.test(target.targetId)) return null;
+    const token = String(settings['slack']?.botToken ?? '');
+    if (!token) return null;
+    const credentialKey = slackBotTokenKey(token);
+    const member = await verifySlackChannelMembership(token, target.targetId);
+    // A settings update during the network call must not authorize under the
+    // previous credential or a newly restricted inbound scope.
+    if (slackAllowlist().ids.length || slackBotTokenKey(String(settings['slack']?.botToken ?? '')) !== credentialKey) return null;
+    if (member) return target;
     return null;
 }
 
@@ -433,18 +449,20 @@ export async function sendChannelOutput(req: ChannelSendRequest): Promise<{ ok: 
         if (req.target && (req.target.targetId !== explicitTarget.targetId || req.target.channel !== explicitTarget.channel)) {
             return { ok: false, status: 400, error: 'chatId and target refer to different destinations' };
         }
-        const authorized = authorizeExplicitTarget(req.target || explicitTarget, channel, req.fullAccess === true);
+        const authorized = await authorizeExplicitTarget(req.target || explicitTarget, channel, req.fullAccess === true);
         if (!authorized) {
-            return { ok: false, status: 403, error: `Explicit ${channel} chatId is not configured or the current active conversation` };
+            return { ok: false, status: 403, error: slackMembershipRefusal(req.target || explicitTarget, channel)
+                ?? `Explicit ${channel} chatId is not configured or the current active conversation` };
         }
         req.target = authorized;
     }
 
     // Validate explicit target (shape + allowlist)
     if (req.target) {
-        const authorized = authorizeExplicitTarget(req.target, channel, req.fullAccess === true);
+        const authorized = await authorizeExplicitTarget(req.target, channel, req.fullAccess === true);
         if (!authorized) {
-            return { ok: false, status: 403, error: `Invalid or disallowed target for ${channel}: ${req.target.targetId || '(empty)'}` };
+            return { ok: false, status: 403, error: slackMembershipRefusal(req.target, channel)
+                ?? `Invalid or disallowed target for ${channel}: ${req.target.targetId || '(empty)'}` };
         }
         req.target = authorized;
     }

@@ -96,9 +96,8 @@ export function resetMemoryFlushCounter(): void {
 // the TARGET global instead. When every session with unflushed rows is summarised
 // together, which session spent the counter stops being a question.
 //
-// Separate from memoryFlushCounter, which must keep growing monotonically:
-// lifecycle-handler reads that one as a turn-count estimate for compaction at 25 and
-// 35 turns, and a counter resetting every ten would never reach either.
+// Separate from memoryFlushCounter, which tracks memory-flush work across turns.
+// Session refresh and clear thresholds use persisted per-bucket turn counts.
 let _turnsSinceFlush = 0;
 
 /** Count a completed turn and report whether a flush has been earned. Resets on a

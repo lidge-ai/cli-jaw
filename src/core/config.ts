@@ -1892,9 +1892,10 @@ export interface HeartbeatJob {
  *  history of channels the bot is in, which is why this lives on a scheduled job
  *  rather than on the inbound event path.
  *
- *  `channelIds` is required and must be a subset of `slack.channelIds`: an
- *  answer addressed to a channel is authorized against that allowlist, so a
- *  channel outside it would be found and then refused with a 403. */
+ *  `channelIds` is required. When `slack.channelIds` is non-empty, the watch
+ *  channels must be its subset and are intersected with it at each tick. An
+ *  empty inbound allowlist imposes no subset requirement: the watch's own
+ *  channel IDs bound its scan and server-owned sends. */
 export interface HeartbeatMentionWatch {
     channel: 'slack';
     /** Ledger and fresh-start identity. Extra subjects live in `userIds`. */

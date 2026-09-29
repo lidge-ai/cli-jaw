@@ -609,6 +609,8 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             }
         },
         send: async (hit, text) => {
+            // The operator's watch list, not the inbound allowlist, owns this send.
+            if (!watch.channelIds.includes(hit.channelId)) return false;
             const key = hit.channelId + '/' + hit.ts;
             const anchor = answerAnchors.get(key);
             answerAnchors.delete(key);
@@ -633,6 +635,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
            const sent = await sendChannelOutput({
                channel: 'slack', type: 'text', text, target,
                allowActiveFallback: false,
+               fullAccess: true,
                // Deliberately NOT `fromAgentSurface`: a heartbeat is not an agent
                // surface, and recording a delivery claim here would let this
                // background post suppress the turn's real answer.

@@ -28,7 +28,9 @@ import { buildRemoteBindingKey } from '../messaging/session-key.js';
 import { matchesRunPin } from '../messaging/run-pin.js';
 import { sessionLanes } from '../orchestrator/session-lanes.js';
 import { createSlackReplyDeliveryLedger } from './reply-delivery.js';
-import { buildMediaPromptMany } from '../agent/spawn.js';
+import { buildMediaPromptMany, isAgentBusy } from '../agent/spawn.js';
+import { db } from '../core/db.js';
+import { sendChannelOutput } from '../messaging/send.js';
 import {
     addSlackReaction,
     describeSlackError,
@@ -60,7 +62,8 @@ import {
 } from './token-claim.js';
 import { runSlackAutoJoin, mergeSlackAutoJoin } from './auto-join.js';
 import { createHash } from 'node:crypto';
-import { admitIngress, getIngressJournal, settleIngress, type IngressAdmission } from '../messaging/durable-ingress.js';
+import { admitIngress, getIngressJournal, settleIngress, takeInterruptedSlackAtBoot, type IngressAdmission } from '../messaging/durable-ingress.js';
+import { noticeInterruptedSlackRequests } from './interrupt-notice.js';
 import { getQueueNoticeStore } from '../messaging/queue-notice-store.js';
 import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
@@ -90,7 +93,7 @@ import { buildSenderDisplay, buildSenderPrompt, resolveSenderIdentity } from './
 import {
     admitHistoryStart, cachedNameMap, resolveConversationInfo, resolveThreadInfo, THREAD_FETCH_LIMIT,
 } from './conversation.js';
-import { fetchSlackHistory, formatHistoryForAgent } from './history.js';
+import { fetchSlackHistory, fetchSlackReplies, formatHistoryForAgent } from './history.js';
 import { buildSlackContextBlock, applySlackContext, buildThreadPreamble, ROSTER_PREVIEW } from './context.js';
 import { fetchSlackChannelMembers } from './roster.js';
 import type { SlackIdentity } from './identity.js';
@@ -385,6 +388,52 @@ export function getSlackConnectionState(): string {
 }
 
 function currentLocale() { return normalizeLocale(settings["locale"], 'ko'); }
+
+async function notifyInterruptedSlackRequests(generation: number): Promise<void> {
+    const journal = getIngressJournal();
+    if (!journal) return;
+    const rows = takeInterruptedSlackAtBoot();
+    if (!rows.length) return;
+    const isCurrent = () => generation === lifecycleGeneration && !slackStopping;
+    await noticeInterruptedSlackRequests({
+        rows,
+        mark: (row, outcome) => { journal.markInterruptNotice('slack', row.accountId, row.eventId, outcome); },
+        hasQueued: target => {
+            const queued = db.prepare('SELECT payload FROM queued_messages').all() as Array<{ payload: string }>;
+            return queued.some(row => {
+                try {
+                    const item = JSON.parse(row.payload) as { target?: RemoteTarget };
+                    return item.target?.channel === 'slack' && item.target.targetId === target.targetId
+                        && item.target.threadId === target.threadId;
+                } catch { return true; }
+            });
+        },
+        hasActiveRun: target => isAgentBusy(resolveSlackScopeForTarget(target)),
+        hasBgTask: target => {
+            const tasks = db.prepare('SELECT origin_meta FROM background_tasks WHERE notified_at IS NULL').all() as Array<{ origin_meta: string | null }>;
+            return tasks.some(row => {
+                const raw = row.origin_meta;
+                if (!raw) return false;
+                try {
+                    const meta = JSON.parse(raw) as { target?: RemoteTarget };
+                    return meta.target?.channel === 'slack' && meta.target.targetId === target.targetId
+                        || raw.includes(target.targetId);
+                } catch { return true; }
+            });
+        },
+        replies: (target, messageTs, cursor) => {
+            const token = getSlackSendClient().token;
+            return token ? fetchSlackReplies(token, target.targetId, target.threadId!,
+                { oldest: messageTs, ...(cursor ? { cursor } : {}), limit: 200, noRetry: true })
+                : Promise.resolve({ ok: false as const, error: 'missing_token' });
+        },
+        send: (target, text) => sendChannelOutput({ channel: 'slack', type: 'text', text, target,
+            fullAccess: true, allowActiveFallback: false }),
+        selfUserId,
+        locale: currentLocale() === 'en' ? 'en' : 'ko',
+        isCurrent,
+    });
+}
 
 function gateConfig() {
     const sc = settings["slack"] || {};
@@ -1439,8 +1488,19 @@ function takeSlackAdmission(envelope: SlackEnvelope): IngressAdmission | undefin
     if (!key) return undefined;
     const row = slackAdmissions.get(key);
     slackAdmissions.delete(key);
-    if (!row || row.expiresAt <= Date.now()) return undefined;
-    return row.admission;
+    if (row && row.expiresAt > Date.now()) return row.admission;
+    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    const team = String(settings['slack']?.teamId || '');
+    if (!event?.channel || !event.ts || !team) return undefined;
+    const record = getIngressJournal()?.find('slack', team, `${team}:${event.channel}:${event.ts}`);
+    if (record?.state !== 'processing') return undefined;
+    const target = (() => { try { return JSON.parse(record.targetJson ?? ''); } catch { return null; } })();
+    if (!isRemoteTarget(target) || target.channel !== 'slack') return undefined;
+    return { admit: true, journaled: true, envelope: {
+        channel: 'slack', accountId: record.accountId, eventId: record.eventId,
+        conversationKey: record.conversationKey, ...(record.threadKey ? { threadKey: record.threadKey } : {}),
+        actorId: record.actorId, receivedAt: record.receivedAt, ackPolicy: 'after-durable-append', target,
+    } };
 }
 
 function settleSlackAdmission(admission: IngressAdmission | undefined, error?: unknown): void {
@@ -1900,6 +1960,7 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
         arb.releaseOwnLeaseOnly();
         return transportNotStarted('superseded');
     }
+    let positiveClaim = false;
     if (!sharingAllowed) {
         const claim = ready === 'connected'
             ? await arb.arbitrate('init')
@@ -1918,6 +1979,7 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
             });
             return transportNotStarted('token_shared_other_home');
         }
+        positiveClaim = ready === 'connected' && claim?.kind === 'acquired';
     }
     if (selfElectionPending) {
         // Two processes of the SAME home with attachPort unset can both reach
@@ -1957,8 +2019,22 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
     // minutes to reconcile at Slack's Tier 2/3 pacing, and the socket must not
     // wait for it — inbound already works the moment the connection is up.
     startSlackAutoJoin(sc, generation);
+    autoJoinTimer = setInterval(() => {
+        if (generation !== lifecycleGeneration || slackStopping) return;
+        startSlackAutoJoin(settings["slack"] ?? {}, generation);
+    }, SLACK_AUTO_JOIN_INTERVAL_MS);
+    autoJoinTimer.unref();
     log.info(`[slack] ✅ connected as ${selfUserId || 'unknown'}`);
     clearSlackClaimRecheck();
+    if (positiveClaim && generation === lifecycleGeneration) {
+        const timer = setTimeout(() => {
+            if (generation === lifecycleGeneration) {
+                void notifyInterruptedSlackRequests(generation).catch(error =>
+                    log.info('[slack:interrupt] notice check failed', logErrorText(error)));
+            }
+        }, 10 * 60 * 1000);
+        timer.unref?.();
+    }
     return transportStarted;
 }
 
@@ -1971,6 +2047,8 @@ export async function shutdownSlack(): Promise<void> {
 // Owned here rather than inside auto-join.ts so the module stays a pure policy
 // function the tests can drive without a live transport.
 let autoJoinAbort: AbortController | null = null;
+let autoJoinTimer: ReturnType<typeof setInterval> | null = null;
+const SLACK_AUTO_JOIN_INTERVAL_MS = 15 * 60 * 1000;
 
 /**
  * Kick off the background reconciliation for this init generation.
@@ -1982,12 +2060,12 @@ let autoJoinAbort: AbortController | null = null;
  * not clear the controller belonging to the run that superseded it.
  */
 function startSlackAutoJoin(sc: Record<string, unknown>, generation: number): void {
+    if (autoJoinAbort) return;
     const config = mergeSlackAutoJoin(undefined, sc?.["autoJoin"]);
     if (!config.enabled) return;
     const token = String(sc?.["botToken"] ?? '').trim();
     if (!token) return;
 
-    autoJoinAbort?.abort();
     const controller = new AbortController();
     autoJoinAbort = controller;
 
@@ -2027,6 +2105,8 @@ function startSlackAutoJoin(sc: Record<string, unknown>, generation: number): vo
  */
 async function disposeSlackRuntime(): Promise<void> {
     slackStopping = true;
+    if (autoJoinTimer) clearInterval(autoJoinTimer);
+    autoJoinTimer = null;
     slackProgressRestorer.abort();
     for (const seal of [...slackProgressSealers]) seal();
     // Begin both cancellation paths before ingress drain can consume the server deadline.

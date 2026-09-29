@@ -115,17 +115,9 @@ function authorizedChannels(
     configured: readonly string[],
     allowlist: readonly string[],
 ): { allowed: string[]; rejected: string[] } {
-    // An empty allowlist does NOT mean "anything goes" for an explicitly
-    // addressed send. `authorizeExplicitTarget` falls back to vouching only for
-    // conversations this process has evidence for — last-active, latest-seen, or a
-    // bound conversation — so a channel with no such evidence is refused with a
-    // 403 (src/messaging/send.ts:301).
-    //
-    // Reading it anyway would be worse than useless: the scan finds a mention,
-    // pays for an agent turn to answer it, gets a 403, records no receipt, and
-    // does the whole thing again next tick. Refusing to scan is the honest
-    // answer, and `unauthorized` says which channels need an allowlist entry.
-    if (allowlist.length === 0) return { allowed: [], rejected: [...configured] };
+    // Empty inbound scope permits all configured watch channels. The watch's
+    // own explicit list still bounds both scanning and server-owned sends.
+    if (allowlist.length === 0) return { allowed: [...configured], rejected: [] };
     const permitted = new Set(allowlist);
     const allowed: string[] = [];
     const rejected: string[] = [];
@@ -169,15 +161,7 @@ export async function runMentionWatchTick(
     const { allowed, rejected } = authorizedChannels(watch.channelIds, deps.allowlist);
     result.unauthorized = rejected;
     if (rejected.length) {
-        // Two different situations, and an operator needs to be told which. An
-        // empty allowlist is the shipped default and reads as "every conversation"
-        // for an ordinary reply, but an explicitly addressed send still needs a
-        // configured list or prior evidence for that conversation — so a watch
-        // running under it would find mentions it cannot answer.
-        const reason = deps.allowlist.length === 0
-            ? 'slack.channelIds is empty, so an explicitly addressed send has nothing to authorize against; add the watched channels to it'
-            : 'outside slack.channelIds';
-        log(`mention watch: skipped ${rejected.length} channel(s) — ${reason}: ${rejected.join(', ')}`);
+        log(`mention watch: skipped ${rejected.length} channel(s) — outside slack.channelIds: ${rejected.join(', ')}`);
     }
     if (allowed.length === 0) return result;
 

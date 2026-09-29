@@ -5,7 +5,7 @@ import { revokeSlackToolGrant } from '../slack/tool-context.js';
 import type { ChildProcess } from 'child_process';
 import { broadcast } from '../core/bus.js';
 import { settings, detectCli, resolveFlushEvery } from '../core/config.js';
-import { clearEmployeeSession, insertMessage, insertMessageWithTraceRun, updateSession, clearSessionBucket, markAnchorConsumed, updateSessionBucketLastRun } from '../core/db.js';
+import { clearEmployeeSession, insertMessage, insertMessageWithTraceRun, updateSession, clearSessionBucket, getSessionBucket, incrementSessionBucketTurns, markAnchorConsumed, updateSessionBucketLastRun } from '../core/db.js';
 import { getActiveChatSession } from '../core/chat-sessions.js';
 import { persistMainSession, type SessionOwnerToken } from './session-persistence.js';
 import { resolveSessionBucket } from './args.js';
@@ -35,7 +35,6 @@ import {
     incrementMemoryFlush,
     countTurnForFlush,
     triggerMemoryFlush,
-    memoryFlushCounter,
 } from './memory-flush-controller.js';
 import { buildGoalContinuation } from '../goal/heartbeat.js';
 import { completeGoal, getActiveGoal, goalHasCompletionEvidence } from '../goal/store.js';
@@ -574,6 +573,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
 
     // ─── Session persistence ───
     const persistedSessionId = ctx.sessionId;
+    let bucketTurns: number | undefined;
     if (persistedSessionId && persistMainSession({
         persistenceOwner, scopeKey, forceNew, employeeSessionId: empSid,
         sessionId: persistedSessionId, isFallback: opts._isFallback === true,
@@ -584,6 +584,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         runtimeTransport: params.runtimeTransport,
         scopedBucket: runBucket,
     })) {
+        bucketTurns = (incrementSessionBucketTurns.get(runBucket, persistedSessionId) as { turn_count: number } | undefined)?.turn_count;
         console.log(`[jaw:session] saved ${cli} session=${persistedSessionId.slice(0, 12)}...${wasKilled ? ' (post-kill)' : ''}`);
     }
     if (cli === 'agy' && persistedSessionId) {
@@ -601,22 +602,25 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     // ─── Phase 54-A: Proactive compact by turn count ───
     // CLIs without a reliable native compact/resume path get a conservative
     // turn-count refresh. AGY owns its compaction and keeps its conversation.
-    if (nativeOutcome === undefined && mainManaged && !opts.internal && code === 0 && !ctx.cliNativeCompactDetected) {
-        const turns = ctx.turns ?? memoryFlushCounter;
+    if (bucketTurns !== undefined && nativeOutcome === undefined && mainManaged && !opts.internal && code === 0 && !ctx.cliNativeCompactDetected) {
+        const turns = ctx.turns ?? bucketTurns;
         const useTurnCountRefresh = shouldUseTurnCountRefresh(runtimeCli);
         if (useTurnCountRefresh && turns >= 35) {
-            console.log(`[jaw:compact] ${cli} reached ${turns} turns — forcing auto-refresh`);
             try {
                 const { autoCompactRefresh } = await import('../core/compact.js');
-                await autoCompactRefresh({
-                    workDir: settings["workingDir"] || '',
-                    instructions: prompt || '',
-                    cli,
-                    model,
-                    scopeKey,
-                    chatSessionId,
-                    sessionBucket: runBucket,
-                });
+                if ((getSessionBucket.get(runBucket) as { session_id: string } | undefined)?.session_id === persistedSessionId) {
+                    console.log(`[jaw:compact] ${cli} reached ${turns} turns — forcing auto-refresh`);
+                    await autoCompactRefresh({
+                        workDir: settings["workingDir"] || '',
+                        instructions: prompt || '',
+                        cli,
+                        model,
+                        scopeKey,
+                        chatSessionId,
+                        sessionBucket: runBucket,
+                        expectedSessionId: persistedSessionId,
+                    });
+                }
             } catch (e) {
                 console.warn('[jaw:compact] turn-count auto-refresh failed:', (e as Error).message);
             }
@@ -632,13 +636,14 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     // ─── High-turn native-compaction coordination ───
     // AGY keeps a native compacted conversation. Other CLIs still use the
     // conservative fresh-session guard when their compaction is not observable.
-    if (nativeOutcome === undefined && mainManaged && !opts.internal && code === 0 && !ctx.cliNativeCompactDetected) {
-        const turns = ctx.turns ?? memoryFlushCounter;
+    if (bucketTurns !== undefined && nativeOutcome === undefined && mainManaged && !opts.internal && code === 0 && !ctx.cliNativeCompactDetected) {
+        const turns = ctx.turns ?? bucketTurns;
         if (shouldClearHighTurnSessionBucket(runtimeCli, turns)) {
-            console.log(`[jaw:compact] ${cli} exited after ${turns} turns — clearing session bucket for fresh start`);
             try {
-                const bucket = runBucket;
-                clearSessionBucket.run(bucket);
+                if ((getSessionBucket.get(runBucket) as { session_id: string } | undefined)?.session_id === persistedSessionId) {
+                    console.log(`[jaw:compact] ${cli} exited after ${turns} turns — clearing session bucket for fresh start`);
+                    clearSessionBucket.run(runBucket);
+                }
             } catch (e) {
                 console.warn('[jaw:compact] session bucket clear failed:', (e as Error).message);
             }

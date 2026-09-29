@@ -57,6 +57,7 @@ export type IngressEventRecord = {
     conversationKey: string;
     threadKey?: string;
     actorId: string;
+    targetJson: string | null;
     ackPolicy: string;
     traceId: string;
     payloadDigest: string;
@@ -153,6 +154,7 @@ function rowToRecord(row: Record<string, unknown>): IngressEventRecord {
         conversationKey: String(row['conversation_key']),
         ...(typeof threadKey === 'string' ? { threadKey } : {}),
         actorId: String(row['actor_id']),
+        targetJson: (row['target_json'] as string | null) ?? null,
         ackPolicy: String(row['ack_policy']),
         traceId: String(row['trace_id']),
         payloadDigest: String(row['payload_digest']),
@@ -289,6 +291,8 @@ export class IngressJournal {
                 last_error = NULL, next_attempt_at = NULL
             WHERE channel = ? AND account_id = ? AND event_id = ?
               AND state IN ('received', 'processing', 'dead_letter')
+              AND NOT (channel = 'slack' AND state = 'dead_letter'
+                  AND last_error GLOB 'interrupted_by_restart*')
         `).run(this.now(), channel, accountId, eventId).changes;
         return changes === 1;
     }
@@ -457,6 +461,37 @@ export class IngressJournal {
         `).run(cutoff).changes;
     }
 
+    /** Close the previous process's Slack work before a new socket can receive frames. */
+    closeInterruptedSlackAtBoot(opts: { recentMs?: number } = {}): IngressEventRecord[] {
+        const cutoff = this.now() - (opts.recentMs ?? 6 * 60 * 60 * 1000);
+        const close = this.database.transaction(() => {
+            const recent = this.database.prepare(`
+                SELECT * FROM ingress_events WHERE channel = 'slack'
+                  AND state IN ('received', 'processing') AND received_at >= ?
+                ORDER BY received_at DESC, event_id
+            `).all(cutoff) as Array<Record<string, unknown>>;
+            this.database.prepare(`
+                UPDATE ingress_events SET state = 'dead_letter', next_attempt_at = NULL,
+                    last_error = CASE WHEN received_at >= ? THEN 'interrupted_by_restart'
+                                      ELSE 'abandoned_stale_processing' END
+                WHERE channel = 'slack' AND state IN ('received', 'processing')
+            `).run(cutoff);
+            return recent.map(row => ({ ...rowToRecord(row), state: 'dead_letter' as const,
+                nextAttemptAt: null, lastError: 'interrupted_by_restart' }));
+        });
+        return close.immediate();
+    }
+
+    markInterruptNotice(channel: MessengerChannel, accountId: string, eventId: string,
+        outcome: 'answered' | 'notified' | `skipped:${string}`): boolean {
+        if (channel !== 'slack') return false;
+        return this.database.prepare(`
+            UPDATE ingress_events SET last_error = ?
+            WHERE channel = ? AND account_id = ? AND event_id = ?
+              AND state = 'dead_letter' AND last_error = 'interrupted_by_restart'
+        `).run(`interrupted_by_restart:${outcome}`, channel, accountId, eventId).changes === 1;
+    }
+
     listByState(state: IngressState, limit = 100): IngressEventRecord[] {
         const rows = this.database.prepare(`
             SELECT * FROM ingress_events WHERE state = ?
@@ -508,7 +543,7 @@ export class IngressJournal {
 
 /** What the journal decided about one inbound event, carried to the completion call. */
 export type IngressAdmission =
-    | { admit: false; reason: 'already_handled' | 'stale_generation' }
+    | { admit: false; reason: 'already_handled' | 'stale_generation' | 'interrupted_by_restart' }
     | { admit: true; journaled: false }
     | { admit: true; journaled: true; envelope: InboundEnvelope };
 
@@ -549,6 +584,11 @@ export function admitIngress(
         inc('ingress.admit', { channel: envelope.channel, result: 'already_handled' });
         return { admit: false, reason: 'already_handled' };
     }
+    if (!result.appended && result.record.state === 'dead_letter'
+        && result.record.channel === 'slack'
+        && result.record.lastError?.startsWith('interrupted_by_restart')) {
+        return { admit: false, reason: 'interrupted_by_restart' };
+    }
     if (!result.appended && result.record.sessionGeneration !== sessionGeneration) {
         inc('ingress.admit', { channel: envelope.channel, result: 'stale_generation' });
         return { admit: false, reason: 'stale_generation' };
@@ -587,6 +627,7 @@ export function settleIngress(
 }
 
 let journal: IngressJournal | null = null;
+let interruptedSlackAtBoot: IngressEventRecord[] = [];
 
 /**
  * Called explicitly at boot rather than on import: an owner module that creates its
@@ -598,9 +639,16 @@ export function initIngressJournal(
     options: IngressJournalOptions = {},
 ): IngressJournal {
     journal = new IngressJournal(database, options);
+    interruptedSlackAtBoot = journal.closeInterruptedSlackAtBoot();
     journal.abandonStaleProcessing();
     assertChildRetentionPredicatesRegistered(database);
     return journal;
+}
+
+export function takeInterruptedSlackAtBoot(): IngressEventRecord[] {
+    const rows = interruptedSlackAtBoot;
+    interruptedSlackAtBoot = [];
+    return rows;
 }
 
 export function getIngressJournal(): IngressJournal | null {
@@ -610,4 +658,5 @@ export function getIngressJournal(): IngressJournal | null {
 /** Test seam: the module-level handle outlives a single test otherwise. */
 export function __resetIngressJournalForTests(): void {
     journal = null;
+    interruptedSlackAtBoot = [];
 }

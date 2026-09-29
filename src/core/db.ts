@@ -46,7 +46,7 @@ db.pragma('foreign_keys = ON');
 // this exists to open — and it would do so BEFORE the step that adds the column.
 // Every index therefore runs after the migration steps, not with the tables.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** A database this binary cannot safely open. Never a `db.prepare` crash. */
 export class SchemaMigrationError extends Error {
@@ -172,6 +172,7 @@ const BASELINE_TABLES_SQL = `
         bucket      TEXT PRIMARY KEY,
         session_id  TEXT NOT NULL,
         model       TEXT NOT NULL,
+        turn_count  INTEGER NOT NULL DEFAULT 0,
         resume_key  TEXT DEFAULT NULL,
         output_len  INTEGER DEFAULT 0,
         memory_snapshot TEXT DEFAULT NULL,
@@ -502,6 +503,13 @@ const MIGRATIONS: readonly MigrationStep[] = [
             // steal ownership.
             database.exec(`UPDATE trace_runs SET session_id = (SELECT session_id FROM messages WHERE id = trace_runs.message_id)
                 WHERE session_id IS NULL AND message_id IS NOT NULL`);
+        },
+    },
+    {
+        version: 2,
+        describe: 'count completed turns per resumable session bucket',
+        apply(database) {
+            addColumnIfMissing(database, 'session_buckets', 'turn_count', 'turn_count INTEGER NOT NULL DEFAULT 0');
         },
     },
 ];
@@ -969,13 +977,13 @@ export const clearEmployeeSession = db.prepare('DELETE FROM employee_sessions WH
 export const clearAllEmployeeSessions = db.prepare('DELETE FROM employee_sessions');
 
 // ─── Session Buckets (per-bucket resume storage) ─────
-export const getSessionBucket = db.prepare('SELECT bucket, session_id, model, resume_key, output_len, memory_snapshot, updated_at, last_run_clean, last_run_cwd, last_run_meta FROM session_buckets WHERE bucket = ?');
+export const getSessionBucket = db.prepare('SELECT bucket, session_id, model, turn_count, resume_key, output_len, memory_snapshot, updated_at, last_run_clean, last_run_cwd, last_run_meta FROM session_buckets WHERE bucket = ?');
 export const copySessionBucketIfMissing = db.prepare(`
     INSERT OR IGNORE INTO session_buckets (
-        bucket, session_id, model, resume_key, output_len, memory_snapshot,
+        bucket, session_id, model, turn_count, resume_key, output_len, memory_snapshot,
         updated_at, last_run_clean, last_run_cwd, last_run_meta
     )
-    SELECT ?, session_id, model, resume_key, output_len, memory_snapshot,
+    SELECT ?, session_id, model, turn_count, resume_key, output_len, memory_snapshot,
         updated_at, last_run_clean, last_run_cwd, last_run_meta
     FROM session_buckets WHERE bucket = ?
 `);
@@ -983,11 +991,17 @@ export const upsertSessionBucket = db.prepare(`
     INSERT INTO session_buckets (bucket, session_id, model, resume_key, output_len, updated_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(bucket) DO UPDATE SET
+        turn_count=CASE WHEN session_buckets.session_id=excluded.session_id THEN session_buckets.turn_count ELSE 0 END,
         session_id=excluded.session_id,
         model=excluded.model,
         resume_key=excluded.resume_key,
         output_len=excluded.output_len,
         updated_at=CURRENT_TIMESTAMP
+`);
+export const incrementSessionBucketTurns = db.prepare(`
+    UPDATE session_buckets SET turn_count = turn_count + 1
+    WHERE bucket = ? AND session_id = ?
+    RETURNING turn_count
 `);
 // Frozen snapshot write happens at spawn time, before the turn's session id
 // exists — the placeholder row ('' session_id stays falsy for resume checks)

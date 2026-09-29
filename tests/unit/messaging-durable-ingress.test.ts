@@ -16,6 +16,8 @@ import {
     registerChildRetentionPredicate,
     __resetChildRetentionPredicatesForTests,
     __resetIngressJournalForTests,
+    admitIngress,
+    takeInterruptedSlackAtBoot,
 } from '../../src/messaging/durable-ingress.ts';
 import type { InboundEnvelope } from '../../src/messaging/types.ts';
 
@@ -55,6 +57,50 @@ test('append persists an envelope and reports it as received', () => {
     assert.equal(result.record.payloadJson, '{"text":"hi"}');
     assert.equal(result.record.conversationKey, 'telegram:-100999');
     assert.equal(result.record.actorId, '42');
+    assert.equal(result.record.targetJson, JSON.stringify(envelope().target));
+});
+
+test('boot closes recent Slack work, keeps older Slack and other transports distinct, and blocks redelivery', () => {
+    const database = freshDb();
+    const now = 1_700_000_000_000;
+    const journal = journalFor(database, () => now);
+    const slack = (eventId: string, receivedAt: number) => envelope({
+        channel: 'slack', accountId: 'T1', eventId, conversationKey: 'slack:T1:C1',
+        receivedAt, ackPolicy: 'after-durable-append',
+        target: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', threadId: '1700.1' },
+    });
+    const recent = slack('T1:C1:1700.1', now - 1000);
+    const old = slack('T1:C1:1600.1', now - 7 * 60 * 60 * 1000);
+    const done = slack('T1:C1:1500.1', now - 1000);
+    journal.append(recent, 'd'); journal.markProcessing('slack', 'T1', recent.eventId);
+    journal.append(old, 'd');
+    journal.append(done, 'd'); journal.markProcessing('slack', 'T1', done.eventId);
+    journal.markCompleted('slack', 'T1', done.eventId);
+    journal.append(envelope({ eventId: 'telegram-open' }), 'd');
+    const closed = journal.closeInterruptedSlackAtBoot();
+    assert.deepEqual(closed.map(row => row.eventId), [recent.eventId]);
+    assert.equal(journal.find('slack', 'T1', recent.eventId)?.lastError, 'interrupted_by_restart');
+    assert.equal(journal.find('slack', 'T1', old.eventId)?.lastError, 'abandoned_stale_processing');
+    assert.equal(journal.find('slack', 'T1', done.eventId)?.state, 'completed');
+    assert.equal(journal.find('telegram', '777', 'telegram-open')?.state, 'received');
+    assert.deepEqual(admitIngress(journal, recent, 'd'), { admit: false, reason: 'interrupted_by_restart' });
+    assert.equal(journal.markInterruptNotice('slack', 'T1', recent.eventId, 'skipped:queued'), true);
+    assert.deepEqual(admitIngress(journal, recent, 'd'), { admit: false, reason: 'interrupted_by_restart' });
+    assert.equal(journal.markProcessing('slack', 'T1', recent.eventId), false);
+    database.close();
+});
+
+test('init exposes the interrupted Slack rows once', () => {
+    const database = freshDb();
+    const seed = journalFor(database);
+    const row = envelope({ channel: 'slack', accountId: 'T1', eventId: 'T1:C1:1700.1',
+        target: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', threadId: '1700.1' } });
+    seed.append(row, 'd');
+    initIngressJournal(database, { now: () => 1_700_000_001_000 });
+    assert.deepEqual(takeInterruptedSlackAtBoot().map(record => record.eventId), [row.eventId]);
+    assert.deepEqual(takeInterruptedSlackAtBoot(), []);
+    __resetIngressJournalForTests();
+    database.close();
 });
 
 test('the same event appended twice is reported as a duplicate, not a second row', () => {
