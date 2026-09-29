@@ -1723,7 +1723,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         capturedRun.cancelTurn = attachedCancel;
                     } else registerActiveProcess(agentLabel, child);
                 },
-                finished: (child, _cancel, queued, cleanupSafe) => {
+                finished: (child, _cancel, queued, cleanupSafe, fallbackPending) => {
                     try {
                         if (capturedRun && capturedRun.cancelPending === attachedCancel) delete capturedRun.cancelPending;
                         if (capturedRun && capturedRun.cancelTurn === attachedCancel) delete capturedRun.cancelTurn;
@@ -1732,7 +1732,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
                         if (cleanupSafe) cleanupClaudeWorker();
                     } finally {
                         settleCapturedExit(scopeKey, capturedExit);
-                        if (mainManaged && (queued || !activeMainProcesses.has(scopeKey))) void processQueue(scopeKey);
+                        if (mainManaged && !fallbackPending && (queued || !activeMainProcesses.has(scopeKey))) void processQueue(scopeKey);
                     }
                 },
             });

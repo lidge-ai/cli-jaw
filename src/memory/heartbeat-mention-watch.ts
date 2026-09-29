@@ -133,6 +133,25 @@ function authorizedChannels(
     return { allowed, rejected };
 }
 
+/** Why a collected turn is not an answer, or null when it finished.
+ *
+ *  A failed turn still resolves with text: the collector substitutes the runtime
+ *  diagnostic or a "no response" placeholder so a chat user sees something. For a
+ *  mention watch that text is not the subject's answer. Posting it would put an
+ *  error on their behalf, and treating its absence as [SILENT] would write a
+ *  receipt that retires the mention for good. Both happened while Claude was out
+ *  of session quota (2026-09-28). A failure has to reach the tick as a throw, so
+ *  it counts as failed and the next tick asks again. */
+export function mentionWatchTurnFailure(data: Readonly<Record<string, unknown>> | undefined): string | null {
+    if (!data) return null;
+    if (data['superseded'] === true) return 'superseded';
+    if (data['collectionFailure']) return 'collection_' + String(data['collectionFailure']);
+    if (data['runtimeStatus'] === 'error') return 'runtime_error';
+    if (data['runtimeStatus'] === 'stopped' || data['executionInterrupted'] === true) return 'stopped';
+    if (data['executionFailed'] === true) return 'execution_failed';
+    return null;
+}
+
 export async function runMentionWatchTick(
     ns: WatchNamespace,
     job: Record<string, unknown>,

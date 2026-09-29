@@ -415,6 +415,39 @@ runTest('failed fallback recording still returns one diagnostic without a fabric
     } finally { off(); }
 });
 
+runTest('a native failure with no effect names the fallback and withholds the error block', async () => {
+    config.settings.fallbackOrder = ['cursor'];
+    const opts = options(), events: Array<{ type: string; data: Record<string, any> }> = [];
+    beforeFactory = async () => { throw new Error('session limit fixture'); };
+    const off = subscribe(event => events.push({ type: event.event, data: event.data }));
+    try {
+        const result = await spawnAgent('no SDK input', opts).promise as Record<string, any>;
+        assert.equal(result.runtimeOutcome?.status, 'error');
+        assert.equal(result.nativeFallbackCli, 'cursor');
+        const done = events.filter(event => event.type === 'agent_done');
+        assert.equal(done.length, 1);
+        assert.equal(done[0]!.data.error, undefined, 'a handed-off failure must not reach forwarders as an error');
+        assert.equal(done[0]!.data.errorKind, undefined);
+        assert.equal(done[0]!.data.fallbackPending, 'cursor');
+        assert.equal(done[0]!.data.text, '');
+    } finally { off(); }
+});
+
+runTest('a native fallback run that fails again reports its error and does not chain', async () => {
+    config.settings.fallbackOrder = ['cursor'];
+    const opts = { ...options(), _isFallback: true }, events: Array<{ type: string; data: Record<string, any> }> = [];
+    beforeFactory = async () => { throw new Error('fallback also failed fixture'); };
+    const off = subscribe(event => events.push({ type: event.event, data: event.data }));
+    try {
+        const result = await spawnAgent('no SDK input', opts).promise as Record<string, any>;
+        assert.equal(result.runtimeOutcome?.status, 'error');
+        assert.equal(result.nativeFallbackCli, undefined);
+        const done = events.filter(event => event.type === 'agent_done');
+        assert.equal(done.length, 1);
+        assert.equal(done[0]!.data.error, true);
+    } finally { off(); }
+});
+
 runTest('journal failure still persists interrupted salvage before the actual exit-settle barrier', async () => {
     failJournal = true; const opts = options(), watermark = getMaxMessageId(opts.chatSessionId);
     let barrier: Promise<void> | undefined, salvage: string | null | undefined;

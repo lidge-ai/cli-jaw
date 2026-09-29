@@ -359,7 +359,7 @@ test.mock.module('../../src/trace/store.js', {
 
 test.mock.module('../../src/agent/lifecycle-handler.js', {
     namedExports: {
-        setSpawnAgent() {}, setMainMetaHandler() {},
+        setSpawnAgent() {}, setMainMetaHandler() {}, pickNativeFallbackCli: () => null,
         handleAgentExit: async (params: Record<string, unknown>) => {
             harness.lifecycleCalls.push(params);
             const onRuntimeEnd = params['onRuntimeEnd'] as ((end: RuntimeEnd) => void) | undefined;

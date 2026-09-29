@@ -15,7 +15,7 @@ import { sendChannelOutput, targetFromChatId } from '../messaging/send.js';
 import { nextDeliverySeq, wasSelfDelivered } from '../messaging/turn-delivery.js';
 import { isHeartbeatMentionWatch } from '../core/config.js';
 import type { HeartbeatMentionWatch } from '../core/config.js';
-import { runMentionWatchTick } from './heartbeat-mention-watch.js';
+import { mentionWatchTurnFailure, runMentionWatchTick } from './heartbeat-mention-watch.js';
 import {
     resolveHeartbeatBinding,
     verifyHeartbeatThreadBindingLive,
@@ -594,6 +594,10 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
                         target,
                     }),
                 );
+                // Before the quiet check: a failed turn is neither an answer nor a
+                // decision to stay silent, and must leave the mention unreceipted.
+                const failure = mentionWatchTurnFailure(collected.data);
+                if (failure) throw new Error('mention_watch_turn_' + failure);
                 const text = applyOutputPolicy(String(collected.text), { scope: 'heartbeat', channel: 'slack' }).text;
                 const quietConfig = loadPolicyHooksConfig()?.flags?.heartbeatQuietOk;
                 const extraQuietMarkers = quietConfig?.enabled ? (quietConfig.markers || []) : [];

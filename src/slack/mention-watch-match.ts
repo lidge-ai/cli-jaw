@@ -105,9 +105,15 @@ function isSkipped(
     // Humans never carry bot_id, so this cannot suppress the messages the watch
     // exists for.
     if (message.botId) return true;
-    if (message.subtype) return true;
+    // System subtypes (joins, topic changes, bot_message) are not questions. Two
+    // subtypes are ordinary human posts, though: a thread reply also sent to the
+    // channel, and a message with a file. Skipping them left a person's question
+    // unanswered because of how they posted it (observed 2026-09-18).
+    if (message.subtype && !HUMAN_MESSAGE_SUBTYPES.has(message.subtype)) return true;
     return false;
 }
+
+const HUMAN_MESSAGE_SUBTYPES: ReadonlySet<string> = new Set(['thread_broadcast', 'file_share']);
 
 function firstMentionedSubject(text: string, subjects: readonly string[]): string | null {
     for (const id of subjects) {

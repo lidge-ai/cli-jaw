@@ -531,7 +531,7 @@ export async function orchestrate(
     // persistence, so it affects only this request's agent run.
     const overrides = meta["overrides"] as { cli?: string; model?: string; effort?: string; systemPrompt?: string } | undefined;
     const lifecycle = runtimeActivityLifecycle(meta);
-    const spawn = () => runSpawnAgent(prompt, {
+    const spawn = (fallback?: { cli: string }) => runSpawnAgent(prompt, {
         origin,
         target,
         chatId,
@@ -548,13 +548,31 @@ export async function orchestrate(
         ...(typeof meta["_steerContext"] === 'string' && meta["_steerContext"]
             ? { steerContext: meta["_steerContext"] as string }
             : {}),
-        ...(overrides?.model ? { model: overrides.model } : {}),
+        ...(overrides?.model && !fallback ? { model: overrides.model } : {}),
         ...(overrides?.cli ? { cli: overrides.cli } : {}),
         ...(overrides?.effort ? { effort: overrides.effort } : {}),
         ...(overrides?.systemPrompt ? { sysPrompt: overrides.systemPrompt } : {}),
+        // A fallback runs on another runtime with that runtime's own model; the
+        // per-topic model override above names a model of the runtime that failed.
+        ...(fallback ? { cli: fallback.cli, _isFallback: true, _skipInsert: true } : {}),
     });
-    const { promise } = withSessionScope({ scope, chatSessionId }, spawn);
-    const result = await promise as Record<string, any>;
+    const { promise } = withSessionScope({ scope, chatSessionId }, () => spawn());
+    let result = await promise as Record<string, any>;
+    // A native turn that failed before doing anything is re-run once on the
+    // fallback runtime lifecycle chose (see nativeFallbackCli there). Awaited
+    // here so this request's terminal event carries the answer, not the failure.
+    // `agent_fallback` carries the request identity so a collector already
+    // pinned to the failed run's trace id can adopt the new run.
+    if (typeof result['nativeFallbackCli'] === 'string' && result['nativeFallbackCli']) {
+        const fallbackCli = result['nativeFallbackCli'] as string;
+        broadcast('agent_fallback', {
+            to: fallbackCli, reason: 'native_runtime_error', native: true,
+            origin, scope, sessionId: chatSessionId,
+            ...(requestId ? { requestId } : {}),
+        });
+        const { promise: fallbackPromise } = withSessionScope({ scope, chatSessionId }, () => spawn({ cli: fallbackCli }));
+        result = await fallbackPromise as Record<string, any>;
+    }
     const nativeOutcome: RuntimeTurnOutcome | undefined = result['runtimeOutcome'];
     const legacyInterrupted = nativeOutcome === undefined && result['executionInterrupted'] === true;
     const stopped = nativeOutcome?.status === 'stopped' || legacyInterrupted;

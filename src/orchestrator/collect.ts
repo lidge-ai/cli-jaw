@@ -111,6 +111,21 @@ export function orchestrateAndCollectData(
         };
         const handler = (type: string, data: Record<string, any>) => {
             if (settled) return;
+            // The orchestrator re-runs a failed native turn on the fallback
+            // runtime under the SAME request (pipeline.ts). That run has its own
+            // trace id, which the pin below would reject, so this request would
+            // wait out the idle timeout while its answer went unread. Checked
+            // before the strict-ownership filter because the notice carries no
+            // trace id by design.
+            if (type === 'agent_fallback' && data['native'] === true && requestId
+                && data['requestId'] === requestId && data['scope'] === binding.scope
+                && data['sessionId'] === binding.chatSessionId) {
+                nativeRunId = undefined;
+                runtimeActive = true;
+                ownTerminalDiagnostic = '';
+                resetTimeout();
+                return;
+            }
             if (meta['_strictRequestOwnership'] === true && !matchesNativeIdentity(data)) return;
             // Same observation the delivery layer makes, through the neutral
             // predicate rather than the delivery-named one: this listener uses
