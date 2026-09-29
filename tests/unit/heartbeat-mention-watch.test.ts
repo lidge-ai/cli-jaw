@@ -224,19 +224,17 @@ test('the rotation anchor is persisted for the next tick', async () => {
     assert.equal(rotation, 'C_SECOND');
 });
 
-test('an empty allowlist scans nothing, because those sends would 403', async () => {
-    // `authorizeExplicitTarget` vouches only for conversations this process has
-    // evidence for when no allowlist is configured, so reading these channels
-    // would find mentions, pay for answers, and get 403 on every send.
+test('an empty inbound allowlist keeps the explicitly configured watch channels active', async () => {
     const { id, ns } = job('mw_no_allowlist');
     const { impl, reads } = historyFetch({
         [CHANNEL]: [{ ts: '650.000100', text: MENTION + ' 답해줘', user: 'U0BME0C36SV' }],
     });
     const { deps: d, recorder } = deps(impl, { allowlist: [] });
     const result = await runMentionWatchTick(ns, { id, name: id }, watchConfig(), d);
-    assert.deepEqual(reads, []);
-    assert.deepEqual(result.unauthorized, [CHANNEL]);
-    assert.equal(recorder.asked.length, 0);
+    assert.deepEqual(reads, [CHANNEL]);
+    assert.deepEqual(result.unauthorized, []);
+    assert.equal(recorder.asked.length, 1);
+    assert.equal(recorder.sent.length, 1);
 });
 
 test('an agent that posted the answer itself is not answered twice', async () => {

@@ -100,5 +100,8 @@ test('bot.ts starts the scan without awaiting it', async () => {
         'cleanup must be identity-guarded so a stale run cannot clear a newer controller');
     assert.match(src, /autoJoinAbort\?\.abort\(\);/,
         'teardown must abort the in-flight scan');
+    assert.match(src, /autoJoinTimer = setInterval\(/,
+        'new channels must be reconciled after startup');
+    assert.match(src, /if \(autoJoinTimer\) clearInterval\(autoJoinTimer\);/,
+        'shutdown must stop periodic reconciliation');
 });
-

@@ -2019,6 +2019,11 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
     // minutes to reconcile at Slack's Tier 2/3 pacing, and the socket must not
     // wait for it — inbound already works the moment the connection is up.
     startSlackAutoJoin(sc, generation);
+    autoJoinTimer = setInterval(() => {
+        if (generation !== lifecycleGeneration || slackStopping) return;
+        startSlackAutoJoin(settings["slack"] ?? {}, generation);
+    }, SLACK_AUTO_JOIN_INTERVAL_MS);
+    autoJoinTimer.unref();
     log.info(`[slack] ✅ connected as ${selfUserId || 'unknown'}`);
     clearSlackClaimRecheck();
     if (positiveClaim && generation === lifecycleGeneration) {
@@ -2042,6 +2047,8 @@ export async function shutdownSlack(): Promise<void> {
 // Owned here rather than inside auto-join.ts so the module stays a pure policy
 // function the tests can drive without a live transport.
 let autoJoinAbort: AbortController | null = null;
+let autoJoinTimer: ReturnType<typeof setInterval> | null = null;
+const SLACK_AUTO_JOIN_INTERVAL_MS = 15 * 60 * 1000;
 
 /**
  * Kick off the background reconciliation for this init generation.
@@ -2053,12 +2060,12 @@ let autoJoinAbort: AbortController | null = null;
  * not clear the controller belonging to the run that superseded it.
  */
 function startSlackAutoJoin(sc: Record<string, unknown>, generation: number): void {
+    if (autoJoinAbort) return;
     const config = mergeSlackAutoJoin(undefined, sc?.["autoJoin"]);
     if (!config.enabled) return;
     const token = String(sc?.["botToken"] ?? '').trim();
     if (!token) return;
 
-    autoJoinAbort?.abort();
     const controller = new AbortController();
     autoJoinAbort = controller;
 
@@ -2098,6 +2105,8 @@ function startSlackAutoJoin(sc: Record<string, unknown>, generation: number): vo
  */
 async function disposeSlackRuntime(): Promise<void> {
     slackStopping = true;
+    if (autoJoinTimer) clearInterval(autoJoinTimer);
+    autoJoinTimer = null;
     slackProgressRestorer.abort();
     for (const seal of [...slackProgressSealers]) seal();
     // Begin both cancellation paths before ingress drain can consume the server deadline.
