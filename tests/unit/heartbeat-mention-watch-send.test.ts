@@ -8,6 +8,7 @@ import {
     revokeSlackToolScope,
     slackCredentialKey,
 } from '../../src/slack/tool-context.ts';
+import { mentionWatchTurnFailure } from '../../src/memory/heartbeat-mention-watch.ts';
 
 const root = join(import.meta.dirname, '../..');
 const heartbeat = fs.readFileSync(join(root, 'src/memory/heartbeat.ts'), 'utf8');
@@ -48,6 +49,28 @@ test('grant fail throws before collect so the tick cannot mark the hit seen', ()
         mentionWatch.indexOf('const sent = await deps.send'),
     );
     assert.match(quiet, /recordSeenMention/);
+});
+
+test('a failed turn throws before the quiet check, so it is retried rather than retired', () => {
+    const failAt = answer.indexOf('mentionWatchTurnFailure(collected.data)');
+    const throwAt = answer.indexOf("throw new Error('mention_watch_turn_' + failure)");
+    const quietAt = answer.indexOf('isHeartbeatQuietOutput');
+    const textAt = answer.indexOf('applyOutputPolicy(String(collected.text)');
+    assert.ok(failAt >= 0 && throwAt > failAt, 'failure check missing');
+    assert.ok(textAt > throwAt && quietAt > throwAt, 'failure must be decided before text is read');
+});
+
+test('mentionWatchTurnFailure names every unfinished turn and passes a finished one', () => {
+    assert.equal(mentionWatchTurnFailure({ runtimeStatus: 'done' }), null);
+    assert.equal(mentionWatchTurnFailure({}), null);
+    assert.equal(mentionWatchTurnFailure(undefined), null);
+    assert.equal(mentionWatchTurnFailure({ runtimeStatus: 'error' }), 'runtime_error');
+    assert.equal(mentionWatchTurnFailure({ runtimeStatus: 'stopped' }), 'stopped');
+    assert.equal(mentionWatchTurnFailure({ executionInterrupted: true }), 'stopped');
+    assert.equal(mentionWatchTurnFailure({ executionFailed: true }), 'execution_failed');
+    assert.equal(mentionWatchTurnFailure({ collectionFailure: 'timeout' }), 'collection_timeout');
+    assert.equal(mentionWatchTurnFailure({ collectionFailure: 'error' }), 'collection_error');
+    assert.equal(mentionWatchTurnFailure({ superseded: true, runtimeStatus: 'done' }), 'superseded');
 });
 
 test('mention-watch activation keys cannot be satisfied by the job keys', () => {
