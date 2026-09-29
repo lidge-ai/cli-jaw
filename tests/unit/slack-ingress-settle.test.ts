@@ -144,6 +144,14 @@ test('preflight plus handle plus lane success completes the journal row', { time
     assert.equal(journal.find('slack', 'T1', 'T1:C1:1700.1')?.state, 'completed');
 });
 
+test('a lost admission stash settles from the processing journal row', { timeout: 5000 }, async () => {
+    const envelope = messageEnvelope('1700.2');
+    assert.equal(await preflightSlackEnvelope(envelope), 'committed');
+    await handleSlackEnvelope({ ...envelope, envelope_id: 'replacement-envelope' });
+    await drain();
+    assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1700.2')?.state, 'completed');
+});
+
 test('collect error inside the lane still completes because processSlackMessageEvent returns', { timeout: 5000 }, async () => {
     collectImpl = async () => { throw new Error('lane_boom'); };
     const envelope = messageEnvelope('1701.1');
