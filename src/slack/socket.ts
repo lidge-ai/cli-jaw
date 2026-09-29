@@ -57,6 +57,14 @@ const DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEDUPE_SWEEP_AT = 5000;
 /** Slack sends `hello` promptly; without it the socket is not usable. */
 export const HELLO_DEADLINE_MS = 15000;
+/**
+ * Grace period after a disconnect `warning` frame. Slack promises a close
+ * before recycling the socket, but a lost close frame must not pin the old
+ * socket forever: state would stay 'connected', acks would keep landing on a
+ * socket Slack already recycled, and inbound would stall with no reconnect.
+ * Once the deadline passes with no close, the client recycles on its own.
+ */
+export const WARNING_CLOSE_DEADLINE_MS = 60_000;
 /** Backoff ceiling: one handshake attempt per minute once the socket is down. */
 const MAX_RECONNECT_DELAY_MS = 60000;
 /**
@@ -105,6 +113,12 @@ export type SlackSocketOptions = {
      */
     maxReconnectAttempts?: number;
     baseReconnectDelayMs?: number;
+    /**
+     * How long a disconnect `warning` may stand before the socket is recycled
+     * without the promised close. Defaults to WARNING_CLOSE_DEADLINE_MS.
+     * Tests shrink it to seconds; the shipped client wants the full minute.
+     */
+    warningGraceMs?: number;
     onStateChange?: (state: SlackConnectionState, meta: { attempts: number }) => void;
 };
 
@@ -114,6 +128,8 @@ export class SlackSocketClient {
     private reconnectAttempts = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private helloTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Deadline for the close Slack promises after a disconnect warning. */
+    private warningTimer: ReturnType<typeof setTimeout> | null = null;
     /** Set when a reconnect is requested while a connect is already running. */
     private reconnectPending = false;
     private seenEnvelopes = new Map<string, number>();
@@ -175,6 +191,7 @@ export class SlackSocketClient {
         this.stopped = true;
         this.clearReconnectTimer();
         this.clearHelloTimer();
+        this.clearWarningTimer();
         this.setState(terminalState);
         for (const waiter of [...this.readyWaiters]) waiter('stopped');
         const socket = this.ws;
@@ -195,6 +212,13 @@ export class SlackSocketClient {
         if (this.helloTimer) {
             clearTimeout(this.helloTimer);
             this.helloTimer = null;
+        }
+    }
+
+    private clearWarningTimer(): void {
+        if (this.warningTimer) {
+            clearTimeout(this.warningTimer);
+            this.warningTimer = null;
         }
     }
 
@@ -304,6 +328,8 @@ export class SlackSocketClient {
         });
         ws.addEventListener('close', () => {
             if (!isCurrent() || this.stopped || this.state === 'disabled') return;
+            // The promised replacement arrived: no deadline recycle needed.
+            this.clearWarningTimer();
             // Detach so a repeated close from this same dead socket cannot
             // schedule a second reconnect.
             this.ws = null;
@@ -342,6 +368,7 @@ export class SlackSocketClient {
             }
             if (envelope.reason === 'warning') {
                 log.info('[slack:socket] disconnect warning; continuing on current socket');
+                this.armWarningDeadline(socket, socketEpoch);
                 return;
             }
             log.info(`[slack:socket] disconnect (${envelope.reason || 'unspecified'}), reconnecting`);
@@ -450,12 +477,32 @@ export class SlackSocketClient {
     /** Drop the current socket and reconnect — used when an ack cannot be sent. */
     private recycleSocket(): void {
         if (this.stopped || this.state === 'disabled') return;
+        this.clearWarningTimer();
         const socket = this.ws;
         this.ws = null;
         this.invalidateSocketOwnership();
         this.clearHelloTimer();
         try { socket?.close(); } catch { /* already closing */ }
         this.scheduleReconnect();
+    }
+
+    /**
+     * Arm the deadline for the close Slack promises after a warning. The timer
+     * captures the socket and its epoch: a superseded socket's deadline can
+     * never recycle the replacement, and the close listener clears it the
+     * moment the promised close actually arrives.
+     */
+    private armWarningDeadline(socket: SlackSocketLike, socketEpoch: number): void {
+        // A deadline left by a socket that was replaced without a close (a
+        // refresh_requested reconnect, say) must not stand in for this one.
+        this.clearWarningTimer();
+        this.warningTimer = setTimeout(() => {
+            this.warningTimer = null;
+            if (this.stopped || !this.ownsSocket(socket, socketEpoch)) return;
+            log.warn('[slack:socket] no close after disconnect warning; recycling');
+            this.recycleSocket();
+        }, this.options.warningGraceMs ?? WARNING_CLOSE_DEADLINE_MS);
+        this.warningTimer.unref?.();
     }
 
     private ownsSocket(socket: SlackSocketLike, socketEpoch: number): boolean {

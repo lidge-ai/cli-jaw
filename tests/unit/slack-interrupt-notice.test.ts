@@ -13,17 +13,20 @@ function row(index = 0, storedTarget: unknown = target): IngressEventRecord {
         completedAt: null, nextAttemptAt: null, lastError: 'interrupted_by_restart',
         tombstoneUntil: null, sessionGeneration: 0 };
 }
-function harness(rows = [row()]) {
+function harness(rows = [row()], identity: { selfUserId?: string | null; selfBotId?: string | null } = {}) {
     const outcomes: string[] = [];
     const sent: string[] = [];
+    let replyCalls = 0;
     const deps: InterruptNoticeDeps = {
         rows, mark: (_row, outcome) => { outcomes.push(outcome); },
         hasQueued: () => false, hasActiveRun: () => false, hasBgTask: () => false,
-        replies: async () => ({ ok: true, messages: [], hasMore: false }),
+        replies: async () => { replyCalls++; return { ok: true, messages: [], hasMore: false }; },
         send: async (_target, text) => { sent.push(text); return { ok: true }; },
-        selfUserId: 'UBOT', locale: 'ko', isCurrent: () => true, sleep: async () => {},
+        selfUserId: identity.selfUserId === undefined ? 'UBOT' : identity.selfUserId,
+        selfBotId: identity.selfBotId ?? null,
+        locale: 'ko', isCurrent: () => true, sleep: async () => {},
     };
-    return { deps, outcomes, sent };
+    return { deps, outcomes, sent, get replyCalls() { return replyCalls; } };
 }
 
 test('root placement stays skipped despite later replyInThread setting changes', async () => {
@@ -48,7 +51,7 @@ for (const [name, key, outcome] of [
 }
 
 test('a bot answer on page two suppresses the notice', async () => {
-    const h = harness();
+    const h = harness([row()], { selfBotId: 'B1' });
     const cursors: Array<string | undefined> = [];
     h.deps.replies = async (_target, _ts, cursor) => {
         cursors.push(cursor);
@@ -58,6 +61,34 @@ test('a bot answer on page two suppresses the notice', async () => {
     await noticeInterruptedSlackRequests(h.deps);
     assert.deepEqual(cursors, [undefined, 'next']);
     assert.deepEqual(h.outcomes, ['answered']);
+});
+
+test("another bot's answer does not suppress the notice", async () => {
+    // Only OUR OWN reply counts as an answer. A different bot posting in the
+    // thread is not evidence the interrupted request was handled — treating it
+    // as one is how a dropped request silently stayed dropped.
+    const h = harness([row()], { selfBotId: 'BBOT' });
+    h.deps.replies = async () => ({ ok: true, messages: [{ ts: '1700.3', text: 'other', botId: 'B_OTHER' }], hasMore: false });
+    await noticeInterruptedSlackRequests(h.deps);
+    assert.deepEqual(h.outcomes, ['notified']);
+    assert.equal(h.sent.length, 1);
+});
+
+test('our own bot id answer suppresses the notice', async () => {
+    const h = harness([row()], { selfUserId: null, selfBotId: 'BBOT' });
+    h.deps.replies = async () => ({ ok: true, messages: [{ ts: '1700.3', text: 'mine', botId: 'BBOT' }], hasMore: false });
+    await noticeInterruptedSlackRequests(h.deps);
+    assert.deepEqual(h.outcomes, ['answered']);
+    assert.deepEqual(h.sent, []);
+});
+
+test('an unknown self identity skips without reading replies', async () => {
+    // Without a self user or bot id no reply can be recognized as ours, so the
+    // check must not even read the thread — a guess would be marked answered.
+    const h = harness([row()], { selfUserId: null, selfBotId: null });
+    await noticeInterruptedSlackRequests(h.deps);
+    assert.deepEqual(h.outcomes, ['skipped:unknown_self']);
+    assert.equal(h.replyCalls, 0, 'no reply read is allowed without a self identity');
 });
 
 test('unfinished pagination is inconclusive', async () => {

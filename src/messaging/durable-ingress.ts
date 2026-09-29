@@ -311,6 +311,14 @@ export class IngressJournal {
      * the row outright would lose the fact that this event was handled, which is the
      * one thing a redelivery needs to know.
      */
+    /**
+     * Also accepts a Slack row a PEER's boot closed as interrupted: this
+     * process admitted it before the close, so its settle is legitimate proof
+     * the work finished. Rows whose notice already has an outcome still match
+     * (the GLOB covers 'interrupted_by_restart:<outcome>') — completing them
+     * records the truth rather than erasing it. Any other dead_letter is not
+     * ours to complete and keeps its state.
+     */
     markCompleted(channel: MessengerChannel, accountId: string, eventId: string): boolean {
         const completedAt = this.now();
         const tombstoneUntil = completedAt + this.tombstoneTtlMs[channel];
@@ -318,7 +326,10 @@ export class IngressJournal {
             UPDATE ingress_events
             SET state = 'completed', completed_at = ?, tombstone_until = ?,
                 payload_json = NULL, last_error = NULL, next_attempt_at = NULL
-            WHERE channel = ? AND account_id = ? AND event_id = ? AND state = 'processing'
+            WHERE channel = ? AND account_id = ? AND event_id = ?
+              AND (state = 'processing'
+                   OR (channel = 'slack' AND state = 'dead_letter'
+                       AND last_error GLOB 'interrupted_by_restart*'))
         `).run(completedAt, tombstoneUntil, channel, accountId, eventId).changes);
         return run.immediate() === 1;
     }
@@ -490,6 +501,24 @@ export class IngressJournal {
             WHERE channel = ? AND account_id = ? AND event_id = ?
               AND state = 'dead_letter' AND last_error = 'interrupted_by_restart'
         `).run(`interrupted_by_restart:${outcome}`, channel, accountId, eventId).changes === 1;
+    }
+
+    /**
+     * Restart-interruption notice set, read from the journal instead of a boot
+     * snapshot: a row a PEER closed after our own boot must still be noticed on
+     * a later pass, and a row already carrying an outcome stays excluded. The
+     * window matches the boot close (6h), newest first, matching the order the
+     * boot snapshot used; the notice pass caps how many rows it actually posts.
+     */
+    listSlackInterruptNotices(opts: { recentMs?: number; limit?: number } = {}): IngressEventRecord[] {
+        const cutoff = this.now() - (opts.recentMs ?? 6 * 60 * 60 * 1000);
+        const rows = this.database.prepare(`
+            SELECT * FROM ingress_events
+            WHERE channel = 'slack' AND state = 'dead_letter' AND last_error = 'interrupted_by_restart'
+              AND received_at >= ?
+            ORDER BY received_at DESC LIMIT ?
+        `).all(cutoff, opts.limit ?? 100) as Array<Record<string, unknown>>;
+        return rows.map(rowToRecord);
     }
 
     listByState(state: IngressState, limit = 100): IngressEventRecord[] {

@@ -474,3 +474,61 @@ test('initIngressJournal abandons stale processing on the same database', () => 
     assert.equal(row?.lastError, 'abandoned_stale_processing');
     __resetIngressJournalForTests();
 });
+
+test('a live owner can still complete a row a peer boot closed', () => {
+    // Process A admitted the row; process B booted while A was handling it and
+    // closeInterruptedSlackAtBoot dead-lettered it. A's settle must still land:
+    // the row WAS handled, and leaving it interrupted would post a false
+    // "mention me again" notice for work that actually finished.
+    const database = freshDb();
+    const now = 1_700_000_000_000;
+    const journal = journalFor(database, () => now);
+    const row = envelope({
+        channel: 'slack', accountId: 'T1', eventId: 'T1:C1:1700.1',
+        conversationKey: 'slack:T1:C1',
+        target: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', threadId: '1700.1' },
+    });
+    journal.append(row, 'd');
+    assert.equal(journal.markProcessing('slack', 'T1', row.eventId), true);
+    journal.closeInterruptedSlackAtBoot();
+    assert.equal(journal.find('slack', 'T1', row.eventId)?.state, 'dead_letter');
+    assert.equal(journal.markCompleted('slack', 'T1', row.eventId), true);
+    assert.equal(journal.find('slack', 'T1', row.eventId)?.state, 'completed');
+    database.close();
+});
+
+test('interrupt notices come from the journal, surviving a second boot', () => {
+    const database = freshDb();
+    let now = 1_700_000_000_000;
+    __resetIngressJournalForTests();
+    const seed = journalFor(database, () => now);
+    const slackRow = (eventId: string, receivedAt: number) => envelope({
+        channel: 'slack', accountId: 'T1', eventId, conversationKey: 'slack:T1:C1',
+        receivedAt, ackPolicy: 'after-durable-append',
+        target: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', threadId: '1700.1' },
+    });
+    const row = slackRow('T1:C1:1700.1', now - 1000);
+    seed.append(row, 'd');
+    seed.markProcessing('slack', 'T1', row.eventId);
+
+    initIngressJournal(database, { now: () => now, bootId: 'boot-1' });
+    assert.deepEqual(takeInterruptedSlackAtBoot().map(record => record.eventId), [row.eventId]);
+    // A second boot closes nothing new, yet the journal still reports the row:
+    // the notice pass reads the journal, not the one-shot boot snapshot, so an
+    // unmarked interruption survives however many restarts happen before the
+    // notice runs.
+    now += 60_000;
+    const boot2 = initIngressJournal(database, { now: () => now, bootId: 'boot-2' });
+    assert.deepEqual(takeInterruptedSlackAtBoot(), []);
+    assert.deepEqual(boot2.listSlackInterruptNotices().map(record => record.eventId), [row.eventId]);
+    // A marked outcome excludes the row, and rows outside the 6h window never appear.
+    assert.equal(boot2.markInterruptNotice('slack', 'T1', row.eventId, 'notified'), true);
+    assert.deepEqual(boot2.listSlackInterruptNotices(), []);
+    const old = slackRow('T1:C1:0900.1', now - 7 * 60 * 60 * 1000);
+    boot2.append(old, 'd');
+    database.prepare("UPDATE ingress_events SET state = 'dead_letter', last_error = 'interrupted_by_restart' WHERE event_id = ?")
+        .run(old.eventId);
+    assert.deepEqual(boot2.listSlackInterruptNotices(), []);
+    __resetIngressJournalForTests();
+    database.close();
+});

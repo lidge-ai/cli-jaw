@@ -22,19 +22,19 @@ test('positive and negative membership cache TTLs use token-scoped keys', async 
     const options = { fetchImpl: fake.fetchImpl, now: () => now };
     const token = 'xoxb-membership-ttl';
     assert.equal(slackBotTokenKey(token).length, 16);
-    assert.equal(await verifySlackChannelMembership(token, channel, options), true);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'member');
     member = false;
     now += 59_999;
-    assert.equal(await verifySlackChannelMembership(token, channel, options), true);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'member');
     now++;
-    assert.equal(await verifySlackChannelMembership(token, channel, options), false);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'not_member');
     member = true;
     now += 29_999;
-    assert.equal(await verifySlackChannelMembership(token, channel, options), false);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'not_member');
     now++;
-    assert.equal(await verifySlackChannelMembership(token, channel, options), true);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'member');
     assert.equal(fake.calls, 3);
-    assert.equal(await verifySlackChannelMembership(token + '-new', channel, options), true);
+    assert.equal(await verifySlackChannelMembership(token + '-new', channel, options), 'member');
     assert.equal(fake.calls, 4);
 });
 
@@ -48,11 +48,32 @@ test('concurrent lookups coalesce; errors, missing scope, and mismatched IDs do 
     const first = verifySlackChannelMembership(token, channel, options);
     const second = verifySlackChannelMembership(token, channel, options);
     release({ ok: false, error: 'missing_scope' });
-    assert.deepEqual(await Promise.all([first, second]), [false, false]);
+    assert.deepEqual(await Promise.all([first, second]), ['unknown', 'unknown']);
     assert.equal(fake.calls, 1);
     answer = { ok: true, channel: { id: 'C_DIFFERENT', is_member: true } };
-    assert.equal(await verifySlackChannelMembership(token, channel, options), false);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'unknown');
     answer = { ok: true, channel: { id: channel, is_member: true } };
-    assert.equal(await verifySlackChannelMembership(token, channel, options), true);
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'member');
     assert.equal(fake.calls, 3);
+});
+
+test('a Slack Connect channel is never authorized by membership', async () => {
+    // is_member can be true in a shared channel while the bot must still not
+    // treat it as an authorized target: membership answers "do we belong
+    // there", not "may we post to an external conversation". The answer is a
+    // definitive, cacheable not_member — not an uncertainty.
+    let now = 1_000;
+    let answer: Record<string, unknown> = { ok: true, channel: { id: channel, is_member: true, is_ext_shared: true } };
+    const fake = fakeFetch(() => answer);
+    const options = { fetchImpl: fake.fetchImpl, now: () => now };
+    const token = 'xoxb-membership-extshared';
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'not_member');
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'not_member');
+    assert.equal(fake.calls, 1, 'a definitive Slack answer is cached like a plain boolean one');
+    now += 31_000;
+    answer = { ok: true, channel: { id: channel, is_member: true, is_pending_ext_shared: true } };
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'not_member');
+    now += 31_000;
+    answer = { ok: true, channel: { id: channel, is_member: true } };
+    assert.equal(await verifySlackChannelMembership(token, channel, options), 'member');
 });

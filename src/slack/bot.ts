@@ -107,6 +107,10 @@ import { parseApprovalCallbackData } from '../messaging/approval-presentation.js
 let socketClient: SlackSocketClient | null = null;
 let forwarderHandler: BroadcastListener | null = null;
 let selfUserId: string | null = null;
+// auth.test reports both; an own reply is recognized by either identity. The
+// bot id matters because this app's own answers post AS the bot (bot_id), not
+// as the user behind the token.
+let selfBotId: string | null = null;
 let slackInitLock = false;
 let activeClaimArbiter: ClaimArbiter | null = null;
 let claimRecheckTimer: ReturnType<typeof setTimeout> | null = null;
@@ -392,8 +396,12 @@ function currentLocale() { return normalizeLocale(settings["locale"], 'ko'); }
 async function notifyInterruptedSlackRequests(generation: number): Promise<void> {
     const journal = getIngressJournal();
     if (!journal) return;
-    const rows = takeInterruptedSlackAtBoot();
-    if (!rows.length) return;
+    // The notice set comes from the journal, not the boot snapshot: a row a
+    // peer boot closed after our own start must still be noticed, and the
+    // snapshot is one-shot — on the second boot it would hide every row the
+    // first boot closed but the notice pass never marked.
+    takeInterruptedSlackAtBoot();
+    const rows = journal.listSlackInterruptNotices();
     const isCurrent = () => generation === lifecycleGeneration && !slackStopping;
     await noticeInterruptedSlackRequests({
         rows,
@@ -430,6 +438,7 @@ async function notifyInterruptedSlackRequests(generation: number): Promise<void>
         send: (target, text) => sendChannelOutput({ channel: 'slack', type: 'text', text, target,
             fullAccess: true, allowActiveFallback: false }),
         selfUserId,
+        selfBotId,
         locale: currentLocale() === 'en' ? 'en' : 'ko',
         isCurrent,
     });
@@ -1824,7 +1833,7 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
         return transportNotStarted('not_attach_instance');
     }
 
-    const auth = await slackApi<{ user_id?: string; team_id?: string }>(sc.botToken, 'auth.test');
+    const auth = await slackApi<{ user_id?: string; bot_id?: string; team_id?: string }>(sc.botToken, 'auth.test');
     // A shutdown may have landed while auth.test was in flight; resuming
     // here would resurrect a transport the caller asked us to stop.
     if (generation !== lifecycleGeneration) {
@@ -1836,6 +1845,7 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
         return transportNotStarted('failed', 'auth_test_failed');
     }
     selfUserId = auth.data?.user_id || null;
+    selfBotId = auth.data?.bot_id || null;
     // The grant is whatever the app was installed with, not whatever the
     // current manifest asks for. Record it here — auth.test already ran, so
     // this costs nothing — and say the whole gap once instead of leaking one
@@ -2142,4 +2152,5 @@ async function disposeSlackRuntime(): Promise<void> {
     activeClaimArbiter = null;
     clearSlackClaimRecheck();
     selfUserId = null;
+    selfBotId = null;
 }
