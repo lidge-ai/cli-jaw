@@ -19,6 +19,11 @@ import {
     runHeartbeatJob,
     getHeartbeatRunRecord,
     getHeartbeatRuntimeState,
+    mentionWatchBackoffUntil,
+    recordMentionWatchTick,
+    pruneMentionWatchBackoff,
+    resetMentionWatchBackoffForTests,
+    MENTION_WATCH_BACKOFF_BASE_MS,
 } from '../../src/memory/heartbeat.ts';
 
 function outcome(over: Partial<HeartbeatRunRecord> = {}): Omit<HeartbeatRunRecord, 'consecutiveFailures' | 'consecutiveSkips'> {
@@ -104,3 +109,38 @@ test('HRR-008 a job that refuses every tick reaches the failing list', async () 
     assert.ok(getHeartbeatRuntimeState().failing.includes('hb-forever'),
         'a job refusing on every tick must be reported, not merely logged');
 });
+
+test('HRR-020 consecutive failing mention-watch ticks back off 5, 10, 20, 40 then 60 minutes; a clean tick clears it', () => {
+    resetMentionWatchBackoffForTests();
+    const minute = 60_000;
+    let now = 1_000_000;
+    const delays: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+        recordMentionWatchTick('mw-job', 1, now);
+        const until = mentionWatchBackoffUntil('mw-job', now);
+        assert.ok(until !== null);
+        delays.push((until - now) / minute);
+        now = until;
+    }
+    assert.deepEqual(delays, [5, 10, 20, 40, 60, 60]);
+    assert.equal(mentionWatchBackoffUntil('mw-job', now), null, 'the hold ends at its boundary');
+    recordMentionWatchTick('mw-job', 0, now);
+    recordMentionWatchTick('mw-job', 1, now);
+    assert.equal(mentionWatchBackoffUntil('mw-job', now), now + MENTION_WATCH_BACKOFF_BASE_MS, 'a clean tick restarts the ladder');
+    pruneMentionWatchBackoff(new Set());
+    assert.equal(mentionWatchBackoffUntil('mw-job', now), null, 'a removed job keeps no hold');
+});
+
+test('HRR-021 a mention watch in backoff is skipped before any Slack or model work', async () => {
+    resetMentionWatchBackoffForTests();
+    const job = { id: 'hb-mw-backoff', name: 'hb-mw-backoff', enabled: true, schedule: { kind: 'every', minutes: 5 },
+        mentionWatch: { channel: 'slack', userId: 'U_BACKOFF', channelIds: ['C_BACKOFF'], since: '1700000000.000100' } };
+    recordMentionWatchTick('hb-mw-backoff', 2, Date.now());
+    await runHeartbeatJob(job);
+    assert.equal(getHeartbeatRunRecord('hb-mw-backoff')?.reason, 'mention_watch_backoff');
+    resetMentionWatchBackoffForTests();
+    await runHeartbeatJob(job);
+    // Without the hold the watch runs and refuses on its own terms (Slack is off here).
+    assert.equal(getHeartbeatRunRecord('hb-mw-backoff')?.reason, 'mention_watch_not_runnable');
+});
+

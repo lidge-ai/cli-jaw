@@ -15,7 +15,7 @@ import { sendChannelOutput, targetFromChatId } from '../messaging/send.js';
 import { nextDeliverySeq, wasSelfDelivered } from '../messaging/turn-delivery.js';
 import { isHeartbeatMentionWatch } from '../core/config.js';
 import type { HeartbeatMentionWatch } from '../core/config.js';
-import { mentionWatchTurnFailure, runMentionWatchTick } from './heartbeat-mention-watch.js';
+import { mentionWatchTurnFailure, runMentionWatchTick, type MentionWatchTickResult } from './heartbeat-mention-watch.js';
 import {
     resolveHeartbeatBinding,
     verifyHeartbeatThreadBindingLive,
@@ -350,9 +350,43 @@ function scheduleIntervalJob(job: Record<string, any>, periodMs: number): void {
     arm();
 }
 
+// ─── Mention-watch failure backoff ───
+// A failed mention-watch turn is left unreceipted so the next tick retries it,
+// and every retry is a paid generation. When the runtime stays down (quota spent,
+// no fallback left) that retry would run every tick for hours, so consecutive
+// failing ticks push the next attempt out: 5, 10, 20, 40, then every 60 minutes.
+// In memory on purpose: a restart costs one early retry, which the at-least-once
+// ledger already tolerates, and a persisted hold would outlive the outage.
+export const MENTION_WATCH_BACKOFF_BASE_MS = 5 * 60_000;
+export const MENTION_WATCH_BACKOFF_MAX_MS = 60 * 60_000;
+const mentionWatchBackoff = new Map<string, { failures: number; nextEligibleAt: number }>();
+
+/** When the job may run again, or null if it is not backing off. */
+export function mentionWatchBackoffUntil(jobId: string, now: number): number | null {
+    const entry = mentionWatchBackoff.get(jobId);
+    return entry && entry.nextEligibleAt > now ? entry.nextEligibleAt : null;
+}
+
+/** A tick with any failed hit extends the backoff; a clean tick clears it. */
+export function recordMentionWatchTick(jobId: string, failed: number, now: number): void {
+    if (failed <= 0) { mentionWatchBackoff.delete(jobId); return; }
+    const failures = (mentionWatchBackoff.get(jobId)?.failures ?? 0) + 1;
+    const delay = Math.min(MENTION_WATCH_BACKOFF_BASE_MS * 2 ** (failures - 1), MENTION_WATCH_BACKOFF_MAX_MS);
+    mentionWatchBackoff.set(jobId, { failures, nextEligibleAt: now + delay });
+}
+
+/** Drops holds for jobs that no longer run, so removed jobs cannot accumulate. */
+export function pruneMentionWatchBackoff(liveJobIds: ReadonlySet<string>): void {
+    for (const jobId of mentionWatchBackoff.keys()) if (!liveJobIds.has(jobId)) mentionWatchBackoff.delete(jobId);
+}
+
+export function resetMentionWatchBackoffForTests(): void { mentionWatchBackoff.clear(); }
+
 export function startHeartbeat() {
     stopHeartbeat();
     const { jobs } = loadHeartbeatFile();
+    pruneMentionWatchBackoff(new Set(jobs.filter(job => job?.enabled && job.id && job.mentionWatch)
+        .map(job => String(job.id))));
     // Re-run on every (re)start rather than once at table creation. A job that
     // was absent at upgrade time and returns under the same id later carries the
     // same unmigrated ledger, and a one-shot check would wave it through.
@@ -496,7 +530,7 @@ async function runEmployee(
  *
  *  Returns false when the job is not runnable as a mention watch at all, so the
  *  caller can say so rather than silently running the prompt against nothing. */
-async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMentionWatch): Promise<boolean> {
+async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMentionWatch): Promise<MentionWatchTickResult | null> {
     // Per-hit delivery anchor, read before the agent turn and consumed by the
     // send. Scoped to this call so nothing survives the tick.
     const answerAnchors = new Map<string, number>();
@@ -504,7 +538,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     const token = String(sc["botToken"] ?? '').trim();
     if (!sc["enabled"] || !token) {
         log.error(`[heartbeat:${job["name"]}] mention watch needs Slack enabled with a bot token`);
-        return false;
+        return null;
     }
     // A mention watch answers the thread it found, so it needs no destination of
     // its own. A destination that IS stored still has to be readable: a broken
@@ -512,7 +546,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     const binding = heartbeatTarget(job["destination"]);
     if (binding.state === 'held' && binding.reason !== 'unbound_destination') {
         log.error(`[heartbeat:${job["name"]}] refuse: ${binding.reason} — mention watch not run`);
-        return false;
+        return null;
     }
 
     const jobId = String(job["id"] ?? job["name"] ?? 'unknown');
@@ -524,7 +558,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     if (isQuarantined(jobId)) {
         log.error(`[heartbeat:${job["name"]}] held: this job has an unmigrated mention-watch ledger. `
             + `Restart it with a fresh mentionWatch.since to clear the hold.`);
-        return false;
+        return null;
     }
 
     // The ledger is keyed by (workspace, user), so the workspace has to come from
@@ -537,7 +571,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     if (!ns) {
         log.error(`[heartbeat:${job["name"]}] could not verify the Slack workspace for this token; `
             + `skipping this tick rather than filing the ledger under a guess`);
-        return false;
+        return null;
     }
 
     const outcome = await runMentionWatchTick(ns, job, watch, {
@@ -663,7 +697,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     ].filter(Boolean).join(', ');
     log.info(`[heartbeat:${job["name"]}] mention watch: ${outcome.answered} answered, ${outcome.quiet} quiet, `
         + `${outcome.failed} failed${stopped}${drain ? ` — ${drain}` : ' — caught up'}`);
-    return true;
+    return outcome;
 }
 
 /** Where the answer goes: the thread that carried the mention.
@@ -866,7 +900,14 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             // thing that separates a watch that ran from one that refused for a
             // reason of its own — a disabled Slack, a quarantined ledger, an
             // unverifiable workspace — so it stops being thrown away here.
+            const backoffUntil = jobId ? mentionWatchBackoffUntil(jobId, Date.now()) : null;
+            if (backoffUntil !== null) {
+                log.info(`[heartbeat:${job["name"]}] mention watch backing off after failed ticks until ${new Date(backoffUntil).toISOString()}`);
+                outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'mention_watch_backoff' };
+                return;
+            }
             const ran = await runMentionWatchJob(job, watch);
+            if (ran && jobId) recordMentionWatchTick(jobId, ran.failed, Date.now());
             outcome = ran
                 ? { execution: 'ok', delivery: 'not_requested' }
                 : { execution: 'skipped', delivery: 'not_requested', reason: 'mention_watch_not_runnable' };
