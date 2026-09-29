@@ -39,7 +39,8 @@ class ClaudeAcquireFailure extends Error {
     constructor(readonly cleanup: Promise<void>) { super('fixture acquisition failed'); }
 }
 mock.module('../../src/agent/claude-runtime-pool.js', { namedExports: { ClaudeAcquireFailure } });
-mock.module('../../src/agent/lifecycle-handler.js', { namedExports: { handleAgentExit: (params: ExitHandlerParams) => exit(params) } });
+mock.module('../../src/agent/lifecycle-handler.js', { namedExports: { handleAgentExit: (params: ExitHandlerParams) => exit(params),
+    pickNativeFallbackCli: () => null } });
 mock.module('../../src/trace/store.js', { namedExports: {
     startTraceRun: () => `trace-${++serial}`, createTraceId: () => `trace-${++serial}`,
     stampTraceTool() {}, updateTraceToolRow: (tool: ToolEntry) => { traceTools.push(structuredClone(tool)); },

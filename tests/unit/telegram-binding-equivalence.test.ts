@@ -99,10 +99,13 @@ test('SubmitResult returns sessionContext for every started and queued admission
 });
 
 test('pipeline spawn runs inside the resolved session context', () => {
-    const spawnStart = pipelineSrc.indexOf('const spawn = () => runSpawnAgent');
-    const spawnEnd = pipelineSrc.indexOf('const result = await promise', spawnStart);
+    const spawnStart = pipelineSrc.indexOf('const spawn = (fallback?: { cli: string }) => runSpawnAgent');
+    const spawnEnd = pipelineSrc.indexOf('const nativeOutcome: RuntimeTurnOutcome', spawnStart);
+    assert.ok(spawnStart >= 0 && spawnEnd > spawnStart);
     const spawnBlock = pipelineSrc.slice(spawnStart, spawnEnd);
-    assert.match(spawnBlock, /withSessionScope\(\{ scope, chatSessionId \}, spawn\)/);
+    assert.match(spawnBlock, /withSessionScope\(\{ scope, chatSessionId \}, \(\) => spawn\(\)\)/);
+    // The native fallback re-run belongs to the same session as the run it replaces.
+    assert.match(spawnBlock, /withSessionScope\(\{ scope, chatSessionId \}, \(\) => spawn\(\{ cli: fallbackCli \}\)\)/);
 });
 
 test('legacy Telegram :thread:1 binding is rebound to the General-topic key', () => {

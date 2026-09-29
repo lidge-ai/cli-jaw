@@ -147,6 +147,25 @@ function performedSideEffects(ctx: ExitContext): boolean {
     return ctx.toolLog.some(tool => !REPEATABLE_TOOL_TYPES.has(tool.toolType));
 }
 
+/** The runtime a failed native main turn should be re-run on, or null.
+ *
+ *  Same gate as the print-path fallback: a main, non-internal first attempt that
+ *  ran no effectful tool, since the fallback re-runs the whole prompt. A Claude
+ *  rate-limit is not exempted as it is on the print path: that exemption exists
+ *  because print-mode Claude waits out its own limit, and a native turn that
+ *  ended in error has already stopped waiting (observed 2026-09-28: "You've hit
+ *  your session limit" ended every Claude turn while Cursor was idle). */
+export function pickNativeFallbackCli(
+    cli: string,
+    opts: { internal?: boolean | undefined; _isFallback?: boolean | undefined },
+    toolLog: readonly ToolEntry[],
+): string | null {
+    if (opts.internal || opts._isFallback) return null;
+    if (toolLog.some(tool => !REPEATABLE_TOOL_TYPES.has(tool.toolType))) return null;
+    return ((settings["fallbackOrder"] || []) as string[])
+        .find((fc: string) => isLiveFallbackCandidate(fc, cli, detectCli, isRuntimeCoolingDown)) ?? null;
+}
+
 type LifecycleSpawnOptions = {
     requestId?: string;
     internal?: boolean;
@@ -708,6 +727,14 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
 
     // ─── Output handling ───
     const outputText = nativeOutcome === undefined ? resolveSpawnOutputText(ctx) : '';
+    // Set when a failed native turn is handed to the next runtime in
+    // `fallbackOrder`. The print-path fallback below never sees a native turn:
+    // this branch settles every native outcome, error included, so without this
+    // a native Claude or Cursor main had no fallback at all. The respawn itself
+    // happens in the orchestrator, which owns the request's terminal event;
+    // respawning here would resolve after the native runner already returned
+    // the failed result (claude-runtime-run.ts `selected ?? resultFor(...)`).
+    let nativeFallbackCli: string | null = null;
     if (nativeOutcome !== undefined) {
         let finalContent = nativeOutcome.finalText;
         // `finalContent` is what a reader sees and history stores; the interview
@@ -746,6 +773,10 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 }
             }
             const failed = nativeOutcome.status !== 'done';
+            if (nativeOutcome.status === 'error' && !wasKilled && !wasSteer) {
+                nativeFallbackCli = pickNativeFallbackCli(cli, opts, ctx.toolLog);
+                if (nativeFallbackCli) console.log(`[jaw:fallback] native ${cli} failed → ${nativeFallbackCli}`);
+            }
             // `ctx.stallReason` is what makes the classifier say "stall" instead
             // of "abnormal exit", and the print paths have always passed it. The
             // native path did not, so a watchdog kill on a native runtime was
@@ -767,7 +798,10 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             // bare "no response" placeholder (orchestrator/collect.ts) even when
             // the runtime had already named its own cause. Carry that sentence
             // instead. Real text always wins, and a stopped run stays silent.
-            const terminalText = compatibilityText || (nativeOutcome.status === 'error'
+            // A turn being handed to a fallback runtime is not the answer yet: its
+            // diagnostic and error tag would reach the Slack forwarder as an error
+            // block in the user's thread, ahead of the answer that follows.
+            const terminalText = compatibilityText || (nativeOutcome.status === 'error' && !nativeFallbackCli
                 && ctx.runtimeDiagnostic?.trim() ? `❌ ${ctx.runtimeDiagnostic.trim()}` : '');
             broadcast('agent_done', {
                 ...donePin,
@@ -779,7 +813,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 sessionId: chatSessionId, scope: scopeKey, toolLog: safeTools, origin, ...empTag,
                 ...(wasSteer ? { steered: true } : {}),
                 ...(nativeStopCause ? { stopCause: nativeStopCause } : {}),
-                ...(failed ? { error: true, errorKind, cli: runtimeCli } : {}),
+                ...(failed && !nativeFallbackCli ? { error: true, errorKind, cli: runtimeCli } : {}),
+                ...(nativeFallbackCli ? { fallbackPending: nativeFallbackCli, cli: runtimeCli } : {}),
             });
             if (finalContent !== null) {
                 if (opts._heartbeatAnchorId) {
@@ -1322,6 +1357,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             ? { agyPlannerOnly: ctx.metadata['agyPlannerOnly'] } : {}),
         ...(params.outputLen ? { outputLen: params.outputLen } : {}),
         ...(resolvedStopCause ? { stopCause: resolvedStopCause } : {}),
+        ...(nativeFallbackCli ? { nativeFallbackCli } : {}),
     });
 
     // ─── AI-initiated /goal done or /goal cancel ───
@@ -1491,5 +1527,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         }
     }
 
-    if (mainManaged && !wasSteer) processQueue(scopeKey);
+    // A turn handed to a fallback is not over: the orchestrator is about to run
+    // it again on the same scope, and that run drains the queue when it ends.
+    // Draining here would start the next queued message beside the fallback.
+    if (mainManaged && !wasSteer && !nativeFallbackCli) processQueue(scopeKey);
 }

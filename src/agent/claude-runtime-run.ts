@@ -7,7 +7,7 @@ import type { ClaudeSdkSession } from './runtime/claude-sdk-session.js';
 import { runNativeRuntime, NativeRunFailure, type NativeRunLease } from './native-runtime-run.js';
 import { acquireClaudeRuntime } from './runtime-pool.js';
 import { ClaudeAcquireFailure } from './claude-runtime-pool.js';
-import { handleAgentExit, type ExitHandlerParams } from './lifecycle-handler.js';
+import { handleAgentExit, pickNativeFallbackCli, type ExitHandlerParams } from './lifecycle-handler.js';
 import { handoffRuntimeOutcome } from './runtime/outcome.js';
 import { runPinFields } from '../messaging/run-pin.js';
 import { RuntimeProjection, type RuntimeEnd } from './runtime/projection.js';
@@ -45,7 +45,10 @@ export interface ClaudeNativeRunOptions {
     isCurrentOwner: Parameters<typeof acquireClaudeRuntime>[0]['isCurrentOwner'];
     starting(cancel: (reason: string) => void): void;
     ready(child: ChildProcess, cancel: (reason: string) => void): void | (() => void);
-    finished(child: ChildProcess | null, cancel: (reason: string) => void, queueRequested: boolean, cleanupSafe: boolean): void;
+    /** `fallbackPending`: the orchestrator is about to re-run this turn on the
+     *  fallback runtime, whose own finish drains the queue. */
+    finished(child: ChildProcess | null, cancel: (reason: string) => void, queueRequested: boolean, cleanupSafe: boolean,
+        fallbackPending?: boolean): void;
     cleanupUnleased?(): void;
     consumeKillReason(pid: number | undefined): string | null;
     activity?(identity: RuntimeLivenessIdentity): void;
@@ -83,7 +86,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         liveScope: input.liveScope, parentLiveScope: input.parentLiveScope, traceRunId, traceAudience: input.audience };
     let facade: ClaudeSdkSession | null = null, owned: NativeRunLease | null = null;
     let fallbackProjection: RuntimeProjection | null = null;
-    let finalized = false, started = false, ended = false, finalizeFailed = false, queueRequested = false, cleanupSafe = false;
+    let finalized = false, started = false, ended = false, finalizeFailed = false, queueRequested = false, cleanupSafe = false, fallbackPending = false;
     let stopReason: string | null = null, selected: Result | undefined;
     let awaitingUnleasedCleanup = false;
     let acquisitionStarted = false;
@@ -136,6 +139,12 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         const final = selected?.runtimeOutcome ?? (ctx.runtimeTerminalAttempted && ctx.runtimeOutcome ? ctx.runtimeOutcome : {
             status: stopReason || ctx.stallReason ? 'stopped' as const : 'error' as const, finalText: null, partialText: outcome.partialText });
         const stopCause = final.status === 'stopped' ? stopCauseFromKillReason(stopReason) : undefined;
+        // A start or settle failure never reaches lifecycle, which is where a
+        // settled native failure is handed to fallbackOrder. The same decision is
+        // made here so a Claude that cannot even start still gets an answer.
+        const fallbackCli = !selected && final.status === 'error' && base.mainManaged
+            ? pickNativeFallbackCli('claude', base.opts, ctx.toolLog) : null;
+        if (fallbackCli) { fallbackPending = true; console.log(`[jaw:fallback] native claude failed to run → ${fallbackCli}`); }
         finishTools(final.status);
         handoffRuntimeOutcome(ctx, final);
         try {
@@ -146,7 +155,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                         scope: base.scopeKey, sessionId: base.chatSessionId,
                         remoteKey: base.opts.remoteKey, target: base.opts.target }),
                     traceRunId, cli: 'claude', ...(worker ? { isEmployee: true } : {}),
-                    text: final.status === 'stopped' ? '' : `❌ ${diagnostic()}`, error: true,
+                    text: final.status === 'stopped' || fallbackCli ? '' : `❌ ${diagnostic()}`,
+                    ...(fallbackCli ? { fallbackPending: fallbackCli } : { error: true }),
                     runtimeStatus: final.status, runtimeFinality: final.finalText === null ? 'absent' : 'present',
                     ...(stopCause ? { stopCause } : {}) }, input.audience);
             }
@@ -160,7 +170,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                 catch { console.warn('[runtime:claude] failure trace finalization failed'); }
             }
         }
-        return selected ?? { ...resultFor(final), diagnostic: diagnostic(), ...(stopCause ? { stopCause } : {}) };
+        return selected ?? { ...resultFor(final), diagnostic: diagnostic(), ...(stopCause ? { stopCause } : {}),
+            ...(fallbackCli ? { nativeFallbackCli: fallbackCli } : {}) };
     };
     const tools = new Map<string, ToolEntry>();
     const syncOwnedTools = () => {
@@ -287,6 +298,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                 smokeResult: detectSmokeResponse(outcome.finalText ?? '', ctx.toolLog, code, 'claude'), costLine: '',
                 childProcess: lease?.child ?? null, resolve: value => { selected ??= value; },
                 processQueue: () => { queueRequested = true; } });
+            if (typeof (selected as Record<string, unknown> | undefined)?.['nativeFallbackCli'] === 'string') fallbackPending = true;
             if (finalizeFailed && lease) await lease.retire(new Error('claude_finalizer_failed'));
             return selected ?? resultFor(ctx.runtimeOutcome ?? outcome);
         },
@@ -310,7 +322,7 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
                         broadcast('agent_status', { running: false, agentId: base.agentLabel, cli: 'claude',
                             scope: base.scopeKey, sessionId: base.chatSessionId, traceRunId }, input.audience);
                     }
-                } finally { input.finished(owned?.child ?? null, cancel, queueRequested, cleanupSafe); }
+                } finally { input.finished(owned?.child ?? null, cancel, queueRequested, cleanupSafe, fallbackPending); }
             }
             finally { if (!awaitingUnleasedCleanup && (!worker || cleanupSafe)) control.finish(); }
         },
