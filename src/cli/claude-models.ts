@@ -35,6 +35,8 @@ export const CLAUDE_PINNED_FULL_IDS = [
   'claude-fable-5[1m]',
   'claude-sonnet-5',
   'claude-sonnet-5[1m]',
+  // claude-sonnet-5-5 first appears in the Claude Code 2.1.284 bundle (absent in 2.1.283).
+  'claude-sonnet-5-5',
   // claude-opus-5-5 verified 2026-09-23 against Claude Code 2.1.280 (bundle and a
   // live turn, both IDs). Claude Code 2.1.278 is rejected by the API with a 400
   // that asks for 2.1.280 or newer.

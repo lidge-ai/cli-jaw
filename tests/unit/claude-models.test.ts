@@ -108,6 +108,7 @@ test('CM-012: getDefaultClaudeChoices returns aliases + verified pinned full IDs
         'claude-sonnet-4-6',
         'claude-sonnet-4-6[1m]',
         'claude-sonnet-5',
+        'claude-sonnet-5-5',
         'claude-sonnet-5[1m]',
         'haiku',
         'opus',
