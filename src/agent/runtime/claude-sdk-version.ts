@@ -4,4 +4,4 @@
  * asserts it against package.json, package-lock.json and the installed package.
  * Kept out of claude-sdk-loader.ts because tests mock that module wholesale.
  */
-export const CLAUDE_AGENT_SDK_PINNED_VERSION = '0.3.282';
+export const CLAUDE_AGENT_SDK_PINNED_VERSION = '0.3.284';
