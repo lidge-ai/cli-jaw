@@ -750,7 +750,14 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             const safeTools = sanitizeToolLogForDurableStorage(
                 mergeLatestTools(ctx.toolLog, ownsLiveRun() ? getLiveRun(liveScope).toolLog : [], nativeTraceRunId || ''),
             );
-            if (finalContent !== null) {
+            // Decided before anything is stored or shown: a turn handed to a
+            // fallback is not the answer. Its partial text would otherwise land in
+            // history and in the user's thread ahead of the fallback's real answer.
+            if (nativeOutcome.status === 'error' && !wasKilled && !wasSteer) {
+                nativeFallbackCli = pickNativeFallbackCli(cli, opts, ctx.toolLog);
+                if (nativeFallbackCli) console.log(`[jaw:fallback] native ${cli} failed → ${nativeFallbackCli}`);
+            }
+            if (finalContent !== null && !nativeFallbackCli) {
                 finalContent = applyOutputPolicy(finalContent, { scope: 'main' }).text;
                 rawFinalContent = finalContent;
                 // The sanitizer also trims; a final with no tracker keeps its exact text.
@@ -778,10 +785,6 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 }
             }
             const failed = nativeOutcome.status !== 'done';
-            if (nativeOutcome.status === 'error' && !wasKilled && !wasSteer) {
-                nativeFallbackCli = pickNativeFallbackCli(cli, opts, ctx.toolLog);
-                if (nativeFallbackCli) console.log(`[jaw:fallback] native ${cli} failed → ${nativeFallbackCli}`);
-            }
             // `ctx.stallReason` is what makes the classifier say "stall" instead
             // of "abnormal exit", and the print paths have always passed it. The
             // native path did not, so a watchdog kill on a native runtime was
@@ -806,7 +809,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             // A turn being handed to a fallback runtime is not the answer yet: its
             // diagnostic and error tag would reach the Slack forwarder as an error
             // block in the user's thread, ahead of the answer that follows.
-            const terminalText = compatibilityText || (nativeOutcome.status === 'error' && !nativeFallbackCli
+            const terminalText = nativeFallbackCli ? '' : compatibilityText || (nativeOutcome.status === 'error'
                 && ctx.runtimeDiagnostic?.trim() ? `❌ ${ctx.runtimeDiagnostic.trim()}` : '');
             broadcast('agent_done', {
                 ...donePin,
