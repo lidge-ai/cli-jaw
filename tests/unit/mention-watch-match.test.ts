@@ -59,6 +59,10 @@ test('no conditions: self posts, bot-only, subtypes, and empty text are skipped'
     assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, user: SELF }), { ...base, selfUserId: SELF }), false);
     assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, botId: 'B1' }), base), false);
     assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, user: OTHER, subtype: 'channel_join' }), base), false);
+    // Human posts that carry a subtype are still questions.
+    assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, user: OTHER, subtype: 'thread_broadcast' }), base), true);
+    assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, user: OTHER, subtype: 'file_share' }), base), true);
+    assert.equal(isMentionWatchCandidate(msg({ text: `<@${SUJI}>`, user: OTHER, subtype: 'bot_message' }), base), false);
     assert.equal(isMentionWatchCandidate(msg({ text: '' }), base), false);
 });
 
