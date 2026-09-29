@@ -117,6 +117,20 @@ test('captured print compact stays P after settings toggle to N and retains defa
     assert.equal(singleton(), null);
 });
 
+test('auto refresh leaves a bucket replaced during its async work untouched', async () => {
+    seed('claude', 'old-session');
+    const beforeMessages = (db.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n;
+    const refresh = autoCompactRefresh({ workDir: '', instructions: '', cli: 'claude',
+        model: 'fixture-model', scopeKey: 'default', sessionBucket: 'claude',
+        expectedSessionId: 'old-session' });
+    // autoCompactRefresh has entered its first awaited import but has not reached mutation.
+    seed('claude', 'new-session');
+    await refresh;
+    assert.equal(sid('claude'), 'new-session');
+    assert.equal(singleton(), 'singleton-P');
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n, beforeMessages);
+});
+
 for (const operation of ['new', 'clear'] as const) {
     test(`real ${operation} invalidates existing owner tokens and prevents late P/N repersistence`, async () => {
         seedPair('claude:local:a'); seedPair('claude:local:a:b');

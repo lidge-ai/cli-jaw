@@ -605,6 +605,7 @@ export async function autoCompactRefresh(opts: {
     cli: string;
     model: string;
     sessionBucket?: string | undefined;
+    expectedSessionId?: string | undefined;
     /**
      * The scope this compact belongs to. A run-owned compact only invalidates its
      * own scope; without it the refresh falls back to the global bump, which is
@@ -645,7 +646,7 @@ export async function autoCompactRefresh(opts: {
 
     const trace = `${BOOTSTRAP_TRACE_PREFIX}\n${bootstrap}`;
 
-    const { insertMessageWithTrace, clearSessionBucket } = await import('./db.js');
+    const { insertMessageWithTrace, clearSessionBucket, getSessionBucket } = await import('./db.js');
     const { resolveScopedSessionBucket } = await import('../agent/args.js');
     const {
         bumpSessionOwnershipGeneration, bumpScopeSessionGeneration,
@@ -666,6 +667,8 @@ export async function autoCompactRefresh(opts: {
             opts.cli, opts.model, null,
             scopeKey, '', 'fallback', codexAppMultiplex,
         ), transport);
+    if (opts.expectedSessionId !== undefined
+        && (getSessionBucket.get(bucket) as { session_id: string } | undefined)?.session_id !== opts.expectedSessionId) return;
     // An automatic compact of N cannot erase the dormant print singleton.
     // Captured sessionBucket wins even if settings changed while the run lived.
     const ownsSingletonRow = scopeKey === 'default' && !isNativeSessionBucket(bucket);

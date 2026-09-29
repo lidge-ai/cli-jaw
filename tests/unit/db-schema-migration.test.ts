@@ -195,11 +195,47 @@ test('db schema: user_version migration of an existing home', async t => {
             );
             // Guard against the comparison passing vacuously.
             assert.ok(shapeOf(fresh).columns.get('messages')?.has('session_id'));
+            assert.ok(shapeOf(fresh).columns.get('session_buckets')?.has('turn_count'));
             assert.ok(shapeOf(fresh).indexes.has('idx_messages_session'));
         } finally {
             fresh.close();
             migrated.close();
         }
+    });
+
+    await t.test('MIG-007: existing v1 buckets gain a zero turn count', () => {
+        const database = new Database(join(freshDir('v1-turns'), 'jaw.db'));
+        try {
+            applySchema(database);
+            database.exec('ALTER TABLE session_buckets DROP COLUMN turn_count');
+            database.prepare('INSERT INTO session_buckets (bucket, session_id, model) VALUES (?, ?, ?)')
+                .run('codex', 'existing-session', 'fixture');
+            database.pragma('user_version = 1');
+            applySchema(database);
+            assert.deepEqual(database.prepare('SELECT session_id, turn_count FROM session_buckets WHERE bucket=?').get('codex'),
+                { session_id: 'existing-session', turn_count: 0 });
+            assert.equal(Number(database.pragma('user_version', { simple: true })), SCHEMA_VERSION);
+        } finally {
+            database.close();
+        }
+    });
+
+    await t.test('bucket turns increment independently and reject a stale session id', () => {
+        const { upsertSessionBucket, incrementSessionBucketTurns, getSessionBucket } = dbModule;
+        db.prepare('DELETE FROM session_buckets').run();
+        upsertSessionBucket.run('bucket-a', 'session-a', 'fixture', null, 0);
+        upsertSessionBucket.run('bucket-b', 'session-b', 'fixture', null, 0);
+        const turns = (bucket: string) => (getSessionBucket.get(bucket) as { turn_count: number }).turn_count;
+        assert.deepEqual(incrementSessionBucketTurns.get('bucket-a', 'session-a'), { turn_count: 1 });
+        assert.deepEqual(incrementSessionBucketTurns.get('bucket-a', 'session-a'), { turn_count: 2 });
+        assert.deepEqual(incrementSessionBucketTurns.get('bucket-b', 'session-b'), { turn_count: 1 });
+        upsertSessionBucket.run('bucket-a', 'session-a', 'fixture', null, 0);
+        assert.equal(turns('bucket-a'), 2);
+        upsertSessionBucket.run('bucket-a', 'replacement', 'fixture', null, 0);
+        assert.equal(turns('bucket-a'), 0);
+        assert.equal(incrementSessionBucketTurns.get('bucket-a', 'session-a'), undefined);
+        assert.equal(turns('bucket-a'), 0);
+        assert.equal(turns('bucket-b'), 1);
     });
 
     await t.test('MIG-004: a gap no step covers fails by name, not at db.prepare', () => {
