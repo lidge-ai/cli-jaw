@@ -87,6 +87,9 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
     let facade: ClaudeSdkSession | null = null, owned: NativeRunLease | null = null;
     let fallbackProjection: RuntimeProjection | null = null;
     let finalized = false, started = false, ended = false, finalizeFailed = false, queueRequested = false, cleanupSafe = false, fallbackPending = false;
+    // Travels with fallbackPending: finished() defers the queue drain whenever it is
+    // set, so every result this run can return must name the runtime that takes over.
+    let chosenFallbackCli: string | null = null;
     let stopReason: string | null = null, selected: Result | undefined;
     let awaitingUnleasedCleanup = false;
     let acquisitionStarted = false;
@@ -144,7 +147,10 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         // made here so a Claude that cannot even start still gets an answer.
         const fallbackCli = !selected && final.status === 'error' && base.mainManaged
             ? pickNativeFallbackCli('claude', base.opts, ctx.toolLog) : null;
-        if (fallbackCli) { fallbackPending = true; console.log(`[jaw:fallback] native claude failed to run → ${fallbackCli}`); }
+        if (fallbackCli) {
+            fallbackPending = true; chosenFallbackCli = fallbackCli;
+            console.log(`[jaw:fallback] native claude failed to run → ${fallbackCli}`);
+        }
         finishTools(final.status);
         handoffRuntimeOutcome(ctx, final);
         try {
@@ -332,6 +338,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         if (selected) return selected;
         const outcome = ctx.runtimeTerminalAttempted && ctx.runtimeOutcome ? ctx.runtimeOutcome
             : error instanceof NativeRunFailure ? error.outcome : { status: 'error' as const, finalText: null, partialText: ctx.fullText };
-        return resultFor(outcome);
+        // failed() may have chosen a fallback and then thrown while broadcasting.
+        // Dropping the choice here would leave the drain deferred with no re-run.
+        return { ...resultFor(outcome), ...(chosenFallbackCli ? { nativeFallbackCli: chosenFallbackCli } : {}) };
     }) };
 }

@@ -30,6 +30,7 @@ const traceTools: ToolEntry[] = [];
 const broadcasts: Array<{ name: string; value: Record<string, unknown> }> = [];
 const ordered: string[] = [];
 let failCompat = false;
+let fallbackPick: string | null = null;
 const workerUpdates: Array<{ id: string; tools: unknown[] }> = [];
 let slot: object | undefined;
 let acquire: (input: { binding: Pick<ClaudeSessionOptions, 'getTurnContext' | 'record'> }) => Promise<unknown>;
@@ -40,7 +41,7 @@ class ClaudeAcquireFailure extends Error {
 }
 mock.module('../../src/agent/claude-runtime-pool.js', { namedExports: { ClaudeAcquireFailure } });
 mock.module('../../src/agent/lifecycle-handler.js', { namedExports: { handleAgentExit: (params: ExitHandlerParams) => exit(params),
-    pickNativeFallbackCli: () => null } });
+    pickNativeFallbackCli: () => fallbackPick } });
 mock.module('../../src/trace/store.js', { namedExports: {
     startTraceRun: () => `trace-${++serial}`, createTraceId: () => `trace-${++serial}`,
     stampTraceTool() {}, updateTraceToolRow: (tool: ToolEntry) => { traceTools.push(structuredClone(tool)); },
@@ -124,6 +125,7 @@ test.beforeEach(() => {
     ordered.length = 0;
     traceClosePolicies.length = 0;
     failCompat = false;
+    fallbackPick = null;
 });
 test.afterEach(() => {
     try {
@@ -272,6 +274,16 @@ test('throwing compatibility observer still closes one pre-start fallback and it
     assert.deepEqual(ordered, ['start', 'compat', 'end']);
     assert.deepEqual(traceEnds, [{ id: result.traceRunId, status: 'error' }]);
     assert.equal(hasClaudeRuns(), false);
+});
+
+test('a fallback chosen before a throwing failure broadcast still reaches the result', async () => {
+    const f = fixture(); failCompat = true; fallbackPick = 'cursor';
+    const pending: Array<boolean | undefined> = [];
+    f.options.finished = (_child, _cancel, _queued, _safe, fallbackPending) => { pending.push(fallbackPending); };
+    f.options.prompt.images = [{ mimeType: 'image/png', data: 'unsupported' }];
+    const result = await f.start().promise as Record<string, unknown>;
+    assert.equal(result['nativeFallbackCli'], 'cursor');
+    assert.deepEqual(pending, [true]);
 });
 
 test('failed old run cannot clear or stop its replacement live trace', async () => {

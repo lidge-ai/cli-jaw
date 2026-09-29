@@ -11,6 +11,8 @@ export type InterruptNoticeDeps = {
     replies: (target: RemoteTarget, messageTs: string, cursor?: string) => Promise<SlackHistoryResult>;
     send: (target: RemoteTarget, text: string) => Promise<{ ok: boolean }>;
     selfUserId: string | null;
+    /** auth.test bot_id; our own answers post as the bot, not the user. */
+    selfBotId: string | null;
     locale: 'ko' | 'en';
     isCurrent: () => boolean;
     sleep?: (ms: number) => Promise<void>;
@@ -37,6 +39,10 @@ export async function noticeInterruptedSlackRequests(deps: InterruptNoticeDeps):
         if (!target.threadId) { mark('skipped:root_placement'); continue; }
         const messageTs = row.eventId.slice(row.eventId.lastIndexOf(':') + 1);
         if (!/^\d+\.\d+$/.test(messageTs)) { mark('skipped:bad_target'); continue; }
+        // Without a self identity no reply can be recognized as ours, and a
+        // guessed 'answered' would bury an interrupted request for good. The
+        // thread is not even read in that case.
+        if (!deps.selfUserId && !deps.selfBotId) { mark('skipped:unknown_self'); continue; }
         try {
             if (deps.hasQueued(target)) { mark('skipped:queued'); continue; }
             if (deps.hasActiveRun(target)) { mark('skipped:active_run'); continue; }
@@ -49,7 +55,9 @@ export async function noticeInterruptedSlackRequests(deps: InterruptNoticeDeps):
                 if (page > 0) await sleep(1000);
                 const result = await deps.replies(target, messageTs, cursor);
                 if (!result.ok) break;
-                if (result.messages.some(message => message.user === deps.selfUserId && !!deps.selfUserId || !!message.botId)) {
+                if (result.messages.some(message =>
+                    (!!deps.selfUserId && message.user === deps.selfUserId)
+                    || (!!deps.selfBotId && message.botId === deps.selfBotId))) {
                     answered = true; break;
                 }
                 if (!result.hasMore) { complete = true; break; }

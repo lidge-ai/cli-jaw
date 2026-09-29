@@ -565,13 +565,23 @@ export async function orchestrate(
     // pinned to the failed run's trace id can adopt the new run.
     if (typeof result['nativeFallbackCli'] === 'string' && result['nativeFallbackCli']) {
         const fallbackCli = result['nativeFallbackCli'] as string;
-        broadcast('agent_fallback', {
-            to: fallbackCli, reason: 'native_runtime_error', native: true,
-            origin, scope, sessionId: chatSessionId,
-            ...(requestId ? { requestId } : {}),
-        });
-        const { promise: fallbackPromise } = withSessionScope({ scope, chatSessionId }, () => spawn({ cli: fallbackCli }));
-        result = await fallbackPromise as Record<string, any>;
+        // The failed run already skipped its queue drain so this re-run would not
+        // start beside the next queued message. If the re-run cannot start, nothing
+        // else will drain this scope, so the drain happens here and the request
+        // ends with the original failure rather than silence.
+        try {
+            broadcast('agent_fallback', {
+                from: resolveMainCli(overrides?.cli || null, settings, getSession() as MainSessionRecord | undefined),
+                to: fallbackCli, reason: 'native_runtime_error', native: true,
+                origin, scope, sessionId: chatSessionId,
+                ...(requestId ? { requestId } : {}),
+            });
+            const { promise: fallbackPromise } = withSessionScope({ scope, chatSessionId }, () => spawn({ cli: fallbackCli }));
+            result = await fallbackPromise as Record<string, any>;
+        } catch (error) {
+            console.warn(`[jaw:fallback] native fallback to ${fallbackCli} could not start:`, (error as Error)?.message ?? error);
+            void processQueue(scope);
+        }
     }
     const nativeOutcome: RuntimeTurnOutcome | undefined = result['runtimeOutcome'];
     const legacyInterrupted = nativeOutcome === undefined && result['executionInterrupted'] === true;

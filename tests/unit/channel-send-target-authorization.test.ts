@@ -107,13 +107,14 @@ test('empty allowlist permits an exact bot member for target and chatId sends', 
     } finally { globalThis.fetch = previousFetch; }
 });
 
-test('non-member and API failure refuse with the invite guidance; API failure retries', async () => {
+test('non-member refuses with invite guidance; API failure refuses with a retry hint and is not cached', async () => {
     const previousFetch = globalThis.fetch;
     let answer: Record<string, unknown> = { ok: true, channel: { id: membershipTarget.targetId, is_member: false } };
     const { fetchImpl, calls } = membershipFetch(() => answer);
     globalThis.fetch = fetchImpl;
     registerSendTransport('slack', async () => ({ ok: true }));
-    const guidance = `Slack target ${membershipTarget.targetId} is not a channel this bot is verified to be in. Invite the bot there and retry. Do not edit slack.channelIds — it controls which conversations the bot hears.`;
+    const guidance = `Slack target ${membershipTarget.targetId} is not a channel this bot is verified to be in, or it is shared with another organization (Slack Connect), which membership alone never authorizes. Invite the bot there and retry. Do not edit slack.channelIds — it controls which conversations the bot hears.`;
+    const unconfirmed = `Membership of Slack target ${membershipTarget.targetId} could not be confirmed (Slack did not answer or no bot token); retry.`;
     try {
         await withSlack([], async () => {
             const denied = await sendChannelOutput({ channel: 'slack', type: 'text', target: membershipTarget });
@@ -125,10 +126,25 @@ test('non-member and API failure refuse with the invite guidance; API failure re
             for (let i = 0; i < 2; i++) {
                 const denied = await sendChannelOutput({ channel: 'slack', type: 'text', chatId: membershipTarget.targetId });
                 assert.equal(denied.status, 403);
-                assert.equal(denied.error, guidance);
+                assert.equal(denied.error, unconfirmed);
             }
         }, 'xoxb-api-failure-send');
         assert.equal(calls.length, 3, 'API uncertainty must not be cached');
+    } finally { globalThis.fetch = previousFetch; }
+});
+
+test('an explicit send to a Slack Connect channel is refused under an empty allowlist', async () => {
+    const previousFetch = globalThis.fetch;
+    const { fetchImpl, calls } = membershipFetch(() => ({ ok: true, channel: { id: membershipTarget.targetId, is_member: true, is_ext_shared: true } }));
+    globalThis.fetch = fetchImpl;
+    try {
+        await withSlack([], async () => {
+            const result = await sendChannelOutput({ channel: 'slack', type: 'text', target: membershipTarget });
+            assert.equal(result.ok, false);
+            assert.equal(result.status, 403);
+            assert.match(String(result.error), /not a channel this bot is verified to be in/);
+        }, 'xoxb-connect-send');
+        assert.equal(calls.length, 1, 'the definitive Slack Connect answer is cached');
     } finally { globalThis.fetch = previousFetch; }
 });
 

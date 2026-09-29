@@ -25,6 +25,12 @@ mock.module('../../src/trace/store.js', { namedExports: {
         return traceStore.linkTraceRunToMessage(...args);
     },
 } });
+// Fallback candidates are real only when their CLI is installed; the fixture
+// host may not have one, so detection is the single edge replaced here.
+const config = await import('../../src/core/config.ts');
+const { settings } = config;
+mock.module('../../src/core/config.js', { namedExports: { ...config,
+    detectCli: () => ({ available: true, path: process.execPath }) } });
 const { handleAgentExit, clearGoalTimers, setSpawnAgent } = await import('../../src/agent/lifecycle-handler.js');
 const { armExitSettle, settleExit, waitForExitSettled } = await import('../../src/agent/spawn.js');
 
@@ -470,4 +476,20 @@ test('internal native final keeps its text for the projection terminal', async (
     assert.deepEqual(f.rows(), []);
     assert.equal(f.ends[0]?.finalText, raw);
     assert.equal(f.result()?.runtimeOutcome?.finalText, raw);
+});
+
+test('a native failure handed to fallback neither stores nor shows its partial text', async () => {
+    settings['fallbackOrder'] = ['cursor'];
+    try {
+        const f = fixture({ status: 'error', finalText: 'PARTIAL-BEFORE-FAILURE', partialText: 'PARTIAL-BEFORE-FAILURE' });
+        const events = await capture(() => handleAgentExit(f.params));
+        const done = events.filter(event => event.type === 'agent_done');
+        assert.equal(done.length, 1);
+        assert.equal(done[0]!.data['text'], '');
+        assert.equal(done[0]!.data['fallbackPending'], 'cursor');
+        assert.deepEqual(f.rows(), []);
+        assert.equal((f.result() as Record<string, unknown> | undefined)?.['nativeFallbackCli'], 'cursor');
+    } finally {
+        settings['fallbackOrder'] = [];
+    }
 });

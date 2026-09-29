@@ -409,6 +409,96 @@ test('a warning-close during an in-flight reconnect does not stack another', asy
     client.stop();
 });
 
+test('a disconnect warning with no following close recycles the socket after the grace deadline', async () => {
+    // Slack promises a close after the warning, but a lost close frame must not
+    // pin the old socket forever: once the grace deadline passes with no close,
+    // the client recycles and reconnects on its own.
+    const sockets: Array<Map<string, (event: unknown) => void>> = [];
+    let fetchCalls = 0;
+    const fetchImpl = (async () => {
+        fetchCalls++;
+        return {
+            ok: true, status: 200,
+            text: async () => JSON.stringify({ ok: true, url: 'wss://example.invalid/link' }),
+        // justified: minimal Response surface for the socket handshake
+        } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test',
+        fetchImpl,
+        baseReconnectDelayMs: 5,
+        warningGraceMs: 20,
+        socketFactory: () => {
+            const listeners = new Map<string, (event: unknown) => void>();
+            sockets.push(listeners);
+            return {
+                send: () => { /* no-op */ },
+                close: () => { /* no-op */ },
+                addEventListener: (type, listener) => { listeners.set(type, listener); },
+            };
+        },
+        onEnvelope: () => { /* no-op */ },
+    });
+    await client.start();
+    sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+    await new Promise(resolve => setImmediate(resolve));
+
+    sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'warning' }) });
+    await new Promise(resolve => setTimeout(resolve, 60));
+
+    assert.equal(fetchCalls, 2, `warning with no close produced ${fetchCalls} connection attempts`);
+    assert.equal(client.getReconnectAttempts(), 1, 'the grace recycle must not stack reconnects');
+    client.stop();
+});
+
+test('a warning on a replacement socket gets its own deadline even if the old one never closed', async () => {
+    // refresh_requested swaps the socket without a close from the old one, so a
+    // deadline armed by a warning on the old socket is still pending. A warning
+    // on the new socket must re-arm for the new socket, not ride the stale timer.
+    const sockets: Array<Map<string, (event: unknown) => void>> = [];
+    let fetchCalls = 0;
+    const fetchImpl = (async () => {
+        fetchCalls++;
+        return {
+            ok: true, status: 200,
+            text: async () => JSON.stringify({ ok: true, url: 'wss://example.invalid/link' }),
+        // justified: minimal Response surface for the socket handshake
+        } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test',
+        fetchImpl,
+        baseReconnectDelayMs: 5,
+        warningGraceMs: 40,
+        socketFactory: () => {
+            const listeners = new Map<string, (event: unknown) => void>();
+            sockets.push(listeners);
+            return {
+                send: () => { /* no-op */ },
+                close: () => { /* no-op */ },
+                addEventListener: (type, listener) => { listeners.set(type, listener); },
+            };
+        },
+        onEnvelope: () => { /* no-op */ },
+    });
+    await client.start();
+    sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+    await new Promise(resolve => setImmediate(resolve));
+    sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'warning' }) });
+    sockets[0]!.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'refresh_requested' }) });
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(sockets.length, 2, 'refresh_requested opened a replacement socket');
+    sockets[1]!.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+    await new Promise(resolve => setImmediate(resolve));
+    sockets[1]!.get('message')!({ data: JSON.stringify({ type: 'disconnect', reason: 'warning' }) });
+    await new Promise(resolve => setTimeout(resolve, 120));
+
+    assert.equal(fetchCalls, 3, 'the replacement socket was recycled after its own warning deadline');
+    client.stop();
+});
+
 test('a failed handshake keeps retrying instead of stalling forever', async () => {
     // Regression: the guard added to stop reconnect stacking also DROPPED the
     // demand when apps.connections.open failed inside connect(), leaving the

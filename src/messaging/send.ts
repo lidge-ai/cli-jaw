@@ -371,25 +371,36 @@ function isRemoteBoundConversation(target: RemoteTarget): boolean {
     }
 }
 
-function slackMembershipRefusal(target: RemoteTarget, channel: MessengerChannel): string | null {
+function slackMembershipRefusal(target: RemoteTarget, channel: MessengerChannel,
+    reason?: 'not_member' | 'unconfirmed'): string | null {
     if (channel !== 'slack' || !/^[CG][A-Z0-9]+$/.test(target.targetId) || slackAllowlist().ids.length) return null;
-    return `Slack target ${target.targetId} is not a channel this bot is verified to be in. Invite the bot there and retry. Do not edit slack.channelIds — it controls which conversations the bot hears.`;
+    // The two phrases name different fixes: a confirmed non-member needs an
+    // invite, while an unconfirmed lookup (Slack did not answer, or there is no
+    // bot token to ask with) is a retry, not a refusal by the workspace.
+    if (reason === 'unconfirmed') {
+        return `Membership of Slack target ${target.targetId} could not be confirmed (Slack did not answer or no bot token); retry.`;
+    }
+    return `Slack target ${target.targetId} is not a channel this bot is verified to be in, or it is shared with another organization (Slack Connect), which membership alone never authorizes. Invite the bot there and retry. Do not edit slack.channelIds — it controls which conversations the bot hears.`;
 }
 
-async function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerChannel, fullAccess = false): Promise<RemoteTarget | null> {
-    if (!isRemoteTarget(target) || target.channel !== channel) return null;
-    if (fullAccess) return target;
-    if (validateTarget(target, channel, { requireConfiguredAllowlist: true })) return target;
+type ExplicitTargetAuth =
+    | { authorized: true; target: RemoteTarget }
+    | { authorized: false; refusal?: 'not_member' | 'unconfirmed' };
+
+async function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerChannel, fullAccess = false): Promise<ExplicitTargetAuth> {
+    if (!isRemoteTarget(target) || target.channel !== channel) return { authorized: false };
+    if (fullAccess) return { authorized: true, target };
+    if (validateTarget(target, channel, { requireConfiguredAllowlist: true })) return { authorized: true, target };
     // Same reading again: an unreadable allowlist is a configured one for this
     // purpose, so the vouching path below stays closed rather than standing in
     // for a list nobody can parse (#406).
-    if (channel !== 'slack' || slackAllowlist().ids.length) return null;
+    if (channel !== 'slack' || slackAllowlist().ids.length) return { authorized: false };
     for (const known of [getLastActiveTarget('slack'), getLatestSeenTarget('slack')]) {
         // Vouching decides WHETHER this send is allowed, never WHERE it goes.
         // Returning `known` here rewrote an explicitly addressed channel-root
         // send into whichever thread had spoken most recently — a caller that
         // named its destination correctly still had it moved (#745).
-        if (known && sameSlackDestination(target, known)) return target;
+        if (known && sameSlackDestination(target, known)) return { authorized: true, target };
     }
     // With no configured allowlist, the two slots above are the only conversations
     // this process can vouch for — and both hold whatever spoke MOST RECENTLY. So an
@@ -402,18 +413,20 @@ async function authorizeExplicitTarget(target: RemoteTarget, channel: MessengerC
     // it does not change when someone else talks. Binding requires the bot to have
     // been addressed there, so this widens nothing an allowlist would have closed;
     // with a configured allowlist we never reach this line at all.
-    if (isRemoteBoundConversation(target)) return target;
+    if (isRemoteBoundConversation(target)) return { authorized: true, target };
     // Only a genuinely empty inbound list opens this extra evidence path.
-    if (!/^[CG][A-Z0-9]+$/.test(target.targetId)) return null;
+    if (!/^[CG][A-Z0-9]+$/.test(target.targetId)) return { authorized: false };
     const token = String(settings['slack']?.botToken ?? '');
-    if (!token) return null;
+    // No token is the same "we could not ask" as a failed lookup: report it so
+    // the refusal can say membership is unconfirmed rather than a flat no.
+    if (!token) return { authorized: false, refusal: 'unconfirmed' };
     const credentialKey = slackBotTokenKey(token);
-    const member = await verifySlackChannelMembership(token, target.targetId);
+    const verdict = await verifySlackChannelMembership(token, target.targetId);
     // A settings update during the network call must not authorize under the
     // previous credential or a newly restricted inbound scope.
-    if (slackAllowlist().ids.length || slackBotTokenKey(String(settings['slack']?.botToken ?? '')) !== credentialKey) return null;
-    if (member) return target;
-    return null;
+    if (slackAllowlist().ids.length || slackBotTokenKey(String(settings['slack']?.botToken ?? '')) !== credentialKey) return { authorized: false };
+    if (verdict === 'member') return { authorized: true, target };
+    return { authorized: false, refusal: verdict === 'not_member' ? 'not_member' : 'unconfirmed' };
 }
 
 export async function sendChannelOutput(req: ChannelSendRequest): Promise<{ ok: boolean; error?: string; [k: string]: unknown }> {
@@ -450,21 +463,21 @@ export async function sendChannelOutput(req: ChannelSendRequest): Promise<{ ok: 
             return { ok: false, status: 400, error: 'chatId and target refer to different destinations' };
         }
         const authorized = await authorizeExplicitTarget(req.target || explicitTarget, channel, req.fullAccess === true);
-        if (!authorized) {
-            return { ok: false, status: 403, error: slackMembershipRefusal(req.target || explicitTarget, channel)
+        if (!authorized.authorized) {
+            return { ok: false, status: 403, error: slackMembershipRefusal(req.target || explicitTarget, channel, authorized.refusal)
                 ?? `Explicit ${channel} chatId is not configured or the current active conversation` };
         }
-        req.target = authorized;
+        req.target = authorized.target;
     }
 
     // Validate explicit target (shape + allowlist)
     if (req.target) {
         const authorized = await authorizeExplicitTarget(req.target, channel, req.fullAccess === true);
-        if (!authorized) {
-            return { ok: false, status: 403, error: slackMembershipRefusal(req.target, channel)
+        if (!authorized.authorized) {
+            return { ok: false, status: 403, error: slackMembershipRefusal(req.target, channel, authorized.refusal)
                 ?? `Invalid or disallowed target for ${channel}: ${req.target.targetId || '(empty)'}` };
         }
-        req.target = authorized;
+        req.target = authorized.target;
     }
 
     // Resolve target: explicit > validated lastActive > validated latestSeen > configured fallback > error
