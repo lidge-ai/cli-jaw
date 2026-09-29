@@ -31,11 +31,16 @@ const foregroundOnly: HookCallback = async (input, _toolUseID, { signal }) => {
     if (input.tool_name === 'Bash' && background === true) {
         return deny('Native runtime supports foreground Bash only; set run_in_background:false.');
     }
+    // SendMessage resumes an agent in the background (async_launched), which ends the
+    // whole turn in claude-sdk-session.ts. Refusing it here keeps the turn alive.
+    if (input.tool_name === 'SendMessage') {
+        return deny('Native runtime cannot resume agents with SendMessage; start a new foreground Agent call with the needed context instead.');
+    }
     // Neutral output preserves the existing permission engine and original arguments.
     return {};
 };
 
 /** Restrict SDK background options; this is not an OS or shell sandbox. */
 export function claudeForegroundHooks(): NonNullable<Options['hooks']> {
-    return { PreToolUse: [{ matcher: '^(Agent|Task|Bash)$', hooks: [foregroundOnly] }] };
+    return { PreToolUse: [{ matcher: '^(Agent|Task|Bash|SendMessage)$', hooks: [foregroundOnly] }] };
 }

@@ -35,7 +35,7 @@ function invoke(tool: string, toolInput: unknown, signal = new AbortController()
     return callback()(input(tool, toolInput), 'tool', { signal });
 }
 
-test('registers only a PreToolUse matcher for the exact built-in Agent, Task and Bash tools', () => {
+test('registers only a PreToolUse matcher for the exact built-in Agent, Task, Bash and SendMessage tools', () => {
     const hooks = claudeForegroundHooks();
     assert.deepEqual(Object.keys(hooks), ['PreToolUse']);
     callback();
@@ -43,8 +43,8 @@ test('registers only a PreToolUse matcher for the exact built-in Agent, Task and
     assert.equal(typeof matcher, 'string');
     assert.ok(matcher);
     const pattern = new RegExp(matcher);
-    for (const tool of ['Agent', 'Task', 'Bash']) assert.equal(pattern.test(tool), true, tool);
-    for (const tool of ['Read', 'TaskOutput', 'mcp__server__Agent', 'AgentExtra', 'OtherBash']) {
+    for (const tool of ['Agent', 'Task', 'Bash', 'SendMessage']) assert.equal(pattern.test(tool), true, tool);
+    for (const tool of ['Read', 'TaskOutput', 'mcp__server__Agent', 'AgentExtra', 'OtherBash', 'mcp__server__SendMessage']) {
         assert.equal(pattern.test(tool), false, tool);
     }
 });
@@ -98,6 +98,18 @@ for (const flag of [false, undefined, 'true', 1, null]) {
 
 test('Bash: omitted background flag stays neutral, including shell background syntax', async () => {
     assert.deepEqual(await invoke('Bash', { command: 'echo hello &' }), {});
+});
+
+test('SendMessage is always denied because resuming an agent runs it in the background', async () => {
+    for (const args of [{ to: 'agent-1', message: 'continue' }, {}, undefined]) {
+        assert.deepEqual(await invoke('SendMessage', args), {
+            hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: 'deny',
+                permissionDecisionReason: 'Native runtime cannot resume agents with SendMessage; start a new foreground Agent call with the needed context instead.',
+            },
+        });
+    }
 });
 
 test('unrelated tools stay neutral even when they carry a background flag', async () => {
