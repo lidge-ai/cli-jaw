@@ -27,7 +27,7 @@ lidge-ai/cli-jaw              ← this repo (public)
 
 Private plans, audits, evidence, and history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-ai/cli-jaw/issues). Public builds and tests do not require it.
 
-Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth, even when a generic skill suggests them. Keep `docs/` and `structure/` for public product documentation and omit private record paths from public docs and source.
+Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth, even when a generic skill suggests them. Keep `docs/` and `structure/` for public product documentation and omit private record paths from public docs and source. Agent harness state under the gitignored `.codexclaw/` (sessions, goalplans, ledgers) is local tool state, not a record store: plans, audits and reviews never go there either.
 
 ### Clone Options
 
