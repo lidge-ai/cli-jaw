@@ -201,6 +201,35 @@ test('automatic checks re-arm on a long interval for tray-resident sessions, man
   assert.equal(state.timers.length, 3);
 });
 
+test('an automatic timer coalesced into a manual check still re-arms the cadence', async () => {
+  const state = fixture();
+  let resolveCheck!: () => void;
+  state.updater.checkForUpdates = () => {
+    state.updater.checks += 1;
+    return new Promise<void>(resolve => { resolveCheck = resolve; });
+  };
+  state.controller.start();
+
+  const manual = state.controller.checkManually();
+  assert.equal(state.updater.checks, 1);
+
+  // timers[0] is the startup delay; firing it while the manual check is in
+  // flight coalesces into the manual promise — the automatic invocation must
+  // still own the next scheduled check once the shared promise settles.
+  state.timers[0]!();
+  resolveCheck();
+  await manual;
+  await flush();
+  assert.equal(state.timers.length, 2, 'coalesced automatic check must re-arm');
+
+  // The re-armed recheck is real and runs the next automatic check.
+  state.updater.checkForUpdates = async () => { state.updater.checks += 1; };
+  state.timers[1]!();
+  await flush();
+  assert.equal(state.updater.checks, 2);
+  assert.equal(state.timers.length, 3);
+});
+
 test('failed automatic checks still re-arm so a transient outage recovers', async () => {
   const state = fixture();
   state.updater.checkForUpdates = async () => {
