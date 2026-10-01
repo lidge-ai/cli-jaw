@@ -110,6 +110,15 @@ jobs:
       - name: Install Electron dependencies
         run: npm ci --prefix electron
 
+      # The DMG blockmap rebuild in notarize-mac-dmg.mjs calls app-builder-lib
+      # through scripts/electron-blockmap.mjs. Run the real helper here, where
+      # electron/node_modules exists, so a toolchain upgrade that moves it
+      # fails before packaging instead of after notarization.
+      - name: Electron toolchain contract tests
+        run: npx tsx --experimental-test-module-mocks tests/run.mts tests/unit/electron-blockmap.test.ts tests/unit/notarize-mac-dmg.test.ts
+        env:
+          JAW_REQUIRE_ELECTRON_DEPS: '1'
+
       - name: Type check Electron shell
         run: npm --prefix electron run typecheck
 
