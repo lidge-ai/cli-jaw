@@ -83,3 +83,18 @@ export function visibleInstances(snapshot: TrayInstancesSnapshot, limit = TRAY_I
   const ordered = orderInstances(snapshot.instances);
   return { rows: ordered.slice(0, limit), hidden: Math.max(0, ordered.length - limit) };
 }
+
+/**
+ * Everything a snapshot can change in the rendered menu: the summary label
+ * plus each visible row label and the hidden-count row. Identical signatures
+ * mean a menu rebuild would be pure churn, which matters because the poller
+ * republishes on every interval, including failure-only updates.
+ */
+export function trayInstancesSignature(snapshot: TrayInstancesSnapshot): string {
+  const { rows, hidden } = visibleInstances(snapshot);
+  return JSON.stringify({
+    summary: instancesSummaryLabel(snapshot),
+    rows: rows.map(instanceMenuLabel),
+    hidden,
+  });
+}

@@ -65,11 +65,15 @@ async function flush(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-test('automatic updater is restricted to installed macOS outside isolated QA and the kill switch', () => {
+test('automatic updater is restricted to installed macOS/Windows outside isolated QA and the kill switch', () => {
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), true);
+  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), true);
   assert.equal(shouldEnableAppUpdater({ platform: 'linux', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), false);
+  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: false, isolatedQa: false, disabledByEnvironment: false }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: false, isolatedQa: false, disabledByEnvironment: false }), false);
+  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: true, isolatedQa: true, disabledByEnvironment: false }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: true, isolatedQa: true, disabledByEnvironment: false }), false);
+  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: true, isolatedQa: false, disabledByEnvironment: true }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: true, isolatedQa: false, disabledByEnvironment: true }), false);
 });
 
@@ -172,6 +176,48 @@ test('startup check failures stay silent while a rejected manual check reports f
 
   await state.controller.checkManually();
   assert.equal(state.dialogs.at(-1)?.title, 'Update Failed');
+});
+
+test('automatic checks re-arm on a long interval for tray-resident sessions, manual checks do not', async () => {
+  const state = fixture();
+  state.controller.start();
+
+  // timers[0] is the startup delay; firing it runs the first automatic check,
+  // which must arm the daily recheck once it settles.
+  state.timers[0]!();
+  await flush();
+  assert.equal(state.updater.checks, 1);
+  assert.equal(state.timers.length, 2);
+
+  // The recheck runs the next automatic check and re-arms again.
+  state.timers[1]!();
+  await flush();
+  assert.equal(state.updater.checks, 2);
+  assert.equal(state.timers.length, 3);
+
+  // A manual check must not replace or multiply the background cadence.
+  await state.controller.checkManually();
+  assert.equal(state.updater.checks, 3);
+  assert.equal(state.timers.length, 3);
+});
+
+test('failed automatic checks still re-arm so a transient outage recovers', async () => {
+  const state = fixture();
+  state.updater.checkForUpdates = async () => {
+    state.updater.checks += 1;
+    throw new Error('offline');
+  };
+  state.controller.start();
+
+  state.timers[0]!();
+  await flush();
+  assert.equal(state.dialogs.length, 0);
+  assert.equal(state.timers.length, 2, 'recheck must be armed even after a failed check');
+
+  state.controller.dispose();
+  state.timers[1]!();
+  await flush();
+  assert.equal(state.updater.checks, 1, 'disposed controller must not check again');
 });
 
 test('dispose removes updater listeners and suppresses later prompts', async () => {

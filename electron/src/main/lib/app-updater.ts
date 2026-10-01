@@ -34,11 +34,15 @@ interface AppUpdaterControllerOptions {
   prepareForUpdateInstall(): Promise<void>;
   log(message: string): void;
   startupDelayMs?: number;
+  recheckIntervalMs?: number;
   setTimer?: (callback: () => void, delayMs: number) => TimerHandle;
   clearTimer?: (handle: TimerHandle) => void;
 }
 
 const DEFAULT_STARTUP_DELAY_MS = 30_000;
+// A tray-resident app can run for weeks without restarting; a single startup
+// check would leave it permanently blind to releases. Recheck daily.
+const DEFAULT_RECHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export function shouldEnableAppUpdater(options: {
   platform: NodeJS.Platform;
@@ -46,7 +50,7 @@ export function shouldEnableAppUpdater(options: {
   isolatedQa: boolean;
   disabledByEnvironment: boolean;
 }): boolean {
-  return options.platform === 'darwin' &&
+  return (options.platform === 'darwin' || options.platform === 'win32') &&
     options.isPackaged &&
     !options.isolatedQa &&
     !options.disabledByEnvironment;
@@ -57,6 +61,7 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
   const clearTimer = options.clearTimer ?? clearTimeout;
   const listeners: Array<[string, (...args: never[]) => void]> = [];
   let startupTimer: TimerHandle | null = null;
+  let recheckTimer: TimerHandle | null = null;
   let started = false;
   let disposed = false;
   let checkPromise: Promise<void> | null = null;
@@ -96,7 +101,7 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
         await options.showMessageBox({
           type: 'info',
           title: 'Updates Unavailable',
-          message: 'Automatic updates are available only in the installed macOS app.',
+          message: 'Automatic updates are available only in the installed desktop app.',
           buttons: ['OK'],
           defaultId: 0,
         });
@@ -120,6 +125,16 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
       })
       .finally(() => {
         checkPromise = null;
+        // Manual checks stay on the user's cadence; only automatic checks
+        // arm the next one so the tray-resident app keeps tracking releases.
+        if (!manual && started && !disposed) {
+          if (recheckTimer) clearTimer(recheckTimer);
+          recheckTimer = setTimer(() => {
+            recheckTimer = null;
+            void check(false);
+          }, options.recheckIntervalMs ?? DEFAULT_RECHECK_INTERVAL_MS);
+          recheckTimer.unref?.();
+        }
       });
     return checkPromise;
   };
@@ -222,6 +237,10 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
       if (startupTimer) {
         clearTimer(startupTimer);
         startupTimer = null;
+      }
+      if (recheckTimer) {
+        clearTimer(recheckTimer);
+        recheckTimer = null;
       }
       for (const [event, listener] of listeners) options.updater.off(event, listener);
       listeners.length = 0;

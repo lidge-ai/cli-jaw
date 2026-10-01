@@ -1,6 +1,7 @@
 import { countTrayReminderBadgeItems, type TrayReminderDateItem } from '../../../../src/shared/reminders/tray-triage.js';
 
 const DEFAULT_INTERVAL_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface ReminderBadgePoller {
   start(): void;
@@ -13,6 +14,7 @@ export function createReminderBadgePoller(opts: {
   setBadge: (count: number) => void;
   log?: (message: string) => void;
   intervalMs?: number;
+  requestTimeoutMs?: number;
 }): ReminderBadgePoller {
   let timer: NodeJS.Timeout | null = null;
   let running = false;
@@ -40,9 +42,13 @@ export function createReminderBadgePoller(opts: {
   async function refreshNow(): Promise<void> {
     if (inFlight) return inFlight;
     inFlight = (async () => {
+      // A fetch with no timeout can hang forever; inFlight would stay set and
+      // the badge would silently stop updating until the next app restart.
+      const controller = new AbortController();
+      const abort = setTimeout(() => controller.abort(), opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
       try {
         const url = new URL('/api/dashboard/reminders', opts.managerUrl).toString();
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const body = await res.json() as { ok?: unknown; items?: unknown };
         if (body.ok !== true || !Array.isArray(body.items)) {
@@ -52,6 +58,7 @@ export function createReminderBadgePoller(opts: {
       } catch (err) {
         logFailure(err);
       } finally {
+        clearTimeout(abort);
         inFlight = null;
       }
     })();
