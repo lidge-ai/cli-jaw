@@ -65,6 +65,7 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
   let started = false;
   let disposed = false;
   let checkPromise: Promise<void> | null = null;
+  let autoRecheckPending = false;
   let manualFeedbackPending = false;
   let downloadPromptOpen = false;
   let restartPromptOpen = false;
@@ -109,7 +110,13 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
       return;
     }
     if (manual) manualFeedbackPending = true;
-    if (checkPromise) return checkPromise;
+    if (checkPromise) {
+      // A coalesced automatic check still owns the daily cadence even though
+      // the in-flight promise belongs to another invocation: the owner's
+      // `manual` closure would never schedule the next check on its own.
+      if (!manual) autoRecheckPending = true;
+      return checkPromise;
+    }
     checkPromise = options.updater.checkForUpdates()
       .then(() => undefined)
       .catch(async (error: unknown) => {
@@ -125,9 +132,12 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
       })
       .finally(() => {
         checkPromise = null;
-        // Manual checks stay on the user's cadence; only automatic checks
-        // arm the next one so the tray-resident app keeps tracking releases.
-        if (!manual && started && !disposed) {
+        // Manual checks stay on the user's cadence; the next check is armed
+        // only by an automatic invocation — either this one or a coalesced
+        // automatic call that arrived while a manual check was in flight.
+        const rearm = (!manual || autoRecheckPending) && started && !disposed;
+        autoRecheckPending = false;
+        if (rearm) {
           if (recheckTimer) clearTimer(recheckTimer);
           recheckTimer = setTimer(() => {
             recheckTimer = null;
