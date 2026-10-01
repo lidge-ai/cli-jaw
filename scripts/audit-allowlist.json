@@ -8,74 +8,11 @@
     "An entry is a decision, not a mute. 'reason' has to say why the vulnerable path",
     "is unreachable HERE, not that the package is popular or the severity looks low.",
     "When 'review' passes, the gate warns; that is the prompt to re-check reachability",
-    "rather than extend the date reflexively."
+    "rather than extend the date reflexively.",
+    "",
+    "An entry names the advisory IDs it covers. A new advisory against an",
+    "allowlisted package fails the gate until someone re-checks reachability",
+    "for that advisory too (scripts/deps-audit-classify.ts)."
   ],
-  "allow": [
-    {
-      "package": "shell-quote",
-      "severity": "critical",
-      "reason": "Reached only through concurrently, which this repo runs from the electron:dev script with hardcoded literal arguments. No caller passes user or agent input to it, and it is devDependency-only so it never ships.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "concurrently",
-      "severity": "critical",
-      "reason": "The shell-quote path above; concurrently itself adds no new sink. devDependency, electron:dev only.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "undici",
-      "severity": "high",
-      "reason": "Both advisories need a precondition we do not create: a SOCKS5 ProxyAgent, or a shared response cache across principals. discord.js and jsdom use plain HTTPS with no proxy agent configured.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "discord.js",
-      "severity": "moderate",
-      "reason": "No advisory of its own; flagged purely as a path to undici. The preconditions there (a SOCKS5 ProxyAgent, or a cache shared across principals) are the ones that would have to hold, and discord.js configures neither.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "@discordjs/rest",
-      "severity": "moderate",
-      "reason": "No advisory of its own; flagged purely as a path to undici, and it issues plain HTTPS requests with no proxy agent, so the SOCKS5 and shared-cache preconditions never hold.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "nanoid",
-      "severity": "high",
-      "reason": "Requires calling the non-secure generator with a negative or zero size. Reached only via postcss at build time, which passes a fixed positive length.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "postcss",
-      "severity": "high",
-      "reason": "sourceMappingURL arbitrary read needs attacker-controlled CSS at build time. Our CSS is repository content; a writer with that access already has the tree.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "@babel/core",
-      "severity": "low",
-      "reason": "Same sourceMappingURL class as postcss, same build-time-only reachability.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "esbuild",
-      "severity": "low",
-      "reason": "Arbitrary read applies to the esbuild DEVELOPMENT SERVER on Windows. We use esbuild as a bundler; the dev server is never started in this repo.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "vite",
-      "severity": "high",
-      "reason": "Dev-server-only, and the launch-editor UNC disclosure additionally needs Windows. Production builds do not run the dev server.",
-      "review": "2026-11-01"
-    },
-    {
-      "package": "body-parser",
-      "severity": "low",
-      "reason": "DoS applies when an INVALID limit value silently disables size enforcement. We pass no limit, so the default stays in force.",
-      "review": "2026-11-01"
-    }
-  ]
+  "allow": []
 }

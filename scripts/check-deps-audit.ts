@@ -18,17 +18,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { classifyAudit, type AllowEntry, type AuditVuln } from './deps-audit-classify.js';
 
-interface AllowEntry { package: string; severity: string; reason: string; review: string }
 interface Allowlist { allow: AllowEntry[] }
-interface AuditVuln { severity: string; isDirect?: boolean; via?: Array<string | { title?: string; url?: string }> }
 
-const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
 const FAIL_AT = process.env['DEPS_AUDIT_LEVEL'] ?? 'low';
-
-function atLeast(sev: string, floor: string): boolean {
-    return SEVERITY_ORDER.indexOf(sev) >= SEVERITY_ORDER.indexOf(floor);
-}
 
 const allowPath = path.resolve('scripts/audit-allowlist.json');
 if (!fs.existsSync(allowPath)) {
@@ -36,7 +30,6 @@ if (!fs.existsSync(allowPath)) {
     process.exit(2);
 }
 const allowlist = JSON.parse(fs.readFileSync(allowPath, 'utf8')) as Allowlist;
-const allowed = new Map(allowlist.allow.map(e => [e.package, e]));
 
 let raw: string;
 try {
@@ -61,25 +54,7 @@ try {
 }
 
 const today = new Date().toISOString().slice(0, 10);
-const unexpected: string[] = [];
-const stale: string[] = [];
-let allowedCount = 0;
-
-for (const [name, v] of Object.entries(vulns)) {
-    if (!atLeast(v.severity, FAIL_AT)) continue;
-    const entry = allowed.get(name);
-    if (!entry) {
-        const via = (v.via ?? [])
-            .map(x => (typeof x === 'string' ? x : x.title ?? ''))
-            .filter(Boolean)
-            .slice(0, 2)
-            .join('; ');
-        unexpected.push(`${v.severity.toUpperCase()} ${name}${via ? ` — ${via}` : ''}`);
-        continue;
-    }
-    allowedCount++;
-    if (entry.review < today) stale.push(`${name} (review was due ${entry.review})`);
-}
+const { unexpected, stale, allowedCount } = classifyAudit(vulns, allowlist.allow, FAIL_AT, today);
 
 for (const line of stale) console.log(`WARN allowlist entry past its review date: ${line}`);
 console.log(`[deps] ${Object.keys(vulns).length} advisory package(s); ${allowedCount} allowlisted, ${unexpected.length} unexpected`);
