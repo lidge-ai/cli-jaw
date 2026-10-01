@@ -92,6 +92,32 @@ test('badge poller coalesces overlapping refreshes', async () => {
     assert.equal(fetchCount, 1);
 });
 
+test('badge poller abandons a hung request instead of stalling forever', async () => {
+    const logs: string[] = [];
+    let fetchCount = 0;
+    globalThis.fetch = (_url: unknown, init?: RequestInit) => {
+        fetchCount += 1;
+        return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        });
+    };
+    const poller = createReminderBadgePoller({
+        managerUrl: 'http://127.0.0.1:24577/',
+        setBadge: () => {},
+        log: message => logs.push(message),
+        requestTimeoutMs: 30,
+    });
+
+    await assert.doesNotReject(() => poller.refreshNow());
+    assert.equal(logs.length, 1);
+    assert.match(logs[0] ?? '', /badge refresh failed:.*(Aborted|abort)/i);
+
+    // The next refresh must issue a real fetch — a stale inFlight latch would
+    // return the same already-settled promise and never reach fetch again.
+    await poller.refreshNow();
+    assert.equal(fetchCount, 2);
+});
+
 test('main process starts and stops reminder badge polling with manager lifecycle', () => {
     const index = read('electron/src/main/index.ts');
     const badge = read('electron/src/main/lib/reminder-badge.ts');

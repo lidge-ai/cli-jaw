@@ -219,6 +219,34 @@ test('Electron updater stays in the trusted main process and preserves coordinat
     assert.ok(vite.includes("'electron-updater'"), 'electron-updater must remain an external packaged runtime dependency');
 });
 
+test('Electron Windows updater path ships its NSIS feed and hides the sidecar console', () => {
+    const workflow = read('.github/workflows/desktop-release.yml');
+    const spawn = read('electron/src/main/lib/jaw-spawn.ts');
+    const updater = read('electron/src/main/lib/app-updater.ts');
+
+    // electron-updater on Windows reads latest.yml from the GitHub release;
+    // without it in the artifact globs the enabled win32 check 404s forever.
+    assert.ok(workflow.includes('electron/dist/latest.yml'), 'Windows release artifacts must upload the NSIS latest.yml update feed');
+    assert.ok(workflow.includes('electron/dist/*.blockmap'), 'Windows release artifacts should upload blockmaps for differential updates');
+    assert.ok(updater.includes("options.platform === 'darwin' || options.platform === 'win32'"), 'updater enablement must cover packaged Windows');
+    // The packaged app is a GUI process; a bare cmd.exe launch flashes a console.
+    assert.ok(spawn.includes('windowsHide: true'), 'sidecar spawn must hide its console window on Windows');
+});
+
+test('Electron fatal exits bypass the keep-running interception and stop bootstrap', () => {
+    const main = read('electron/src/main/index.ts');
+
+    assert.ok(main.includes('function quitAfterFatal(reason: string)'), 'Electron main must centralize fatal-path exits');
+    assert.ok(main.includes('forceQuitRequested = true'), 'fatal exits must arm force-quit so before-quit cannot swallow them');
+    for (const reason of ['bootstrap-failed', 'attach-failed', 'jaw-not-found', 'spawn-timeout', 'crash-loop']) {
+        assert.ok(main.includes(`quitAfterFatal('${reason}')`), `fatal path '${reason}' must use the coordinated quit`);
+    }
+    assert.ok(
+        main.includes('if (shuttingDown || shutdownComplete) return;\n  installTrayReminders();'),
+        'bootstrap must not install tray pollers or open a window after a fatal quit has begun',
+    );
+});
+
 test('Electron default launch owns its manager server instead of attaching to web UI', () => {
     const main = read('electron/src/main/index.ts');
 

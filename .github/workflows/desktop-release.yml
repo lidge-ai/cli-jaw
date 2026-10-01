@@ -45,10 +45,14 @@ jobs:
             sidecar_platform: win32
             sidecar_arch: x64
             sidecar_check_script: check:electron-dist-win-no-jwc
+            # latest.yml is the electron-updater NSIS feed; *.blockmap enables
+            # differential downloads. Both are emitted next to the installer.
             artifact_globs: |
               electron/dist/*.exe
               electron/dist/*.msi
               electron/dist/*.zip
+              electron/dist/latest.yml
+              electron/dist/*.blockmap
           - platform: linux
             os: ubuntu-latest
             script: dist:linux
