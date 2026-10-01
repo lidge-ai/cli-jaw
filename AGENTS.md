@@ -195,7 +195,7 @@ git add skills_ref && git commit -m "chore: update skills_ref ref" && git push
 
 Private plans, audits, evidence, and development history belong only in a separate sibling clone of [cli-jaw-internal](https://github.com/lidge-jun/cli-jaw-internal). Request collaborator access through an [issue](https://github.com/lidge-ai/cli-jaw/issues).
 
-Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth. This boundary overrides generic skill defaults. `docs/` and `structure/` hold public product documentation only; do not put private logs or private record paths in public docs or source.
+Never create private records inside this checkout, including `devlog`, `_plan`, `_fin`, or `.jwc` aliases at any depth. This boundary overrides generic skill defaults. `docs/` and `structure/` hold public product documentation only; do not put private logs or private record paths in public docs or source. Agent harness state under the gitignored `.codexclaw/` (sessions, goalplans, ledgers) is local tool state, not a record store: plans, audits and reviews never go there either.
 
 Before any public push, run `npm run check:private-boundary` for the index and `node scripts/check-private-boundary.mjs --range <remote-base> HEAD` for every outgoing commit tree. Follow [contributor hook setup](CONTRIBUTING.md#local-private-path-check) to enable `.githooks/pre-push` for this checkout; it invokes `--pre-push` using Git's stdin. Review content as well as paths and do not bypass the hook. CI is a backstop after upload, not a pre-disclosure guard.
 
