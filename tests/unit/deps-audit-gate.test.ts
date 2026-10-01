@@ -79,8 +79,13 @@ test('DAG-006: an entry without advisory ids cannot waive a package that has adv
 });
 
 test('DAG-007: a transitive-only finding needs the entry, not advisory ids', () => {
-    const vulns = { 'discord.js': { severity: 'moderate', via: ['undici'] } };
-    assert.equal(classifyAudit(vulns, [entry('discord.js')], 'low', '2026-10-02').allowedCount, 1);
+    const vulns = {
+        'discord.js': { severity: 'moderate', via: ['undici'] },
+        undici: { severity: 'moderate', via: [ghsa('GHSA-u')] },
+    };
+    const waived = classifyAudit(vulns, [entry('discord.js'), entry('undici', ['GHSA-u'])], 'low', '2026-10-02');
+    assert.deepEqual(waived.unexpected, []);
+    assert.equal(waived.allowedCount, 2);
     const missing = classifyAudit(vulns, [], 'low', '2026-10-02');
     assert.match(missing.unexpected[0]!, /MODERATE discord\.js — via undici/);
 });
@@ -101,3 +106,26 @@ test('DAG-009: advisoryId reads the GHSA id from the url and falls back to the n
     assert.equal(advisoryId({ source: 1234 }), '1234');
 });
 
+
+test('DAG-010: the threshold applies per advisory, not to the package aggregate', () => {
+    const vulns = {
+        parent: { severity: 'high', via: [{ ...ghsa('GHSA-low', 'minor'), severity: 'low' }, 'child'] },
+        child: { severity: 'high', via: [{ ...ghsa('GHSA-high', 'major'), severity: 'high' }] },
+    };
+    const r = classifyAudit(vulns, [entry('parent'), entry('child', ['GHSA-high'])], 'moderate', '2026-10-02');
+    assert.deepEqual(r.unexpected, [], 'the low advisory is below a moderate floor, and the child is waived');
+    const low = classifyAudit(vulns, [entry('parent'), entry('child', ['GHSA-high'])], 'low', '2026-10-02');
+    assert.match(low.unexpected.join('\n'), /LOW parent — allowlist entry must list the advisory IDs it waives \(GHSA-low\)/);
+});
+
+test('DAG-011: mixed advisory and transitive vias are each classified, and a dangling reference fails', () => {
+    const vulns = {
+        parent: { severity: 'high', via: [ghsa('GHSA-p'), 'child'] },
+        child: { severity: 'high', via: [ghsa('GHSA-c', 'child bug')] },
+    };
+    const childUnwaived = classifyAudit(vulns, [entry('parent', ['GHSA-p'])], 'low', '2026-10-02');
+    assert.equal(childUnwaived.unexpected.length, 1);
+    assert.match(childUnwaived.unexpected[0]!, /HIGH child — child bug/);
+    const dangling = classifyAudit({ parent: { severity: 'high', via: [ghsa('GHSA-p'), 'ghost'] } }, [entry('parent', ['GHSA-p'])], 'low', '2026-10-02');
+    assert.match(dangling.unexpected[0]!, /references ghost, which has no audit record/);
+});
