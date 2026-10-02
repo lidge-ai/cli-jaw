@@ -132,3 +132,40 @@ test('main process starts and stops reminder badge polling with manager lifecycl
     assert.ok(badge.includes('countTrayReminderBadgeItems'));
     assert.ok(badge.includes('setTimeout'));
 });
+
+test('badge poller drops a request that settles after stop and refetches after restart', async () => {
+    const releases: Array<(response: Response) => void> = [];
+    const signals: AbortSignal[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise<Response>(resolve => releases.push(resolve));
+    }) as typeof fetch;
+    const badges: number[] = [];
+    const logs: string[] = [];
+    const poller = createReminderBadgePoller({
+        managerUrl: 'http://127.0.0.1:1',
+        setBadge: count => badges.push(count),
+        log: message => logs.push(message),
+        intervalMs: 60_000,
+        requestTimeoutMs: 60_000,
+    });
+    try {
+        const stale = poller.refreshNow();
+        poller.stop();
+        assert.equal(signals[0]?.aborted, true, 'stop aborts the in-flight request');
+        releases[0]!(jsonResponse({ ok: true, items: [item({ dueAt: new Date().toISOString() })] }));
+        await stale;
+        assert.deepEqual(badges, [], 'a result from before stop must not reach the badge');
+        assert.deepEqual(logs, [], 'the aborted request is not reported as a failure');
+
+        const fresh = poller.refreshNow();
+        assert.equal(releases.length, 2, 'after stop a refresh issues a new request instead of joining the old one');
+        releases[1]!(jsonResponse({ ok: true, items: [] }));
+        await fresh;
+        assert.deepEqual(badges, [0]);
+    } finally {
+        poller.stop();
+        globalThis.fetch = originalFetch;
+    }
+});
+
