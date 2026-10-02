@@ -6,6 +6,7 @@ tests/unit/service-windows-branch.test.ts
 tests/unit/windows-service-lifecycle-honesty.test.ts
 tests/unit/windows-installer-shims.test.ts
 tests/unit/windows-spawn-primitives.test.ts
+tests/unit/electron-installer-user-path.test.ts
 tests/unit/manager-browser-open.test.ts
 tests/unit/eaddrinuse-diagnostics-contract.test.ts
 tests/unit/tui-presentation.test.ts

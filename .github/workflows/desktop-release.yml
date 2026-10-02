@@ -47,6 +47,8 @@ jobs:
             sidecar_check_script: check:electron-dist-win-no-jwc
             artifact_globs: |
               electron/dist/*.exe
+              electron/dist/*.exe.blockmap
+              electron/dist/latest.yml
               electron/dist/*.msi
               electron/dist/*.zip
           - platform: linux
@@ -190,6 +192,10 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Verify Windows update metadata and payload integrity
+        if: matrix.platform == 'windows'
+        run: npm run verify:electron-update-metadata:win
+
       - name: Verify Developer ID signature and notarization ticket
         if: matrix.platform == 'macos'
         run: |
@@ -245,6 +251,7 @@ jobs:
             electron/dist/*.rpm
             electron/dist/*.zip
             electron/dist/*-mac.yml
+            electron/dist/latest.yml
             electron/dist/*.blockmap
           if-no-files-found: error
           retention-days: 7

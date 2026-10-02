@@ -75,6 +75,10 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
+  # One name in electron/dist, latest.yml and the GitHub asset. The default
+  # "cli-jaw Setup X.exe" becomes "cli-jaw.Setup.X.exe" on upload, which the
+  # latest.yml entry (cli-jaw-Setup-X.exe) never matches.
+  artifactName: ${productName}-Setup-${version}.${ext}
 linux:
   target:
     - AppImage
