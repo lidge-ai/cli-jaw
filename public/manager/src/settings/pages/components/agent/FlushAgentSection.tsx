@@ -1,6 +1,6 @@
 import { SelectField } from '../../../fields';
 import { SettingsSection } from '../../page-shell';
-import { metaFor, selectableRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
+import { metaFor, auxiliaryRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
 
 type FlushAgentSectionProps = {
     activeCli: string;
@@ -28,6 +28,7 @@ export function FlushAgentSection({
     onFlushModelChange,
 }: FlushAgentSectionProps) {
     const effectiveCli = flushCli || activeCli;
+    const unsupported = effectiveCli === 'aside';
     const effectiveCliLabel = effectiveCli ? metaFor(effectiveCli, cliMeta).label || effectiveCli : 'active';
     return (
         <SettingsSection
@@ -46,11 +47,11 @@ export function FlushAgentSection({
                         id="agent-flush-cli"
                         label="Flush CLI"
                         value={flushCli}
-                        missingValueLabel={isRetiredCliSelection(flushCli) ? retiredRuntimeLabel(flushCli) : undefined}
-                        error={isRetiredCliSelection(effectiveCli) ? 'The saved flush runtime is retired. Choose an available runtime.' : null}
+                        missingValueLabel={!flushCli && activeCli === 'aside' ? '(active CLI unavailable)' : flushCli === 'aside' ? 'Aside (main-only)' : isRetiredCliSelection(flushCli) ? retiredRuntimeLabel(flushCli) : undefined}
+                        error={unsupported ? 'Aside cannot run memory flush. Choose a separate runtime.' : isRetiredCliSelection(effectiveCli) ? 'The saved flush runtime is retired. Choose an available runtime.' : null}
                         options={[
-                            { value: '', label: '(active CLI)' },
-                            ...selectableRuntimeOptions(cliOptions).map((value) => ({ value, label: metaFor(value, cliMeta).label || value })),
+                            ...(activeCli === 'aside' ? [] : [{ value: '', label: '(active CLI)' }]),
+                            ...auxiliaryRuntimeOptions(cliOptions).map((value) => ({ value, label: metaFor(value, cliMeta).label || value })),
                         ]}
                         onChange={onFlushCliChange}
                     />
@@ -58,7 +59,7 @@ export function FlushAgentSection({
                         id="agent-flush-model"
                         label="Flush model"
                         value={flushModel}
-                        disabled={isRetiredCliSelection(effectiveCli)}
+                        disabled={unsupported || isRetiredCliSelection(effectiveCli)}
                         options={[{ value: '', label: '(default)' }, ...modelOptions]}
                         onChange={onFlushModelChange}
                     />

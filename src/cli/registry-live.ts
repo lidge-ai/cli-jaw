@@ -5,7 +5,8 @@ import { fetchCopilotModelInventory } from '../agent/copilot-models.js';
 import { fetchCursorModelInventory } from '../agent/cursor-model-inventory.js';
 import { fetchGrokModelInventory } from '../agent/grok-models.js';
 import { settings } from '../core/config.js';
-import { readAsideCatalog } from '../agent/aside-catalog.js';
+import { readAsideCatalog, resolveAsideSelection } from '../agent/aside-catalog.js';
+import type { AsideCatalog } from '../shared/aside-contract.js';
 import { CLI_REGISTRY } from './registry.js';
 import { claudeCatalogToChoices, resolveClaudeBundleCatalog } from './claude-model-discovery.js';
 import { buildClaudeEffortsByModel } from './claude-models.js';
@@ -190,16 +191,45 @@ export async function buildLiveCliRegistry() {
     }
 
     const catalog = await asideCatalog;
-    if (catalog) {
-        registry['aside'] = { ...registry['aside'],
-            models: ['default', ...catalog.entries.map(entry => entry.id)],
-            modelSource: catalog.source, modelDetails: catalog.entries,
-            effortsByModel: Object.fromEntries(catalog.entries.map(entry => [entry.id, [...entry.efforts]])),
-            efforts: unionEfforts(Object.fromEntries(catalog.entries.map(entry => [entry.id, entry.efforts]))),
-            observedDefaultModel: catalog.defaultModel, catalogStatus: catalog.status,
-        };
-    }
+    registry['aside'] = { ...registry['aside'], ...projectAsideCatalog(catalog) };
     return registry;
+}
+
+/** Safe picker projection; registered models and observed preference never imply auth. */
+export function projectAsideCatalog(catalog: AsideCatalog | null) {
+    const denied = catalog?.diagnostics.some(row => row.source === 'models' || row.source === 'context');
+    const selectable = denied ? null : catalog;
+    const models = selectable?.entries.map(entry => entry.id) ?? [];
+    const effortsByModel: Record<string, string[]> = Object.fromEntries(
+        (selectable?.entries ?? []).map(entry => [entry.id, [...entry.efforts]]));
+    const defaultEffortByModel: Record<string, string> = {};
+    const defaultModel = selectable?.defaultModel;
+    if (defaultModel && selectable) {
+        if (!models.includes(defaultModel)) models.push(defaultModel);
+        const defaultEntry = selectable.entries.find(entry => entry.id === defaultModel);
+        if (!defaultEntry || defaultEntry.capability === 'unknown') {
+            // Missing effort metadata still permits the concrete observed preference.
+            effortsByModel[defaultModel] = selectable.configuredDefault?.thinkingLevel
+                ? [selectable.configuredDefault.thinkingLevel] : [];
+        }
+        try {
+            const selection = resolveAsideSelection(selectable);
+            models.unshift('default');
+            effortsByModel['default'] = [...(effortsByModel[selection.model] ?? [])];
+            if (selection.effort) {
+                defaultEffortByModel['default'] = selection.effort;
+                defaultEffortByModel[selection.model] = selection.effort;
+            }
+        } catch {
+            // Keep unavailable saved choices visible without making the sentinel selectable.
+        }
+    }
+    return {
+        models, modelSource: 'local-files', modelDetails: selectable?.entries ?? [],
+        effortsByModel, defaultEffortByModel, efforts: unionEfforts(effortsByModel),
+        observedDefaultModel: catalog?.defaultModel ?? null,
+        catalogStatus: catalog?.status ?? 'unavailable', catalogDiagnostics: catalog?.diagnostics ?? [],
+    };
 }
 
 /**

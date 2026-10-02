@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SettingsPageProps, DirtyEntry } from '../types';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { SettingsPageProps, SettingsClient, DirtyEntry } from '../types';
 import {
     CLI_STATUS_POLL_HORIZON_MS,
     planCliStatusPoll,
@@ -9,8 +9,11 @@ import {
     PageLoading,
     PageOffline,
     usePageSnapshot,
+    type SnapshotState,
 } from './page-shell';
 import { parsePermissionsValue, permissionsEditMode } from './Permissions';
+import { AsideSelectionFields } from './components/AsideSelectionFields';
+import { useAsideModels, asideSelectionError, isAsideAccount } from './components/aside-models';
 import { RuntimeHeader } from './components/agent/RuntimeHeader';
 import { PermissionQuickSection } from './components/agent/PermissionQuickSection';
 import { FlushAgentSection } from './components/agent/FlushAgentSection';
@@ -120,6 +123,8 @@ type FlushSnapshot = {
 
 type RuntimeDraft = {
     cli: string;
+    account: string;
+    host: string;
     provider: string;
     model: string;
     effort: string;
@@ -130,10 +135,26 @@ type RuntimeDraft = {
     permissions: unknown;
 };
 
-export default function Agent({ port, client, dirty, registerSave }: SettingsPageProps) {
-    const { state, refresh, setData } = usePageSnapshot<AgentSnapshot>(client, '/api/settings');
+const ownsAgentKey = (key: string) => ['cli', 'workingDir', 'permissions', 'runtimeEmployees', 'flushCli', 'flushModel', 'multiSession.midRunPolicy'].includes(key) || key.startsWith('activeOverrides.') || key.startsWith('perCli.');
+
+export default function Agent({ port, instanceUrl, client, dirty, registerSave }: SettingsPageProps) {
+    const instance = useMemo(() => ({ client, port, instanceUrl, dirty }), [client, port, instanceUrl, dirty]);
+    const activeInstance = useRef<typeof instance | null>(null);
+    const activeOperation = useRef<Promise<void> | null>(null);
+    const metadataGeneration = useRef(0);
+    const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const snapshotClient = useMemo<SettingsClient>(() => ({ ...client,
+        get: async <T,>(path: string, init?: RequestInit) => ({ instance, value: await client.get<AgentSnapshot>(path, init) }) as T,
+    }), [client, instance]);
+    const { state: boundState, refresh, setData: setBoundData } = usePageSnapshot<{ instance: typeof instance; value: AgentSnapshot }>(snapshotClient, '/api/settings');
+    const state: SnapshotState<AgentSnapshot> = boundState.kind === 'ready'
+        ? boundState.data.instance === instance ? { kind: 'ready', data: boundState.data.value } : { kind: 'loading' } : boundState;
+    const setData = useCallback((value: AgentSnapshot) => setBoundData({ instance, value }), [instance, setBoundData]);
     const [draft, setDraft] = useState<RuntimeDraft>({
         cli: '',
+        account: '',
+        host: '',
         provider: '',
         model: '',
         effort: '',
@@ -156,16 +177,37 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
     const [sessionMigrationError, setSessionMigrationError] = useState<string | null>(null);
 
     const loadCliMeta = useCallback(async () => {
+        const generation = ++metadataGeneration.current;
         try {
             const response = await client.get<{ data?: unknown } | Record<string, unknown>>('/api/cli-registry');
+            if (activeInstance.current !== instance || generation !== metadataGeneration.current) return;
             const data = response && typeof response === 'object' && 'data' in response
                 ? (response as { data?: unknown }).data
                 : response;
             setCliMeta(normalizeCliMetaRegistry(data));
         } catch {
-            setCliMeta(null);
+            if (activeInstance.current === instance && generation === metadataGeneration.current) setCliMeta(null);
         }
-    }, [client]);
+    }, [client, instance]);
+
+    const aside = useAsideModels(client, instanceUrl, port, draft.account);
+    const savedAside = state.kind === 'ready' ? state.data.perCli?.['aside'] : undefined;
+    const asideModel = draft.cli === 'aside' ? draft.model : String(dirty.pending.get('activeOverrides.aside.model')?.value || savedAside?.model || '');
+    const asideEffort = draft.cli === 'aside' ? draft.effort : String(dirty.pending.get('activeOverrides.aside.effort')?.value || savedAside?.effort || '');
+    const asideError = draft.host !== 'local' ? 'Aside requires the local host.' : asideSelectionError(aside.inventory, asideModel, asideEffort);
+    useEffect(() => {
+        for (const [key, entry] of dirty.pending) {
+            if (key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.') || (key === 'cli' && draft.cli === 'aside')) {
+                const valid = !asideError;
+                if (entry.valid !== valid) dirty.set(key, { ...entry, valid });
+            }
+        }
+    }, [asideError, dirty, draft.cli]);
+    useLayoutEffect(() => {
+        activeInstance.current = instance; activeOperation.current = null; ++metadataGeneration.current;
+        setSaving(false); setSaveError(null); setCliMeta(null);
+        return () => { activeInstance.current = null; activeOperation.current = null; ++metadataGeneration.current; };
+    }, [instance]);
 
     // Generation ref, same convention as Browser.tsx: clearing a timer does not
     // stop a request that is already in flight, and that response would
@@ -177,45 +219,49 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
     const loadCliStatus = useCallback(async (gen?: number) => {
         try {
             const next = await client.get<Record<string, CliStatusInfo>>('/api/cli-status');
-            if (gen !== undefined && gen !== cliStatusGenRef.current) return;
+            if (activeInstance.current !== instance || (gen !== undefined && gen !== cliStatusGenRef.current)) return;
             cliStatusRef.current = next;
             setCliStatus(next);
         } catch {
-            if (gen !== undefined && gen !== cliStatusGenRef.current) return;
+            if (activeInstance.current !== instance || (gen !== undefined && gen !== cliStatusGenRef.current)) return;
             cliStatusRef.current = {};
             setCliStatus({});
         }
-    }, [client]);
+    }, [client, instance]);
 
     const loadFlush = useCallback(async () => {
         setFlushLoading(true);
         setFlushError(null);
         try {
             const data = await client.get<FlushSnapshot>('/api/memory-files');
+            if (activeInstance.current !== instance) return;
             const next = { cli: data.cli || '', model: data.model || '' };
             setFlushOriginal(next);
             setFlushDraft(next);
         } catch (err: unknown) {
+            if (activeInstance.current !== instance) return;
             setFlushError(err instanceof Error ? err.message : String(err));
         } finally {
-            setFlushLoading(false);
+            if (activeInstance.current === instance) setFlushLoading(false);
         }
-    }, [client]);
+    }, [client, instance]);
 
     const loadEmployees = useCallback(async () => {
         setEmployeeLoading(true);
         setEmployeeError(null);
         try {
             const response = await client.get<RuntimeEmployeesResponse>('/api/employees');
+            if (activeInstance.current !== instance) return;
             const rows = unwrapRuntimeEmployees(response);
             setEmployeeOriginal(rows);
             setEmployeeDraft(rows);
         } catch (err: unknown) {
+            if (activeInstance.current !== instance) return;
             setEmployeeError(err instanceof Error ? err.message : String(err));
         } finally {
-            setEmployeeLoading(false);
+            if (activeInstance.current === instance) setEmployeeLoading(false);
         }
-    }, [client]);
+    }, [client, instance]);
 
     useEffect(() => {
         void loadCliMeta();
@@ -284,6 +330,8 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
         const meta = metaFor(cli, cliMeta);
         setDraft({
             cli,
+            account: state.data.perCli?.['aside']?.account || '',
+            host: state.data.perCli?.['aside']?.host || '',
             provider: state.data.perCli?.[cli]?.provider || meta.defaultProvider || '',
             model: runtimeModelFor(cli, state.data.perCli, state.data.activeOverrides),
             effort: runtimeEffortFor(cli, state.data.perCli, state.data.activeOverrides),
@@ -297,39 +345,50 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
                 : permissions.mode === 'safe' ? 'safe'
                 : 'auto',
         });
-    }, [cliMeta, state]);
+    }, [state.kind === 'ready' ? state.data : null]);
 
-    useEffect(() => {
-        return () => {
-            for (const key of Array.from(dirty.pending.keys())) {
-                if (
-                    key === 'cli' ||
-                    key === 'workingDir' ||
-                    key === 'permissions' ||
-                    key === 'runtimeEmployees' ||
-                    key === 'flushCli' ||
-                    key === 'flushModel' ||
-                    key.startsWith('activeOverrides.')
-                ) {
-                    dirty.remove(key);
-                }
-            }
-        };
-    }, [dirty]);
+    useEffect(() => () => {
+        for (const key of Array.from(dirty.pending.keys())) if (ownsAgentKey(key)) dirty.remove(key);
+    }, [dirty, instance]);
 
-    const setEntry = useCallback((key: string, entry: DirtyEntry) => dirty.set(key, entry), [dirty]);
+    const setEntry = useCallback((key: string, entry: DirtyEntry) => {
+        if (activeInstance.current === instance && !activeOperation.current && ownsAgentKey(key)) dirty.set(key, entry);
+    }, [dirty, instance]);
 
-    const onSave = useCallback(async () => {
-        const bundle = dirty.saveBundle();
-        if (Object.keys(bundle).length === 0) return;
-        const freshSettings = await saveAgentRuntime({ client, bundle, employeeDraft, employeeOriginal });
-        dirty.clear();
-        if (freshSettings) setData(freshSettings as AgentSnapshot);
-        await refresh();
-        await loadCliMeta();
-        await loadFlush();
-        await loadEmployees();
-    }, [client, dirty, employeeDraft, employeeOriginal, loadCliMeta, loadEmployees, loadFlush, refresh, setData]);
+    const onSave = useCallback((): Promise<void> => {
+        if (activeInstance.current !== instance) return Promise.resolve();
+        if (activeOperation.current) return activeOperation.current;
+        if ([...dirty.pending.keys()].some(key => key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.')) && asideError) return Promise.reject(new Error(asideError));
+        const bundle = Object.fromEntries(Object.entries(dirty.saveBundle()).filter(([key]) => ownsAgentKey(key)));
+        if (!Object.keys(bundle).length) return Promise.resolve();
+        if ((draft.cli === 'aside' || Object.keys(bundle).some(key => key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.'))) && asideError)
+            return Promise.reject(new Error(asideError));
+        if ((Object.hasOwn(bundle, 'flushCli') || Object.hasOwn(bundle, 'flushModel')) && (flushDraft.cli || draft.cli) === 'aside') return Promise.reject(new Error('Aside cannot run memory flush.'));
+        if (Object.hasOwn(bundle, 'perCli.aside.account')) {
+            bundle['activeOverrides.aside.model'] ??= '';
+            bundle['activeOverrides.aside.effort'] ??= '';
+        }
+        const submitted = new Map([...dirty.pending].filter(([key]) => Object.hasOwn(bundle, key)));
+        setSaving(true); setSaveError(null);
+        const operation = Promise.resolve().then(async () => {
+            if (activeInstance.current !== instance) return;
+            const freshSettings = await saveAgentRuntime({ client, bundle, employeeDraft, employeeOriginal });
+            if (activeInstance.current !== instance) return;
+            for (const [key, entry] of submitted) if (dirty.pending.get(key) === entry) dirty.remove(key);
+            if (freshSettings) setData(freshSettings as AgentSnapshot);
+            await refresh();
+            await loadCliMeta();
+            await loadFlush();
+            await loadEmployees();
+        }).catch(error => {
+            if (activeInstance.current === instance) throw error;
+        }).finally(() => {
+            if (activeOperation.current === operation) activeOperation.current = null;
+            if (activeInstance.current === instance) setSaving(false);
+        });
+        activeOperation.current = operation;
+        return operation;
+    }, [client, dirty, draft.cli, flushDraft.cli, asideError, instance, employeeDraft, employeeOriginal, loadCliMeta, loadEmployees, loadFlush, refresh, setData]);
 
     useEffect(() => {
         if (!registerSave) return;
@@ -414,12 +473,12 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
 
     function resetActiveOverrideKeys(): void {
         for (const key of Array.from(dirty.pending.keys())) {
-            if (key.startsWith('activeOverrides.')) dirty.remove(key);
+            if (key.startsWith('activeOverrides.') && !key.startsWith('activeOverrides.aside.')) dirty.remove(key);
         }
     }
 
     function setRuntimeDraft(next: RuntimeDraft): void {
-        setDraft(next);
+        if (activeInstance.current === instance && !activeOperation.current) setDraft(next);
     }
 
     return (
@@ -427,9 +486,11 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             className="settings-page-form"
             onSubmit={(event) => {
                 event.preventDefault();
-                void onSave();
+                void onSave().catch(error => { if (activeInstance.current === instance) setSaveError(describeError(error)); });
             }}
         >
+            {saveError ? <PageError message={saveError} /> : null}
+            <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {settingsData.runtimeDefaultMigration?.state === 'pending' ? (
                 <div className="settings-inline-notice" role="status">
                     <strong>기본 런타임 변경 안내</strong>
@@ -480,6 +541,27 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             </label>
             <CliProbeNotice status={cliStatus[draft.cli]} exhausted={cliStatusExhausted} />
             <RuntimeHeader
+                asideFields={draft.cli === 'aside' ? <AsideSelectionFields id="agent-aside" account={draft.account} host={draft.host}
+                    model={draft.model} effort={draft.effort} inventory={aside.inventory} disabled={saving} refresh={aside.refresh}
+                    onAccountChange={next => {
+                        if (activeInstance.current !== instance || activeOperation.current) return;
+                        setRuntimeDraft({ ...draft, account: next, host: 'local', model: perCli['aside']?.model || '', effort: perCli['aside']?.effort || '' });
+                        setEntry('perCli.aside.account', { value: next, original: perCli['aside']?.account || '', valid: isAsideAccount(next) });
+                        setEntry('perCli.aside.host', { value: 'local', original: perCli['aside']?.host || '', valid: true });
+                        setEntry('activeOverrides.aside.model', { value: '', original: activeOverrides['aside']?.model || '', valid: true });
+                        setEntry('activeOverrides.aside.effort', { value: '', original: activeOverrides['aside']?.effort || '', valid: true });
+                    }}
+                    onModelChange={next => {
+                        if (activeInstance.current !== instance || activeOperation.current) return;
+                        setRuntimeDraft({ ...draft, model: next });
+                        setEntry('activeOverrides.aside.model', { value: next, original: dirty.pending.has('perCli.aside.account') ? '' : activeOverrides['aside']?.model || '', valid: true });
+                    }}
+                    onEffortChange={next => {
+                        if (activeInstance.current !== instance || activeOperation.current) return;
+                        const effort = next || 'default';
+                        setRuntimeDraft({ ...draft, effort });
+                        setEntry('activeOverrides.aside.effort', { value: effort, original: dirty.pending.has('perCli.aside.account') ? '' : activeOverrides['aside']?.effort || '', valid: true });
+                    }} /> : null}
                 cli={draft.cli}
                 cliOptions={cliOptions}
                 provider={activeProvider}
@@ -496,9 +578,11 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
                     const nextDraft = {
                         ...draft,
                         cli: next,
+                        account: draft.account,
+                        host: draft.host,
                         provider: perCli[next]?.provider || nextMeta.defaultProvider || '',
-                        model: runtimeModelFor(next, perCli, activeOverrides),
-                        effort: runtimeEffortFor(next, perCli, activeOverrides),
+                        model: next === 'aside' && (dirty.pending.has('activeOverrides.aside.model') || dirty.pending.has('perCli.aside.account')) ? String(dirty.pending.get('activeOverrides.aside.model')?.value || perCli['aside']?.model || '') : runtimeModelFor(next, perCli, activeOverrides),
+                        effort: next === 'aside' && (dirty.pending.has('activeOverrides.aside.effort') || dirty.pending.has('perCli.aside.account')) ? String(dirty.pending.get('activeOverrides.aside.effort')?.value || perCli['aside']?.effort || '') : runtimeEffortFor(next, perCli, activeOverrides),
                     };
                     resetActiveOverrideKeys();
                     setRuntimeDraft(nextDraft);
@@ -594,7 +678,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
                 onFlushCliChange={(next) => {
                     const model = next ? metaFor(next, cliMeta).models[0] || '' : '';
                     setFlushDraft({ cli: next, model });
-                    setEntry('flushCli', { value: next, original: flushOriginal.cli || '', valid: true });
+                    setEntry('flushCli', { value: next, original: flushOriginal.cli || '', valid: next !== 'aside' && (next !== '' || draft.cli !== 'aside') });
                     setEntry('flushModel', { value: model, original: flushOriginal.model || '', valid: true });
                 }}
                 onFlushModelChange={(next) => {
@@ -605,7 +689,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
             <AgentEmployeesSection
                 roster={employeeDraft}
                 original={employeeOriginal}
-                cliOptions={cliOptions}
+                cliOptions={cliOptions.filter(cli => cli !== 'aside')}
                 cliMeta={cliMeta}
                 loading={employeeLoading}
                 error={employeeError}
@@ -622,6 +706,7 @@ export default function Agent({ port, client, dirty, registerSave }: SettingsPag
                     });
                 }}
             />
+            </fieldset>
         </form>
     );
 }

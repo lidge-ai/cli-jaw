@@ -1,5 +1,5 @@
 import type { SettingsClient } from '../../../types';
-import { selectableRuntimeOptions, type CliMeta } from './agent-meta';
+import { auxiliaryRuntimeOptions, type CliMeta } from './agent-meta';
 
 export type RuntimeEmployeeSource = 'static' | 'db';
 
@@ -42,7 +42,7 @@ export function makeDefaultRuntimeEmployee(
     cliOptions: ReadonlyArray<string>,
     cliMeta?: Record<string, CliMeta> | null,
 ): RuntimeEmployeeRecord {
-    const cli = selectableRuntimeOptions(cliOptions)[0] || 'claude';
+    const cli = auxiliaryRuntimeOptions(cliOptions)[0] || 'claude';
     const model = cliMeta?.[cli]?.models?.[0] || 'default';
     return {
         id: newRuntimeEmployeeId(),
@@ -81,6 +81,7 @@ export function normalizeRuntimeEmployee(value: unknown): RuntimeEmployeeRecord 
 
 export function runtimeEmployeeError(row: RuntimeEmployeeRecord): string | null {
     if (!row.name.trim()) return 'Name is required';
+    if (row.cli === 'aside') return 'Aside supports the main agent only';
     if (!row.cli.trim()) return 'CLI is required';
     if (!row.model.trim()) return 'Model is required';
     return null;

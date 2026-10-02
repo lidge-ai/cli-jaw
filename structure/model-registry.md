@@ -190,9 +190,9 @@ probe." 카탈로그 렌더 한 번이 프로세스를 띄우면 로그인 프�
 
 ## Aside account catalog boundary
 
-Aside is not yet an executable Jaw engine in this layer. Its installed CLI can
-be invoked separately with an explicit account and host; registering model data
-does not by itself add a Jaw runtime or a native Code provider.
+Aside has an experimental main-session CLI backend. Catalog discovery remains
+separate from execution: registered model metadata does not prove authentication,
+entitlement, or native Code support.
 
 Aside keeps custom provider models in the selected account's `models.json`, under
 `providers.<provider>.models`. Model identity includes the provider and model ID;
@@ -265,3 +265,9 @@ session in Aside, acknowledge with authenticated `POST /api/orchestrate/aside/re
 `{sessionId, acknowledgementToken, acknowledged:true}`; the captured local child must have closed. The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
 purges pending input, drops the retained owner, and requires fresh input; it never resumes
 or retries the uncertain turn. External tool physical completion is not proved by Stop.
+
+
+Aside draft selection uses the explicit account endpoint and preserves cleared active
+overrides as empty values. Empty overrides inherit `perCli.aside`; an explicit
+`default` value intentionally resolves the account's configured default. Registered
+models without reasoning metadata remain selectable with no inferred effort choices.

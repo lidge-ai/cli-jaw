@@ -24,7 +24,7 @@ export interface CliStatusWorkerOptions {
     env?: NodeJS.ProcessEnv;
 }
 
-type AuthResult = { authenticated: boolean; source: string };
+type AuthResult = { authenticated: boolean | null; source: string };
 type CapabilityResult = { ready: boolean; reason?: string };
 
 function defaultWorkerPath(): string {
@@ -251,6 +251,7 @@ async function probeCodexApp(binary: string): Promise<CapabilityResult> {
 
 async function authForCli(cli: string, path: string | null, _detected: Record<string, { available?: boolean }>): Promise<AuthResult> {
     switch (cli) {
+        case 'aside': return { authenticated: null, source: 'selected account authentication is unverified' };
         case 'agy': return { authenticated: true, source: 'installed; auth checked by agy at run time' };
         case 'pi': return { authenticated: true, source: 'profile auth validated at registration' };
         case 'claude': {
@@ -339,7 +340,7 @@ export async function collectCliStatus(deps: CliStatusCollectionDeps = {}): Prom
         if (cli === 'codex-app' && binaryInstalled && path) {
             capability = await inStage('capability', cli, () => probeCodexApp(path));
         }
-        const auth = binaryInstalled
+        const auth = binaryInstalled || cli === 'aside'
             ? await inStage('auth', cli, () => authForCli(cli, path, detected))
             : { authenticated: false, source: 'none' };
         const row: CliStatusRow = {
