@@ -34,6 +34,7 @@ jobs:
             sidecar_platform: darwin
             sidecar_arch: arm64
             sidecar_check_script: check:electron-dist-mac-no-jwc
+            sidecar_smoke_script: check:electron-dist-mac-smoke
             artifact_globs: |
               electron/dist/*.dmg
               electron/dist/*.zip
@@ -45,6 +46,7 @@ jobs:
             sidecar_platform: win32
             sidecar_arch: x64
             sidecar_check_script: check:electron-dist-win-no-jwc
+            sidecar_smoke_script: check:electron-dist-win-smoke
             artifact_globs: |
               electron/dist/*.exe
               electron/dist/*.exe.blockmap
@@ -57,6 +59,7 @@ jobs:
             sidecar_platform: linux
             sidecar_arch: x64
             sidecar_check_script: check:electron-dist-linux-no-jwc
+            sidecar_smoke_script: check:electron-dist-linux-smoke
             artifact_globs: |
               electron/dist/*.AppImage
               electron/dist/*.deb
@@ -231,6 +234,9 @@ jobs:
 
       - name: Verify packaged app has no JWC payload
         run: npm run ${{ matrix.sidecar_check_script }}
+
+      - name: Smoke packaged sidecar
+        run: npm run ${{ matrix.sidecar_smoke_script }}
 
       - name: Verify macOS app icons
         if: matrix.platform == 'macos'

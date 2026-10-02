@@ -12,6 +12,10 @@ function read(path: string): string {
     return normalizeStrictPropertyAccess(readFileSync(join(projectRoot, path), 'utf8'));
 }
 
+function commandTokens(command: string | undefined): string[] {
+    return command?.trim().split(/\s+/) ?? [];
+}
+
 test('browser URL normalization keeps preview host shorthands and Google search distinct', async () => {
     const { DEFAULT_BROWSER_URL, normalizeBrowserTarget } = await import('../../public/manager/src/browser-panel/browser-url.ts');
 
@@ -27,10 +31,38 @@ test('browser URL normalization keeps preview host shorthands and Google search 
 
 test('Electron desktop build refreshes manager frontend assets before packaging', () => {
     const pkg = read('package.json');
+    const scripts = (JSON.parse(pkg) as { scripts?: Record<string, string> }).scripts ?? {};
+    const localDist = commandTokens(scripts['electron:dist:mac']);
 
+    let previousCommandAt = -1;
+    for (const orderedCommand of [
+        'build:frontend',
+        'sidecar:bundle',
+        'build',
+        'dist:mac',
+        'electron:resign:mac',
+        'check:electron-dist-mac-no-jwc',
+        'check:electron-dist-mac-smoke',
+        'check:app-icons',
+    ]) {
+        const at = localDist.indexOf(orderedCommand);
+        assert.ok(at > previousCommandAt, `electron:dist:mac must invoke ${orderedCommand} in release order`);
+        assert.equal(localDist.indexOf(orderedCommand, at + 1), -1,
+            `electron:dist:mac must invoke ${orderedCommand} exactly once`);
+        previousCommandAt = at;
+    }
     assert.ok(
-        pkg.includes('"electron:dist:mac": "npm run build:frontend && npm run sidecar:bundle && npm --prefix electron run build && CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix electron run dist:mac && npm run electron:resign:mac && npm run check:electron-dist-mac-no-jwc && npm run check:app-icons"'),
-        'electron:dist:mac must rebuild assets, bundle the sidecar, package the shell, and verify the final app before success',
+        localDist.indexOf('check:electron-dist-mac-no-jwc')
+            < localDist.indexOf('check:electron-dist-mac-smoke')
+        && localDist.indexOf('check:electron-dist-mac-smoke') < localDist.indexOf('check:app-icons'),
+        'electron:dist:mac must smoke the packaged sidecar after the absence check and before completing',
+    );
+    const signedDist = commandTokens(scripts['electron:dist:mac:signed']);
+    assert.ok(
+        signedDist.indexOf('check:electron-dist-mac-no-jwc')
+            < signedDist.indexOf('check:electron-dist-mac-smoke')
+        && signedDist.indexOf('check:electron-dist-mac-smoke') < signedDist.indexOf('check:app-icons'),
+        'electron:dist:mac:signed must smoke the packaged sidecar after the absence check and before artifact verification',
     );
     assert.ok(
         pkg.includes('"sidecar:bundle": "bash scripts/bundle-sidecar.sh darwin arm64"'),
@@ -52,6 +84,17 @@ test('Electron desktop build refreshes manager frontend assets before packaging'
         pkg.includes('"check:electron-dist-linux-no-jwc": "node scripts/check-electron-sidecar-no-jwc.cjs --server-root electron/dist/linux-unpacked/resources/server"'),
         'package scripts must expose a final Linux app no-JWC validator',
     );
+    for (const [name, serverRoot] of Object.entries({
+        'check:electron-dist-mac-smoke': 'electron/dist/mac-arm64/cli-jaw.app/Contents/Resources/server',
+        'check:electron-dist-win-smoke': 'electron/dist/win-unpacked/resources/server',
+        'check:electron-dist-linux-smoke': 'electron/dist/linux-unpacked/resources/server',
+    })) {
+        assert.deepEqual(
+            commandTokens(scripts[name]),
+            ['node', 'scripts/check-sidecar-smoke.mjs', '--server-root', serverRoot],
+            `${name} must smoke the OS-specific packaged server tree`,
+        );
+    }
     assert.ok(pkg.includes('"check:app-icons": "node scripts/check-app-icon-assets.cjs"'), 'package scripts must expose app icon validation');
 });
 

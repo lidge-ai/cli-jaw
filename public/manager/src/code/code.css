@@ -9,6 +9,10 @@
 /* Jaw/Code mode switch */
 .mode-switch {
     display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: var(--workspace-topbar-height);
+    flex-shrink: 0;
     gap: 2px;
     padding: 6px 8px;
     background: var(--bg-panel);

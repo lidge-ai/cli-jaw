@@ -500,6 +500,8 @@ Group DMs need the `message.mpim` event and `mpim:history` scope. For containers
 
 The Electron app boots the manager dashboard, ships a bundled Node.js sidecar, and lives in your menu bar. Download it from [GitHub Releases](https://github.com/lidge-ai/cli-jaw/releases/latest):
 
+Each desktop build verifies its bundled server starts successfully before installers are uploaded.
+
 - **macOS (Apple Silicon)** — open the DMG and drag CLI-JAW into Applications. Builds are Developer ID signed, notarized and stapled, and update in-app.
 - **Windows (x64)** — run the Setup `.exe`. It is unsigned, so SmartScreen may ask you to confirm.
 - **Linux (x64)** — make the AppImage executable and run it.

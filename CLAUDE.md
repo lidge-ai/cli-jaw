@@ -2,6 +2,8 @@
 
 - The canonical desktop release workflow must Developer ID-sign macOS with Team `U9ATA49N28`, notarize, staple, verify the final app, and verify channel metadata plus the update ZIP SHA-512 before upload. `electron:dist:mac:signed` is the equivalent opt-in local path; ordinary `electron:dist:mac` remains ad-hoc. Windows remains unsigned. Keep README and `structure/infra.md` aligned; fixture tests do not prove a signed/notarized artifact, and the first signed release is a manual-DMG bootstrap before in-app updates can be trusted.
 
+Electron Builder 26 copies sidecar `node_modules` through an explicit `extraResources` FileSet with the sidecar exclusions preserved; local default/signed macOS commands and every desktop release matrix leg must smoke the packaged server tree after packaging and before upload.
+
 This repository is a Node.js ESM orchestration runtime for boss/employee dispatch, Web UI, browser/CDP automation, Telegram/Discord/Slack channels, memory, heartbeat, and PABCD orchestration.
 
 The `/api/code` API owns isolated Codex/Claude/Cursor/Grok sessions through `src/code-mode/host.ts`. Use its dedicated store, native adapters and captured turn/resource ownership; keep full snapshots, compact replay and byte limits synchronized with the runtime and API architecture docs. Claude conversation rollback is the one replay carve-out: removed items and their events are deleted, replay below the replay floor answers `invalid_sequence`, and a higher `historyGeneration` requires a new snapshot.
