@@ -90,6 +90,7 @@ cli-jaw/
 │   │       ├── cursor.ts ← Cursor native adapter
 │   │       └── grok.ts ← Grok native adapter
 │   ├── agent/                ← CLI 에이전트 런타임 (root files + events/ + spawn/)
+│   │   ├── aside-catalog.ts  ← explicit-account local Aside catalog and selection resolution
 │   │   ├── runtime/          ← shared native contract foundation (provider activation follows separately)
 │   │   │   ├── acp/          ← shared v1 wire boundary and bounded native transport
 │   │   │   │   ├── runtime-session.ts ← captured native turn, raw outcome and passive claim/finalize
@@ -511,6 +512,7 @@ cli-jaw/
 │   │   ├── types.ts          ← TraceRunInput, TraceEventInput, TracePointer, TraceRunRow 타입
 │   │   └── redact.ts         ← trace event redaction helpers
 │   ├── shared/               ← shared runtime, presentation and policy contracts
+│   │   ├── aside-contract.ts ← safe account, registered/cached catalog and selection types
 │   │   ├── elicitation-spec.ts ← structured elicitation schema + validation helper
 │   │   ├── runtime-observability.ts ← worker-run/background-task shared runtime status category vocabulary
 │   │   ├── runtime-contract.ts ← native session capabilities, turn outcome and presentation event types
@@ -664,6 +666,7 @@ cli-jaw/
 │       └── tui/              ← chat 터미널 TUI 분리 (api, channel, fullscreen-mode, input-handler, overlays, raw-pipe-mode, renderer, simple-mode, tui-io, types, ws-handler)
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
+│       ├── aside-catalog.test.ts ← local profile fixtures, catalog bounds and selection safety
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
