@@ -160,3 +160,15 @@ Slack `trustedBotTriggers` lets one named bot start a turn here: a fully validat
 Optional `workflowSkill` selects the operator-configured execution route only after the actual sender/channel/bot-user/marker match and self-mention. Load only the selected enabled skill, bounded to 64 KiB; unverified sender/request context or unavailable or ambiguous skill selection is visibly blocked with no model fallback. Four-key rules keep legacy behavior. Empty or standalone `SILENT` workflow results require an unconfirmed notice and failure ACK, with no automatic rerun because effects may already exist. Preserve normal approval, tool grants and source permissions; an AI reply is not business-completion proof. See `docs/slack-tools.md`.
 
 Opted-in workflow requests use the `followup` queue when busy; never steer or collect them into an unrelated running turn. Read the selected skill at admission and preserve its captured content, hash and source metadata across queueing and restart. Silent outcomes settle the workflow request as unconfirmed/failed while preserving provider/native final text and status; never automatically rerun.
+
+
+- Aside is an experimental main-only CLI backend with explicit `perCli.aside.account=uN`
+  and `host=local`. Catalog-selected concrete model/effort and cwd/policy are captured
+  before awaits; Safe maps to guard, Auto to full-access, other policies fail closed.
+  Workers/internal flush/images/native Code/pools/automatic retries and fallback are
+  unsupported. Normal steer and `/steer` queue; `/queue steer` rejects. Owned structured
+  replay supplies exact finals; diagnostic CLI logs never do. Uncertain cleanup retains
+  the captured scope and blocks queue draining. Manual external reconciliation followed
+  by authenticated `POST /api/orchestrate/aside/reconcile` with `{sessionId, acknowledgementToken, acknowledged:true}`
+  validates exact chat/run token and local child close, purges pending input and allows fresh input only. See
+  `structure/runtime-integration.md` (or `runtime-integration.md` from structure/).

@@ -10,7 +10,7 @@ aliases: [CLI-JAW Commands, slash commands registry, commands.md]
 
 > `commands.ts`(621L) + `handlers.ts`(448L) + `handlers-runtime.ts`(507L) + `handlers-completions.ts`(103L) + `handlers-workflows.ts`(505L) + `handlers-search.ts`(34L) + `handlers-skill-invoke.ts`(36L) + `api-auth.ts`(45L) + `command-context.ts`(144L) + `registry.ts`(254L) + `acp-client.ts`(382L) + `claude-models.ts`(84L) + `compact.ts`(143L)
 > slash registry는 55개 커맨드이며 non-hidden은 54개다(`/file`만 hidden). interface별 가시성은 CLI 50 / Web 44 / Telegram 41 / Discord 41 / Slack 41이고, root cmdline에는 workflow/interactive hidden set을 제외한 28개가 보인다. root CLI는 `bin/cli-jaw.ts` 기준 `provider`/`design`/`hooks`를 포함한 dynamic import branch를 가진다. `chat search`, `browser web-ai`, `dashboard memory`, `dashboard chat search`처럼 grouped subcommand까지 포함하면 28개 user-facing surface로 문서화한다. helper까지 포함한 `bin/commands/*.ts` top-level 파일은 33개다. `browser web-ai`는 `browser-web-ai.ts`, `dashboard memory`는 `dashboard-memory.ts`, dashboard chat federation은 `dashboard-chat.ts`, task root command는 `task.ts`, dispatch unwrap 보조는 `dispatch-helpers.ts`, batch summary 보조는 `dispatch-batch-summary.ts`로 분리되어 있다.
-> 모델/CLI 선택은 `registry.ts` 단일 소스를 따른다. 현재 registry 런타임은 `pi`, `agy`, `claude`, `codex`, `codex-app`, `cursor`, `grok`, `kiro-code`, `opencode`, `copilot` 10개다.
+> 모델/CLI 선택은 `registry.ts` 단일 소스를 따른다. 현재 registry 런타임은 `pi`, `agy`, `claude`, `codex`, `codex-app`, `cursor`, `grok`, `kiro-code`, `opencode`, `copilot` 11개다.
 
 ---
 
@@ -290,7 +290,7 @@ external SDK or falls through to a chat prompt. Choose an available runtime with
 
 `src/cli/registry.ts` (224L)
 
-현재 CLI registry는 10개 top-level runtime을 갖는다.
+현재 CLI registry는 11개 top-level runtime을 갖는다.
 Codex 기본 registry는 ocx inactive fallback용 모델만 보유하며, live surface는 `src/cli/registry-live.ts`와 `src/cli/opencodex-models.ts`가 ocx `/v1/models`를 병합한다.
 모델 목록뿐 아니라 **모델별 reasoning effort**도 함께 병합되어 `effortsByModel`/`defaultEffortByModel`로 노출되며, `max`/`ultra`는 이를 지원하는 모델에서만 선택할 수 있다.
 

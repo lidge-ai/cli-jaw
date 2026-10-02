@@ -1,3 +1,4 @@
+import type { AsideSelection } from '../shared/aside-contract.js';
 import fs from 'fs';
 import os from 'os';
 import { dirname, join } from 'path';
@@ -190,4 +191,10 @@ export function ensureOpencodeAlwaysAllowPermissions(
     } catch (error) {
         console.warn('[jaw:opencode] permission sync failed:', (error as Error).message);
     }
+}
+
+/** Full concrete identity; changing any selector starts a fresh Aside session. */
+export function buildAsideResumeKey(selection: AsideSelection, cwd: string, policy: 'auto' | 'safe'): string {
+    return JSON.stringify(['aside-v1', selection.account, selection.host, selection.provider,
+        selection.modelId, selection.effort, cwd, policy]);
 }

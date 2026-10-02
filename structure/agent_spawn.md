@@ -366,3 +366,22 @@ orchestrate(prompt, meta)
 | Tool-log sanitize | `sanitizeToolLogForDurableStorage()` before DB insert |
 | Trace finalization | `finalizeTraceRun()` + `linkTraceRunToMessage()` |
 | Kiro output resolution | `resolveSpawnOutputText()` (parsed Kiro body 우선) |
+
+## Aside experimental main CLI
+
+Aside is an experimental main-session CLI backend (`aside`), restricted to an explicit
+`perCli.aside.account` (`uN`) and `host: local`. Its model is `default` or a qualified
+`provider/modelId`; empty model/effort selectors normalize to default, resolved once from
+that account's local catalog. The execution identity captures account, host, concrete
+provider/model/effort, cwd and policy before asynchronous preparation. Safe maps only to
+Aside `guard`, Auto only to `full-access`; arrays and other policies are rejected.
+Workers, internal/flush calls, images, blind retries/fallbacks and native Code/pools are
+unsupported. Normal/default steer and `/steer` queue one follow-up; `/queue steer` is
+rejected before queue removal or process control. Structured owned replay selects finals,
+including exact empty/whitespace answers; CLI logs remain diagnostic. Failed/stopped or
+uncertain sessions never persist a resumable ID. `cleanup: uncertain` retains only the
+captured scope and blocks automatic queue draining. After manually reconciling that exact
+session in Aside, acknowledge with authenticated `POST /api/orchestrate/aside/reconcile`
+`{sessionId, acknowledgementToken, acknowledged:true}`; the captured local child must have closed. The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
+purges pending input, drops the retained owner, and requires fresh input; it never resumes
+or retries the uncertain turn. External tool physical completion is not proved by Stop.

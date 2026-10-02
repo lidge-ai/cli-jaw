@@ -2,13 +2,13 @@ import { resolve } from 'node:path';
 import type { Express } from 'express';
 import type { AuthMiddleware } from './types.js';
 import { fail } from '../http/response.js';
-import { isAgentBusy, messageQueue, getQueuedMessageSnapshotForScope, removeQueuedMessage, killActiveAgent, waitForMainProcessEnd, waitForExitSettled, getSteerWaitMsForActiveAgent, setQueueHold, clearQueueHold, setSteerInProgress, isSteerInProgress } from '../agent/spawn.js';
+import { reconcileAsideScope, getCurrentMainMeta, isAgentBusy, messageQueue, getQueuedMessageSnapshotForScope, removeQueuedMessage, killActiveAgent, waitForMainProcessEnd, waitForExitSettled, getSteerWaitMsForActiveAgent, setQueueHold, clearQueueHold, setSteerInProgress, isSteerInProgress } from '../agent/spawn.js';
 import { getLiveRun } from '../agent/live-run-state.js';
 import { listToolEntriesForRun } from '../trace/store.js';
 import { mergeLatestTools } from '../agent/merge-tool-log.js';
 import { orchestrate, orchestrateContinue, orchestrateReset, isResetIntent, isContinueIntent, drainPendingReplays } from '../orchestrator/pipeline.js';
 import { getSession, insertMessage } from '../core/db.js';
-import { getActiveChatSession } from '../core/chat-sessions.js';
+import { getActiveChatSession, getChatSessionById, getChatSessionRemoteKey } from '../core/chat-sessions.js';
 import { resolveRequestSessionStrict } from './session-request.js';
 import { getState, getCtx, setState, resetState, canTransition, resetEveryState, parseWorkerVerdict, aggregateBatchVerdicts } from '../orchestrator/state-machine.js';
 import type { WorkerVerdict } from '../orchestrator/state-machine.js';
@@ -17,7 +17,7 @@ import { parsePhaseAttestationObject } from '../orchestrator/attestation.js';
 import { resetFriction } from '../orchestrator/friction.js';
 import { buildSeedFromEvidence, renderSeedBlock } from '../orchestrator/seed.js';
 import type { OrcStateName } from '../orchestrator/state-machine.js';
-import { resolveOrcScope } from '../orchestrator/scope.js';
+import { resolveOrcScope, scopeForChatSession } from '../orchestrator/scope.js';
 import {
     getActiveWorkers,
     claimWorker,
@@ -47,7 +47,7 @@ import { verifyBossToken } from '../core/boss-auth.js';
 import { buildVirtualEmployeeRow, resolveDispatchableEmployee, checkRuntimeHints, checkModelSupport } from '../core/employees.js';
 import type { EmployeeRow, SyntheticEmployeeRow } from '../core/employees.js';
 import { resolveCliDefaultModel } from '../cli/opencodex-models.js';
-import { resolveMainCli } from '../core/main-session.js';
+import { resolveMainCli, type MainSessionRecord } from '../core/main-session.js';
 import { getHeartbeatRuntimeState } from '../memory/heartbeat.js';
 import { sanitizeToolLogForDurableStorage, isToolLogOverflowMarker, omittedCountOf } from '../shared/tool-log-sanitize.js';
 import { getSecurityAuditLog } from '../security/security-audit-log.js';
@@ -485,6 +485,21 @@ export function registerOrchestrateRoutes(
         res.json({ ok: true, released: id });
     });
 
+    app.post('/api/orchestrate/aside/reconcile', requireAuth, (req, res) => {
+        const token = req.body?.acknowledgementToken;
+        if (req.body?.acknowledged !== true || typeof req.body?.sessionId !== 'string' || !req.body.sessionId.trim()
+            || typeof token !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(token)) {
+            return fail(res, 400, 'aside_reconciliation_acknowledgement_required');
+        }
+        // Reconciliation always names the exact chat; a disabled multi-session gate cannot substitute the active chat.
+        const chatSessionId = req.body.sessionId.trim();
+        if (getChatSessionById(chatSessionId) === null) return fail(res, 404, 'unknown_session');
+        const scope = scopeForChatSession(chatSessionId, getChatSessionRemoteKey(chatSessionId) ?? undefined,
+            settings['multiSession']?.enabled === true);
+        if (!reconcileAsideScope(scope, chatSessionId, token)) return fail(res, 409, 'aside_reconciliation_unavailable_or_child_not_closed');
+        res.json({ ok: true, scope, freshInputRequired: true });
+    });
+
     app.post('/api/orchestrate/queue/:id/steer', requireAuth, async (req, res) => {
         const id = String(req.params["id"] || '');
         if (!id) return fail(res, 400, 'missing id');
@@ -515,6 +530,10 @@ export function registerOrchestrateRoutes(
                 ...(peek.remoteKey ? { remoteKey: peek.remoteKey } : {}),
             } : {}),
         });
+        if (getCurrentMainMeta(scope)?.cli === 'aside'
+            || resolveMainCli(peek.overrides?.cli, settings, getSession() as MainSessionRecord | undefined) === 'aside') {
+            return fail(res, 409, 'aside_queue_steer_unsupported');
+        }
         if (isSteerInProgress(scope)) {
             clearQueueHold(scope, id, { resume: false });
             return fail(res, 409, 'steer already in progress');

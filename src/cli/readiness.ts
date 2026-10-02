@@ -49,6 +49,10 @@ export function getCliReadiness(dependencies: ReadinessDependencies = DEFAULT_DE
         }
 
         switch (cli) {
+            case 'aside': {
+                source = 'installed; selected account authentication is unverified';
+                break;
+            }
             case 'agy': {
                 authenticated = true; // agy performs auth checks during prompt execution.
                 source = 'installed; auth checked by agy at run time';
@@ -133,13 +137,13 @@ export function getCliReadiness(dependencies: ReadinessDependencies = DEFAULT_DE
     return results;
 }
 
-export const DEFAULT_READINESS_ORDER: readonly CliEngine[] = ['codex-app', 'pi', 'claude', 'agy', 'codex', 'cursor', 'kiro-code', 'copilot', 'grok', 'opencode'];
+export const DEFAULT_READINESS_ORDER: readonly CliEngine[] = ['codex-app', 'pi', 'claude', 'agy', 'codex', 'cursor', 'kiro-code', 'copilot', 'grok', 'opencode', 'aside'];
 
 export function pickFirstReadyCli(
     order: readonly CliEngine[] = DEFAULT_READINESS_ORDER,
     dependencies: ReadinessDependencies = DEFAULT_DEPENDENCIES,
 ): CliEngine {
-    const effectiveOrder = [DEFAULT_CLI, ...order.filter(cli => cli !== DEFAULT_CLI)];
+    const effectiveOrder = [DEFAULT_CLI, ...order.filter(cli => cli !== DEFAULT_CLI && cli !== 'aside')];
     const readiness = getCliReadiness(dependencies);
     // Tier 1: installed + authenticated
     for (const cli of effectiveOrder) {
