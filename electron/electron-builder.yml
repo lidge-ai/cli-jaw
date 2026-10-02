@@ -23,6 +23,18 @@ extraResources:
       - "!**/*.map"
       - "!**/test*"
       - "!**/.cache"
+  # app-builder-lib 26 rejects a FileSet's root node_modules directory before
+  # evaluating its include patterns. Copy its contents from a separate source
+  # root so production dependencies reach Resources/server/node_modules while
+  # retaining the same source, map, test and cache exclusions as the sidecar.
+  - from: sidecar/server/node_modules
+    to: server/node_modules
+    filter:
+      - "**/*"
+      - "!**/*.ts"
+      - "!**/*.map"
+      - "!**/test*"
+      - "!**/.cache"
   - from: build/icon.png
     to: icon.png
   - from: build/trayTemplate.png

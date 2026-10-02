@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..', '..');
@@ -331,8 +332,32 @@ test('stable promotion fast-forwards instead of squashing through a PR', () => {
     );
 });
 
+test('electron-builder copies the sidecar node_modules through its own filtered resource set', () => {
+    const config = parse(read('electron/electron-builder.yml')) as {
+        extraResources?: Array<{ from?: string; to?: string; filter?: string[] }>;
+    };
+    const resources = config.extraResources ?? [];
+    const sidecar = resources.find(resource => resource.from === 'sidecar/server');
+    const dependencies = resources.find(resource => resource.from === 'sidecar/server/node_modules');
+    const expectedFilters = ['**/*', '!**/*.ts', '!**/*.map', '!**/test*', '!**/.cache'];
+
+    assert.deepEqual(sidecar?.filter, expectedFilters, 'the general sidecar copy must retain its release exclusions');
+    assert.equal(dependencies?.to, 'server/node_modules', 'production dependencies must be restored at the packaged runtime path');
+    assert.deepEqual(dependencies?.filter, expectedFilters,
+        'the explicit dependency copy must retain the same source/map/test/cache exclusions');
+});
+
 test('desktop release workflow uploads OS matrix artifacts only after GitHub release publication', () => {
     const workflow = read('.github/workflows/desktop-release.yml');
+    const workflowConfig = parse(workflow) as {
+        jobs?: Record<string, {
+            strategy?: { matrix?: { include?: Array<Record<string, string>> } };
+            steps?: Array<{ name?: string; run?: string }>;
+        }>;
+    };
+    const desktopJob = workflowConfig.jobs?.['desktop-release'];
+    const matrix = desktopJob?.strategy?.matrix?.include ?? [];
+    const steps = desktopJob?.steps ?? [];
 
     assert.ok(workflow.includes('release:'), 'desktop workflow must be release-triggered');
     assert.ok(workflow.includes('types: [published]'), 'desktop workflow must run only after release publication');
@@ -350,8 +375,20 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
     assert.ok(workflow.includes('sidecar_check_script: check:electron-dist-mac-no-jwc'), 'desktop workflow must bind macOS to the mac packaged sidecar no-JWC verifier');
     assert.ok(workflow.includes('sidecar_check_script: check:electron-dist-win-no-jwc'), 'desktop workflow must bind Windows to the Windows packaged sidecar no-JWC verifier');
     assert.ok(workflow.includes('sidecar_check_script: check:electron-dist-linux-no-jwc'), 'desktop workflow must bind Linux to the Linux packaged sidecar no-JWC verifier');
+    for (const [platform, script] of Object.entries({
+        macos: 'check:electron-dist-mac-smoke',
+        windows: 'check:electron-dist-win-smoke',
+        linux: 'check:electron-dist-linux-smoke',
+    })) {
+        const row = matrix.find(candidate => candidate['platform'] === platform);
+        assert.equal(row?.['sidecar_smoke_script'], script, `${platform} must map to its packaged sidecar smoke`);
+    }
     assert.ok(workflow.includes('Verify packaged app has no JWC payload'), 'desktop workflow must verify packaged app excludes JWC before upload on every OS');
     assert.ok(workflow.includes('npm run ${{ matrix.sidecar_check_script }}'), 'desktop workflow must run the OS-specific final sidecar verifier');
+    const smokeAt = steps.findIndex(step => step.name === 'Smoke packaged sidecar');
+    assert.ok(smokeAt >= 0, 'desktop workflow must launch the copied sidecar before upload on every OS');
+    assert.equal(steps[smokeAt]?.run, 'npm run ${{ matrix.sidecar_smoke_script }}',
+        'desktop workflow must run the matrix-selected packaged sidecar smoke');
     assert.ok(workflow.includes('Verify macOS app icons'), 'desktop workflow must validate macOS app icons separately');
     assert.ok(workflow.includes("if: matrix.platform == 'macos'"), 'macOS icon verification must not run on Windows/Linux matrix legs');
     assert.ok(workflow.includes('npm run check:app-icons'), 'desktop workflow must validate app icon assets before uploading macOS artifacts');
@@ -394,6 +431,10 @@ test('desktop release workflow uploads OS matrix artifacts only after GitHub rel
         workflow.indexOf('Verify macOS update metadata and payload integrity') < workflow.indexOf('Upload build artifacts (manual run)'),
         'update metadata verification must run before any artifact upload',
     );
+    for (const uploadName of ['Upload build artifacts (manual run)', 'Upload desktop assets to release']) {
+        const uploadAt = steps.findIndex(step => step.name === uploadName);
+        assert.ok(uploadAt > smokeAt, `packaged sidecar smoke must pass before ${uploadName}`);
+    }
     const packageBlock = workflow.slice(
         workflow.indexOf('- name: Package signed and notarized macOS app'),
         workflow.indexOf('- name: Package unsigned Windows or Linux app'),

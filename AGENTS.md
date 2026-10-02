@@ -234,6 +234,8 @@ Owner map (keep these docs synchronized when the surface changes):
 - `structure/` reading map → `structure/INDEX.md`
 - Sync rule: keep `README.md`, root `AGENTS.md`, root `CLAUDE.md`, and `structure/AGENTS.md` aligned when command/API/orchestration surfaces change.
 
+Electron Builder 26 copies sidecar `node_modules` through an explicit `extraResources` FileSet with the sidecar exclusions preserved; local default/signed macOS commands and every desktop release matrix leg must smoke the packaged server tree after packaging and before upload.
+
 ### Native decisions
 
 The Classic permission selector offers Auto (YOLO) / Safe choices, stored as literal `auto` / `safe`. Server startup preserves the saved policy; never reintroduce the obsolete safe-to-auto coercion. Existing runtime-specific policy support and settings invalidation still apply.
