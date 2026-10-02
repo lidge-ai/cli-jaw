@@ -10,6 +10,8 @@ import { coerceEffortForModel, effortChoicesForModel } from './agent/agent-meta'
 import type { CliMeta, PerCliEntry } from './agent/agent-meta';
 import { PiProfileDialog } from './PiProfileDialog';
 import { piModelOptions, piProfileOptions, type PiSettingsView } from './pi-profile';
+import { AsideSelectionFields } from './AsideSelectionFields';
+import { type AsideInventory, isAsideAccount } from './aside-models';
 import { hasRuntimeTransportChoice, RuntimeTransportField } from './runtime-transport-field';
 export type PiRegistration = Parameters<ComponentProps<typeof PiProfileDialog>['onRegistered']>[0];
 
@@ -23,6 +25,8 @@ type Props = {
     dirty: DirtyStore;
     disabled?: boolean;
     client?: SettingsClient;
+    aside?: { inventory: AsideInventory; refresh(): void };
+    asideOverride?: { model?: string; effort?: string };
     pi?: PiSettingsView | undefined;
     setPi?: (next: PiSettingsView) => void;
     onPiRegistered?: (next: PiRegistration) => void;
@@ -32,7 +36,7 @@ function entryFor(value: unknown, original: unknown, valid = true): DirtyEntry {
     return { value, original, valid };
 }
 
-export function PerCliRow({ cli, meta, original, value, setValue, setEntry, dirty, disabled = false, client, pi, setPi, onPiRegistered }: Props) {
+export function PerCliRow({ cli, meta, original, value, setValue, setEntry, dirty, disabled = false, client, aside, asideOverride, pi, setPi, onPiRegistered }: Props) {
     const modelDatalistId = `percli-${cli}-models`;
     const isPi = cli === 'pi';
     const [piDialogOpen, setPiDialogOpen] = useState(false);
@@ -43,6 +47,30 @@ export function PerCliRow({ cli, meta, original, value, setValue, setEntry, dirt
         blocked.current = disabled;
         return () => { blocked.current = true; };
     }, [disabled]);
+    if (cli === 'aside' && aside) return <div className="settings-percli-row" data-cli={cli}>
+        <SettingsToolbar><strong className="settings-percli-title">Aside</strong></SettingsToolbar>
+        <AsideSelectionFields id="percli-aside" account={value.account || ''} host={value.host}
+            model={value.model || ''} effort={value.effort || ''} inventory={aside.inventory} disabled={disabled}
+            refresh={aside.refresh}
+            onAccountChange={next => {
+                if (blocked.current) return;
+                setValue({ ...value, account: next, host: 'local' });
+                setEntry('perCli.aside.account', entryFor(next, original.account || '', isAsideAccount(next)));
+                setEntry('perCli.aside.host', entryFor('local', original.host || ''));
+                setEntry('activeOverrides.aside.model', entryFor('', asideOverride?.model || ''));
+                setEntry('activeOverrides.aside.effort', entryFor('', asideOverride?.effort || ''));
+            }}
+            onModelChange={next => {
+                if (blocked.current) return;
+                setValue({ ...value, model: next });
+                setEntry('perCli.aside.model', entryFor(next, original.model || ''));
+            }}
+            onEffortChange={next => {
+                if (blocked.current) return;
+                setValue({ ...value, effort: next });
+                setEntry('perCli.aside.effort', entryFor(next, original.effort || ''));
+            }} />
+    </div>;
     const provider = value.provider || meta.defaultProvider || meta.providers?.[0] || 'claude';
     const piModels = isPi ? piModelOptions(pi, provider, value.model || '') : [];
     const hasProviders = !isPi && (meta.providers?.length ?? 0) > 0;

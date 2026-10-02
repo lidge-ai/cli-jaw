@@ -1270,8 +1270,8 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         return runAsideBackend({ mainRun, scopeKey, chatSessionId, opts, origin, ownerGeneration,
             persistenceOwner, runPin, prompt, resolve: value => resolve(value), resultPromise,
             binary: detected.path || 'aside', context: { account, host: 'local' }, policy: permissions as 'auto' | 'safe',
-            spawnCwd: cwd, spawnEnv: env, model: (opts.model ?? overrides.model ?? cfg.model) || 'default',
-            effort: (opts.effort ?? overrides.effort ?? cfg.effort) || 'default',
+            spawnCwd: cwd, spawnEnv: env, model: opts.model || overrides.model || cfg.model || 'default',
+            effort: opts.effort || overrides.effort || cfg.effort || 'default',
             sysPrompt: customSysPrompt !== undefined ? customSysPrompt : getSystemPrompt(stripUndefined({
                 currentPrompt: prompt, forDisk: false, memorySnapshot, activeCli: 'aside', freshSession: true })) },
             { activeMainProcesses, activeProcesses, buildHistoryBlock, releaseMainRun, queueCtrl, processQueue, consumeKillReason });

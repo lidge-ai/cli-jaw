@@ -4,6 +4,8 @@ import { api } from './api.js';
 
 export interface CliEntry {
     label: string;
+    observedDefaultModel?: string;
+    catalogStatus?: string;
     efforts: string[];
     models: string[];
     defaultProvider?: string;
@@ -31,6 +33,7 @@ export interface CliEntry {
 export type CliRegistry = Record<string, CliEntry>;
 
 const FALLBACK_CLI_REGISTRY: CliRegistry = {
+    aside: { label: 'Aside (experimental)', models: [], efforts: [] },
     agy: {
         label: 'Antigravity',
         efforts: [],
@@ -233,6 +236,8 @@ function normalizeRegistry(input: Record<string, unknown>): CliRegistry {
         if (typeof v['modelNote'] === 'string' && v['modelNote'].trim()) {
             normalized['modelNote'] = v['modelNote'];
         }
+        if (typeof v['observedDefaultModel'] === 'string') normalized.observedDefaultModel = v['observedDefaultModel'];
+        if (typeof v['catalogStatus'] === 'string') normalized.catalogStatus = v['catalogStatus'];
         if (typeof v['defaultProvider'] === 'string') normalized.defaultProvider = v['defaultProvider'];
         if (Array.isArray(v['providers'])) normalized.providers = [...v['providers']] as string[];
         if (v['modelsByProvider'] && typeof v['modelsByProvider'] === 'object') {

@@ -11,7 +11,7 @@ export interface CliReadiness {
     installed: boolean;
     binaryInstalled: boolean;
     capabilityReady: boolean;
-    authenticated: boolean;
+    authenticated: boolean | null;
     source: string;
 }
 
@@ -40,7 +40,7 @@ export function getCliReadiness(dependencies: ReadinessDependencies = DEFAULT_DE
         const binaryInstalled = !!info?.available;
         let capabilityReady = binaryInstalled;
         let installed = binaryInstalled;
-        let authenticated = false;
+        let authenticated: boolean | null = cli === 'aside' ? null : false;
         let source = 'none';
 
         if (!binaryInstalled) {

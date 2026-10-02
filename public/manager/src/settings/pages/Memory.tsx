@@ -37,7 +37,7 @@ import {
     type MemoryBlock,
     type MemoryEntry,
 } from './components/memory-helpers';
-import { metaFor, selectableRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel } from './components/agent/agent-meta';
+import { metaFor, auxiliaryRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel } from './components/agent/agent-meta';
 
 // Re-export pure helpers for unit tests (Heartbeat pattern).
 export {
@@ -125,6 +125,7 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
             if (isMemorySettingsKey(key)) filtered[key] = value;
         }
         if (Object.keys(filtered).length === 0) return;
+        if (filtered['memory.cli'] === 'aside' || (filtered['memory.cli'] === '' && settingsSnap.state.kind === 'ready' && settingsSnap.state.data['cli'] === 'aside')) throw new Error('Aside cannot run memory flush.');
         const patch = expandPatch(filtered);
         const updated = await client.put<SettingsSnapshot>('/api/settings', patch);
         const fresh = (updated && typeof updated === 'object' && 'data' in updated
@@ -211,12 +212,13 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
     const retentionError = validatePositiveInt(retentionDays, 'Retention days');
 
     const perCli = settingsSnap.state.data.perCli || {};
-    const cliKeys = selectableRuntimeOptions(Object.keys(perCli));
+    const cliKeys = auxiliaryRuntimeOptions(Object.keys(perCli));
+    const asideInherited = !cli && settingsSnap.state.data['cli'] === 'aside';
     const cliOptions = [
-        { value: '', label: '(profile default)' },
+        ...(settingsSnap.state.data['cli'] === 'aside' ? [] : [{ value: '', label: '(profile default)' }]),
         ...cliKeys.map((c) => ({ value: c, label: metaFor(c).label || c })),
     ];
-    if (cli && !isRetiredCliSelection(cli) && !cliOptions.some((opt) => opt.value === cli)) {
+    if (cli && cli !== 'aside' && !isRetiredCliSelection(cli) && !cliOptions.some((opt) => opt.value === cli)) {
         cliOptions.push({ value: cli, label: `${metaFor(cli).label || cli} (legacy)` });
     }
 
@@ -276,8 +278,8 @@ export default function Memory({ port, client, dirty, registerSave }: SettingsPa
                     id="memory-cli"
                     label="Flush CLI"
                     value={cli}
-                    missingValueLabel={isRetiredCliSelection(cli) ? retiredRuntimeLabel(cli) : undefined}
-                    error={isRetiredCliSelection(cli) ? 'The saved runtime is retired. Choose an available runtime.' : null}
+                    missingValueLabel={asideInherited ? '(profile default unavailable)' : cli === 'aside' ? 'Aside (main-only)' : isRetiredCliSelection(cli) ? retiredRuntimeLabel(cli) : undefined}
+                    error={asideInherited || cli === 'aside' ? 'Aside cannot run memory flush. Choose a separate runtime.' : isRetiredCliSelection(cli) ? 'The saved runtime is retired. Choose an available runtime.' : null}
                     options={cliOptions}
                     onChange={(next) => {
                         setCli(next);

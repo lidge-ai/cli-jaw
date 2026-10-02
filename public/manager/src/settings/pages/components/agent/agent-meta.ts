@@ -31,6 +31,8 @@ export type CliMeta = {
 };
 
 export type PerCliEntry = {
+    account?: string;
+    host?: string;
     transport?: RuntimeTransport;
     provider?: string;
     model?: string;
@@ -50,6 +52,7 @@ const CODEX_MODELS: ReadonlyArray<string> = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini
 export const PRIMARY_CLIS: ReadonlyArray<string> = ['pi', 'claude', 'agy', 'codex', 'cursor', 'kiro-code', 'gemini'];
 
 export const CLI_META: Record<string, CliMeta> = {
+    aside: { label: 'Aside (experimental)', models: [], efforts: [] },
     agy: {
         label: 'Antigravity',
         // Label form is what `agy --model` accepts when no --effort is sent
@@ -314,6 +317,10 @@ export function metaFor(cli: string, registry?: Record<string, CliMeta> | null):
 
 export function selectableRuntimeOptions(cliOptions: ReadonlyArray<string>): string[] {
     return cliOptions.filter(value => !isRetiredCliSelection(value));
+}
+
+export function auxiliaryRuntimeOptions(cliOptions: ReadonlyArray<string>): string[] {
+    return selectableRuntimeOptions(cliOptions).filter(cli => cli !== 'aside');
 }
 
 export function orderRuntimeCliOptions(input: ReadonlyArray<string>): string[] {

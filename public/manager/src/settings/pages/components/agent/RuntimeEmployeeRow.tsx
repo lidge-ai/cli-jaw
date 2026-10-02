@@ -1,6 +1,6 @@
 import { SelectField, TextField } from '../../../fields';
 import { SettingsActions, StatusBadge } from '../../page-shell';
-import { metaFor, optionList, selectableRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
+import { metaFor, optionList, auxiliaryRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
 import {
     isStaticEmployee,
     runtimeEmployeeError,
@@ -28,8 +28,8 @@ export function RuntimeEmployeeRow({
     const meta = metaFor(employee.cli, cliMeta);
     const modelOptions = optionList(meta.models, employee.model);
     const error = runtimeEmployeeError(employee);
-    const retired = isRetiredCliSelection(employee.cli);
-    const cliChoices = selectableRuntimeOptions(Array.from(new Set([...cliOptions, employee.cli, 'claude'])).filter(Boolean));
+    const retired = isRetiredCliSelection(employee.cli) || employee.cli === 'aside';
+    const cliChoices = auxiliaryRuntimeOptions(Array.from(new Set([...cliOptions, employee.cli, 'claude'])).filter(Boolean));
 
     const employeeName = employee.name || `Employee ${index + 1}`;
     return (
@@ -51,7 +51,7 @@ export function RuntimeEmployeeRow({
                     id={`runtime-employee-${employee.id}-cli`}
                     label="CLI"
                     value={employee.cli}
-                    missingValueLabel={isRetiredCliSelection(employee.cli) ? retiredRuntimeLabel(employee.cli) : undefined}
+                    missingValueLabel={employee.cli === 'aside' ? 'Aside (main-only)' : isRetiredCliSelection(employee.cli) ? retiredRuntimeLabel(employee.cli) : undefined}
                     error={retired ? 'This saved runtime cannot execute. Choose an available runtime.' : null}
                     disabled={locked}
                     options={cliChoices.map((value) => ({ value, label: metaFor(value, cliMeta).label || value }))}

@@ -389,3 +389,39 @@ test('registered reconciliation route rejects stale run token, wrong or unknown 
     assert.equal(spawn.activeMainProcesses.has('default'), false);
     assert.equal(spawn.messageQueue.length, 0);
 });
+
+for (const source of ['boot', 'watch', 'api'] as const) {
+    test(`cleared Aside overrides reach the actual runtime with saved selection after ${source}`, async () => {
+        const { mergeSettingsPatch, sanitizeSettingsInput } = await import('../../src/core/settings-merge.ts');
+        catalog.entries.push({ id: 'p/selected', provider: 'p', modelId: 'selected', name: 'Selected',
+            efforts: ['low', 'max'], thinkingLevelMap: { low: 'low', max: 'max' }, capability: 'registered' });
+        try {
+            const sanitized = sanitizeSettingsInput({
+                perCli: { aside: { model: 'p/selected', effort: 'low' } },
+                activeOverrides: { aside: { model: '', effort: '' } },
+            }, source);
+            Object.assign(testSettings, mergeSettingsPatch(testSettings, sanitized.value));
+            const saved = start({ model: '', effort: '', _skipHistory: true });
+            await turn();
+            assert.equal(runs[0]?.input.selection.model, 'p/selected');
+            assert.equal(runs[0]?.input.selection.effort, 'low');
+            runs[0]!.result.resolve(success()); await saved.promise;
+
+            testSettings.activeOverrides.aside = { model: 'p/model', effort: 'high' };
+            const override = start({ _skipHistory: true }); await turn();
+            assert.equal(runs[1]?.input.selection.model, 'p/model');
+            assert.equal(runs[1]?.input.selection.effort, 'high');
+            runs[1]!.result.resolve(success()); await override.promise;
+
+            const options = start({ model: 'p/selected', effort: 'max', _skipHistory: true }); await turn();
+            assert.equal(runs[2]?.input.selection.model, 'p/selected');
+            assert.equal(runs[2]?.input.selection.effort, 'max');
+            runs[2]!.result.resolve(success()); await options.promise;
+
+            const explicitDefault = start({ model: 'default', effort: 'default', _skipHistory: true }); await turn();
+            assert.equal(runs[3]?.input.selection.model, 'p/model');
+            assert.equal(runs[3]?.input.selection.effort, 'high');
+            runs[3]!.result.resolve(success()); await explicitDefault.promise;
+        } finally { catalog.entries.pop(); }
+    });
+}

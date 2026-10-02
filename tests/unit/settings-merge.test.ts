@@ -1,3 +1,4 @@
+import '../setup/isolated-home.ts';
 // Phase 9.4: settings patch merge 단위 테스트
 // src/settings-merge.js 가 생성되면 통과 (server.js에서 로직 추출 예정)
 import test from 'node:test';
@@ -241,4 +242,92 @@ test('Aside partial selector patches preserve configured account and unrelated p
     const candidate = mergeSettingsPatch(current, patch.value);
     assert.deepEqual(candidate.perCli.aside, { account: 'u7', host: 'local', model: 'provider/model/id', effort: 'high' });
     assert.deepEqual(candidate.perCli.codex, { model: 'other' });
+});
+
+for (const source of ['boot', 'watch', 'api'] as const) {
+    test(`Aside override clears remain empty across ${source} sanitation and merge`, () => {
+        const current = {
+            perCli: { aside: { account: 'u7', host: 'local', model: 'p/old', effort: 'high' } },
+            activeOverrides: { aside: { model: 'p/override', effort: 'max' }, codex: { model: 'keep' } },
+        };
+        const input = {
+            perCli: { aside: { account: 'u8', model: 'p/selected', effort: 'low' } },
+            activeOverrides: { aside: { model: '', effort: '' } },
+        };
+        const sanitized = sanitizeSettingsInput(input, source);
+        assert.deepEqual(sanitized.invalidPaths, []);
+        assert.deepEqual(sanitized.value.activeOverrides.aside, { model: '', effort: '' });
+        const merged = mergeSettingsPatch(current, sanitized.value);
+        assert.deepEqual(merged.activeOverrides.aside, { model: '', effort: '' });
+        assert.deepEqual(merged.activeOverrides.codex, { model: 'keep' });
+        assert.equal(merged.perCli.aside.account, 'u8');
+        assert.equal(merged.perCli.aside.model, 'p/selected');
+        assert.equal(merged.perCli.aside.effort, 'low');
+        assert.deepEqual(input.activeOverrides.aside, { model: '', effort: '' });
+        const explicit = sanitizeSettingsInput({ activeOverrides: { aside: { model: 'default', effort: 'default' } } }, source);
+        assert.deepEqual(explicit.value.activeOverrides.aside, { model: 'default', effort: 'default' });
+    });
+}
+
+test('Aside cleared overrides survive real applySettingsPatch persistence, boot and watch reload', async t => {
+    const { default: childProcess } = await import('node:child_process');
+    const { syncBuiltinESMExports } = await import('node:module');
+    for (const method of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'] as const) {
+        t.mock.method(childProcess, method, () => assert.fail('unexpected subprocess in settings mutation'));
+    }
+    syncBuiltinESMExports();
+    t.mock.method(globalThis, 'fetch', () => assert.fail('unexpected provider call in settings mutation'));
+    const fs = await import('node:fs');
+    const config = await import('../../src/core/config.ts');
+    const { applySettingsPatch } = await import('../../src/core/session-ops.ts');
+    const { reloadSettingsFromDisk } = await import('../../src/core/settings-watch.ts');
+    const { getCliModelAndEffort } = await import('../../src/core/main-session.ts');
+    const snapshot = config.snapshotSettingsState();
+    const existingRaw = fs.existsSync(config.SETTINGS_PATH) ? fs.readFileSync(config.SETTINGS_PATH, 'utf8') : null;
+    try {
+        const baseline = structuredClone(config.DEFAULT_SETTINGS);
+        baseline.cli = 'aside';
+        baseline.workingDir = config.JAW_HOME;
+        baseline.messaging.enabledChannels = [];
+        baseline.messaging.homeChannel = null;
+        baseline.perCli.aside = { account: 'u0', host: 'local', model: 'p/previous', effort: 'high' };
+        baseline.activeOverrides = { aside: { model: 'default', effort: 'default' },
+            copilot: { model: 'claude-opus-4.6-fast', effort: 'low' } };
+        config.saveSettings(baseline);
+        for (const account of ['u1', 'u99999', 'u0']) {
+            const updated = await applySettingsPatch({
+                perCli: { aside: { account, host: 'local', model: 'p/selected', effort: 'low' } },
+                activeOverrides: { aside: { model: '', effort: '' } },
+            });
+            assert.equal(updated.perCli.aside.model, 'p/selected');
+            assert.deepEqual(updated.activeOverrides.aside, { model: '', effort: '' });
+            assert.equal(getCliModelAndEffort('aside').model, 'p/selected');
+            const persisted = JSON.parse(fs.readFileSync(config.SETTINGS_PATH, 'utf8'));
+            assert.deepEqual(persisted.activeOverrides.aside, { model: '', effort: '' });
+            assert.equal(persisted.perCli.aside.account, account);
+            assert.equal(persisted.activeOverrides.copilot.model, 'claude-opus-4.6');
+            config.loadSettings();
+            assert.deepEqual(config.settings.activeOverrides.aside, { model: '', effort: '' });
+            assert.equal(getCliModelAndEffort('aside').model, 'p/selected');
+            assert.equal(reloadSettingsFromDisk({ lastSavedRaw: null }), true);
+            assert.deepEqual(config.settings.activeOverrides.aside, { model: '', effort: '' });
+            assert.equal(getCliModelAndEffort('aside').model, 'p/selected');
+        }
+        await applySettingsPatch({ activeOverrides: { aside: { model: 'default', effort: 'default' } } });
+        config.loadSettings();
+        assert.equal(config.settings.activeOverrides.aside.model, 'default');
+        assert.equal(getCliModelAndEffort('aside').model, 'default');
+        const withoutModel = structuredClone(config.settings);
+        withoutModel.activeOverrides.aside = { effort: '' };
+        config.saveSettings(withoutModel);
+        config.loadSettings();
+        assert.equal(config.settings.activeOverrides.aside.model, undefined);
+        assert.equal(getCliModelAndEffort('aside').model, 'p/selected');
+    } finally {
+        config.replaceSettings(snapshot.value, snapshot.shape);
+        if (existingRaw === null) fs.rmSync(config.SETTINGS_PATH, { force: true });
+        else fs.writeFileSync(config.SETTINGS_PATH, existingRaw, { mode: 0o600 });
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+    }
 });
