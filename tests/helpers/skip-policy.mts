@@ -109,6 +109,11 @@ export const SKIP_POLICY: SkipEntry[] = [
     { file: 'tests/unit/windows-native-cli-detect.test.ts', policy: 'platform', why: 'Windows-only CLI detection; the onWindows helper is test.skip off win32.' },
     { file: 'tests/unit/sidecar-bundle-ownership.test.ts', policy: 'platform', why: 'Only meaningful on the platforms that ship a sidecar (darwin arm64/x64, linux x64); skipped elsewhere.' },
     // ── unit: dependency present on the lane that runs them ──────────────────
+    {
+        file: 'tests/unit/electron-blockmap.test.ts',
+        policy: 'opt-in-isolated',
+        why: 'Runs the real DMG blockmap helper, which needs app-builder-lib from electron/node_modules. The unit shards install root dependencies only, so it skips there. Desktop Release runs it after npm ci --prefix electron on every leg with JAW_REQUIRE_ELECTRON_DEPS=1, where absence fails instead of skipping.',
+    },
     { file: 'tests/unit/manager-notes-routes.test.ts', policy: 'ci-required', why: 'Skips without ripgrep. The Linux test shards install it, so the skip is for developer boxes.' },
     { file: 'tests/unit/browser-connection.test.ts', policy: 'ci-required', why: 'Needs the skills_ref submodule, which CI initialises.' },
     { file: 'tests/unit/browser-skill-policy.test.ts', policy: 'ci-required', why: 'Needs skills_ref skill documents, which CI initialises.' },
