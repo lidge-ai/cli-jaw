@@ -52,8 +52,8 @@ const { default: signExtraBinaries } = await import('../../electron/build/sign-e
 const { verifyMacSignature, verifyMacDiskImage } = await import('../../scripts/verify-mac-signature.mjs');
 
 const signingDependencies = {
-    // Pinned source anchors: app-builder-lib 25.1.8
-    // out/macPackager.js:190-197 and out/codeSign/macCodeSign.js:251-272.
+    // Pinned source anchors: app-builder-lib 26.15.3
+    // out/macPackager.js:25,299 (codeSigningInfo MemoLazy) and out/codeSign/macCodeSign.js:261.
     findIdentity: async (type: string, qualifier: unknown, keychain: unknown) => {
         identityCalls.push({ type, qualifier, keychain });
         return identityResult;

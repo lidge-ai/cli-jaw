@@ -2,18 +2,19 @@
 /**
  * Notarize and staple the signed macOS disk image, then re-describe it.
  *
- * electron-builder 25.1.8 notarizes and staples the app bundle, and with
+ * electron-builder 26.15 notarizes and staples the app bundle, and with
  * `dmg.sign` it signs the disk image, but it never notarizes the disk image.
  * A user who downloads the DMG therefore opens a container Gatekeeper cannot
  * vouch for: `spctl --type open` rejects it and the stapler finds no ticket.
  *
  * Stapling is the part that needs care. dmg-builder hashes the DMG into its
- * blockmap immediately after signing it (dmg-builder/out/dmg.js:62-67) and
+ * blockmap immediately after signing it (dmg-builder/out/dmg.js:48) and
  * that hash is what lands in latest-mac.yml. Stapling appends the ticket to
  * the file, so every description written before it (the DMG entry in
  * latest-mac.yml and the .blockmap next to the DMG) would describe bytes that
  * no longer exist. This script rebuilds both from the stapled file with the
- * same app-builder command electron-builder uses, and only touches the DMG
+ * same blockmap implementation electron-builder uses (scripts/electron-blockmap.mjs
+ * calls app-builder-lib buildBlockMap), and only touches the DMG
  * entry: the ZIP entry and the legacy top-level path/sha512 fields are the
  * updater payload and must stay byte-for-byte what electron-builder wrote.
  *
@@ -75,13 +76,21 @@ function sha512Base64(path) {
   return createHash('sha512').update(readFileSync(path)).digest('base64');
 }
 
-export function resolveAppBuilder() {
+const BLOCKMAP_HELPER = join(projectRoot, 'scripts', 'electron-blockmap.mjs');
+
+/**
+ * The command that rebuilds a blockmap the way electron-builder does. Since
+ * 26.15 that is app-builder-lib's own buildBlockMap (app-builder-bin is gone),
+ * reached through a node helper that keeps the app-builder CLI contract.
+ */
+export function resolveBlockmapCommand() {
   const electronRequire = createRequire(join(projectRoot, 'electron', 'package.json'));
-  const { appBuilderPath } = electronRequire('app-builder-bin');
-  if (!appBuilderPath || !existsSync(appBuilderPath)) {
-    throw new Error(`app-builder binary not found at ${String(appBuilderPath)}; run npm ci --prefix electron`);
+  try {
+    electronRequire.resolve('app-builder-lib/out/targets/blockmap/blockmap.js');
+  } catch {
+    throw new Error('app-builder-lib blockmap implementation not found; run npm ci --prefix electron');
   }
-  return appBuilderPath;
+  return { cmd: process.execPath, prefix: [BLOCKMAP_HELPER] };
 }
 
 /**
@@ -169,10 +178,12 @@ export function notarizeMacDiskImage(options = {}) {
   if (validate.error || validate.status !== 0) throw new Error(`stapler validate failed:\n${outputOf(validate).trim()}`);
 
   // 4. Rebuild the blockmap from the stapled bytes, exactly as electron-builder does.
-  const appBuilder = options.appBuilderPath ?? resolveAppBuilder();
+  const blockmapCommand = options.appBuilderPath
+    ? { cmd: options.appBuilderPath, prefix: [] }
+    : resolveBlockmapCommand();
   const blockmapPath = `${dmgPath}.blockmap`;
-  const blockmap = run(appBuilder, ['blockmap', '--input', dmgPath, '--output', blockmapPath]);
-  if (blockmap.error || blockmap.status !== 0) throw new Error(`app-builder blockmap failed:\n${outputOf(blockmap).trim()}`);
+  const blockmap = run(blockmapCommand.cmd, [...blockmapCommand.prefix, 'blockmap', '--input', dmgPath, '--output', blockmapPath]);
+  if (blockmap.error || blockmap.status !== 0) throw new Error(`blockmap rebuild failed:\n${outputOf(blockmap).trim()}`);
   let described;
   try { described = JSON.parse(blockmap.stdout); } catch { described = null; }
   const actualSize = statSync(dmgPath).size;
