@@ -134,13 +134,20 @@ For each platform matrix entry it:
    signature, Gatekeeper verdict and stapled ticket of the app, and the
    Developer ID signature, team, `open` Gatekeeper verdict (must report
    `Notarized Developer ID`) and stapled ticket of the DMG,
-9. verifies the selected release's `latest-mac.yml`, ZIP size/SHA-512,
-   blockmap, the size/SHA-512 of every other listed artifact (the DMG) and
-   the packaged GitHub provider,
+9. verifies the selected release's macOS `latest-mac.yml`, ZIP size/SHA-512,
+   blockmap, every other listed artifact (the DMG), and packaged GitHub
+   provider; the Windows leg likewise verifies `latest.yml`, its exact NSIS
+   installer name, size/SHA-512, blockmap, legacy fields, and provider,
 10. verifies the final sidecar and packaged app icon inputs,
 11. uploads artifacts to the release or 7-day manual-run artifact storage.
 
-The updater runs only in an installed, packaged macOS app. It performs a
+The Windows update feed (`latest.yml`, the NSIS installer, and its blockmap) is
+published and checked by the release workflow, but the updater client remains
+macOS-only. Enable Windows in `shouldEnableAppUpdater` only after the installer
+is Authenticode-signed and electron-builder has a matching `publisherName`, so
+`NsisUpdater` can enforce publisher verification.
+
+The macOS updater runs only in an installed, packaged app. It performs a
 delayed silent check on startup, then an automatic check every 24 hours while
 the app keeps running, and exposes **CLI-JAW → Check for Updates…**.
 It never auto-downloads or auto-installs: both actions require native-dialog

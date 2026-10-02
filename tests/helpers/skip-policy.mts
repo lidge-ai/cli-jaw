@@ -85,6 +85,11 @@ export const SKIP_POLICY: SkipEntry[] = [
         why: 'Opt-in burst probe behind CLI_JAW_BURST_BROWSER / CLI_JAW_BURST_LABEL. smoke is not a runner scope and the file is .mts, so it is never collected.',
     },
     // ── unit: platform gates ─────────────────────────────────────────────────
+    {
+        file: 'tests/unit/electron-installer-user-path.test.ts',
+        policy: 'platform',
+        why: 'Runs electron/build/update-user-path.ps1 with Windows PowerShell, including registry cases against a disposable HKCU key. It is listed in scripts/ci/windows-unit-manifest.txt, so the windows-unit lane executes it; other platforms have no powershell.exe or HKCU.',
+    },
     { file: 'tests/unit/npm-registry-smoke.test.ts', policy: 'platform', why: 'Executes the Linux publish workflow Bash step with POSIX npm/sleep stubs on Linux and macOS; native win32 skips this shell-specific harness.' },
     { file: 'tests/unit/electron-jaw-spawn-orphan-kill.test.ts', policy: 'platform', why: 'POSIX process-group semantics; skipped on win32 and run on the Linux shards.' },
     { file: 'tests/unit/restack-pr-script.test.ts', policy: 'platform', why: 'Drives the bash script scripts/restack-pr.sh against temporary git repositories; skipped on win32 and run on the Linux shards.' },

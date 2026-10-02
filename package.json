@@ -153,6 +153,7 @@
     "verify:mac-signature": "node scripts/verify-mac-signature.mjs electron/dist/mac-arm64/cli-jaw.app",
     "verify:mac-dmg": "node scripts/verify-mac-signature.mjs --dmg",
     "verify:electron-update-metadata": "node scripts/verify-electron-update-metadata.mjs electron/dist electron/dist/mac-arm64/cli-jaw.app/Contents/Resources/app-update.yml",
+    "verify:electron-update-metadata:win": "node scripts/verify-electron-update-metadata.mjs --platform win",
     "electron:start": "npm --prefix electron run start",
     "check:cli-bin-links": "node scripts/check-cli-bin-links.cjs",
     "check:electron-sidecar-no-jwc": "node scripts/check-electron-sidecar-no-jwc.cjs",
