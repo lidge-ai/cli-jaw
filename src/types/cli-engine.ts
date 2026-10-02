@@ -17,6 +17,7 @@
 
 export type ExecutableCliEngine =
     | 'agy'
+    | 'aside'
     | 'claude'
     | 'codex'
     | 'codex-app'
@@ -77,6 +78,7 @@ export function retiredRuntimeChoiceLabel(value: RetiredCliSelection): string {
  */
 export const CLI_ENGINES = [
     'agy',
+    'aside',
     'claude',
     'codex',
     'codex-app',

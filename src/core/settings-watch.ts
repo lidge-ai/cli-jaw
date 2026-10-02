@@ -99,6 +99,9 @@ export function reloadSettingsFromDisk(options: ReloadOptions = {}): boolean {
     if (sanitized.invalidPaths.length > 0) {
         console.warn(`[settings-watch] ignored invalid settings fields: ${sanitized.invalidPaths.join(', ')}`);
     }
+    if (sanitized.invalidPaths.some(path => path.startsWith('perCli.aside') || path.startsWith('activeOverrides.aside'))) {
+        return false; // Preserve the previously admitted selector on malformed external writes.
+    }
     const externalPatch = { ...sanitized.value };
     const wikiManagedPaths = wikiRouteManagedPatchPaths(externalPatch);
     if (wikiManagedPaths.length > 0) {
@@ -153,8 +156,16 @@ export function reloadSettingsFromDisk(options: ReloadOptions = {}): boolean {
     const transportChanged = SWITCHABLE_NATIVE_CLIS.some(cli =>
         resolveRuntimeTransport(settings['perCli']?.[cli]?.transport)
         !== resolveRuntimeTransport(candidate['perCli']?.[cli]?.transport));
+    const asideSelectors = (document: Record<string, unknown>) => JSON.stringify(
+        ['perCli', 'activeOverrides'].map(key => {
+            const entries = document[key];
+            return entries && typeof entries === 'object' && !Array.isArray(entries)
+                ? (entries as Record<string, unknown>)['aside'] : undefined;
+        }),
+    );
+    const asideChanged = asideSelectors(settings) !== asideSelectors(candidate);
     replaceSettings(candidate, sanitized.persistenceShape);
-    if (transportChanged) bumpSessionOwnershipGeneration();
+    if (transportChanged || asideChanged) bumpSessionOwnershipGeneration();
     recordAllowlistNarrowing(allowlistChange, 'settings.json');
     broadcast('settings_change', {
         changedKeys: Object.keys(externalPatch),

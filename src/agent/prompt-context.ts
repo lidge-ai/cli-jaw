@@ -68,7 +68,7 @@ export function shouldBuildHistoryBlock(input: {
 }
 
 function isArgvPromptRuntime(cli: string, _effectiveProvider?: string | null): boolean {
-    return cli === 'cursor'
+    return cli === 'aside' || cli === 'cursor'
         || cli === 'kiro-code'
         || cli === 'grok'
         || cli === 'opencode';
@@ -99,7 +99,7 @@ export function buildPromptForArgs(input: {
         ? withHistoryPrompt(input.prompt, input.historyBlock)
         : input.prompt;
 
-    const needsOperationalContext = isKiroRuntime(input.cli, input.effectiveProvider)
+    const needsOperationalContext = input.cli === 'aside' || isKiroRuntime(input.cli, input.effectiveProvider)
         || (input.cli === 'cursor' && input.runtimeTransport === 'native');
     if (needsOperationalContext && input.sysPrompt) {
         return withOperationalContext(basePrompt, input.sysPrompt);

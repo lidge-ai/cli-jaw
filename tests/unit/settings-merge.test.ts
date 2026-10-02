@@ -214,3 +214,31 @@ test('SM-020: the spec names every key both ingresses rely on', () => {
         'employees is an array and must stay a wholesale replacement');
 });
 
+
+for (const source of ['boot', 'watch', 'api'] as const) {
+    test(`Aside selectors validate ${source} without mutating input`, () => {
+        const input = { perCli: { aside: { account: 'u7', host: 'local', model: '', effort: '' } } };
+        const output = sanitizeSettingsInput(input, source);
+        assert.deepEqual(output.invalidPaths, []);
+        assert.deepEqual(output.value.perCli.aside, { account: 'u7', host: 'local', model: 'default', effort: 'default' });
+        assert.deepEqual(input.perCli.aside, { account: 'u7', host: 'local', model: '', effort: '' });
+        for (const [key, value] of [['account', '../u0'], ['host', 'remote'], ['model', 'unqualified'],
+            ['effort', 'ultra'], ['permissions', ['auto']], ['transport', 'native'], ['provider', 'p']] as const) {
+            const bad = sanitizeSettingsInput({ perCli: { aside: { [key]: value } } }, source);
+            assert.deepEqual(bad.invalidPaths, [`perCli.aside.${key}`]);
+            assert.equal(Object.hasOwn(bad.value.perCli.aside, key), false);
+        }
+        const overriddenAccount = sanitizeSettingsInput({ activeOverrides: { aside: { account: 'u9' } } }, source);
+        assert.deepEqual(overriddenAccount.invalidPaths, ['activeOverrides.aside.account']);
+    });
+}
+
+test('Aside partial selector patches preserve configured account and unrelated providers', () => {
+    const current = { perCli: { aside: { account: 'u7', host: 'local', model: 'default', effort: 'default' },
+        codex: { model: 'other' } } };
+    const patch = sanitizeSettingsInput({ perCli: { aside: { model: 'provider/model/id', effort: 'high' } } }, 'api');
+    assert.deepEqual(patch.invalidPaths, []);
+    const candidate = mergeSettingsPatch(current, patch.value);
+    assert.deepEqual(candidate.perCli.aside, { account: 'u7', host: 'local', model: 'provider/model/id', effort: 'high' });
+    assert.deepEqual(candidate.perCli.codex, { model: 'other' });
+});

@@ -17,8 +17,8 @@ const __dirname = dirname(__filename);
 
 // ─── Structure validation ────────────────────────────
 
-test('CLI_KEYS contains exactly 10 known entries', () => {
-    assert.deepEqual([...CLI_KEYS].sort(), ['agy', 'claude', 'codex', 'codex-app', 'copilot', 'cursor', 'grok', 'kiro-code', 'opencode', 'pi']);
+test('CLI_KEYS contains exactly 11 known entries', () => {
+    assert.deepEqual([...CLI_KEYS].sort(), ['agy', 'aside', 'claude', 'codex', 'codex-app', 'copilot', 'cursor', 'grok', 'kiro-code', 'opencode', 'pi']);
 });
 
 test('DEFAULT_CLI is codex-app', () => {

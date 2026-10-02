@@ -620,3 +620,16 @@ Public code and product docs live here. Private planning and history live only i
 
 
 
+
+### Aside (experimental)
+
+Aside can run main sessions on the local host with an explicit account selector:
+`perCli.aside = { "account": "u0", "host": "local", "model": "default", "effort": "default" }`.
+Catalog discovery reads only that account's allowlisted local model metadata; installed
+binary detection does not verify authentication. Safe uses guard; Auto uses full-access.
+Workers, memory flush, images, native Code and automatic retry/fallback are unsupported.
+Normal steer and `/steer` queue follow-ups; `/queue steer` is unavailable. If cleanup is
+uncertain, reconcile the captured session in Aside and acknowledge via
+`POST /api/orchestrate/aside/reconcile` with `{ "sessionId": "<jaw-chat-id>", "acknowledgementToken": "<retained-run-token>", "acknowledged": true }`.
+Recovery requires the captured local CLI to have closed and discards old queued input;
+send fresh input afterward. Stop does not prove external tools have physically finished.

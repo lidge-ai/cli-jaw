@@ -104,6 +104,7 @@ function applyMidRunPolicy(
 
     if (policy === 'steer') {
         const owner = getCurrentMainMeta(ctx.scopeKey);
+        if (owner?.cli === 'aside') return queue();
         if (owner && !sameRunConversation(
             { origin: owner.origin, remoteKey: owner.remoteKey
                 ?? (isRemoteTarget(owner.target) ? buildRemoteBindingKey(owner.target) : undefined) },

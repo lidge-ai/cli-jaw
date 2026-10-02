@@ -91,6 +91,9 @@ cli-jaw/
 │   │       └── grok.ts ← Grok native adapter
 │   ├── agent/                ← CLI 에이전트 런타임 (root files + events/ + spawn/)
 │   │   ├── aside-catalog.ts  ← explicit-account local Aside catalog and selection resolution
+│   │   ├── aside-cli.ts      ← bounded Aside CLI commands, receipt and structured replay transport
+│   │   ├── aside-replay.ts   ← owned lifecycle interval selection and interrupted-status proof
+│   │   ├── aside-runtime.ts  ← captured run, cancellation latch and typed cleanup certainty
 │   │   ├── runtime/          ← shared native contract foundation (provider activation follows separately)
 │   │   │   ├── acp/          ← shared v1 wire boundary and bounded native transport
 │   │   │   │   ├── runtime-session.ts ← captured native turn, raw outcome and passive claim/finalize
@@ -156,6 +159,7 @@ cli-jaw/
 │   │   │   ├── backend-context.ts ← SpawnBackendLocals (spawnAgent 값 스냅샷) + SpawnBackendHost (spawn.ts 모듈 상태/헬퍼)
 │   │   │   ├── backend-native-acp.ts ← Cursor/Grok native ACP main 백엔드 (runNativeAcpBackend)
 │   │   │   ├── backend-copilot.ts ← Copilot ACP 백엔드 (runCopilotBackend)
+│   │   │   ├── backend-aside.ts ← main-only Aside admission, captured execution and lifecycle integration
 │   │   │   ├── backend-pi.ts ← Pi RPC 백엔드 (runPiBackend)
 │   │   │   ├── backend-codex-app.ts ← Codex AppServer 백엔드 (runCodexAppBackend)
 │   │   │   ├── types.ts      ← spawnAgent 공유 타입 (MainRunState/MainSessionMeta/SpawnLifecycle 는 spawn.ts 가 재수출)
@@ -666,6 +670,10 @@ cli-jaw/
 │       └── tui/              ← chat 터미널 TUI 분리 (api, channel, fullscreen-mode, input-handler, overlays, raw-pipe-mode, renderer, simple-mode, tui-io, types, ws-handler)
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
+│       ├── aside-cli.test.ts ← bounded CLI framing, transport and process-close contracts
+│       ├── aside-replay.test.ts ← observed replay interval and finality contracts
+│       ├── aside-runtime.test.ts ← captured cancellation, terminal selection and cleanup contracts
+│       ├── aside-admission.test.ts ← Aside admission, resume identity, Stop, queued steer and reconciliation
 │       ├── aside-catalog.test.ts ← local profile fixtures, catalog bounds and selection safety
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR

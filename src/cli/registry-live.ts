@@ -4,6 +4,8 @@ import { fetchOpencodeModelInventory } from '../agent/opencode-models.js';
 import { fetchCopilotModelInventory } from '../agent/copilot-models.js';
 import { fetchCursorModelInventory } from '../agent/cursor-model-inventory.js';
 import { fetchGrokModelInventory } from '../agent/grok-models.js';
+import { settings } from '../core/config.js';
+import { readAsideCatalog } from '../agent/aside-catalog.js';
 import { CLI_REGISTRY } from './registry.js';
 import { claudeCatalogToChoices, resolveClaudeBundleCatalog } from './claude-model-discovery.js';
 import { buildClaudeEffortsByModel } from './claude-models.js';
@@ -28,6 +30,12 @@ function unionEfforts(effortsByModel: Record<string, string[]>): string[] {
 
 export async function buildLiveCliRegistry() {
     const registry = structuredClone(CLI_REGISTRY) as Record<string, Record<string, unknown>>;
+    // Capture the explicit selector before any inventory await. No u0 fallback.
+    const aside = settings['perCli']?.aside;
+    const asideContext = { account: aside?.account, host: aside?.host };
+    const asideCatalog = typeof asideContext.account === 'string' && asideContext.host === 'local'
+        ? readAsideCatalog({ account: asideContext.account, host: 'local' }).catch(() => null)
+        : Promise.resolve(null);
 
     const [kiroInventory, openCodexRuntime, claudeCatalog, cursorInventory, grokInventory, agyInventory, opencodeInventory, copilotInventory] = await Promise.all([
         fetchKiroModelInventory(),
@@ -181,6 +189,16 @@ export async function buildLiveCliRegistry() {
         }
     }
 
+    const catalog = await asideCatalog;
+    if (catalog) {
+        registry['aside'] = { ...registry['aside'],
+            models: ['default', ...catalog.entries.map(entry => entry.id)],
+            modelSource: catalog.source, modelDetails: catalog.entries,
+            effortsByModel: Object.fromEntries(catalog.entries.map(entry => [entry.id, [...entry.efforts]])),
+            efforts: unionEfforts(Object.fromEntries(catalog.entries.map(entry => [entry.id, entry.efforts]))),
+            observedDefaultModel: catalog.defaultModel, catalogStatus: catalog.status,
+        };
+    }
     return registry;
 }
 
