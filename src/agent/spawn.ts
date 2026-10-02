@@ -140,6 +140,7 @@ import type { MainRunState, MainSessionMeta, SpawnOpts, SpawnPromiseResult, Spaw
 import type { SpawnBackendHost, SpawnBackendLocals } from './spawn/backend-context.js';
 import { runNativeAcpBackend } from './spawn/backend-native-acp.js';
 import { runCopilotBackend } from './spawn/backend-copilot.js';
+import { runAsideBackend, asideAdmissionError } from './spawn/backend-aside.js';
 import { runPiBackend } from './spawn/backend-pi.js';
 import { runCodexAppBackend } from './spawn/backend-codex-app.js';
 export type { MainRunState, MainSessionMeta, SpawnLifecycle } from './spawn/types.js';
@@ -624,12 +625,12 @@ export function killActiveAgent(scopeKeyOrReason = 'user', scopedReason?: string
         settleOnce(run?.meta?.requestId, 'cancelled', { reason });
         clearWorkerSlotsOnStop(scopeKey, reason);
     }
-    if (run?.cancelTurn && ['codex-app', 'pi', 'cursor', 'grok', 'claude'].includes(getActiveMainCli(scopeKey) || '')) {
+    if (run?.cancelTurn && ['codex-app', 'pi', 'cursor', 'grok', 'claude', 'aside'].includes(getActiveMainCli(scopeKey) || '')) {
         if (run.process?.pid) killReasons.set(run.process.pid, reason);
         console.log(`[jaw:kill] reason=${reason} scope=${scopeKey} cli=${getActiveMainCli(scopeKey)} action=lease.cancel`);
         if (isLifecycleExitSettleReason(reason)) armExitSettle(scopeKey);
         run.cancelTurn(reason);
-        if (isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
+        if (getActiveMainCli(scopeKey) !== 'aside' && isImmediateScopeReleaseReason(reason)) activeMainProcesses.delete(scopeKey);
         return true;
     }
     const activeProcess = run?.process ?? null;
@@ -758,11 +759,18 @@ export function waitForAllProcessesEnd(timeoutMs = 2000): Promise<void> {
     });
 }
 
+/** Human acknowledgement after external reconciliation; retained owner verifies local close. */
+export function reconcileAsideScope(scopeKey: string, chatSessionId: string, acknowledgementToken: string): boolean {
+    const run = activeMainProcesses.get(scopeKey);
+    if (run?.meta.chatSessionId !== chatSessionId) return false;
+    return run?.reconcileAside?.(acknowledgementToken) === true;
+}
+
 export function canSteerAgent(scopeKey: string): boolean {
     const run = activeMainProcesses.get(scopeKey);
     // Route CLI steering through either the in-band hook or the native replacement hook.
     // Each owning hook decides whether the current turn can still accept the input.
-    return typeof run?.steerTurnInBand === 'function' || typeof run?.replaceTurn === 'function';
+    return run?.meta.cli === 'aside' || typeof run?.steerTurnInBand === 'function' || typeof run?.replaceTurn === 'function';
 }
 
 /** Native replacement owns a stricter mismatch contract than queue fallback:
@@ -789,6 +797,7 @@ export async function steerAgent(
             scope: scopeKey, sessionId: chatSessionId });
         return 'retired';
     }
+    if (run?.meta.cli === 'aside') return 'fallback-queue';
     if (typeof run?.replaceTurn === 'function') {
         const capturedSessionOwner = getSessionOwnershipGeneration(scopeKey);
         const owner = run.meta;
@@ -1212,7 +1221,9 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     // saved-session reads, bootstrap consumption, or worker isolation.
     const runtimeTransport = isSwitchableNativeCli(cli)
         ? resolveRuntimeTransport(settings['perCli']?.[cli]?.transport) : 'print';
-    const selectedPermissions = opts.permissions || settings['permissions'] || session.permissions || 'auto';
+    const selectedPermissions = cli === 'aside'
+        ? opts.permissions ?? settings['permissions'] ?? session.permissions ?? 'auto'
+        : opts.permissions || settings['permissions'] || session.permissions || 'auto';
     const permissions = Array.isArray(selectedPermissions) ? [...selectedPermissions] : selectedPermissions;
     const capturedPermissions: string | string[] | undefined = typeof permissions === 'string'
         || (Array.isArray(permissions) && permissions.every(value => typeof value === 'string')) ? permissions : undefined;
@@ -1237,6 +1248,34 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         resolve!({ text: message, code: 78 });
         if (released) void processQueue(scopeKey);
         return { child: null, promise: resultPromise };
+    }
+
+    if (cli === 'aside') {
+        const admission = asideAdmissionError(mainManaged, opts, permissions);
+        const cfg = { ...settings['perCli']?.aside };
+        const overrides = { ...settings['activeOverrides']?.aside };
+        const account = cfg.account, selectedHost = cfg.host;
+        const invalidContext = typeof account !== 'string' || !/^u(?:0|[1-9][0-9]{0,8})$/.test(account) || selectedHost !== 'local';
+        const diagnostic = admission || (invalidContext ? 'aside_explicit_local_account_required' : null);
+        if (diagnostic) {
+            if (activeMainProcesses.get(scopeKey) === mainRun) releaseMainRun(scopeKey, null, ownerGeneration);
+            settleOnce(opts.requestId, 'failed', { error: diagnostic, scope: scopeKey, sessionId: chatSessionId });
+            broadcast('agent_done', { ...runPin, text: diagnostic, cli, error: true, ...empTag }, isEmployee ? 'internal' : 'public');
+            try { opts.lifecycle?.onExit?.(78); } catch { /* observer only */ }
+            resolve!({ text: diagnostic, code: 78 });
+            return { child: null, promise: resultPromise };
+        }
+        const cwd = settings['workingDir'] || process.cwd();
+        const detected = detectCli('aside');
+        const env = makeCleanEnv(applyCliEnvDefaults('aside', opts.env));
+        return runAsideBackend({ mainRun, scopeKey, chatSessionId, opts, origin, ownerGeneration,
+            persistenceOwner, runPin, prompt, resolve: value => resolve(value), resultPromise,
+            binary: detected.path || 'aside', context: { account, host: 'local' }, policy: permissions as 'auto' | 'safe',
+            spawnCwd: cwd, spawnEnv: env, model: (opts.model ?? overrides.model ?? cfg.model) || 'default',
+            effort: (opts.effort ?? overrides.effort ?? cfg.effort) || 'default',
+            sysPrompt: customSysPrompt !== undefined ? customSysPrompt : getSystemPrompt(stripUndefined({
+                currentPrompt: prompt, forDisk: false, memorySnapshot, activeCli: 'aside', freshSession: true })) },
+            { activeMainProcesses, activeProcesses, buildHistoryBlock, releaseMainRun, queueCtrl, processQueue, consumeKillReason });
     }
 
     // Ensure AGENTS.md on disk is fresh before CLI reads it
@@ -1277,11 +1316,11 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     // instead of the legacy `isResumeGuess` heuristic. See comment near line 762.
 
     // ─── Fallback retry: skip to fallback if retries exhausted ───
-    if (runtimeTransport !== 'native' && !opts._isFallback && !opts.internal) {
+    if (cli !== 'aside' && runtimeTransport !== 'native' && !opts._isFallback && !opts.internal) {
         const st = queueCtrl.fallbackStateForScope(scopeKey).get(cli);
         if (st?.fallbackCli && st.retriesLeft <= 0) {
             const fbAvail = detectCli(st.fallbackCli)?.available;
-            if (fbAvail && !isRetiredCliSelection(st.fallbackCli)) {
+            if (fbAvail && st.fallbackCli !== 'aside' && !isRetiredCliSelection(st.fallbackCli)) {
                 console.log(`[jaw:fallback] ${cli} retries exhausted → direct ${st.fallbackCli}`);
                 broadcast('agent_fallback', { from: cli, to: st.fallbackCli, reason: 'retries exhausted', ...empTag }, isEmployee ? 'internal' : 'public');
                 return spawnAgent(prompt, {

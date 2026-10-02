@@ -112,6 +112,7 @@ export async function memoryHandler(args: string[], ctx: CliCommandContext): Pro
             // The manual path stays single-session: someone asking to flush THIS
             // conversation means this one. Only the automatic flush merges.
             const outcome = await triggerMemoryFlushForCurrentSession();
+            if (outcome === 'unavailable') return { ok: false, text: 'Choose a supported memory.cli before flushing; Aside is main-only.' };
             if (outcome === 'locked') return { ok: false, text: '🧠 A memory flush is already running; try again shortly.' };
             if (outcome === 'insufficient') return { ok: true, text: '🧠 Nothing new to summarise yet.' };
             return { ok: true, text: '🧠 Memory flush triggered.' };

@@ -159,7 +159,7 @@ export function pickNativeFallbackCli(
     opts: { internal?: boolean | undefined; _isFallback?: boolean | undefined },
     toolLog: readonly ToolEntry[],
 ): string | null {
-    if (opts.internal || opts._isFallback) return null;
+    if (cli === 'aside' || opts.internal || opts._isFallback) return null;
     if (toolLog.some(tool => !REPEATABLE_TOOL_TYPES.has(tool.toolType))) return null;
     return ((settings["fallbackOrder"] || []) as string[])
         .find((fc: string) => isLiveFallbackCandidate(fc, cli, detectCli, isRuntimeCoolingDown)) ?? null;
@@ -256,7 +256,7 @@ export function isLiveFallbackCandidate(
     detect: (name: string) => { available: boolean },
     coolingDown: (name: string) => boolean,
 ): boolean {
-    return fc !== currentCli
+    return fc !== 'aside' && currentCli !== 'aside' && fc !== currentCli
         && !isRetiredCliSelection(fc)
         && detect(fc).available
         && !coolingDown(fc);
@@ -319,6 +319,9 @@ export interface ExitHandlerParams {
     ctx: ExitContext;
     code: number | null;
     childExitCode?: number | null;
+    /** Execution values captured before asynchronous backend preparation. */
+    workingDir?: string;
+    permissions?: string;
     /** Exact reason captured at cancellation admission; presentation provenance only. */
     killReason?: string | null;
     cli: string;
@@ -404,6 +407,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     const nativeTraceRunId = ctx.traceRunId;
     const effectiveProvider = params.effectiveProvider;
     const runtimeCli = cli;
+    const workingDir = params.workingDir ?? settings['workingDir'];
     const effortVal = cfg.effort || effortDefault;
     // Every runtime now has a bucket of its own keyed by scope (073 §2.1), so the guard
     // 072 put here is gone: instead of refusing to touch shared state, each session
@@ -451,7 +455,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
 
     // ─── Smoke response auto-continuation ───
     if (
-        nativeOutcome === undefined
+        cli !== 'aside' && nativeOutcome === undefined
         && smokeResult.isSmoke
         && smokeResult.confidence !== 'low'
         && !opts._isSmokeContinuation
@@ -475,6 +479,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 sessionId: smokeSessionId, isFallback: opts._isFallback === true,
                 code, cli, model, provider: effectiveProvider, resumeKey: params.resumeKey, effort: effortVal,
                 skipSessionPersist: opts._skipSessionPersist === true,
+        ...(params.workingDir !== undefined ? { workingDir: params.workingDir } : {}),
+        ...(params.permissions !== undefined ? { permissions: params.permissions } : {}),
                 outputLen: params.outputLen,
                 ...(params.codexAppBucket ? { codexAppBucket: params.codexAppBucket } : {}),
                 runtimeTransport: params.runtimeTransport,
@@ -538,7 +544,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         const info = insertMessageWithTraceRun.run(
             'assistant', salvageContent, cli, model,
             ctx.traceLog.join('\n') || null, serializeSanitizedToolLog(partialTools),
-            settings['workingDir'] || null, salvageRunId, chatSessionId,
+            workingDir || null, salvageRunId, chatSessionId,
         );
         const messageId = Number(info.lastInsertRowid);
         if (salvageRunId && Number.isSafeInteger(messageId) && messageId > 0) {
@@ -558,7 +564,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         try {
             const { autoCompactRefresh } = await import('../core/compact.js');
             await autoCompactRefresh({
-                workDir: settings["workingDir"] || '',
+                workDir: workingDir || '',
                 instructions: prompt || '',
                 cli,
                 model,
@@ -579,6 +585,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         sessionId: persistedSessionId, isFallback: opts._isFallback === true,
         code, wasKilled, cli, model, provider: effectiveProvider, resumeKey: params.resumeKey, effort: effortVal,
         skipSessionPersist: opts._skipSessionPersist === true,
+        ...(params.workingDir !== undefined ? { workingDir: params.workingDir } : {}),
+        ...(params.permissions !== undefined ? { permissions: params.permissions } : {}),
         outputLen: params.outputLen,
         ...(params.codexAppBucket ? { codexAppBucket: params.codexAppBucket } : {}),
         runtimeTransport: params.runtimeTransport,
@@ -593,7 +601,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
         const clean = code === 0 && !wasKilled && !ctx.stallReason && !plannerOnly && !checkpointSeen;
         updateSessionBucketLastRun.run(
             clean ? 1 : 0,
-            settings['workingDir'] || '',
+            workingDir || '',
             JSON.stringify({ checkpointSeen, plannerOnly, exitCode: code, at: Date.now() }),
             runBucket,
         );
@@ -611,7 +619,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 if ((getSessionBucket.get(runBucket) as { session_id: string } | undefined)?.session_id === persistedSessionId) {
                     console.log(`[jaw:compact] ${cli} reached ${turns} turns — forcing auto-refresh`);
                     await autoCompactRefresh({
-                        workDir: settings["workingDir"] || '',
+                        workDir: workingDir || '',
                         instructions: prompt || '',
                         cli,
                         model,
@@ -698,7 +706,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             if (!peekPendingBootstrapPrompt(scopeKey)) {
                 const { autoCompactRefresh } = await import('../core/compact.js');
                 await autoCompactRefresh({
-                    workDir: settings["workingDir"] || null, instructions: '', cli, model, scopeKey,
+                    workDir: workingDir || null, instructions: '', cli, model, scopeKey,
                     chatSessionId,
                     sessionBucket: runBucket,
                 });
@@ -780,7 +788,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 // cannot suppress final delivery or this history pointer.
                 const info = insertMessageWithTraceRun.run(
                     'assistant', finalContent, cli, model, ctx.traceLog.join('\n') || null,
-                    serializeSanitizedToolLog(safeTools), settings['workingDir'] || null,
+                    serializeSanitizedToolLog(safeTools), workingDir || null,
                     nativeTraceRunId || null, chatSessionId,
                 );
                 const messageId = Number(info.lastInsertRowid);
@@ -814,8 +822,10 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             // A turn being handed to a fallback runtime is not the answer yet: its
             // diagnostic and error tag would reach the Slack forwarder as an error
             // block in the user's thread, ahead of the answer that follows.
-            const terminalText = nativeFallbackCli ? '' : compatibilityText || (nativeOutcome.status === 'error'
+            const terminalText = nativeFallbackCli ? '' : compatibilityText || ((nativeOutcome.status === 'error'
+                || (cli === 'aside' && ctx.metadata?.['asideCleanup'] === 'uncertain'))
                 && ctx.runtimeDiagnostic?.trim() ? `❌ ${ctx.runtimeDiagnostic.trim()}` : '');
+            if (cli === 'aside') ctx.runtimeTerminalAttempted = true;
             broadcast('agent_done', {
                 ...donePin,
                 ...(nativeTraceRunId ? { traceRunId: nativeTraceRunId } : {}),
@@ -924,7 +934,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
             const toolLogJson = serializeSanitizedToolLog(sanitizedToolLog);
             const info = insertMessageWithTraceRun.run(
                 'assistant', finalContent, cli, model,
-                traceText || null, toolLogJson, settings["workingDir"] || null,
+                traceText || null, toolLogJson, workingDir || null,
                 ctx.traceRunId || null, chatSessionId,
             );
             const messageId = Number(info.lastInsertRowid || 0);
@@ -974,7 +984,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 errMsg,
                 cli,
                 model,
-                settings["workingDir"] || null,
+                workingDir || null,
                 chatSessionId,
             );
         }
@@ -1032,7 +1042,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 if (bucket) clearSessionBucket.run(bucket);
                 console.log(`[jaw:session] invalidated stale resume — ${cli}/${bucket} bucket cleared (scope ${scopeKey})`);
             } else {
-                updateSession.run(cli, null, model, settings["permissions"], settings["workingDir"], effortVal);
+                updateSession.run(cli, null, model, settings["permissions"], workingDir, effortVal);
                 const bucket = runBucket;
                 if (bucket) clearSessionBucket.run(bucket);
                 console.log(`[jaw:session] invalidated stale resume — ${cli}/${bucket} session cleared`);
@@ -1076,13 +1086,13 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                     try {
                         const { autoCompactRefresh } = await import('../core/compact.js');
                         await autoCompactRefresh({
-                    workDir: settings["workingDir"] || null, instructions: '', cli, model, scopeKey,
+                    workDir: workingDir || null, instructions: '', cli, model, scopeKey,
                     chatSessionId,
                     sessionBucket: runBucket,
                 });
                     } catch {}
                 }
-                insertMessage.run('assistant', `⏱️ ${errMsg}`, cli, model, settings["workingDir"] || null, chatSessionId);
+                insertMessage.run('assistant', `⏱️ ${errMsg}`, cli, model, workingDir || null, chatSessionId);
             }
             broadcast('agent_done', { ...runTag(ctx), ...donePin, text: `❌ ${errMsg}`, error: true, errorKind, cli: runtimeCli, origin, ...empTag, ...(wasSteer ? { steered: true } : {}) }, isEmployee ? 'internal' : 'public');
             finalizeRun('error', errMsg);
@@ -1168,7 +1178,7 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                     if (!peekPendingBootstrapPrompt(scopeKey)) {
                         const { autoCompactRefresh } = await import('../core/compact.js');
                         await autoCompactRefresh({
-                    workDir: settings["workingDir"] || null, instructions: '', cli, model, scopeKey,
+                    workDir: workingDir || null, instructions: '', cli, model, scopeKey,
                     chatSessionId,
                     sessionBucket: runBucket,
                 });
@@ -1378,8 +1388,8 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
     // and execute it so the continuation loop stops.
     const controlText = resolvedOutcome === undefined ? ctx.fullText
         : resolvedOutcome.status === 'done' ? resolvedOutcome.finalText ?? '' : '';
-    const allowNativeContinuation = resolvedOutcome === undefined
-        || (resolvedOutcome.status === 'done' && resolvedOutcome.finalText !== null);
+    const allowNativeContinuation = cli !== 'aside' && (resolvedOutcome === undefined
+        || (resolvedOutcome.status === 'done' && resolvedOutcome.finalText !== null));
     let goalDoneRejected = false;
     if (mainManaged && !opts.internal && controlText) {
         const activeGoal = getActiveGoal();

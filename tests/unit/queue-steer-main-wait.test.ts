@@ -155,3 +155,39 @@ test('missing or already-steering queue item never inserts or starts a second co
     assert.equal(queued.length, 1);
     assert.equal(calls.some(call => ['insert', 'remove', 'kill', 'dispatch'].includes(call.name)), false);
 });
+
+test('Aside owned queue-steer rejects before hold, removal, stop, insertion or dispatch', async () => {
+    spawn.activeMainProcesses.set(item.scope, { process: null, starting: true, steering: false, ownerGeneration: 0,
+        meta: { cli: 'aside', origin: 'web', chatSessionId: item.chatSessionId } });
+    try {
+        const result = await invoke();
+        assert.equal(result.status, 409);
+        assert.equal(queued.length, 1);
+        assert.equal(calls.some(call => ['hold', 'remove', 'kill', 'insert', 'dispatch'].includes(call.name)), false);
+    } finally { spawn.activeMainProcesses.delete(item.scope); }
+});
+
+test('selected Aside queued item rejects queue-steer even when idle', async () => {
+    busy = false;
+    queued[0] = Object.assign(structuredClone(item), { overrides: { cli: 'aside' } });
+    const result = await invoke();
+    assert.equal(result.status, 409);
+    assert.equal(queued.length, 1);
+    assert.equal(calls.some(call => ['hold', 'remove', 'kill', 'insert', 'dispatch'].includes(call.name)), false);
+});
+
+test('Aside reconciliation endpoint requires explicit acknowledgement and retains instance auth', async () => {
+    const route = routes.get('POST /api/orchestrate/aside/reconcile')!;
+    assert.equal(route[0], auth);
+    const handler = route.at(-1)!;
+    const state = { status: 200, body: undefined as unknown };
+    const response = { status(value: number) { state.status = value; return response; },
+        json(value: unknown) { state.body = value; return response; } };
+    await handler({ body: { sessionId: 'default' } } as unknown as Request,
+        response as unknown as Response, error => { if (error) throw error; });
+    assert.equal(state.status, 400);
+    state.status = 200;
+    await handler({ body: { sessionId: 'unknown', acknowledgementToken: '8a0f4e69-b035-4186-8b99-1783f3adad19', acknowledged: true } } as unknown as Request,
+        response as unknown as Response, error => { if (error) throw error; });
+    assert.equal(state.status, 404);
+});
