@@ -4,6 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const script = resolve(import.meta.dirname, '../../electron/build/update-user-path.ps1');
+// A cold Windows PowerShell start on a hosted runner can take more than 10 s
+// (preview run 36952059033 attempt 1 hit it on the first spawn), so allow 60 s.
+const PWSH_TIMEOUT_MS = 60_000;
 const windowsOnly = {
   skip: process.platform === 'win32' ? false : 'requires Windows PowerShell',
 };
@@ -20,9 +23,9 @@ function compute(mode: 'add' | 'remove', current: string, dir = 'C:\\Program Fil
   ], {
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 10_000,
+    timeout: PWSH_TIMEOUT_MS,
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, result.error ? String(result.error) : result.stderr);
   return result.stdout.trim();
 }
 
@@ -73,7 +76,7 @@ function readRaw(key: string): { value: string; kind: string } | null {
     "if ($k.GetValueNames() -notcontains 'Path') { 'null'; exit 0 }",
     "@{ value = [string]$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); kind = [string]$k.GetValueKind('Path') } | ConvertTo-Json -Compress",
   ].join('; ');
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true, timeout: PWSH_TIMEOUT_MS });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout.trim()) as { value: string; kind: string } | null;
 }
@@ -82,7 +85,7 @@ function apply(key: string, mode: 'add' | 'remove'): void {
   const result = spawnSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', script, '-Dir', DIR, '-Mode', mode, '-RegistryKey', key, '-NoBroadcast',
-  ], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+  ], { encoding: 'utf8', windowsHide: true, timeout: PWSH_TIMEOUT_MS });
   assert.equal(result.status, 0, result.stderr);
 }
 
