@@ -609,11 +609,12 @@ cli-jaw/
 │       └── render/
 │           ├── markdown.ts   ← marked/sanitize pipeline + `/media`/guarded `/api/image` inline media rewrite
 │           └── delegations.ts ← one-time document capture image-error delegation + render delegation registry
-├── electron/                 ← Electron tray background app (41 TS/TSX files) ✨
+├── electron/                 ← Electron tray background app ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts
 │   └── src/
 │       ├── main/index.ts     ← Electron main process — BrowserWindow + tray + jaw server spawn + deep-link + IPC
 │       ├── main/lib/qa-session.ts ← isolated QA profile paths before lock and sessions
+│       ├── main/lib/fatal-quit.ts ← fatal-dialog quit guarantee and post-bootstrap startup gate
 │       ├── main/lib/tray-menu-model.ts ← pure menu bar instance list model: parse, order, labels, stale marking
 │       ├── main/lib/tray-instances.ts ← menu bar instance poller for /api/dashboard/instances
 │       ├── main/lib/         ← top-level helpers plus subdirectories (jaw-spawn, tray-manager, tray-instances, tray-menu-model, qa-session, install-cli, dock-icon, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
@@ -664,7 +665,8 @@ cli-jaw/
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
-│       └── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
+│       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
+│       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
 ├── scripts/                  ← 도구 스크립트 (TypeScript + Shell + CJS; atomic build, sidecar bundle, release gates, install-risk evidence)
 ├── officecli/                ← OfficeCLI 포크 서브모듈 (lidge-jun/OfficeCLI, Apache 2.0)
 ├── skills_ref/               ← 레퍼런스 스킬

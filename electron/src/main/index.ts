@@ -58,6 +58,7 @@ import { resolveWindowChromeOptions } from './lib/window/chrome-options.js';
 import { isAllowedSender, setAllowedOrigin } from './lib/ipc-origin-guard.js';
 import { primeMacAutomationPermission } from './lib/mac-automation-permission.js';
 import { showQuitProgress } from './lib/quit-progress.js';
+import { quitAfterDialog, runStartupAfterBootstrap } from './lib/fatal-quit.js';
 import {
   createAppUpdaterController,
   shouldEnableAppUpdater,
@@ -339,31 +340,36 @@ if (!gotLock) {
     }
     configureEmbeddedBrowserSession();
     initializeAppUpdater();
-    await bootstrapOnce();
-    appUpdaterController?.start();
-    if (!QA_POLICY) promptInstallCli().catch(() => {});
-    if (!metricsCollector) {
-      try {
-        metricsCollector = startAppMetricsCollector();
-      } catch (err) {
-        ringBuffer.append(`[metrics start error] ${(err as Error)?.message ?? err}\n`);
-      }
-    }
-    if (pendingDeepLinkUrl) {
-      const pending = pendingDeepLinkUrl;
-      pendingDeepLinkUrl = null;
-      await handleDeepLink(pending);
-    }
+    await runStartupAfterBootstrap(
+      bootstrapOnce,
+      () => shuttingDown || shutdownComplete,
+      async () => {
+        appUpdaterController?.start();
+        if (!QA_POLICY) promptInstallCli().catch(() => {});
+        if (!metricsCollector) {
+          try {
+            metricsCollector = startAppMetricsCollector();
+          } catch (err) {
+            ringBuffer.append(`[metrics start error] ${(err as Error)?.message ?? err}\n`);
+          }
+        }
+        if (pendingDeepLinkUrl) {
+          const pending = pendingDeepLinkUrl;
+          pendingDeepLinkUrl = null;
+          await handleDeepLink(pending);
+        }
 
-    app.on('activate', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        void createManagerWindow();
+        app.on('activate', () => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            void createManagerWindow();
+          }
+        });
       }
-    });
+    );
   }).catch((err) => {
     console.error('[jaw-electron] bootstrap failed', err);
     dialog.showErrorBox('jaw Electron', String(err?.stack ?? err));
-    app.quit();
+    quitAfterFatal('bootstrap-failed');
   });
 }
 
@@ -404,6 +410,16 @@ async function requestApplicationQuit(reason: string): Promise<void> {
   }
   const prepared = await prepareApplicationShutdown(reason);
   if (prepared) app.exit(0);
+}
+
+// Fatal paths (spawn failure, crash loop, bootstrap failure) must actually
+// exit. A bare app.quit() is swallowed by the before-quit interception when
+// Keep Running in Background is enabled, which would leave a zombie tray
+// process with no server. Route them through the same coordinated shutdown
+// the tray Quit item uses.
+function quitAfterFatal(reason: string): void {
+  forceQuitRequested = true;
+  void requestApplicationQuit(reason);
 }
 
 async function prepareApplicationShutdown(reason: string): Promise<boolean> {
@@ -738,6 +754,9 @@ async function bootstrap(): Promise<void> {
   }, QA_POLICY);
 
   await ensureManagerRunning();
+  // A fatal failure inside ensureManagerRunning already started coordinated
+  // shutdown; do not install pollers or open a window on top of it.
+  if (shuttingDown || shutdownComplete) return;
   installTrayReminders();
   markManagerRunning();
   if (FLAGS.background) {
@@ -1249,7 +1268,7 @@ async function ensureManagerRunning(): Promise<void> {
       await showSpawnFailedDialog(
         `${MANAGER_URL} 에 연결할 수 없습니다. 명시적 attach 모드이므로 서버를 자동 spawn하지 않습니다.`,
       );
-      app.quit();
+      quitAfterFatal('attach-failed');
     }
     return;
   }
@@ -1283,7 +1302,7 @@ async function spawnAndWait(): Promise<void> {
         return spawnAndWait();
       }
     }
-    app.quit();
+    quitAfterFatal('jaw-not-found');
     return;
   }
 
@@ -1311,7 +1330,7 @@ async function spawnAndWait(): Promise<void> {
     await showSpawnFailedDialog(
       `60초 안에 ${MANAGER_URL} 가 응답하지 않았습니다.\n\n최근 로그:\n${ringBuffer.read().slice(-1500)}`,
     );
-    app.quit();
+    quitAfterFatal('spawn-timeout');
   }
 }
 
@@ -1360,7 +1379,11 @@ function handleManagerExitAfterCleanup(code: number | null, signal: NodeJS.Signa
       crashLoopStopped = true;
       updateServerStatus('Server: Crash loop');
       notifyServerCrash();
-      void showCrashLoopDialog(ringBuffer.read()).then(() => app.quit());
+      void quitAfterDialog(
+        () => showCrashLoopDialog(ringBuffer.read()),
+        () => quitAfterFatal('crash-loop'),
+        (message) => ringBuffer.append(message),
+      );
       return;
     }
     void (async () => {
@@ -1404,7 +1427,11 @@ function handleManagerExitAfterCleanup(code: number | null, signal: NodeJS.Signa
       crashLoopStopped = true;
       updateServerStatus('Server: Crash loop');
       notifyServerCrash();
-      void showCrashLoopDialog(ringBuffer.read()).then(() => app.quit());
+      void quitAfterDialog(
+        () => showCrashLoopDialog(ringBuffer.read()),
+        () => quitAfterFatal('crash-loop'),
+        (message) => ringBuffer.append(message),
+      );
       return;
     }
     try {

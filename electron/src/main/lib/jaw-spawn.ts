@@ -248,6 +248,9 @@ export function spawnJawDashboard(
     // gracefulShutdown, otherwise the server survives, keeps its port, and the
     // next launch walks to the next port and spawns a second full server.
     detached: process.platform !== 'win32',
+    // The packaged app is a GUI process with no console; without windowsHide a
+    // `jaw.cmd` launch via cmd.exe flashes a visible console window on Windows.
+    windowsHide: true,
     ...(invocation.shell ? { shell: true } : {}),
   });
   if (policy) captureQaLifetime(child, policy);

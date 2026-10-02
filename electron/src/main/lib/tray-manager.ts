@@ -8,6 +8,7 @@ import {
   EMPTY_TRAY_INSTANCES,
   instanceMenuLabel,
   instancesSummaryLabel,
+  trayInstancesSignature,
   visibleInstances,
   type TrayInstancesSnapshot,
 } from './tray-menu-model.js';
@@ -55,6 +56,7 @@ let currentMenu: Menu | null = null;
 let onTrayClick: (() => void) | null = null;
 let qaPolicy: IsolatedQaPolicy | null = null;
 let instancesSnapshot: TrayInstancesSnapshot = EMPTY_TRAY_INSTANCES;
+let renderedInstancesSignature = trayInstancesSignature(EMPTY_TRAY_INSTANCES);
 
 export interface TrayCallbacks {
   onOpenDashboard: () => void;
@@ -109,6 +111,12 @@ export function updateServerStatus(status: string): void {
 
 export function setTrayInstances(snapshot: TrayInstancesSnapshot): void {
   instancesSnapshot = snapshot;
+  // The poller republishes every interval — often an identical list or a
+  // failure-count bump past the stale threshold. Rebuilding the native menu
+  // when nothing visible changed is pointless churn on a backgrounded app.
+  const signature = trayInstancesSignature(snapshot);
+  if (signature === renderedInstancesSignature) return;
+  renderedInstancesSignature = signature;
   rebuildMenu();
 }
 
@@ -153,6 +161,7 @@ export function destroyTray(): void {
   currentMenu = null;
   onTrayClick = null;
   instancesSnapshot = EMPTY_TRAY_INSTANCES;
+  renderedInstancesSignature = trayInstancesSignature(EMPTY_TRAY_INSTANCES);
 }
 
 function syncLoginItemSetting(): void {

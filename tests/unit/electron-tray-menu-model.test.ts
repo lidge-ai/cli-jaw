@@ -9,6 +9,7 @@ import {
     instancesSummaryLabel,
     orderInstances,
     parseDashboardInstances,
+    trayInstancesSignature,
     visibleInstances,
     type TrayInstance,
     type TrayInstancesSnapshot,
@@ -180,4 +181,57 @@ test('visibleInstances caps the ordered rows at the limit and reports the hidden
     const none = visibleInstances(snapshot({ instances }), 0);
     assert.deepEqual(none.rows, []);
     assert.equal(none.hidden, instances.length);
+});
+
+test('trayInstancesSignature ignores timestamps but tracks every visible menu change', () => {
+    const instances = [
+        instance({ port: 3457, label: 'Work', status: 'online' }),
+        instance({ port: 3458, label: 'Side', status: 'offline' }),
+    ];
+
+    // A fresh updatedAt with identical rows must not rebuild the native menu.
+    assert.equal(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1 })),
+        trayInstancesSignature(snapshot({ instances, updatedAt: 2 })),
+    );
+
+    // Failure counts past the stale threshold no longer change the label.
+    assert.equal(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1, failures: TRAY_STALE_AFTER_FAILURES })),
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1, failures: TRAY_STALE_AFTER_FAILURES + 3 })),
+    );
+
+    // The stale flip itself is visible and must rebuild.
+    assert.notEqual(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1, failures: TRAY_STALE_AFTER_FAILURES - 1 })),
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1, failures: TRAY_STALE_AFTER_FAILURES })),
+    );
+
+    // Reordered input collapses to the same menu — orderInstances sorts rows.
+    assert.equal(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1 })),
+        trayInstancesSignature(snapshot({ instances: [instances[1]!, instances[0]!], updatedAt: 1 })),
+    );
+
+    // Status and membership changes are all visible.
+    assert.notEqual(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1 })),
+        trayInstancesSignature(snapshot({
+            instances: [instance({ port: 3457, label: 'Work', status: 'offline' }), instances[1]!],
+            updatedAt: 1,
+        })),
+    );
+    assert.notEqual(
+        trayInstancesSignature(snapshot({ instances, updatedAt: 1 })),
+        trayInstancesSignature(snapshot({ instances: [instances[0]!], updatedAt: 1 })),
+    );
+
+    // Rows past the visible limit collapse into the hidden count.
+    const many = Array.from({ length: TRAY_INSTANCE_LIMIT + 4 }, (_, index) =>
+        instance({ port: 3500 + index, status: 'offline' }));
+    const more = [...many, instance({ port: 3600, status: 'offline' })];
+    assert.notEqual(
+        trayInstancesSignature(snapshot({ instances: many })),
+        trayInstancesSignature(snapshot({ instances: more })),
+    );
 });
