@@ -3,6 +3,8 @@
 
 import { CLI_KEYS, buildModelChoicesByCli } from './registry.js';
 import { applyCodexModelsToChoices, resolveOpenCodexCodexModels } from './opencodex-models.js';
+import { readAsideCatalog } from '../agent/aside-catalog.js';
+import { projectAsideCatalog } from './registry-live.js';
 import { t } from '../core/i18n.js';
 import type { CompletionCtx, SlashChoice } from './types.js';
 
@@ -30,8 +32,17 @@ function getCliChoicesFromContext(ctx: CompletionCtx): string[] {
     return keys.length ? keys : DEFAULT_CLI_CHOICES;
 }
 
-async function getModelChoicesByCli(): Promise<Record<string, string[]>> {
-    return applyCodexModelsToChoices(buildModelChoicesByCli(), await resolveOpenCodexCodexModels());
+async function getModelChoicesByCli(ctx: CompletionCtx, includeAside = true): Promise<Record<string, string[]>> {
+    const choices = buildModelChoicesByCli();
+    delete choices['aside'];
+    const selected = ctx.settings?.perCli?.['aside'] as { account?: unknown; host?: unknown } | undefined;
+    // Capture the account before awaiting any inventory. No implicit profile or other CLI probes.
+    const aside = includeAside && typeof selected?.account === 'string' && selected.host === 'local'
+        ? readAsideCatalog({ account: selected.account, host: 'local' }).catch(() => null)
+        : Promise.resolve(null);
+    const codex = await resolveOpenCodexCodexModels();
+    if (includeAside) choices['aside'] = projectAsideCatalog(await aside).models;
+    return applyCodexModelsToChoices(choices, codex);
 }
 
 function getModelChoicesFromContext(ctx: CompletionCtx, modelChoicesByCli: Record<string, string[]>): string[] {
@@ -47,7 +58,7 @@ function getModelChoicesFromContext(ctx: CompletionCtx, modelChoicesByCli: Recor
 }
 
 export async function modelArgumentCompletions(ctx: CompletionCtx): Promise<SlashChoice[]> {
-    const modelChoicesByCli = await getModelChoicesByCli();
+    const modelChoicesByCli = await getModelChoicesByCli(ctx);
     const cliByModel = new Map<string, string>();
     for (const [cli, models] of Object.entries(modelChoicesByCli)) {
         if (MODEL_LABEL_SKIP_CLIS.has(cli)) continue;
@@ -83,11 +94,11 @@ export async function employeeArgumentCompletions(ctx: CompletionCtx, argv: stri
     const sub = String(argv[0] || '').trim().toLowerCase();
     if (!sub) return subcommands;
     if (sub === 'cli') {
-        return getCliChoicesFromContext(ctx).map(value => ({ value, label: 'cli' }));
+        return getCliChoicesFromContext(ctx).filter(cli => cli !== 'aside').map(value => ({ value, label: 'cli' }));
     }
     if (sub === 'model') {
         if (argv.length < 2) return [];
-        const modelChoicesByCli = await getModelChoicesByCli();
+        const modelChoicesByCli = await getModelChoicesByCli(ctx, false);
         const allModels: string[] = (Object.values(modelChoicesByCli) as string[][]).flat();
         return dedupeChoices(allModels.map(value => ({ value, label: 'model' })));
     }
@@ -101,7 +112,7 @@ export function browserArgumentCompletions(ctx: CompletionCtx): SlashChoice[] {
 
 export function fallbackArgumentCompletions(ctx: CompletionCtx): SlashChoice[] {
     const L = ctx?.locale || 'ko';
-    const clis = Object.keys(ctx?.settings?.perCli || {});
+    const clis = Object.keys(ctx?.settings?.perCli || {}).filter(cli => cli !== 'aside');
     return [
         ...clis.map(c => ({ value: c, label: 'cli' })),
         { value: 'off', label: t('cmd.arg.fallbackOff', {}, L) },
@@ -110,8 +121,8 @@ export function fallbackArgumentCompletions(ctx: CompletionCtx): SlashChoice[] {
 
 export async function flushArgumentCompletions(ctx: CompletionCtx): Promise<SlashChoice[]> {
     const L = ctx?.locale || 'ko';
-    const clis = Object.keys(ctx?.settings?.perCli || {});
-    const modelChoicesByCli = await getModelChoicesByCli();
+    const clis = Object.keys(ctx?.settings?.perCli || {}).filter(cli => cli !== 'aside');
+    const modelChoicesByCli = await getModelChoicesByCli(ctx, false);
     const allModels: string[] = (Object.values(modelChoicesByCli) as string[][]).flat();
     return dedupeChoices([
         ...clis.map(c => ({ value: c, label: 'cli' })),

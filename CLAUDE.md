@@ -172,3 +172,5 @@ Opted-in workflow requests use the `followup` queue when busy; never steer or co
   by authenticated `POST /api/orchestrate/aside/reconcile` with `{sessionId, acknowledgementToken, acknowledged:true}`
   validates exact chat/run token and local child close, purges pending input and allows fresh input only. See
   `structure/runtime-integration.md` (or `runtime-integration.md` from structure/).
+
+Aside settings: Agent and Model defaults share explicit account/model controls; `/api/aside/models` previews only the requested local account without saving. Account changes clear conflicting active overrides in the same patch; auxiliary pickers exclude Aside.

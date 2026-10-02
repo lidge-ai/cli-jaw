@@ -180,7 +180,7 @@ Cursor/Grok activation and Activity controls are separate from this API foundati
 | Instance Lock | `GET /api/instance/lock` `POST /api/instance/lock` `DELETE /api/instance/lock` |
 | Search | `GET /api/search` |
 | Settings/Prompt | `GET/PUT /api/settings` `POST /api/settings/slack/reset` `POST /api/settings/runtime-default-migration` `POST /api/settings/multi-session-default-migration` `POST /api/project/pick` `GET /api/project/git-summary` `GET/PUT /api/prompt` `GET /api/prompt-templates` `PUT /api/prompt-templates/:id` `GET/PUT /api/heartbeat-md` |
-| MCP/CLI/Quota | `GET/PUT /api/mcp` `POST /api/mcp/sync` `POST /api/mcp/install` `POST /api/mcp/reset` `GET /api/mcp/registry` `GET /api/cli-registry` `GET /api/cli-status` `GET /api/quota` `POST /api/copilot/refresh` `POST /api/pi/profiles/register` `GET /api/pi/models` |
+| MCP/CLI/Quota | `GET/PUT /api/mcp` `POST /api/mcp/sync` `POST /api/mcp/install` `POST /api/mcp/reset` `GET /api/mcp/registry` `GET /api/cli-registry` `GET /api/aside/models` `GET /api/cli-status` `GET /api/quota` `POST /api/copilot/refresh` `POST /api/pi/profiles/register` `GET /api/pi/models` |
 | Runtime Context | `GET /api/runtime-context` `POST /api/runtime-context` `DELETE /api/runtime-context/:id` `DELETE /api/runtime-context` |
 | Native Runtime Decisions | `GET /api/runtime/requests` `POST /api/runtime/requests/:id` |
 | Security Audit | `GET /api/security-audit/entries` `GET /api/security-audit/verify` |
@@ -209,7 +209,7 @@ All trace routes set `Cache-Control: no-store` before auth/parsing. Activity dis
 | Dashboard Schedule | `GET /api/dashboard/schedule/work` `POST /api/dashboard/schedule/work` `PATCH /api/dashboard/schedule/work/:id` `DELETE /api/dashboard/schedule/work/:id` `POST /api/dashboard/schedule/work/:id/dispatch` |
 | i18n | `GET /api/i18n/languages` `GET /api/i18n/:lang` |
 
-> AST 추출기가 현재 인식하는 범위는 총 245개 route handler다. 이 추출 범위의 API 엔드포인트는 244개이고 `/` 엔트리는 1개다. 전체 API 총수는 아니다. `registerNativeCodeRoutes()` 내부의 `router.*`와 `app.use(prefix, router)` 연결은 아직 집계하지 못한다. 별도로 동작하는 native Code 핸들러 14개는 아래 [Native Code API](#native-code-api) 표에 명시하며, 이전 경로의 410 응답 핸들러도 추출 집계에서 빠져 있다. Browser API 43개는 `src/routes/browser.ts`, Jaw CEO 20개는 `src/routes/jaw-ceo.ts`에서 등록된다.
+> AST 추출기가 현재 인식하는 범위는 총 246개 route handler다. 이 추출 범위의 API 엔드포인트는 245개이고 `/` 엔트리는 1개다. 전체 API 총수는 아니다. `registerNativeCodeRoutes()` 내부의 `router.*`와 `app.use(prefix, router)` 연결은 아직 집계하지 못한다. 별도로 동작하는 native Code 핸들러 14개는 아래 [Native Code API](#native-code-api) 표에 명시하며, 이전 경로의 410 응답 핸들러도 추출 집계에서 빠져 있다. Browser API 43개는 `src/routes/browser.ts`, Jaw CEO 20개는 `src/routes/jaw-ceo.ts`에서 등록된다.
 
 `PUT /api/heartbeat`의 job은 `mentionWatch: { channel: "slack", userId: "U...", channelIds: ["C..."], maxHits?, since?, userIds?, conditions? }`를 선택적으로 받는다. `userIds`와 `conditions`는 생략하거나 빈 배열이면 오늘과 같이 `userId` 멘션만 본다. `conditions`의 `match`는 `mention` 또는 `talk`(말한 사람이 subject일 때만)이고 inbound `mentionOnly`와는 다른 게이트다. `channelIds`는 비어 있지 않아야 한다. `slack.channelIds`가 비어 있으면(모든 대화) 부분집합 검사와 교집합은 하지 않고 watch의 채널 목록 자체가 스캔 범위가 된다. 비어 있지 않은 allowlist에서는 저장 때 검사하지 않고, 실행 tick 직전 현재 allowlist와 교집합해 밖의 채널을 그 tick에서 건너뛴다. 감시 채널을 allowlist에 넣으라고 안내하지 않는다 — 그 목록은 inbound를 끊는다. job id가 같은 기존 값에 대해 필드가 없으면 상속하고, `null`이면 삭제하며, 잘못된 값은 `400 invalid heartbeat mention watch`다. 파일 로드 정규화에서 잘못된 `mentionWatch`는 해당 job을 `enabled: false`로 내린다. 기본 운영값은 비활성이고, 설정된 watch는 별도 daemon이 아니라 기존 `runHeartbeatJob`에서 실행된다.
 
@@ -629,3 +629,18 @@ uncertain owner or child not closed;
 200 `{ok:true, scope, freshInputRequired:true}`. It never sends an Aside prompt or resumes
 an uncertain session. Normal/default steer and `/steer` queue; `/queue steer` refuses Aside
 before queue removal, insertion, or process control.
+
+
+### Aside draft catalog
+
+`GET /api/aside/models?account=uN&host=local` uses existing instance authentication.
+Both scalar query values are required; repeated, unknown, malformed or remote-host
+parameters return 400. It never substitutes the saved account. Valid queries return
+`{ok:true,data:AsideCatalog}` with `available`, `partial` or `unavailable` status and
+safe diagnostics. Catalog reads do not save settings, log in or start an agent.
+Only allowlisted model metadata is returned; credentials remain owned by Aside.
+
+`/api/cli-registry` describes the saved account, while the draft endpoint lets settings
+preview a different account before save. Default effort is scoped to the concrete
+configured model. Installed Aside is reported with unknown authentication, not a
+positive login inference from its binary or catalog.

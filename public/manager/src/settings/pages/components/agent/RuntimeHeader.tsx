@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react';
 import { SelectField, TextField } from '../../../fields';
 import { SettingsSection } from '../../page-shell';
 import { metaFor, orderRuntimeCliOptions, PRIMARY_CLIS, isRetiredCliSelection, retiredRuntimeLabel, type CliMeta } from './agent-meta';
 
 type RuntimeHeaderProps = {
+    asideFields?: ReactNode;
     cli: string;
     cliOptions: ReadonlyArray<string>;
     provider?: string;
@@ -22,6 +24,7 @@ type RuntimeHeaderProps = {
 };
 
 export function RuntimeHeader({
+    asideFields,
     cli,
     cliOptions,
     provider = '',
@@ -58,6 +61,7 @@ export function RuntimeHeader({
                     collapsedAfter={orderedPrimaryCliCount}
                     onChange={onCliChange}
                 />
+                {asideFields || <>
                 {providerOptions.length > 0 ? (
                     <SelectField
                         id={`agent-${cli}-provider`}
@@ -86,6 +90,7 @@ export function RuntimeHeader({
                     disabled={retired || effortOptions.length === 0}
                     onChange={onEffortChange}
                 />
+                </>}
                 <TextField
                     id="agent-workingDir"
                     label="Working directory"

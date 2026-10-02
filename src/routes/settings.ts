@@ -32,6 +32,7 @@ import { fetchKiroUsage } from './quota-kiro-reverse.js';
 import { CLI_KEYS } from '../cli/registry.js';
 import { fetchOpenCodeUsage } from './quota-opencode-go-api.js';
 import { buildLiveCliRegistry } from '../cli/registry-live.js';
+import { AsideCatalogError, readAsideCatalog } from '../agent/aside-catalog.js';
 import { getCachedCliStatus, getCachedCliStatusForced } from '../cli/cli-status.js';
 import { isSwitchableNativeCli, runtimeSelectionStatus } from '../agent/runtime/selection.js';
 import { nativeStartFailure } from '../agent/runtime/start-failure.js';
@@ -664,6 +665,28 @@ export function registerSettingsRoutes(
             res.status(500).json({ ok: false, error: (e as Error).message, entries: [], builtins: [] });
         }
     });
+
+    app.get('/api/aside/models', requireAuth, asyncHandler(async (req, res) => {
+        // Parse the wire query to retain repeated keys regardless of Express's parser.
+        const query = new URL(req.originalUrl, 'http://localhost').searchParams;
+        const account = query.get('account');
+        const host = query.get('host');
+        if ([...query.keys()].some(key => key !== 'account' && key !== 'host')
+            || query.getAll('account').length !== 1 || query.getAll('host').length !== 1
+            || !account || !/^u(?:0|[1-9][0-9]{0,8})$/.test(account) || !host) {
+            fail(res, 400, 'invalid_context');
+            return;
+        }
+        if (host !== 'local') {
+            fail(res, 400, 'unsupported_host');
+            return;
+        }
+        try {
+            ok(res, await readAsideCatalog({ account, host }));
+        } catch (error) {
+            fail(res, 500, error instanceof AsideCatalogError ? error.code : 'read_failed');
+        }
+    }));
 
     app.get('/api/cli-registry', requireAuth, asyncHandler(async (_, res) => {
         ok(res, await buildLiveCliRegistry());

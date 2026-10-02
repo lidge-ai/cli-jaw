@@ -840,3 +840,23 @@ when a retained Instance draft already keeps the aggregate dirty flag true.
 Employee forms keep each label above its control within the roster column, and
 collapse to one column in narrow settings containers. Expanding a select menu
 returns focus to its combobox so Escape dismisses the menu before page navigation.
+
+
+## Aside account and model selection
+
+Agent and Model defaults share account-scoped inventory controls. The account is an
+explicit `uN` value and the host is local; model IDs retain their provider prefix.
+`GET /api/aside/models?account=uN&host=local` previews draft-account data without
+saving settings, logging in, or starting an agent. SettingsClient returns the raw
+response envelope, so the inventory owner validates and unwraps its data.
+
+Account/client/instance/port changes invalidate prior success and error responses,
+including A→B→A races. Reads do not change drafts. Account edits reset incompatible
+active overrides in the same saved patch. Unavailable saved values remain visible;
+cached-only IDs and unknown capabilities never become verified choices. Default-model
+effort comes from its concrete model, not a union of other models' efforts.
+
+Aside exposes no fast-mode or transport switch. Employee, flush and fallback choices
+exclude it. Classic standalone settings uses this same Manager implementation rather
+than a second account form. Binary presence and registered metadata do not establish
+login status; authentication remains unknown until independently observed.

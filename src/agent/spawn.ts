@@ -1269,7 +1269,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         const detected = detectCli('aside');
         const env = makeCleanEnv(applyCliEnvDefaults('aside', opts.env));
         env[COMPUTER_USE_APPROVAL_ENV] = permissions === 'auto' ? 'auto' : 'safe';
-        const model = (opts.model ?? overrides.model ?? cfg.model) || 'default';
+        const model = opts.model || overrides.model || cfg.model || 'default';
         if (mainManaged) {
             setCurrentMainMeta(scopeKey, stripUndefined({
                 origin, cli: 'aside', permissions: capturedPermissions, target: opts.target,
@@ -1283,7 +1283,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             persistenceOwner, runPin, prompt, resolve: value => resolve(value), resultPromise,
             binary: detected.path || 'aside', context: { account, host: 'local' }, policy: permissions as 'auto' | 'safe',
             spawnCwd: cwd, spawnEnv: env, model,
-            effort: (opts.effort ?? overrides.effort ?? cfg.effort) || 'default',
+            effort: opts.effort || overrides.effort || cfg.effort || 'default',
             sysPrompt: customSysPrompt !== undefined ? customSysPrompt : getSystemPrompt(stripUndefined({
                 currentPrompt: prompt, forDisk: false, memorySnapshot, activeCli: 'aside', freshSession: true })) },
             { activeMainProcesses, activeProcesses, buildHistoryBlock, releaseMainRun, queueCtrl, processQueue, consumeKillReason });

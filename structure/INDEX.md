@@ -224,3 +224,5 @@ Support labels must stay aligned with agbrowse:
 ---
 
 *마지막 갱신: 2026-07-06 (`server.ts` 637L, `src/routes/` 36 TS files / 238 route handlers including `/` / 237 API endpoints, `src/agent/` 48 TS files including spawn/events submodules, `src/goal/` 5 TS files (+`pause-gate.ts`), `src/cli/commands.ts` 52 slash commands (51 non-hidden; only `/file` hidden) + dynamic `/skill:<id>`, `src/core/event-bus.ts` + `src/routes/events.ts` SSE channel, `src/manager/` 102 TS/TSX files (+`telegram-hub/` 3 files), `src/browser/web-ai/` 96 TS files + `adaptive-fetch/` 32 files, `src/telegram/` 7 top-level TS files (+`hub-callback.ts`), `bin/commands/` 36 top-level TS files (+`hooks.ts`), `electron/` sidecar packaging 기준)*
+
+Aside account selection and draft model discovery: see [model registry](model-registry.md), [frontend](frontend.md#aside-account-and-model-selection), and [server API](server_api.md#aside-draft-catalog). The experimental runtime remains local/main-only.
