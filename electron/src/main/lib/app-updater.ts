@@ -50,7 +50,10 @@ export function shouldEnableAppUpdater(options: {
   isolatedQa: boolean;
   disabledByEnvironment: boolean;
 }): boolean {
-  return (options.platform === 'darwin' || options.platform === 'win32') &&
+  // Windows installers are unsigned and package no publisherName, so
+  // electron-updater would skip Authenticode verification entirely. Keep the
+  // Windows client off until signing exists.
+  return options.platform === 'darwin' &&
     options.isPackaged &&
     !options.isolatedQa &&
     !options.disabledByEnvironment;
@@ -102,7 +105,7 @@ export function createAppUpdaterController(options: AppUpdaterControllerOptions)
         await options.showMessageBox({
           type: 'info',
           title: 'Updates Unavailable',
-          message: 'Automatic updates are available only in the installed desktop app.',
+          message: 'Automatic updates are available only in the installed macOS app.',
           buttons: ['OK'],
           defaultId: 0,
         });

@@ -58,6 +58,7 @@ import { resolveWindowChromeOptions } from './lib/window/chrome-options.js';
 import { isAllowedSender, setAllowedOrigin } from './lib/ipc-origin-guard.js';
 import { primeMacAutomationPermission } from './lib/mac-automation-permission.js';
 import { showQuitProgress } from './lib/quit-progress.js';
+import { quitAfterDialog, runStartupAfterBootstrap } from './lib/fatal-quit.js';
 import {
   createAppUpdaterController,
   shouldEnableAppUpdater,
@@ -339,27 +340,32 @@ if (!gotLock) {
     }
     configureEmbeddedBrowserSession();
     initializeAppUpdater();
-    await bootstrapOnce();
-    appUpdaterController?.start();
-    if (!QA_POLICY) promptInstallCli().catch(() => {});
-    if (!metricsCollector) {
-      try {
-        metricsCollector = startAppMetricsCollector();
-      } catch (err) {
-        ringBuffer.append(`[metrics start error] ${(err as Error)?.message ?? err}\n`);
-      }
-    }
-    if (pendingDeepLinkUrl) {
-      const pending = pendingDeepLinkUrl;
-      pendingDeepLinkUrl = null;
-      await handleDeepLink(pending);
-    }
+    await runStartupAfterBootstrap(
+      bootstrapOnce,
+      () => shuttingDown || shutdownComplete,
+      async () => {
+        appUpdaterController?.start();
+        if (!QA_POLICY) promptInstallCli().catch(() => {});
+        if (!metricsCollector) {
+          try {
+            metricsCollector = startAppMetricsCollector();
+          } catch (err) {
+            ringBuffer.append(`[metrics start error] ${(err as Error)?.message ?? err}\n`);
+          }
+        }
+        if (pendingDeepLinkUrl) {
+          const pending = pendingDeepLinkUrl;
+          pendingDeepLinkUrl = null;
+          await handleDeepLink(pending);
+        }
 
-    app.on('activate', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        void createManagerWindow();
+        app.on('activate', () => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            void createManagerWindow();
+          }
+        });
       }
-    });
+    );
   }).catch((err) => {
     console.error('[jaw-electron] bootstrap failed', err);
     dialog.showErrorBox('jaw Electron', String(err?.stack ?? err));
@@ -1373,7 +1379,11 @@ function handleManagerExitAfterCleanup(code: number | null, signal: NodeJS.Signa
       crashLoopStopped = true;
       updateServerStatus('Server: Crash loop');
       notifyServerCrash();
-      void showCrashLoopDialog(ringBuffer.read()).then(() => quitAfterFatal('crash-loop'));
+      void quitAfterDialog(
+        () => showCrashLoopDialog(ringBuffer.read()),
+        () => quitAfterFatal('crash-loop'),
+        (message) => ringBuffer.append(message),
+      );
       return;
     }
     void (async () => {
@@ -1417,7 +1427,11 @@ function handleManagerExitAfterCleanup(code: number | null, signal: NodeJS.Signa
       crashLoopStopped = true;
       updateServerStatus('Server: Crash loop');
       notifyServerCrash();
-      void showCrashLoopDialog(ringBuffer.read()).then(() => quitAfterFatal('crash-loop'));
+      void quitAfterDialog(
+        () => showCrashLoopDialog(ringBuffer.read()),
+        () => quitAfterFatal('crash-loop'),
+        (message) => ringBuffer.append(message),
+      );
       return;
     }
     try {

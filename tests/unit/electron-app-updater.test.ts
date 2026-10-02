@@ -65,9 +65,9 @@ async function flush(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-test('automatic updater is restricted to installed macOS/Windows outside isolated QA and the kill switch', () => {
+test('automatic updater is restricted to installed macOS outside isolated QA and the kill switch', () => {
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), true);
-  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), true);
+  assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'linux', isPackaged: true, isolatedQa: false, disabledByEnvironment: false }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'win32', isPackaged: false, isolatedQa: false, disabledByEnvironment: false }), false);
   assert.equal(shouldEnableAppUpdater({ platform: 'darwin', isPackaged: false, isolatedQa: false, disabledByEnvironment: false }), false);

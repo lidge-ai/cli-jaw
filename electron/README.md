@@ -140,8 +140,9 @@ For each platform matrix entry it:
 10. verifies the final sidecar and packaged app icon inputs,
 11. uploads artifacts to the release or 7-day manual-run artifact storage.
 
-The updater runs only in an installed, packaged macOS app. It performs one
-delayed silent check on startup and exposes **CLI-JAW → Check for Updates…**.
+The updater runs only in an installed, packaged macOS app. It performs a
+delayed silent check on startup, then an automatic check every 24 hours while
+the app keeps running, and exposes **CLI-JAW → Check for Updates…**.
 It never auto-downloads or auto-installs: both actions require native-dialog
 consent, and coordinated manager cleanup completes before restart/install.
 Stable builds use GitHub's latest stable release. Preview builds select a

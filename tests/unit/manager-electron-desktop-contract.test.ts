@@ -219,16 +219,10 @@ test('Electron updater stays in the trusted main process and preserves coordinat
     assert.ok(vite.includes("'electron-updater'"), 'electron-updater must remain an external packaged runtime dependency');
 });
 
-test('Electron Windows updater path ships its NSIS feed and hides the sidecar console', () => {
-    const workflow = read('.github/workflows/desktop-release.yml');
+test('Electron keeps the unsigned Windows updater off and hides the sidecar console', () => {
     const spawn = read('electron/src/main/lib/jaw-spawn.ts');
     const updater = read('electron/src/main/lib/app-updater.ts');
-
-    // electron-updater on Windows reads latest.yml from the GitHub release;
-    // without it in the artifact globs the enabled win32 check 404s forever.
-    assert.ok(workflow.includes('electron/dist/latest.yml'), 'Windows release artifacts must upload the NSIS latest.yml update feed');
-    assert.ok(workflow.includes('electron/dist/*.blockmap'), 'Windows release artifacts should upload blockmaps for differential updates');
-    assert.ok(updater.includes("options.platform === 'darwin' || options.platform === 'win32'"), 'updater enablement must cover packaged Windows');
+    assert.ok(updater.includes("return options.platform === 'darwin' &&"), 'updater enablement must stay macOS-only until Windows signing exists');
     // The packaged app is a GUI process; a bare cmd.exe launch flashes a console.
     assert.ok(spawn.includes('windowsHide: true'), 'sidecar spawn must hide its console window on Windows');
 });
