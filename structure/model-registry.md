@@ -187,3 +187,26 @@ probe." 카탈로그 렌더 한 번이 프로세스를 띄우면 로그인 프�
 - [runtime integration](runtime-integration.md) — transport 선택과 native adapter
 - [server API](server_api.md) — `/api/cli-registry`, `/api/cli-status`
 - [commands](commands.md) — 슬래시 커맨드에서의 모델 선택
+
+## Aside account catalog boundary
+
+Aside is not yet an executable Jaw engine in this layer. Its installed CLI can
+be invoked separately with an explicit account and host; registering model data
+does not by itself add a Jaw runtime or a native Code provider.
+
+Aside keeps custom provider models in the selected account's `models.json`, under
+`providers.<provider>.models`. Model identity includes the provider and model ID;
+a model ID alone can collide across providers. Readers must project only model
+metadata, because the same provider object can also contain credentials. No raw
+provider object belongs in a registry response, log, or browser bundle.
+
+The account's configured `defaultModel` is a preference, separate from registered
+models. An account model-ID cache is also separate: its presence does not establish
+current entitlement, model capabilities, or a complete builtin catalog. A missing
+or malformed profile must not silently borrow another account's models. A remote
+host must not be represented by a local profile's inventory.
+
+Catalog discovery should read bounded local data without starting an agent turn,
+logging in, modifying Aside settings, or querying a paid model. Execution remains
+a separate capability: a successful CLI exit alone does not prove a completed
+agent turn, and terminating that CLI does not prove the Aside session stopped.
