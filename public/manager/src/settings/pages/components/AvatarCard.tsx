@@ -65,6 +65,8 @@ export function AvatarCard({ kind, client }: Props) {
                         'x-filename': encodeURIComponent(file.name),
                     },
                     body: buf,
+                    // Image transfers may exceed the client's JSON request timeout.
+                    signal: new AbortController().signal,
                 },
             );
             const next: AvatarMeta = 'data' in envelope && envelope.data

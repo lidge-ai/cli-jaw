@@ -38,6 +38,7 @@ function fixture(value: unknown, pending = false) {
     const gate = Promise.withResolvers<void>(); if (!pending) gate.resolve();
     const writes: Array<{ path: string; body: unknown }> = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) {
             if (path === '/api/settings') { await gate.promise; return structuredClone(snapshot) as T; }
             if (path === '/api/cli-registry') return { claude: { label: 'Claude', models: ['fixture-model'], efforts: ['low'] } } as T;
