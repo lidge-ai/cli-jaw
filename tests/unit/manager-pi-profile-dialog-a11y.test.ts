@@ -47,6 +47,7 @@ async function mount(t: TestContext, options: { inert?: boolean; prepare?: (cont
     const response = Promise.withResolvers<unknown>();
     const posts: Array<{ path: string; body: unknown; init: RequestInit | undefined }> = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get() { throw Error('Unexpected GET'); },
         async put() { throw Error('Unexpected PUT'); },
         async delete() { throw Error('Unexpected DELETE'); },

@@ -41,6 +41,7 @@ async function mountRow(t: TestContext, cli = 'cursor', transport: unknown = und
     const values: PerCliEntry[] = [];
     const http: string[] = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get() { http.push('GET'); throw new Error('Unexpected HTTP'); },
         async put() { http.push('PUT'); throw new Error('Unexpected HTTP'); },
         async post() { http.push('POST'); throw new Error('Unexpected HTTP'); },

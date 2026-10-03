@@ -242,6 +242,7 @@ test('App host guards real settings drafts through document and desktop subscrip
         save: async (patch: DashboardRegistryPatch) => { writes.push(structuredClone(patch)); return registryResult; } };
     const activity = { events: [], titlesByPort: {}, titleSupportByPort: {}, busyPorts: new Set<number>() };
     const client: SettingsClient = {
+        url: (path) => path,
         async get<T>() { return { presentation: { mode: 'activity' }, tui: { pasteCollapseLines: 6 } } as T; },
         async put<T>(path: string): Promise<T> { settingsWrites.push(path); throw new Error('Navigation must not save settings'); },
         async post<T>(path: string): Promise<T> { settingsWrites.push(path); throw new Error('Unexpected settings POST'); },
