@@ -25,6 +25,7 @@ export function createSettingsClient(port: number, options: {
     base?: string; getHeaders?: () => Promise<Record<string, string>>;
 } = {}): SettingsClient {
     const base = options.base ?? buildBaseUrl(port);
+    const url = (path: string): string => `${base}${path}`;
     const headers: HeadersInit = { 'content-type': 'application/json' };
 
     async function request<T>(
@@ -44,7 +45,7 @@ export function createSettingsClient(port: number, options: {
                 signal: init?.signal || controller.signal,
             };
             if (body !== undefined) fetchInit.body = JSON.stringify(body);
-            const response = await fetch(`${base}${path}`, fetchInit);
+            const response = await fetch(url(path), fetchInit);
             if (!response.ok) {
                 const detail = await response.text().catch(() => '');
                 throw new SettingsRequestError(method, path, response.status, detail);
@@ -66,6 +67,7 @@ export function createSettingsClient(port: number, options: {
     }
 
     return {
+        url,
         get: (path, init) => request('GET', path, undefined, init),
         put: (path, body, init) => request('PUT', path, body, init),
         post: (path, body, init) => request('POST', path, body, init),
