@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -11,6 +11,104 @@ import {
     prepareContextForBrowser,
     renderContextDryRunReport,
 } from '../../src/browser/web-ai/context-pack/index.js';
+
+const patternLimitError = /context glob pattern exceeds 32 opening delimiters/;
+const unsafePatterns = [
+    ['nested braces', '{'.repeat(4900) + 'x' + '}'.repeat(4900)],
+    ['parentheses', '{' + '('.repeat(40) + 'x' + ')'.repeat(40) + '}'],
+    ['escaped closers', '{\\}'.repeat(40) + 'x' + '}'.repeat(40)],
+    ['quoted closers', '{"}"'.repeat(40) + 'x' + '}'.repeat(40)],
+    ['character-class closers', '{[}]'.repeat(40) + 'x' + '}'.repeat(40)],
+    ['sibling braces', '{}'.repeat(33)],
+    ['escaped openers', '\\{'.repeat(33)],
+] as const;
+
+for (const [name, pattern] of unsafePatterns) {
+    for (const source of ['include', 'exclude'] as const) {
+        test(`context glob guard rejects ${name} in ${source}`, async (t) => {
+            const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+            t.after(() => rm(dir, { recursive: true, force: true }));
+            await assert.rejects(() => expandContextPaths(
+                source === 'include' ? [pattern] : ['*.ts'],
+                source === 'exclude' ? [pattern] : [],
+                dir,
+            ), patternLimitError);
+        });
+    }
+}
+
+test('context glob guard accepts 32 openers per pattern and rejects the 33rd', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const filename = '{}'.repeat(32) + 'a.ts';
+    await writeFile(join(dir, filename), 'export {};');
+    assert.deepEqual(await expandContextPaths(['{}'.repeat(32) + '*.ts'], [], dir), [join(dir, filename)]);
+    // The limit is per pattern, not summed across the include and ignore arrays.
+    assert.deepEqual(await expandContextPaths(['*.ts'], ['{}'.repeat(32) + '*.ts'], dir), []);
+    assert.deepEqual(await expandContextPaths(
+        ['{}'.repeat(32) + '*.ts'], ['{}'.repeat(32) + '*.js'], dir,
+    ), [join(dir, filename)]);
+    for (const openers of ['{}'.repeat(33), '()'.repeat(33), '{}'.repeat(16) + '()'.repeat(17)]) {
+        await assert.rejects(() => expandContextPaths([openers + '*.ts'], [], dir), patternLimitError);
+        await assert.rejects(() => expandContextPaths(['*.ts'], [openers + '*.ts'], dir), patternLimitError);
+    }
+    await expandContextPaths(['()'.repeat(32) + '*.ts'], [], dir);
+    await expandContextPaths(['{}'.repeat(16) + '()'.repeat(16) + '*.ts'], [], dir);
+});
+
+for (const format of ['text', 'json'] as const) {
+    for (const source of ['include', 'exclude'] as const) {
+        test(`context glob guard checks ${format} manifest ${source}`, async (t) => {
+            const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+            t.after(() => rm(dir, { recursive: true, force: true }));
+            const unsafe = './' + '{'.repeat(40) + 'x' + '}'.repeat(40);
+            const include = source === 'include' ? [unsafe] : ['*.ts'];
+            const exclude = source === 'exclude' ? [unsafe] : [];
+            const content = format === 'json'
+                ? JSON.stringify({ include, exclude })
+                : [...include, ...exclude.map(pattern => `!${pattern}`)].join('\n');
+            await writeFile(join(dir, 'context.txt'), content);
+            await assert.rejects(() => buildContextPackageResult({
+                cwd: dir, contextFile: 'context.txt', prompt: 'review',
+            }), patternLimitError);
+        });
+    }
+}
+
+test('context glob guard checks CLI include, negation and exclusion inputs', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const unsafe = '{'.repeat(40) + 'x' + '}'.repeat(40);
+    for (const input of [
+        { contextFromFiles: [unsafe] },
+        { contextFromFiles: ['*.ts', `!${unsafe}`] },
+        { contextFromFiles: ['*.ts'], contextExclude: [unsafe] },
+    ]) {
+        await assert.rejects(() => buildContextPackageResult({ cwd: dir, prompt: 'review', ...input }), patternLimitError);
+    }
+});
+
+test('context glob guard checks directory-derived patterns but preserves literal files', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const name = '('.repeat(33);
+    await mkdir(join(dir, name));
+    const filename = join(name, 'literal.ts');
+    await writeFile(join(dir, filename), 'export {};');
+    await assert.rejects(() => expandContextPaths([name], [], dir), patternLimitError);
+    assert.deepEqual(await expandContextPaths([filename], [name], dir), [join(dir, filename)]);
+    assert.deepEqual(await expandContextPaths([filename, '*.missing'], [], dir), [join(dir, filename)]);
+});
+
+test('context glob guard preserves ordinary brace alternatives and ranges', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-guard-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    for (const name of ['a.ts', 'b.ts', 'c.ts', '1.ts', '2.ts', '3.ts']) {
+        await writeFile(join(dir, name), 'export {};');
+    }
+    assert.deepEqual(await expandContextPaths(['{a,b}.ts', '{1..3}.ts'], ['{b,2}.ts'], dir),
+        ['1.ts', '3.ts', 'a.ts'].map(name => join(dir, name)));
+});
 
 test('web-ai context pack collects include and exclude patterns', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'jaw-ctx-pack-'));
