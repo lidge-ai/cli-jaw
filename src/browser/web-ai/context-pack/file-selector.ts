@@ -6,6 +6,8 @@ import { languageFromPath } from './renderer.js';
 import { estimateTokens } from './token-estimator.js';
 import type { ContextPackInput, ExcludedContextFile, SelectedContextFile } from './types.js';
 
+const MAX_GLOB_OPENING_DELIMITERS = 32;
+
 interface ContextPatternSet {
     include: string[];
     exclude: string[];
@@ -82,6 +84,11 @@ export async function expandContextPaths(
         else throw new Error(`context path not found: ${pattern}`);
     }
 
+    if (globs.length) {
+        for (const pattern of globs) assertBoundedGlobPattern(pattern);
+        for (const pattern of excludePatterns) assertBoundedGlobPattern(pattern);
+    }
+
     const globbed = globs.length
         ? await fg(globs, {
             cwd,
@@ -96,6 +103,19 @@ export async function expandContextPaths(
     return unique([...literals, ...globbed])
         .map(path => resolve(path))
         .sort((a, b) => toPosix(relative(cwd, a)).localeCompare(toPosix(relative(cwd, b))));
+}
+
+function assertBoundedGlobPattern(pattern: string): void {
+    // GHSA-vfj7-8cjw-p6xm: braces recursively walks both brace and paren nodes.
+    // Count all raw openers, including escaped ones; apparent closers inside
+    // escapes, quotes or character classes cannot safely reduce AST depth.
+    let openers = 0;
+    for (const char of pattern) {
+        if (char !== '{' && char !== '(') continue;
+        if (++openers > MAX_GLOB_OPENING_DELIMITERS) {
+            throw new Error(`context glob pattern exceeds ${MAX_GLOB_OPENING_DELIMITERS} opening delimiters`);
+        }
+    }
 }
 
 export async function readContextFile(

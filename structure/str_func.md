@@ -664,6 +664,7 @@ cli-jaw/
 │       └── tui/              ← chat 터미널 TUI 분리 (api, channel, fullscreen-mode, input-handler, overlays, raw-pipe-mode, renderer, simple-mode, tui-io, types, ws-handler)
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
+│       ├── manager-system-trash-options.test.ts ← literal trash-path forwarding without glob expansion
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees

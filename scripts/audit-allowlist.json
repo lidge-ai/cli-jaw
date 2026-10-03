@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Advisories we have looked at and decided to carry, each with the reason and a",
-    "review date. Anything NOT listed here fails the gate — that is the point: the",
+    "review date. Anything NOT listed here fails the gate \u2014 that is the point: the",
     "old check compared three hardcoded rules and passed the mermaid prototype",
     "pollution straight through to dev (#456, #460).",
     "",
@@ -14,5 +14,51 @@
     "allowlisted package fails the gate until someone re-checks reachability",
     "for that advisory too (scripts/deps-audit-classify.ts)."
   ],
-  "allow": []
+  "allow": [
+    {
+      "package": "braces",
+      "severity": "high",
+      "advisories": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ],
+      "reason": "src/browser/web-ai/context-pack/file-selector.ts checks every final include and ignore pattern before fast-glob, rejecting more than 32 total raw opening braces or parentheses. These are the only recursive AST container openers in braces 3.0.3, so this entrypoint cannot reach the advisory's unbounded nesting. src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. No patched upstream version exists at review time. This decision covers only GHSA-vfj7-8cjw-p6xm nesting, not arbitrary expansion/cardinality risks.",
+      "review": "2026-10-10"
+    },
+    {
+      "package": "micromatch",
+      "severity": "high",
+      "advisories": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ],
+      "reason": "Transitive GHSA-vfj7-8cjw-p6xm through braces. src/browser/web-ai/context-pack/file-selector.ts checks every final include and ignore pattern before fast-glob, rejecting more than 32 total raw opening braces or parentheses. These are the only recursive AST container openers in braces 3.0.3, so this entrypoint cannot reach the advisory's unbounded nesting. src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. ",
+      "review": "2026-10-10"
+    },
+    {
+      "package": "fast-glob",
+      "severity": "high",
+      "advisories": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ],
+      "reason": "Transitive GHSA-vfj7-8cjw-p6xm through micromatch/braces. src/browser/web-ai/context-pack/file-selector.ts checks every final include and ignore pattern before fast-glob, rejecting more than 32 total raw opening braces or parentheses. These are the only recursive AST container openers in braces 3.0.3, so this entrypoint cannot reach the advisory's unbounded nesting. src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. ",
+      "review": "2026-10-10"
+    },
+    {
+      "package": "globby",
+      "severity": "high",
+      "advisories": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ],
+      "reason": "Transitive GHSA-vfj7-8cjw-p6xm through fast-glob/micromatch/braces. Its only installed consumer is trash; src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. ",
+      "review": "2026-10-10"
+    },
+    {
+      "package": "trash",
+      "severity": "high",
+      "advisories": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ],
+      "reason": "Transitive GHSA-vfj7-8cjw-p6xm through globby/fast-glob/micromatch/braces. src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. Literal path forwarding with glob:false is covered by manager-system-trash-options.test.ts without calling the OS trash implementation.",
+      "review": "2026-10-10"
+    }
+  ]
 }
