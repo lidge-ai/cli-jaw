@@ -35,6 +35,7 @@ function settingsClient(initial: Record<string, unknown>, wrapped = false) {
     let reads = 0;
     const writes: { path: string; body: unknown }[] = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) {
             assert.equal(path, '/api/settings');
             reads += 1;
@@ -399,6 +400,7 @@ async function mountSlack(t: TestContext, initial: Record<string, unknown> = { s
     let pendingGet: ReturnType<typeof Promise.withResolvers<Record<string, unknown>>> | null = null;
     const writes: { method: string; path: string; body: unknown }[] = [], reads: string[] = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) {
             reads.push(path);
             if (path.startsWith('/api/slack/manifest')) return { json: '{"display_information":{"name":"cli-jaw"}}' } as T;

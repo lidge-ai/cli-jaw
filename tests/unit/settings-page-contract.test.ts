@@ -26,6 +26,7 @@ after(() => {
     }
 });
 const client: SettingsClient = {
+    url: (path) => path,
     async get<T>() { return { presentation: { mode: 'activity' }, tui: {} } as T; },
     async put<T>() { return {} as T; }, async post<T>() { return {} as T; }, async delete<T>() { return {} as T; },
 };
@@ -130,6 +131,7 @@ test('Dashboard meta refuses to load or write without a selected instance', asyn
     };
     const instanceCalls: string[] = [];
     const spyClient: SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) { instanceCalls.push(path); return {} as T; },
         async put<T>() { return {} as T; }, async post<T>() { return {} as T; }, async delete<T>() { return {} as T; },
     };

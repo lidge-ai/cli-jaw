@@ -707,6 +707,7 @@ test('unified registry filters scopes, localizes navigation, and preserves Manag
         dashboardShortcutKeymap: normalizeManagerShortcutKeymap(saved.dashboardShortcutKeymap) };
     const managerWrites: unknown[] = [], instanceWrites: unknown[] = [];
     const client: import('../../public/manager/src/settings/types').SettingsClient = {
+        url: (path) => path,
         async get() { throw new Error('Manager-only page must not request instance data'); },
         async put(path, body) { instanceWrites.push({ path, body }); throw new Error('Unexpected PUT'); },
         async post() { throw new Error('Unexpected POST'); }, async delete() { throw new Error('Unexpected DELETE'); },

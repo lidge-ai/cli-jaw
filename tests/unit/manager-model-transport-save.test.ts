@@ -38,6 +38,7 @@ function fixture(t: TestContext, name: string) {
     const reads: string[] = [];
     const posts: Array<Record<string, unknown>> = [];
     const client: SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) {
             assert.ok(path === '/api/settings' || path === '/api/cli-registry'); reads.push(path);
             const value = structuredClone(path === '/api/settings' ? snapshot : registry);

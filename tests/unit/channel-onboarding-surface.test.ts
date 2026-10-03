@@ -290,6 +290,7 @@ test('shared Telegram and Discord setup validate before saving and protect page 
             let pageSave: import('../../public/manager/src/settings/types').SaveHandler | null = null;
             const writes: Array<{ path: string; body: unknown }> = [];
             const client: import('../../public/manager/src/settings/types').SettingsClient = {
+                url: (path) => path,
                 async get<T>(path: string) {
                     if (path === '/api/settings') settingsReads++;
                     return (path === '/api/settings' ? { [channel]: {} } : {}) as T;

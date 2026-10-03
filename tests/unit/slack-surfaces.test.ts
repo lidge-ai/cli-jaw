@@ -116,6 +116,7 @@ test('Slack registry entry is reachable through shared settings navigation', asy
     });
     const requests: string[] = [];
     const client: import('../../public/manager/src/settings/types').SettingsClient = {
+        url: (path) => path,
         async get<T>(path: string) { requests.push(path); return (path === '/api/settings' ? { slack: {} } : {}) as T; },
         async put() { throw new Error('Unexpected write'); }, async post() { throw new Error('Unexpected write'); }, async delete() { throw new Error('Unexpected write'); },
     };
