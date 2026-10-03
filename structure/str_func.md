@@ -580,6 +580,8 @@ cli-jaw/
 │   │   ├── chat.css          ← chat/message/virtual-scroll + inline image min-height/object-fit/error fallback
 │   │   ├── native-requests.css ← live decision form, focus and bounded responsive scrolling
 │   │   └── activity.css      ← scoped live Activity disclosure and reversible Legacy visibility
+│   ├── manager/src/components/instance-overview.css ← bounded instance summary and responsive property lists
+│   ├── manager/src/components/process-control.css ← manager-wide process table, feedback and recovery disclosure
 │   ├── manager/src/settings-standalone.tsx ← shared instance settings root
 │   ├── manager/src/manager-desktop-titlebar.css ← Electron titlebar rail and zoom-aware traffic-light spacing
 │   ├── manager/src/settings/ ← unified instance and Manager settings
@@ -665,6 +667,7 @@ cli-jaw/
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
 │       ├── manager-system-trash-options.test.ts ← literal trash-path forwarding without glob expansion
+│       ├── manager-process-control.test.ts ← loading/error feedback, single-flight actions, confirmation and stale-response guards
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees

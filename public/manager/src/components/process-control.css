@@ -1,0 +1,128 @@
+.process-control-panel {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--canvas-mid);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+.process-control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px 12px;
+}
+
+.process-control-panel .process-control-heading h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.process-control-heading p,
+.process-control-count,
+.process-control-empty,
+.process-control-maintenance-body p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.process-control-header button,
+.process-control-actions button {
+    min-height: 32px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.process-control-content { padding: 0 18px 14px; }
+.process-control-count { margin: 0 0 10px; }
+.process-control-count span { font-size: 11px; }
+
+.process-control-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    text-align: left;
+}
+
+.process-control-table th,
+.process-control-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    overflow-wrap: anywhere;
+}
+
+.process-control-table thead th {
+    padding-top: 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.process-control-table tbody th,
+.process-control-table tbody td:nth-child(2) {
+    font-variant-numeric: tabular-nums;
+}
+
+.process-control-table tbody th { font-weight: 600; }
+.process-control-table tbody td { color: var(--text-secondary); }
+.process-control-table tr:last-child > * { border-bottom: 0; }
+.process-control-table thead tr > * { border-bottom: 1px solid var(--border-subtle); }
+.process-control-table tr > :first-child { padding-left: 0; }
+.process-control-table tr > :last-child { padding-right: 0; }
+
+.process-control-feedback:not(:empty),
+.process-control-error {
+    margin: 0;
+    padding: 0 18px 14px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.process-control-error { color: var(--status-error); }
+.process-control-maintenance { border-top: 1px solid var(--border-subtle); }
+.process-control-maintenance summary {
+    padding: 12px 18px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+}
+.process-control-maintenance summary:hover { color: var(--text-primary); }
+.process-control-maintenance-body { padding: 0 18px 16px; }
+.process-control-maintenance-body p { margin-top: 0; }
+.process-control-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
+.process-control-actions .process-control-stop { color: var(--status-error); }
+.process-control-panel button:disabled { cursor: not-allowed; opacity: 0.5; }
+.process-control-panel button:focus-visible,
+.process-control-maintenance summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.process-control-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+    .process-control-header button, .process-control-actions button, .process-control-maintenance summary { min-height: 44px; }
+    .process-control-header { gap: 10px; padding: 14px 12px 10px; }
+    .process-control-content { padding: 0 12px 12px; }
+    .process-control-feedback:not(:empty), .process-control-error { padding-inline: 12px; }
+    .process-control-maintenance summary { padding: 12px; }
+    .process-control-maintenance-body { padding: 0 12px 14px; }
+    .process-control-table th, .process-control-table td { padding-inline: 6px; }
+}

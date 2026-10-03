@@ -400,21 +400,8 @@ test('manager workbench modes remain instance-only while Notes renders outside W
     assert.equal(renderer.includes('./wysiwyg/'), false, 'MarkdownRenderer must not import WYSIWYG-only frontmatter helpers');
 });
 
-test('manager process control panel exposes safe managed-process actions only', () => {
-    const panel = read('public/manager/src/components/ProcessControlPanel.tsx');
-    const detail = read('public/manager/src/components/InstanceDetailPanel.tsx');
-    const api = read('public/manager/src/api.ts');
-    const types = read('public/manager/src/types.ts');
+test('manager process control backend retains unsupported force-release boundary', () => {
     const server = read('src/manager/server.ts');
-
-    assert.ok(detail.includes('ProcessControlPanel'), 'overview must render the process control panel');
-    assert.ok(panel.includes('Stop all managed'), 'panel must expose Stop all managed');
-    assert.ok(panel.includes('Adopt/recover'), 'panel must expose Adopt/recover');
-    assert.ok(panel.includes('Force release port'), 'panel must show force release as a planned control');
-    assert.ok(panel.includes('<button type="button" disabled'), 'force release must not be clickable in this slice');
-    assert.ok(api.includes('/api/dashboard/process-control/stop-managed'), 'frontend API must call stop-managed');
-    assert.ok(api.includes('/api/dashboard/process-control/adopt'), 'frontend API must call adopt');
-    assert.ok(types.includes('DashboardProcessControlState'), 'frontend types must include process control state');
     assert.ok(server.includes('/api/dashboard/process-control/force-release'), 'backend must explicitly reject force release for now');
     assert.ok(server.includes('501'), 'force release route must be unsupported until strict proof exists');
 });

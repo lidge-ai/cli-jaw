@@ -885,28 +885,11 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     overflow: auto;
     padding: 12px;
 }
-.overview-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-}
-.overview-grid > div, .metric, .detail-empty {
+.metric, .detail-empty {
     border: 1px solid var(--border-subtle);
     background: var(--canvas-mid);
     border-radius: 8px;
     padding: 11px;
-}
-.overview-grid span {
-    display: block;
-    color: var(--text-secondary);
-    font-size: 11px;
-}
-.overview-grid strong {
-    display: block;
-    margin-top: 6px;
-    overflow-wrap: anywhere;
-    font-size: 14px;
-    font-weight: 500;
 }
 /* ─── Logs Panel ──────────────────────────────── */
 .logs-panel {
@@ -984,64 +967,6 @@ button.instance-group-header[aria-expanded="false"] .instance-group-chevron {
     min-width: 0;
 }
 
-.process-control-panel {
-    margin-top: 12px;
-    border: 1px solid var(--border-subtle);
-    background: var(--canvas-mid);
-    border-radius: 8px;
-    padding: 11px;
-}
-.process-control-header,
-.process-control-actions,
-.process-control-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.process-control-header {
-    justify-content: space-between;
-}
-.process-control-header span,
-.process-control-list p,
-.process-control-message {
-    color: var(--text-secondary);
-    font-size: 11px;
-}
-.process-control-header strong {
-    display: block;
-    margin-top: 3px;
-    font-size: 14px;
-}
-.process-control-actions {
-    flex-wrap: wrap;
-    margin-top: 10px;
-}
-.process-control-actions button,
-.process-control-header button {
-    min-height: 28px;
-    padding: 5px 9px;
-    font-size: 12px;
-}
-.process-control-list {
-    display: grid;
-    gap: 6px;
-    margin-top: 10px;
-}
-.process-control-row {
-    min-height: 28px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    padding: 5px 7px;
-}
-.process-control-row span {
-    font-weight: 700;
-}
-.process-control-row strong,
-.process-control-row em {
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-style: normal;
-}
 .preview-panel {
     position: relative;
     min-height: 100%;
