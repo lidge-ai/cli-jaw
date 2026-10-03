@@ -1,12 +1,11 @@
 // Phase 2 — avatar upload card.
 //
-// Avatar upload bypasses the JSON settings client because the route expects a
-// raw image body (`Content-Type: image/*` or `application/octet-stream`) plus
-// `X-Filename`. We mount our own fetch + state instead of registering with the
-// page-level dirty store: uploads are atomic side-effects, not pending edits.
+// Avatar uploads use the configured settings transport with a raw image body.
+// They remain atomic side-effects outside the page-level dirty store.
 
 import { useEffect, useRef, useState } from 'react';
 import { icon } from '../../../../../js/icons';
+import type { SettingsClient } from '../../types';
 
 type AvatarKind = 'agent' | 'user';
 
@@ -20,12 +19,12 @@ type EnvelopeMeta =
 
 type Props = {
     kind: AvatarKind;
-    port: number;
+    client: SettingsClient;
 };
 
 const ACCEPTED_TYPES = 'image/png,image/jpeg,image/webp,image/gif';
 
-export function AvatarCard({ kind, port }: Props) {
+export function AvatarCard({ kind, client }: Props) {
     const [meta, setMeta] = useState<AvatarMeta | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -35,9 +34,8 @@ export function AvatarCard({ kind, port }: Props) {
         let cancelled = false;
         setError(null);
         setMeta(null);
-        fetch(`/i/${port}/api/avatar`)
-            .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`avatar HTTP ${r.status}`))))
-            .then((envelope: EnvelopeMeta) => {
+        client.get<EnvelopeMeta>('/api/avatar')
+            .then((envelope) => {
                 if (cancelled) return;
                 const inner = 'data' in envelope && envelope.data ? envelope.data : envelope;
                 const got = (inner as { agent?: AvatarMeta; user?: AvatarMeta })[kind] || null;
@@ -50,7 +48,7 @@ export function AvatarCard({ kind, port }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [kind, port]);
+    }, [kind, client]);
 
     const onPick = () => inputRef.current?.click();
 
@@ -60,21 +58,15 @@ export function AvatarCard({ kind, port }: Props) {
         try {
             const buf = await file.arrayBuffer();
             const ct = file.type || 'application/octet-stream';
-            const response = await fetch(`/i/${port}/api/avatar/${kind}/upload`, {
-                method: 'POST',
-                headers: {
-                    'content-type': ct,
-                    'x-filename': encodeURIComponent(file.name),
+            const envelope = await client.post<{ ok?: boolean; data?: AvatarMeta } | AvatarMeta>(
+                `/api/avatar/${kind}/upload`, undefined, {
+                    headers: {
+                        'content-type': ct,
+                        'x-filename': encodeURIComponent(file.name),
+                    },
+                    body: buf,
                 },
-                body: buf,
-            });
-            if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(`upload failed: ${response.status} ${text}`);
-            }
-            const envelope = (await response.json()) as
-                | { ok?: boolean; data?: AvatarMeta }
-                | AvatarMeta;
+            );
             const next: AvatarMeta = 'data' in envelope && envelope.data
                 ? (envelope.data as AvatarMeta)
                 : (envelope as AvatarMeta);
@@ -91,15 +83,9 @@ export function AvatarCard({ kind, port }: Props) {
         setBusy(true);
         setError(null);
         try {
-            const response = await fetch(`/i/${port}/api/avatar/${kind}/image`, {
-                method: 'DELETE',
-            });
-            if (!response.ok) {
-                throw new Error(`clear failed: ${response.status}`);
-            }
-            const envelope = (await response.json()) as
-                | { ok?: boolean; data?: AvatarMeta }
-                | AvatarMeta;
+            const envelope = await client.delete<{ ok?: boolean; data?: AvatarMeta } | AvatarMeta>(
+                `/api/avatar/${kind}/image`,
+            );
             const next: AvatarMeta = 'data' in envelope && envelope.data
                 ? (envelope.data as AvatarMeta)
                 : (envelope as AvatarMeta);
@@ -112,7 +98,7 @@ export function AvatarCard({ kind, port }: Props) {
     };
 
     const imageUrl = meta && meta.kind === 'image'
-        ? `/i/${port}${meta.imageUrl}`
+        ? client.url(meta.imageUrl)
         : null;
     const label = kind === 'agent' ? 'Agent avatar' : 'User avatar';
 

@@ -118,8 +118,8 @@ export default function Profile({ port, client, dirty, registerSave }: SettingsP
             </SettingsSection>
 
             <SettingsSection title="Avatars" hint="Uploads write to the instance's home folder.">
-                <AvatarCard kind="agent" port={port} />
-                <AvatarCard kind="user" port={port} />
+                <AvatarCard kind="agent" client={client} />
+                <AvatarCard kind="user" client={client} />
             </SettingsSection>
         </form>
     );

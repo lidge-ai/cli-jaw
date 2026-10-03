@@ -66,6 +66,7 @@ export type SettingsPageProps = {
 };
 
 export type SettingsClient = {
+    url(path: string): string;
     get<T>(path: string, init?: RequestInit): Promise<T>;
     put<T>(path: string, body: unknown, init?: RequestInit): Promise<T>;
     post<T>(path: string, body: unknown, init?: RequestInit): Promise<T>;
