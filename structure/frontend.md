@@ -384,6 +384,23 @@ Rows use an inline-size container: below 240px of row content width, quick actio
 | `manager/src/dashboard-reminders/` | reminders matrix/sidebar/workspace UI, drag/drop, detail popover |
 | `manager/src/dashboard-settings/` | Developer tools settings (diff defaults, embedding) |
 
+### Manager Overview
+
+Overview separates the selected instance from manager-wide process control. A compact
+status line and check timestamp lead Runtime and Connection definition lists, followed
+by full project directories. Missing measurements stay explicit; offline instances do
+not display a live uptime. Health and ownership reasons remain available under a
+native disclosure. `components/instance-overview.css` owns the bounded, scrollable
+layout and collapses columns by available panel width.
+
+Managed processes always covers all instances in this manager. Its port/PID/proof
+list distinguishes loading, failed reads, empty results and last-loaded data. Recovery
+and Stop all live under an explicitly named disclosure; Stop still requires confirmation
+and a failed read disables it until state is refreshed. Refresh and mutations share a
+single request owner, and responses after unmount cannot update the panel. Completion
+of a Stop request does not claim every process exited. The Preview switch and retained
+iframe behavior are independent of Overview.
+
 ### Manager Settings — Runtime transport and embedded Classic
 
 Workbench has Overview/Preview/Logs modes. The Settings tab and the command-bar gear are both removed: the sidebar rail is the only settings entry point, it renders manager scope only, and Meta+, opens it through the same dirty guard. The Workbench keeps Overview/Preview/Logs with its Preview iframe mounted across tab changes. `ui.instanceSettingsOpen` is accepted by the registry for one version but no longer written; page saves still target the selected instance API.

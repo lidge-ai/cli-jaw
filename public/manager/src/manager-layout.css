@@ -150,7 +150,6 @@
     .dashboard-shell.manager-shell:not(.is-sidebar-collapsed) .manager-workspace.is-side-panel-open {
         --right-panel-width: 50vw;
     }
-    .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1023px) {
     .dashboard-shell.manager-shell .manager-workspace,
@@ -285,7 +284,6 @@
         overflow-x: auto;
     }
     .workbench-header .workbench-mode-tabs button { flex: 1 0 auto; }
-    .overview-grid { grid-template-columns: 1fr; }
     .workbench-preview .preview-panel {
         gap: 8px;
         padding: 8px 10px;

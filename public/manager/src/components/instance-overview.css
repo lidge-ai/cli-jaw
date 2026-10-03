@@ -1,0 +1,97 @@
+.workbench-overview > .workbench-header {
+    display: flex;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--workspace-topbar-height);
+    padding: 12px;
+}
+.workbench-overview .workbench-header .detail-header {
+    display: flex;
+    flex: 1 1 520px;
+    min-width: 0;
+    align-items: center;
+    flex-wrap: wrap;
+    border: 0;
+    padding: 0;
+}
+.workbench-overview .workbench-header .detail-header > div:first-child { flex: 1 1 180px; }
+.workbench-overview .workbench-header .detail-header-actions { flex-wrap: wrap; }
+.workbench-overview .workbench-mode-bar { margin-left: auto; }
+.instance-overview {
+    width: 100%;
+    min-height: 0;
+    overflow: auto;
+    padding: clamp(16px, 3vw, 32px);
+    container-type: inline-size;
+}
+.instance-overview > * {
+    max-width: 1040px;
+    margin-inline: auto;
+}
+.overview-instance { margin-bottom: 28px; }
+.overview-status-line,
+.overview-status-heading { display: flex; align-items: center; gap: 14px; }
+.overview-status-line {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.overview-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.overview-status > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--status-idle);
+}
+.overview-status.is-online > span { background: var(--status-success); }
+.overview-status.is-error > span { background: var(--status-error); }
+.overview-status.is-timeout > span { background: var(--status-warn); }
+.overview-port { color: var(--text-secondary); font-family: var(--font-mono); font-size: 13px; }
+.overview-checked { color: var(--text-secondary); font-size: 12px; }
+.overview-unavailable { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.overview-sections { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
+.instance-overview h3 { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
+.overview-sections > section { min-width: 0; padding-block: 22px; }
+.overview-properties { margin: 0; display: grid; gap: 13px; }
+.overview-properties > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; font-size: 13px; line-height: 1.5; }
+.overview-properties dt { color: var(--text-secondary); }
+.overview-properties dd { margin: 0; overflow-wrap: anywhere; }
+.overview-mono { font-family: var(--font-mono); font-size: 12px; }
+.overview-project { padding-block: 18px; border-top: 1px solid var(--border-subtle); }
+.overview-project ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.overview-project li { overflow-wrap: anywhere; line-height: 1.6; }
+.overview-project p,
+.overview-no-selection p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.overview-diagnostics { border-top: 1px solid var(--border-subtle); }
+.overview-diagnostics summary { padding-block: 14px; color: var(--text-secondary); cursor: pointer; font-size: 12px; }
+.overview-diagnostics summary:hover { color: var(--text-primary); }
+.overview-diagnostics summary:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.overview-diagnostics .overview-properties { padding-block: 4px 16px; }
+.overview-diagnostics .overview-properties > div { grid-template-columns: 128px minmax(0, 1fr); }
+.overview-no-selection { padding-block: 20px 32px; }
+@container (max-width: 640px) {
+    .overview-sections { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .overview-sections > section + section { border-top: 1px solid var(--border-subtle); }
+}
+@container (max-width: 360px) {
+    .overview-properties > div { grid-template-columns: 80px minmax(0, 1fr); gap: 8px; }
+    .overview-diagnostics .overview-properties > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+@media (max-width: 480px) {
+    .workbench-overview .workbench-header .detail-header { align-items: stretch; flex-direction: column; }
+    .workbench-overview .workbench-header .detail-header > div:first-child { flex-basis: auto; }
+    .workbench-overview .workbench-mode-bar { margin-left: 0; }
+    .workbench-overview .workbench-header .detail-header-actions { justify-content: flex-start; }
+    .workbench-overview .workbench-header .detail-header button,
+    .workbench-overview .workbench-header .detail-header .open-link,
+    .workbench-overview .workbench-mode-tabs button { min-height: 44px; height: auto; }
+    .overview-diagnostics summary { min-height: 44px; }
+}
