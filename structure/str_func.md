@@ -667,6 +667,7 @@ cli-jaw/
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
 │   └── unit/
 │       ├── manager-system-trash-options.test.ts ← literal trash-path forwarding without glob expansion
+│       ├── manager-process-control.test.ts ← loading/error feedback, single-flight actions, confirmation and stale-response guards
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
