@@ -180,7 +180,14 @@ function compactSequences(location: string): void {
         }
     }
 }
-export async function acquirePeriodConsumerSlot(maxConcurrent = 2, waitSeconds = 300): Promise<(() => void) | null> {
+/** Default cap on period-thread consumers running at once across instances.
+ *  Separate from multiSession.maxConcurrent: this bounds proxy writers sharing one
+ *  parent post, not chat lanes. */
+export const PERIOD_THREAD_DEFAULT_MAX_CONSUMERS = 2;
+/** Default bounded wait for a consumer slot before the tick is skipped. */
+export const PERIOD_THREAD_DEFAULT_SLOT_WAIT_SECONDS = 300;
+
+export async function acquirePeriodConsumerSlot(maxConcurrent = PERIOD_THREAD_DEFAULT_MAX_CONSUMERS, waitSeconds = PERIOD_THREAD_DEFAULT_SLOT_WAIT_SECONDS): Promise<(() => void) | null> {
     const token = randomUUID();
     const location = dir('slots');
     compactSequences(location);

@@ -52,7 +52,7 @@ import { log } from '../core/logger.js';
 import { capturePeriodKey } from './period-thread-key.js';
 import type { CapturedPeriod } from './period-thread-key.js';
 import { ensurePeriodThreadRoot, verifyPeriodThreadParent, listBotRepliesSince, type PeriodRootResult } from './period-thread-root.js';
-import { acquirePeriodConsumerSlot, claimPeriodThreadReply, hasPeriodThreadReplyClaim, periodThreadReplyHash, periodThreadRootHash, writePeriodReplyInfo } from './period-thread-state.js';
+import { PERIOD_THREAD_DEFAULT_MAX_CONSUMERS, PERIOD_THREAD_DEFAULT_SLOT_WAIT_SECONDS, acquirePeriodConsumerSlot, claimPeriodThreadReply, hasPeriodThreadReplyClaim, periodThreadReplyHash, periodThreadRootHash, writePeriodReplyInfo } from './period-thread-state.js';
 import type { HeartbeatDestination } from '../core/config.js';
 import { loadHeartbeatPromptSkills } from './heartbeat-prompt-skills.js';
 
@@ -982,8 +982,8 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             }
             if (destination.periodThread!.role === 'consumer') {
                 releaseConsumerSlot = await acquirePeriodConsumerSlot(
-                    destination.periodThread!.maxConcurrent ?? 2,
-                    destination.periodThread!.concurrencyWaitSeconds ?? 300,
+                    destination.periodThread!.maxConcurrent ?? PERIOD_THREAD_DEFAULT_MAX_CONSUMERS,
+                    destination.periodThread!.concurrencyWaitSeconds ?? PERIOD_THREAD_DEFAULT_SLOT_WAIT_SECONDS,
                 );
                 if (!releaseConsumerSlot) {
                     updateHeartbeatLiveDestinationHold(job, 'consumer_concurrency_full');
