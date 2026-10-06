@@ -45,9 +45,17 @@ function readHeartbeatPromptSkills(ids: unknown, options: { skillsDir?: string }
             return { ok: false, reason: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'prompt_skill_missing' : 'prompt_skill_read_failed', id };
         }
         if (!actual.startsWith(root + sep)) return { ok: false, reason: 'prompt_skill_outside_root', id };
+        // Reject non-regular files BEFORE opening: a blocking open of a FIFO
+        // would stall the server's event loop until a writer appears. The
+        // non-blocking open plus fstat below covers a swap between the two.
+        try {
+            if (!fs.statSync(actual).isFile()) return { ok: false, reason: 'prompt_skill_not_file', id };
+        } catch {
+            return { ok: false, reason: 'prompt_skill_read_failed', id };
+        }
         let handle: number | undefined;
         try {
-            handle = fs.openSync(actual, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+            handle = fs.openSync(actual, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
             if (!fs.fstatSync(handle).isFile()) return { ok: false, reason: 'prompt_skill_not_file', id };
             const buffer = Buffer.allocUnsafe(MAX_SKILL_BYTES + 1);
             let size = 0;

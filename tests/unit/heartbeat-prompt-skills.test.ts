@@ -43,6 +43,18 @@ test('valid IDs and bounded SKILL bodies remove frontmatter', t => {
     assert.deepEqual(loadHeartbeatPromptSkills(brokenArray, { skillsDir: f.dir }), { ok: false, reason: 'prompt_skill_read_failed', id: '' });
 });
 
+
+test('a FIFO named SKILL.md is refused without blocking the event loop', { skip: process.platform === 'win32' }, async t => {
+    const f = fixture(t);
+    fs.mkdirSync(path.join(f.dir, 'pipe'));
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('mkfifo', [path.join(f.dir, 'pipe', 'SKILL.md')]);
+    const started = Date.now();
+    assert.deepEqual(loadHeartbeatPromptSkills(['pipe'], { skillsDir: f.dir }), { ok: false, reason: 'prompt_skill_not_file', id: 'pipe' });
+    assert.ok(Date.now() - started < 1000, 'loader returned promptly');
+});
+
+
 test('each unsafe or unreadable SKILL has a reason and never throws', t => {
     const f = fixture(t);
     assert.deepEqual(loadHeartbeatPromptSkills(['absent'], { skillsDir: f.dir }), { ok: false, reason: 'prompt_skill_missing', id: 'absent' });
