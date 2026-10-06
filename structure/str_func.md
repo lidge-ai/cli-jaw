@@ -54,7 +54,7 @@ cli-jaw/
 │   │   ├── bus.ts            ← public SSE publish + 내부 리스너 fan-out
 │   │   ├── logger.ts         ← 로거 유틸 + structured log.event
 │   │   ├── i18n.ts           ← 서버사이드 번역
-│   │   ├── employees.ts      ← Employee 시드/CRUD 공용 로직 + 정적 직원 등록(Control: codex `gpt-5.6-luna` + `codex-imagegen`) + virtual synthetic row/preset helpers + DEFAULT_EMPLOYEES
+│   │   ├── employees.ts      ← Employee 시드/CRUD 공용 로직 + 정적 직원 레지스트리(현재 비어 있음; Control은 jaw-computer-use MCP로 대체) + virtual synthetic row/preset helpers + DEFAULT_EMPLOYEES
 │   │   ├── main-session.ts   ← 메인 세션 authoritative CLI/clear-state helper + clearBossSessionOnly
 │   │   ├── message-summary.ts ← message preview/summary helper
 │   │   ├── path-expand.ts    ← shell-style path expansion helper
@@ -273,8 +273,7 @@ cli-jaw/
 │   │   ├── runtime-context.ts ← 런타임 컨텍스트 주입 (RuntimeContextEntry, loadEntries, getActiveEntries, addEntry, removeEntry, clearAll, buildInjectionBlock)
 │   │   ├── soul-bootstrap-prompt.ts ← LLM 기반 soul.md 개인화 부트스트랩 프롬프트 빌더
 │   │   ├── template-loader.ts ← 프롬프트 템플릿 로더
-│   │   └── templates/        ← 프롬프트 템플릿 (a1-system.md, a2-default.md, employee.md, orchestration.md, control-system.md, worker-context.md, vision-click.md, skills.md, heartbeat-*.md)
-│   │       └── control-system.md ← Control GUI/image-generation capability boundary + on-demand skill loading contract
+│   │   └── templates/        ← 프롬프트 템플릿 (a1-system.md, a2-default.md, employee.md, orchestration.md, worker-context.md, vision-click.md, skills.md, heartbeat-*.md)
 │   ├── cli/                  ← 커맨드 시스템 (root files + tui/)
 │   │   ├── commands.ts       ← 슬래시 커맨드 레지스트리 + workflow metadata + 디스패처 + 파일경로 필터 + /commands alias /cmd + /settings fullscreen transition + /orchestrate alias /pabcd + /compact + /plan + /search + /gd force-done alias + artifact persistence
 │   │   ├── handlers.ts       ← core command handlers + runtime/completion re-export hub + compact re-export + unknown command recovery payload

@@ -9,7 +9,7 @@ aliases: [A1 system prompt, CLI-JAW A1, system prompt template]
 # prompt_basic_A1 — 시스템 프롬프트 기본값
 
 > 경로: `~/.cli-jaw/prompts/A-1.md`
-> 소스: `src/prompt/templates/a1-system.md` (393L)
+> 소스: `src/prompt/templates/a1-system.md`
 > 구현: `src/prompt/builder.ts` → `getA1Content()` / `initPromptFiles()` / `getSystemPrompt()`
 > 파일 우선: `A-1.md`가 있으면 사용자 편집본 사용, 없으면 템플릿 렌더 결과 사용
 > `A1_CONTENT` 상수는 더 이상 없음
@@ -27,6 +27,7 @@ aliases: [A1 system prompt, CLI-JAW A1, system prompt template]
 | 5 | 해시가 달라졌을 때 사용자 편집본이면 보존, stock 파일이면 새 템플릿으로 이관 | `resolveLegacyA1Migration()` |
 
 > 핵심은 "파일 우선, 템플릿 폴백"이다. 예전처럼 코드 상수 하나로 고정된 구조가 아니다.
+> Computer Use 전환에서는 이전 배포본의 정상 `desktop-control` anchor 해시를 새 MCP 안내로 이관한다. Anchor 밖의 이전 item 5 문구는 완전한 줄로 정확히 한 번 있을 때만 바꾸고, 사용자 수정본이나 중복 문구는 보존한다.
 
 ---
 
@@ -42,7 +43,7 @@ aliases: [A1 system prompt, CLI-JAW A1, system prompt template]
 - `Search routing`: 버전/오류/API/현재 정보 질문은 native cli-jaw search 경로를 우선하고, 한국어/source-sensitive 검색은 1-3개 focused query로 재작성한 뒤 URL 후보의 원문 fetch/open 검증을 거친다.
 - `jaw Employees vs CLI Sub-agents` + `When to Use Which`: Boss dispatch와 CLI 내부 sub-agent를 구분
 - `How jaw Works (Architecture)`: Boss/employee 흐름과 `$computer-use` 토큰, `cli-jaw dispatch` 타임아웃, `cli-jaw worker status/watch` 직원 progress 조회 힌트. `snapshot.workers`는 running-only이고 완료된 worker progress는 `worker-progress.previous`에 있다.
-- `Desktop / Browser Control (MANDATORY)`: `$computer-use` 트리거, Control 디스패치 템플릿, 빠른 `cli-jaw browser` CDP/Web UI 경로, Codex/Control Computer Use 경로, Codex-only vision-click fallback, transcript format, forbidden 항목
+- `Desktop / Browser Control (MANDATORY)`: `$computer-use` 트리거, `jaw-computer-use` MCP의 `js` 도구(Claude에서는 `mcp__jaw-computer-use__js`) 또는 Codex 기본 Computer Use 플러그인으로 직접 수행하는 경로, 빠른 `cli-jaw browser` CDP/Web UI 경로, 별도의 Codex 전용 legacy vision-click fallback, transcript format, 금지 항목. Computer Use 첫 호출에서 반환된 `cua` API 문서를 읽고 거기에 나온 동작만 사용한다. 도구가 없으면 `precondition failed: no Computer Use surface`, 첫 앱 호출이 막히면 `precondition failed: computer-use app access blocked`로 구분한다.
 - `Channel File Delivery` (+ Discord/Slack notes): canonical local API, transport와 conversation ID 구분, target 생략 시 현재 Slack thread 보존, explicit `targetId` + parent `threadId` JSON 예시
 - `Long-term Memory (MANDATORY)`: `{{JAW_HOME}}/memory/structured/` 경로, L1 `cli-jaw memory ...` current-instance read/write, L2 `cli-jaw dashboard memory ...` cross-instance read-only 경계, 저장 가이드
   - **Compact Handoff Interpretation**: `/compact` 핸드오프 후 trust table(section별 High/Medium/Low) + decision tree(goal 검증 → memory search → file open 순서)

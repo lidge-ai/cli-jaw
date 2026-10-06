@@ -1,5 +1,4 @@
-// P37-PROMPT: A1 template must carry the Desktop/Browser Control anchor,
-// intent matrix, who-performs-it block, and forbidden phrases.
+// Desktop/Browser routing contract and action guidance.
 
 
 import test from 'node:test';
@@ -26,10 +25,8 @@ test('P37-PROMPT-002: A1 has both CDP path and Computer Use path sections', () =
     const a1 = readA1();
     assert.match(a1, /CDP path/);
     assert.match(a1, /Computer Use path/);
-    // The Computer Use tool surface is host-provided and version-dependent, so A1
-    // must not hard-code a tool name. It must instead tell the agent to establish
-    // the surface from what the host actually exposes.
-    assert.match(a1, /surface belongs to the host/);
+    assert.match(a1, /jaw-computer-use/);
+    assert.match(a1, /first call returns its documentation/i);
     assert.doesNotMatch(a1, /^\s*-\s*\*\*macOS:\*\*\s*`get_app_state/m);
 });
 
@@ -47,12 +44,11 @@ test('P37-PROMPT-004: A1 contains three forbidden phrases (explicit bans)', () =
     assert.match(a1, /Never (claim|say)/i);
 });
 
-test('P37-PROMPT-005: A1 has "Who performs it" block (Control not exclusive)', () => {
+test('P37-PROMPT-005: A1 lets any MCP-aware CLI self-serve', () => {
     const a1 = readA1();
     assert.match(a1, /Who performs it/i);
-    assert.match(a1, /may dispatch to `?Control`?/i);
-    assert.match(a1, /may self-serve Computer Use/i);
-    assert.match(a1, /Neither self-serve nor dispatch is mandatory/i);
+    assert.match(a1, /Any boss or employee whose CLI exposes `jaw-computer-use`/);
+    assert.doesNotMatch(a1, /dispatch --agent "Control"/);
 });
 
 test('P37-PROMPT-006: A1 intent→action-class matrix row exists', () => {
@@ -69,19 +65,13 @@ test('P37-PROMPT-007: A1 transcript format shows path= and action_class=', () =>
     assert.match(a1, /stale_warning=/);
 });
 
-test('P37-PROMPT-008: control-system.md exists with Control-specific rules', () => {
-    assert.ok(fs.existsSync(CONTROL_SYS_PATH), 'control-system.md must exist');
-    const text = fs.readFileSync(CONTROL_SYS_PATH, 'utf8');
-    assert.match(text, /You are `Control`/);
-    assert.match(text, /path=cdp|path=computer-use/);
-    assert.match(text, /Computer Use tool surface belongs to the host/);
+test('P37-PROMPT-008: retired Control system prompt is absent', () => {
+    assert.equal(fs.existsSync(CONTROL_SYS_PATH), false);
 });
 
 test('P37-PROMPT-009: Computer Use guidance prefers explicit text selection over keyboard guesswork', () => {
     const a1 = readA1();
-    const control = fs.readFileSync(CONTROL_SYS_PATH, 'utf8');
     assert.match(a1, /select text explicitly rather than by keyboard guesswork/);
-    assert.match(control, /select text explicitly rather than by keyboard guesswork/);
 });
 
 test('P40-PROMPT-010: A1 gates external realtime lookup through active search skill', () => {

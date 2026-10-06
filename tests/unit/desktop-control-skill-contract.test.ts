@@ -59,11 +59,12 @@ test('DCS-003: the reference keeps the platform shapes distinct', maybe, () => {
 
 test('DCS-004: the reference tells the agent to establish the surface rather than assume it', maybe, () => {
     const ref = fs.readFileSync(CU_REF, 'utf8');
-    assert.match(ref, /Do not assume tool names/i);
-    assert.match(ref, /enabled plugin is not proof/i,
-        'the exact trap that made the old inventory wrong must stay documented');
-    assert.match(ref, /no Computer Use surface/,
-        'and the agent must know what to report when nothing is exposed');
+    assert.match(ref, /jaw-computer-use/);
+    assert.match(ref, /first call[^\n]*documentation/i);
+    assert.match(ref, /precondition failed: no Computer Use surface/);
+    assert.match(ref, /precondition failed: computer-use app access blocked/);
+    assert.match(ref, /`auto`\s+approves/i);
+    assert.match(ref, /`safe`\s+declines/i);
 });
 
 test('DCS-005: the two Windows false-success traps are documented', maybe, () => {

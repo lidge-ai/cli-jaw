@@ -139,7 +139,7 @@ Key rules:
    for safe-summary progress, `cli-jaw worker watch [agent] --port <port>` for live
    progress. `snapshot.workers` is running-only; completed progress is under
    `worker-progress.previous`.
-5. **`$computer-use` / Computer Use routing** — binding rule is anchor:desktop-control §0 below (codex self-serves; non-codex dispatches to a codex-family employee verbatim with the token; none → report precondition failure, never fall back to CDP).
+5. **`$computer-use` / Computer Use routing** — binding rule is anchor:desktop-control §0 below: use `jaw-computer-use` MCP (`js`) or Codex's native Computer Use plugin yourself; if neither is exposed, report `precondition failed: no Computer Use surface`. Never substitute CDP.
 6. **Screenshot-first in dispatch body**: every UI-task dispatch must include — *"If unsure of state, re-read it (Computer Use state read, or `cli-jaw browser snapshot` on CDP) before the next action. Never chain actions through uncertainty."*
 
 ### Dispatch task authoring (the skeleton — employees are stateless; the task text is ALL they know)
@@ -176,38 +176,11 @@ Return: <exact shape you need back: verdict word (PASS/FAIL, DONE/NEEDS_FIX) +
 
 When the user's message contains **`$computer-use`**, skip intent routing entirely:
 
-- **Codex + host preconditions ready** → self-serve Computer Use. The first action is whatever entry point your host's Computer Use surface documents (§B.0) — read that documentation before calling anything.
-- **Not codex** → use the dispatch template below. Control preferred; any codex-family employee acceptable.
-- **No codex-family employee** → report `precondition failed: no codex-family employee for $computer-use`. Never fall back to CDP.
-- `jaw-desktop-control` skill is already inlined into Control's system prompt — never paste absolute skill paths (`/Users/*/.codex/skills/...` etc.) into the task body.
+- **Computer Use surface exposed** → self-serve through the `jaw-computer-use` MCP server (`js`; `mcp__jaw-computer-use__js` in Claude) or Codex's native computer-use plugin. The first call returns its own documentation for the `cua` API (`cua.getApp(name)`, `app.getAXState()`, `app.click(index|[x,y])`, `app.typeText`, `app.pressKey`, ...). Read it and use only what it describes.
+- **Neither surface exposed** → report `precondition failed: no Computer Use surface` (install/open the ChatGPT desktop app with Computer Use, then restart jaw so it registers `jaw-computer-use`). Never substitute CDP.
+- **First app call blocked** → report `precondition failed: computer-use app access blocked`; the jaw service's responsible process/binary may lack macOS permission to access data from other apps.
 
-If the token is absent but the target is clearly a desktop app (Finder, System Settings, Chrome tab bar, Spotify window, any non-DOM UI), the same dispatch logic applies.
-
-### 🎯 Dispatching to `Control` — required template
-
-Write the task to a file with your file tool (the user's request goes in
-verbatim — a file avoids shell-quoting breakage), then dispatch async:
-
-```text
-$computer-use
-
-<user's original request, verbatim>
-
-Execution rules:
-- First action: read your Computer Use surface's own documentation, then use its documented entry point to select the target app. Do not assume a tool name.
-- If unsure of state (which tab, which index, did the click land), re-read state BEFORE acting. Never chain actions through uncertainty.
-- Report precondition failures verbatim; never fall back to CDP.
-```
-
-```bash
-cli-jaw dispatch --agent "Control" --task-file /tmp/jaw-cu-<epoch>.md --async
-```
-(Use a fresh unique path per dispatch — never reuse a brief file.)
-
-Template rules:
-- Quote the task body with double quotes; escape inner quotes `\"`.
-- `$computer-use` must be the first token of the task body (short-circuits Control's routing).
-- Give Control the full end-to-end goal in one task — never split a single UI flow across dispatches.
+If the token is absent but the target is clearly a desktop app (Finder, System Settings, Chrome tab bar, Spotify window, any non-DOM UI), use the same Computer Use surface.
 
 ### A. CDP path — `cli-jaw browser` (for DOM web pages)
 This is the fast path for browser automation. Use it for DOM pages, local apps, Web UI verification, console/network inspection, and routine page interaction. Workflow: snapshot → act → snapshot/targeted wait → verify. For debug/log inspection, use the Web UI debug console — never open a visible browser just to inspect state.
@@ -223,20 +196,23 @@ cli-jaw browser type e5 "hello" --submit
 - Ref IDs **reset on navigation** → re-snapshot after navigate.
 - If the current tab is already at the requested URL, do not `navigate`/`open` the same URL unless an intentional reload is needed.
 - Prefer the smallest state check that answers the next question: snapshot for ref/DOM truth, screenshot only when visual layout matters, console/network only for debugging.
-- For Canvas / iframe / WebGL / Shadow DOM with no ref: if Control/Computer Use is available and the target is visible, use `click(x, y)` pointer-action from the screenshot. `cli-jaw browser vision-click` remains a Codex-only legacy fallback for no-ref targets; use it only after the ref path and direct coordinate path are unsuitable.
+- For Canvas / iframe / WebGL / Shadow DOM with no ref: if a Computer Use surface is available and the target is visible, use the documented coordinate pointer action from the screenshot. `cli-jaw browser vision-click` remains a Codex-only legacy fallback for no-ref targets; use it only after the ref path and direct coordinate path are unsuitable.
 
 ### A.1 Embedded Manager Browser (agent-visible pages)
 Default browser work uses the Chrome CDP path above. The Electron Manager ALSO has an embedded browser (right-sidebar Browser tab): agent-visible Manager Browser tabs appear in your runtime-context as `[Embedded Browser]` entries with a target id and exact curl commands — `/screenshot` (PNG path), `/snapshot` (bounded AX tree), and `/act` (click/type/scroll/key). Actions are already allowed for those entries; use the exact local Manager endpoints from the entry, never guess ports/ids, and act only after user intent is clear. No `[Embedded Browser]` entry in context = the embedded browser is not available — use the Chrome CDP path. Details: active `jaw-browser` skill § Embedded Manager Browser.
 
 ### B.0 Platform contract — read before the first Computer Use call
 
-**The Computer Use tool surface belongs to the host, not to cli-jaw, and it changes between versions.** Do not assume tool names from memory or from these instructions.
+**The Computer Use tool surface is provided by `jaw-computer-use` or Codex's native plugin and can change between versions.** Do not assume APIs from memory or from these instructions.
 
 Establish the surface before the first call:
 
-1. Look at the tools actually exposed this session. Recent Codex builds provide a **CUA JavaScript session** (a `cua` object reached through a REPL tool) rather than individual MCP tools. Older builds exposed `mcp__computer_use__*` MCP tools directly.
-2. Whichever is present, **its own first call returns its documentation.** Read that result before continuing, and use only the APIs it describes.
-3. If neither is present, that is `precondition failed: no Computer Use surface`. Report it and stop — never substitute CDP.
+1. Look for `jaw-computer-use` MCP tool `js` (`mcp__jaw-computer-use__js` in Claude), or Codex's native computer-use plugin. Computer Use is an MCP tool, not an employee.
+2. The tool's **first call returns its documentation**. Read that result before continuing, and use only the `cua` APIs it describes. Do not assume a tool name or call shape beyond the exposed surface.
+3. If neither is present, report `precondition failed: no Computer Use surface`. Install/open the ChatGPT desktop app with Computer Use and restart jaw so it registers `jaw-computer-use`. Linux/WSL/Docker have no host; CDP remains available only for DOM work, never as a substitute for `$computer-use`.
+4. On macOS the jaw service's responsible process/binary needs permission to access data from other apps (TCC App Data for the ChatGPT Computer Use container). Without it the first app call can block; report `precondition failed: computer-use app access blocked`. The grant lives in Privacy & Security (the pane name varies by macOS version).
+
+jaw answers Computer Use app-approval prompts from the run's permission policy: `auto` approves; `safe` declines. If declined, report "not approved".
 
 What stays true across surfaces: read state before acting, prefer an accessibility element index over raw coordinates, use coordinates only when the target is visible but absent from the element tree, and re-read state after anything that changes the UI.
 
@@ -248,7 +224,7 @@ The sandbox workaround `--dangerously-bypass-approvals-and-sandbox` disables **b
 
 If a precondition fails, stop and report `precondition failed: <name>`. Never fall back to CDP silently.
 
-### B. Computer Use path (macOS + Windows, codex-only)
+### B. Computer Use path (macOS + Windows, any CLI with jaw-computer-use or native Codex CU)
 For desktop apps and non-DOM UI. Operates native UI through accessibility, keyboard, and pointer actions. Do not promise that a visible cursor overlay will appear.
 
 **Workflow:** state read (§B.0) → action → re-read state after UI/focus changes, stale warnings, or uncertainty → verify.
@@ -270,9 +246,8 @@ For desktop apps and non-DOM UI. Operates native UI through accessibility, keybo
 | Agent-visible Manager Browser page | Embedded Browser endpoints (A.1) | screenshot / snapshot / act |
 
 ### B.2 Who performs it
-- You may dispatch to `Control` at any time, regardless of your own CLI.
-- You may self-serve Computer Use only when your own CLI is codex and TCC preconditions hold (server launched from Terminal with Automation permission).
-- Neither self-serve nor dispatch is mandatory — pick based on task length, transcript isolation, and user intent. `$computer-use` token overrides this: the section 0 rule is binding.
+- Any boss or employee whose CLI exposes `jaw-computer-use` or Codex's native computer-use plugin can self-serve.
+- You may delegate a long GUI flow to any employee with the same Computer Use surface when useful; delegation is optional. The `$computer-use` token makes the Computer Use path binding.
 
 ### C. Transcript format (every UI action)
 
@@ -297,7 +272,7 @@ result=ok
 ### D. Forbidden
 - Never claim `click(x,y)` guarantees a visible cursor.
 - Never say Computer Use failed just because the user didn't see the cursor.
-- Never silently fall back between paths. If a precondition fails (server down, Automation permission missing, TCC not granted, CLI isn't codex), stop and report which one.
+- Never silently fall back between paths. If a precondition fails (server down, Automation permission missing, TCC not granted, no Computer Use surface, app access blocked), stop and report which one.
 <!-- /anchor:desktop-control -->
 
 ## Channel File Delivery

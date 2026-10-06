@@ -1,16 +1,13 @@
-// P37-CU: STATIC_EMPLOYEES + Control runtime hints + dispatch resolution.
-
-
+// Static employee retirement and DB employee dispatch resolution.
+import '../setup/isolated-home.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resetOpenCodexModelCacheForTest } from '../../src/cli/opencodex-models.ts';
+import { insertEmployee, deleteEmployee } from '../../src/core/db.ts';
 import {
     STATIC_EMPLOYEES,
     findStaticEmployee,
-    checkRuntimeHints,
     checkModelSupport,
     resolveDispatchableEmployee,
     listEmployees,
@@ -19,130 +16,45 @@ import {
 
 const ROOT = process.cwd();
 
-async function withInactiveOpenCodex<T>(fn: () => Promise<T>): Promise<T> {
-    const previousDir = process.env['CLI_JAW_OPENCODEX_DIR'];
-    const testDir = fs.mkdtempSync(path.join(tmpdir(), 'jaw-ocx-inactive-'));
-    process.env['CLI_JAW_OPENCODEX_DIR'] = testDir;
-    resetOpenCodexModelCacheForTest();
-    try {
-        return await fn();
-    } finally {
-        resetOpenCodexModelCacheForTest();
-        if (previousDir === undefined) delete process.env['CLI_JAW_OPENCODEX_DIR'];
-        else process.env['CLI_JAW_OPENCODEX_DIR'] = previousDir;
-    }
-}
-
-test('P37-CU-001: Control static employee is defined with Codex + luna + darwin/win32 support', () => {
-    const control = findStaticEmployee('Control');
-    assert.ok(control, 'Control must be in STATIC_EMPLOYEES');
-    assert.equal(control!.cli, 'codex');
-    assert.equal(control!.model, 'gpt-5.6-luna');
-    assert.deepEqual(control!.runtimeHints?.supportedPlatforms, ['darwin', 'win32']);
+test('P37-CU-001: Computer Use has no static Control employee', async () => {
+    assert.deepEqual(STATIC_EMPLOYEES, []);
+    assert.equal(findStaticEmployee('Control'), null);
+    assert.equal(await resolveDispatchableEmployee('Control', []), null);
+    assert.equal((await listEmployees()).some(e => e.name === 'Control' && e.source === 'static'), false);
 });
 
-test('P37-CU-002: Control carries desktop-control + screen-capture + codex-imagegen', () => {
-    // vision-click is no longer a separate active skill for Control — the
-    // desktop-control skill's reference/vision-click.md covers routing, and
-    // the `cli-jaw browser vision-click` command encapsulates the
-    // low-level recipe. See 37_revisions_and_integration.md §G.
-    const control = findStaticEmployee('control'); // case-insensitive
-    assert.ok(control);
-    for (const skill of ['jaw-desktop-control', 'jaw-screen-capture', 'codex-imagegen']) {
-        assert.ok(control!.skills.includes(skill), `missing skill: ${skill}`);
-    }
-    assert.ok(!control!.skills.includes('vision-click'),
-        'vision-click should be absorbed into desktop-control, not a separate Control skill');
-});
-
-test('P37-CU-003: Control is preferred-for-long-sessions, NOT exclusive', () => {
-    const control = findStaticEmployee('Control')!;
-    assert.equal(control.delegation?.mode, 'preferred_for_long_sessions');
-    assert.equal(control.delegation?.boss_may_self_serve, true);
-});
-
-test('P37-CU-004: Control defers non-GUI tasks back to Boss', () => {
-    const control = findStaticEmployee('Control')!;
-    assert.deepEqual(control.defer, { when: 'not-gui-automation', back_to: 'Boss' });
-});
-
-test('P37-CU-005: checkRuntimeHints fails on linux because it is outside supportedPlatforms', () => {
-    const control = findStaticEmployee('Control')!;
-    const result = checkRuntimeHints(control, 'linux');
-    assert.ok(result.fail.length > 0, 'expected at least one fail on linux');
-    // The message must name BOTH the current platform and what is allowed,
-    // otherwise an operator on WSL cannot tell why dispatch was refused.
-    const message = result.fail.join('\n');
-    assert.match(message, /linux/);
-    assert.match(message, /darwin/);
-    assert.match(message, /win32/);
-});
-
-// #308: Computer Use exists on Windows (window-scoped API). A WSL process
-// reports `linux` via process.platform, so it stays denied by omission.
-test('P37-CU-005b: checkRuntimeHints passes on both darwin and win32', () => {
-    const control = findStaticEmployee('Control')!;
-    assert.deepEqual(checkRuntimeHints(control, 'darwin').fail, []);
-    assert.deepEqual(checkRuntimeHints(control, 'win32').fail, []);
-});
-
-test('P37-CU-005c: requiresDarwin stays in the serialized listing and agrees with supportedPlatforms', async () => {
-    // runtimeHints is returned by GET /api/employees, so the legacy boolean
-    // cannot simply be dropped. It is derived, never hand-set.
-    const listing = await withInactiveOpenCodex(() => listEmployees());
-    const control = listing.find((e) => e.name === 'Control');
-    assert.ok(control, 'Control must appear in the employee listing');
-    assert.deepEqual(control!.runtimeHints?.supportedPlatforms, ['darwin', 'win32']);
-    assert.equal(control!.runtimeHints?.requiresDarwin, false,
-        'Control no longer requires macOS, so the legacy flag must say so');
-});
-
-test('P37-CU-005d: withDerivedRuntimeHints reports darwin-only as requiring macOS', () => {
-    assert.equal(withDerivedRuntimeHints({ supportedPlatforms: ['darwin'] })?.requiresDarwin, true);
-    assert.equal(withDerivedRuntimeHints({ supportedPlatforms: ['win32'] })?.requiresDarwin, false);
-    assert.equal(withDerivedRuntimeHints(undefined), undefined);
-});
-
-test('P37-CU-006: resolveDispatchableEmployee returns static row with synthetic id', async () => {
-    const res = await withInactiveOpenCodex(() => resolveDispatchableEmployee('Control', []));
-    assert.ok(res, 'Control must resolve from static employees');
-    assert.equal(res!.source, 'static');
-    assert.equal(res!.row.name, 'Control');
-    assert.equal(res!.row.cli, 'codex');
-    assert.equal(res!.row.model, 'gpt-5.6-luna');
-    assert.match(String(res!.row.id), /^static:/);
-    assert.ok(res!.spec, 'spec must accompany static resolution');
-});
-
-test('P37-CU-007: DB row wins over static when names collide', async () => {
+test('P37-CU-002: a user-created DB employee named Control remains dispatchable', async () => {
     const dbRows = [{
         id: 'db-row-123',
         name: 'Control',
         cli: 'claude',
         model: 'sonnet',
-        role: 'overridden by user',
+        role: 'user-created employee',
     }];
     const res = await resolveDispatchableEmployee('Control', dbRows);
     assert.ok(res);
-    assert.equal(res!.source, 'db');
-    assert.equal(res!.row.id, 'db-row-123');
-    assert.equal(res!.row.cli, 'claude');
+    assert.equal(res.source, 'db');
+    assert.equal(res.row.id, 'db-row-123');
+    assert.equal(res.row.cli, 'claude');
+    insertEmployee.run('db-row-123', 'Control', 'claude', 'sonnet', 'user-created employee');
+    try {
+        const listed = (await listEmployees()).find(e => e.name === 'Control');
+        assert.equal(listed?.source, 'db');
+        assert.equal(listed?.id, 'db-row-123');
+    } finally {
+        deleteEmployee.run('db-row-123');
+    }
+});
+
+test('P37-CU-003: static runtime-hint compatibility stays available for future specialists', () => {
+    assert.equal(withDerivedRuntimeHints({ supportedPlatforms: ['darwin'] })?.requiresDarwin, true);
+    assert.equal(withDerivedRuntimeHints({ supportedPlatforms: ['win32'] })?.requiresDarwin, false);
+    assert.equal(withDerivedRuntimeHints(undefined), undefined);
 });
 
 test('P37-CU-008: unknown employee returns null', async () => {
     const res = await resolveDispatchableEmployee('Nonexistent', []);
     assert.equal(res, null);
-});
-
-test('P37-CU-010: desktop-control skill includes control-workflow reference', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const refPath = path.join(
-        import.meta.dirname, '..', '..', 'skills_ref', 'jaw-desktop-control', 'reference', 'control-workflow.md',
-    );
-    assert.ok(fs.existsSync(refPath), `missing: ${refPath}`);
-    const content = fs.readFileSync(refPath, 'utf8');
-    assert.match(content, /Control workflow/, 'control-workflow.md must contain "Control workflow"');
 });
 
 test('P37-CU-009: STATIC_EMPLOYEES has no duplicate names', () => {

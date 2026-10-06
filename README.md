@@ -471,7 +471,7 @@ State survives restarts. Start with `jaw orchestrate` or `/pabcd`, resume with `
 
 ### Browser and desktop automation
 
-Drive Chrome through the DevTools Protocol, click by description with `jaw browser vision-click "Login button"`, control desktop apps through Codex Computer Use on macOS and Windows, and ask ChatGPT, Gemini or Grok web UIs with `jaw browser web-ai`.
+Drive Chrome through the DevTools Protocol, click by description with `jaw browser vision-click "Login button"`, and control desktop apps through the `jaw-computer-use` MCP tool (or Codex's native Computer Use plugin) on supported macOS and Windows hosts. Ask ChatGPT, Gemini or Grok web UIs with `jaw browser web-ai`.
 
 ### Messaging
 
@@ -617,6 +617,5 @@ Public code and product docs live here. Private planning and history live only i
 ---
 
 <p align="center"><a href="LICENSE"><b>MIT License</b></a> · Built by developers who got tired of tab-switching between AI apps.</p>
-
 
 

@@ -18,7 +18,7 @@ interface Employee {
     status?: string;
     phase?: string;
     phaseLabel?: string;
-    /** 'static' → baked-in employee (Control, etc.). CLI is locked, only model editable. */
+    /** 'static' → baked-in employee. CLI is locked, only model editable. */
     source?: 'db' | 'static';
 }
 

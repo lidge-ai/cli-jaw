@@ -8,7 +8,7 @@ aliases: [Prompt Injection Flow, CLI-JAW prompt flow, prompt pipeline]
 
 # 프롬프트 삽입 흐름 — Prompt Injection Flow
 
-> cli-jaw의 프롬프트 조립 + 주입 전체 흐름. 현재 기준 소스는 `src/prompt/builder.ts` 1040L, `src/memory/injection.ts`, `src/agent/spawn.ts` 2011L, `src/prompt/templates/*` (a1-system 388L, a2-default 25L, orchestration 120L, employee 73L, control-system 56L, worker-context 11L, skills 24L, heartbeat-jobs 4L, heartbeat-default 4L, vision-click 3L).
+> cli-jaw의 프롬프트 조립 + 주입 전체 흐름. 현재 기준 소스는 `src/prompt/builder.ts`, `src/memory/injection.ts`, `src/agent/spawn.ts`, `src/prompt/templates/*` (a1-system, a2-default, orchestration, employee, worker-context, skills, heartbeat-jobs, heartbeat-default, vision-click).
 
 ---
 
@@ -52,6 +52,7 @@ graph TD
 - 역할: 시스템 규칙, browser control, memory/heartbeat, jaw employee vs CLI sub-agent 구분, 채널 전송 규칙
 
 핵심은 "파일 우선, 템플릿 폴백"이다. 디스크 원본은 그대로 보존한다. `forDisk: false` 런타임 조립만 현재 prompt/active skill routing이 desktop/browser 의도를 가질 때 `desktop-control` anchor를 포함하고, 그 외에는 단일 정상 anchor block을 제외한다.
+이전 배포본의 stock `desktop-control` anchor는 알려진 해시로 새 Computer Use MCP 안내에 이관한다. Anchor 밖의 이전 item 5 안내는 완전한 줄로 정확히 한 번 있을 때만 바꾸며, 편집되었거나 중복된 줄은 건드리지 않는다.
 
 ### A-2.md
 
@@ -379,7 +380,7 @@ delegation rules 블록은 prompt 끝에 항상 붙는다.
 현재 employee prompt 레이어:
 
 1. `employee.md` 기본 템플릿
-2. static employee system patch와 declared skill inline injection(예: Control)
+2. 등록된 static employee용 system patch와 declared skill inline injection. Computer Use는 직원이 아니라 `jaw-computer-use` MCP 도구 또는 Codex 기본 플러그인으로 직접 사용한다.
 3. 공통 `dev/SKILL.md`
 4. `jaw-dev-scaffolding`
 5. 역할별 skill (`jaw-dev-frontend`, `jaw-dev-backend`, `jaw-dev-data`, docs용 documentation 등)

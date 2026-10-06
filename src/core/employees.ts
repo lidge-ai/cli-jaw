@@ -17,9 +17,8 @@ export const DEFAULT_EMPLOYEES = [
 ];
 
 // ─── Static (code-defined) employees ─────────────────────────────
-// Defined in code, not stored in the DB. Avoids a schema migration for
-// employees that have fixed CLIs or baked system prompts (e.g. Control
-// needs Codex + darwin).
+// Registry kept for future static specialists; Computer Use is now provided
+// by the jaw-computer-use MCP rather than a static employee.
 
 /**
  * @deprecated Prefer `CliEngine` from `src/types/cli-engine.ts`. This alias
@@ -232,29 +231,7 @@ export function buildVirtualEmployeeRow(
     };
 }
 
-export const STATIC_EMPLOYEES: StaticEmployee[] = [
-    {
-        name: 'Control',
-        cli: 'codex',
-        model: 'gpt-5.6-luna',
-        description: 'Desktop + browser automation specialist (NOT exclusive — Boss-as-codex may self-serve).',
-        // vision-click is absorbed into desktop-control (reference/vision-click.md).
-        // Keep skills minimal; screen-capture stays for non-Chrome OS capture.
-        skills: ['jaw-desktop-control', 'jaw-screen-capture', 'codex-imagegen'],
-        systemPromptPatchFile: 'control-system.md',
-        runtimeHints: {
-            // Computer Use runs on macOS (app-scoped API) and on Windows
-            // (window-scoped API). Linux and WSL have no Computer Use host, and
-            // a WSL process reports `linux`, so both stay denied. See #308.
-            supportedPlatforms: ['darwin', 'win32'],
-        },
-        delegation: {
-            mode: 'preferred_for_long_sessions',
-            boss_may_self_serve: true,
-        },
-        defer: { when: 'not-gui-automation', back_to: 'Boss' },
-    },
-];
+export const STATIC_EMPLOYEES: StaticEmployee[] = [];
 
 export function findStaticEmployee(name: string): StaticEmployee | null {
     const needle = name.trim().toLowerCase();

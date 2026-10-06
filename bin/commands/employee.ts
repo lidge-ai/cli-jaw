@@ -33,7 +33,7 @@ function printHelp() {
   Description:
     List employees or reset DB employees to built-in defaults.
     sessions-reset clears only persisted employee resume sessions.
-    Static employees such as Control are merged into the list by the server.
+    Static employees, when configured, are merged into the list by the server.
 `);
 }
 

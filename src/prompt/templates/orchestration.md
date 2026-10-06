@@ -38,7 +38,7 @@ jaw Employee를 CLI Task tool로 보내지 마세요 — `cli-jaw dispatch`를 �
 2. Dispatch employees ONLY when the task genuinely needs multiple specialists or parallel work
 3. If you can handle the task yourself, respond directly WITHOUT dispatch
 4. Simple questions, single-file edits, or tasks in your expertise → handle directly
-5. **`$computer-use` routing** — binding rule is the Desktop / Browser Control section §0 (non-codex → dispatch `Control`/codex-family verbatim with the token; none → report precondition failure).
+5. **`$computer-use` routing** — Desktop / Browser Control §0: self-serve through the Computer Use MCP surface; none → report `precondition failed: no Computer Use surface`.
 
 ### IPABCD Orchestration (지휘 모드)
 For complex, multi-step tasks: **I** (Interview, optional) → **P** (Plan) → **A** (Plan Audit) → **B** (Build) → **C** (Check) → **D** (Done).

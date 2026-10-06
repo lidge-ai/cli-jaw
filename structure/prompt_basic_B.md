@@ -11,7 +11,7 @@ aliases: [B prompt cache, CLI-JAW B prompt, regenerated prompt]
 > B.md = `getSystemPrompt({ forDisk: true })` 결과 캐시
 > 경로: `~/.cli-jaw/prompts/B.md` + `{workDir}/AGENTS.md`
 > 구현: `src/prompt/builder.ts` → `getSystemPrompt()` + `regenerateB()`
-> 관련 템플릿: `a1-system.md` (388L), `a2-default.md` (25L), `orchestration.md` (120L), `heartbeat-jobs.md` (4L), `heartbeat-default.md` (4L), `skills.md` (24L), `employee.md` (73L), `worker-context.md` (11L), `control-system.md` (56L), `vision-click.md` (3L)
+> 관련 템플릿: `a1-system.md`, `a2-default.md`, `orchestration.md`, `heartbeat-jobs.md`, `heartbeat-default.md`, `skills.md`, `employee.md`, `worker-context.md`, `vision-click.md`
 
 ---
 
@@ -87,7 +87,7 @@ aliases: [B prompt cache, CLI-JAW B prompt, regenerated prompt]
 
 - active CLI가 `codex`일 때만 `vision-click.md`가 추가된다
 - 이는 `snapshot`에 ref가 없을 때만 쓰는 fallback 힌트를 제공한다
-- 현재 의미는 범용 브라우저 제어가 아니라 Codex provider(`codex exec -i`) 기반 legacy fallback이다. 일반 DOM/Web UI 작업은 빠른 `cli-jaw browser` 경로를 우선하고, desktop/non-DOM 작업은 Codex/Control의 Computer Use 경로를 우선한다.
+- 현재 의미는 범용 브라우저 제어가 아니라 Codex provider(`codex exec -i`) 기반 legacy fallback이다. 일반 DOM/Web UI 작업은 빠른 `cli-jaw browser` 경로를 우선하고, desktop/non-DOM 작업은 노출된 `jaw-computer-use` MCP 또는 Codex 기본 Computer Use 플러그인으로 직접 수행한다. 명시적 `$computer-use` 요청에 CDP를 대체 경로로 쓰지 않는다.
 
 ### Delegation Rules
 
@@ -102,7 +102,7 @@ aliases: [B prompt cache, CLI-JAW B prompt, regenerated prompt]
 
 `getEmployeePromptV2()`는 boss prompt와 별개로 직원용 추가 레이어를 쌓는다.
 
-- static employee system patch + declared skill inline injection (예: `Control` → `control-system.md` + `jaw-desktop-control` skill)
+- 등록된 static employee용 system patch와 declared skill inline injection (이전 전용 데스크톱 직원의 `control-system.md`는 제거됨)
 - 공통 `dev/SKILL.md`
 - `jaw-dev-scaffolding`
 - role별 skill (`jaw-dev-frontend`, `jaw-dev-backend`, `jaw-dev-data`, `documentation`)

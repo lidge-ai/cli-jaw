@@ -31,8 +31,8 @@ test('worker run id sanitizes virtual employee ids before durable store use', ()
     assert.equal(basename(workerRunDir(slot.runId)), slot.runId);
 });
 
-test('worker run id sanitizes static control employee ids before durable store use', () => {
-    const slot = claimWorker({ id: 'static:control', name: 'Control' }, 'audit worker run id');
+test('worker run id sanitizes static employee ids before durable store use', () => {
+    const slot = claimWorker({ id: 'static:future-specialist', name: 'Future Specialist' }, 'audit worker run id');
 
     assert.equal(assertWorkerRunId(slot.runId), slot.runId);
     assert.equal(basename(workerRunDir(slot.runId)), slot.runId);

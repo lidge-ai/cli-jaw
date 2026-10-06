@@ -447,7 +447,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 
 ### 브라우저와 데스크톱 자동화
 
-Chrome을 DevTools Protocol로 제어하고, `jaw browser vision-click "Login button"`처럼 설명으로 클릭하며, macOS와 Windows에서 Codex Computer Use로 데스크톱 앱을 다루고, `jaw browser web-ai`로 ChatGPT, Gemini, Grok 웹 UI에 물어볼 수 있습니다.
+Chrome을 DevTools Protocol로 제어하고, `jaw browser vision-click "Login button"`처럼 설명으로 클릭합니다. 지원되는 macOS 및 Windows 호스트에서는 `jaw-computer-use` MCP 도구(또는 Codex의 기본 Computer Use 플러그인)로 데스크톱 앱을 다루고, `jaw browser web-ai`로 ChatGPT, Gemini, Grok 웹 UI에 물어볼 수 있습니다.
 
 ### 메시징
 
