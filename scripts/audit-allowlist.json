@@ -59,6 +59,51 @@
       ],
       "reason": "Transitive GHSA-vfj7-8cjw-p6xm through globby/fast-glob/micromatch/braces. src/manager/notes/system-trash.ts calls trash with glob:false, bypassing its globby/fast-glob/brace-expansion path. Literal path forwarding with glob:false is covered by manager-system-trash-options.test.ts without calling the OS trash implementation.",
       "review": "2026-10-10"
+    },
+    {
+      "package": "katex",
+      "severity": "low",
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ],
+      "reason": "GHSA-238p-pmpm-9mq7 needs two things at once: a separate prototype-pollution primitive in the same page realm, and KaTeX trust-gated commands. Every cli-jaw KaTeX entrypoint leaves trust at its default false and passes no trust function: public/js/render/math.ts renderToString({displayMode, throwOnError:false}), public/manager/src/notes/wysiwyg/milkdown-math.ts katex.render with notesKatexOptions default {}, and rehype-katex with default options in public/manager/src/notes/rendering/MarkdownRenderer.tsx. The fix needs katex >=0.18.2, which mermaid 11.17.1, rehype-katex 7.0.1 and micromark-extension-math 3.1.0 exclude (katex ^0.16), so an override would run them on an unsupported major. Re-check when those ranges move.",
+      "review": "2026-11-06"
+    },
+    {
+      "package": "mermaid",
+      "severity": "low",
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ],
+      "reason": "GHSA-238p-pmpm-9mq7 needs two things at once: a separate prototype-pollution primitive in the same page realm, and KaTeX trust-gated commands. Every cli-jaw KaTeX entrypoint leaves trust at its default false and passes no trust function: public/js/render/math.ts renderToString({displayMode, throwOnError:false}), public/manager/src/notes/wysiwyg/milkdown-math.ts katex.render with notesKatexOptions default {}, and rehype-katex with default options in public/manager/src/notes/rendering/MarkdownRenderer.tsx. The fix needs katex >=0.18.2, which mermaid 11.17.1, rehype-katex 7.0.1 and micromark-extension-math 3.1.0 exclude (katex ^0.16), so an override would run them on an unsupported major. Re-check when those ranges move. Transitive via katex.",
+      "review": "2026-11-06"
+    },
+    {
+      "package": "micromark-extension-math",
+      "severity": "low",
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ],
+      "reason": "GHSA-238p-pmpm-9mq7 needs two things at once: a separate prototype-pollution primitive in the same page realm, and KaTeX trust-gated commands. Every cli-jaw KaTeX entrypoint leaves trust at its default false and passes no trust function: public/js/render/math.ts renderToString({displayMode, throwOnError:false}), public/manager/src/notes/wysiwyg/milkdown-math.ts katex.render with notesKatexOptions default {}, and rehype-katex with default options in public/manager/src/notes/rendering/MarkdownRenderer.tsx. The fix needs katex >=0.18.2, which mermaid 11.17.1, rehype-katex 7.0.1 and micromark-extension-math 3.1.0 exclude (katex ^0.16), so an override would run them on an unsupported major. Re-check when those ranges move. Transitive via katex.",
+      "review": "2026-11-06"
+    },
+    {
+      "package": "rehype-katex",
+      "severity": "low",
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ],
+      "reason": "GHSA-238p-pmpm-9mq7 needs two things at once: a separate prototype-pollution primitive in the same page realm, and KaTeX trust-gated commands. Every cli-jaw KaTeX entrypoint leaves trust at its default false and passes no trust function: public/js/render/math.ts renderToString({displayMode, throwOnError:false}), public/manager/src/notes/wysiwyg/milkdown-math.ts katex.render with notesKatexOptions default {}, and rehype-katex with default options in public/manager/src/notes/rendering/MarkdownRenderer.tsx. The fix needs katex >=0.18.2, which mermaid 11.17.1, rehype-katex 7.0.1 and micromark-extension-math 3.1.0 exclude (katex ^0.16), so an override would run them on an unsupported major. Re-check when those ranges move. Transitive via katex.",
+      "review": "2026-11-06"
+    },
+    {
+      "package": "remark-math",
+      "severity": "low",
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ],
+      "reason": "GHSA-238p-pmpm-9mq7 needs two things at once: a separate prototype-pollution primitive in the same page realm, and KaTeX trust-gated commands. Every cli-jaw KaTeX entrypoint leaves trust at its default false and passes no trust function: public/js/render/math.ts renderToString({displayMode, throwOnError:false}), public/manager/src/notes/wysiwyg/milkdown-math.ts katex.render with notesKatexOptions default {}, and rehype-katex with default options in public/manager/src/notes/rendering/MarkdownRenderer.tsx. The fix needs katex >=0.18.2, which mermaid 11.17.1, rehype-katex 7.0.1 and micromark-extension-math 3.1.0 exclude (katex ^0.16), so an override would run them on an unsupported major. Re-check when those ranges move. Transitive via micromark-extension-math -> katex.",
+      "review": "2026-11-06"
     }
   ]
 }
