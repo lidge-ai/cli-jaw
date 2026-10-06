@@ -109,10 +109,14 @@ export class SlackActionRuntime {
                         }
                         await withSlackToolAccess(token, principal, args.channel, async () => true, this.options.fetchImpl, undefined, true);
                         if (beforeDispatch) await beforeDispatch();
-                        checkCurrent(); store.dispatched(workspace, actor, args.invocationId!); dispatched = true;
+                        checkCurrent();
                     }
                     if (!WRITE_METHODS.has(method) && beforeDispatch) { await beforeDispatch(); checkCurrent(); }
                     const options = { ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}), ...(signal ? { signal } : {}), sensitiveResponse: true, maxResponseBytes: 1048576, timeoutMs: 10000 };
+                    if (WRITE_METHODS.has(method)) {
+                        assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, args.channel);
+                        store.dispatched(workspace, actor, args.invocationId!); dispatched = true;
+                    }
                     const result = method === 'reactions.add' ? await addSlackReaction(token, String(body['channel']), String(body['timestamp']), String(body['name']), options)
                         : method === 'reactions.remove' ? await removeSlackReaction(token, String(body['channel']), String(body['timestamp']), String(body['name']), options)
                         : method === 'chat.delete' ? await deleteSlackMessage(token, String(body['channel']), String(body['ts']), options)

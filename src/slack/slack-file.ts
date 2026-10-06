@@ -57,7 +57,7 @@ export type SlackFileSendResult = {
 
 export async function sendSlackFile(
     token: string, target: RemoteTarget, filePath: string,
-    options: { caption?: string; fetchImpl?: SlackFetch; signal?: AbortSignal } = {},
+    options: { caption?: string; fetchImpl?: SlackFetch; signal?: AbortSignal; writeGuard?: (channelId: string) => void } = {},
 ): Promise<SlackFileSendResult> {
     const doFetch = options.fetchImpl || fetch;
     const deadline = AbortSignal.timeout(120_000);
@@ -131,6 +131,7 @@ export async function sendSlackFile(
     }
     stage = 'completion';
     if (signal.aborted) return failure('slack_send_aborted', 499);
+    options.writeGuard?.(target.targetId);
     const complete = await slackApi(token, 'files.completeUploadExternal', {
         files: [{ id: fileId, title: safeFilename }], channel_id: target.targetId,
         ...(target.threadId ? { thread_ts: target.threadId } : {}),

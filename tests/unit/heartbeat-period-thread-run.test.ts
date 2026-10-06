@@ -10,7 +10,8 @@ import { resolveHeartbeatBinding } from '../../src/memory/heartbeat-destination.
 import { capturePeriodKey } from '../../src/memory/period-thread-key.ts';
 import { periodThreadReplyHash, periodThreadRootHash, readPeriodReplyInfo } from '../../src/memory/period-thread-state.ts';
 import { parseHeartbeatReport } from '../../src/memory/heartbeat-report.ts';
-import { resolveSlackToolGrant, SLACK_TOOL_GRANT_ENV } from '../../src/slack/tool-context.ts';
+import { activeServerOwnedChannels, resolveSlackToolGrant, SLACK_TOOL_GRANT_ENV } from '../../src/slack/tool-context.ts';
+import { assertSlackWriteAllowed } from '../../src/slack/write-guard.ts';
 import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
 
 const destination = { channel: 'slack' as const, targetId: 'C0TESTCHANNEL', scope: 'period_thread' as const,
@@ -61,6 +62,24 @@ test('injection binds grant and final send to verified thread, with server instr
     const hash = periodThreadReplyHash(periodThreadRootHash(teamId, destination, captured), destination.periodThread.slot, botUserId);
     assert.equal(readPeriodReplyInfo(hash)?.status, 'delivered');
     assert.equal(getHeartbeatRunRecord(h.job.id)?.delivery, 'delivered');
+}));
+
+test('channel lease outlives model grant through reply scan and final server send', async () => fresh(async () => {
+    const h = harness({
+        listPeriodReplies: async () => {
+            assert.deepEqual([...activeServerOwnedChannels()], [destination.targetId]);
+            assert.throws(() => assertSlackWriteAllowed({ kind: 'operator' }, null, destination.targetId),
+                (error: unknown) => (error as { code?: string }).code === 'slack_channel_leased_by_heartbeat');
+            return { ok: true, found: false };
+        },
+        sendOutput: (async () => {
+            assert.deepEqual([...activeServerOwnedChannels()], [destination.targetId]);
+            return { ok: true };
+        }) as HeartbeatJobDeps['sendOutput'],
+    });
+    await runHeartbeatJob(h.job, h.deps);
+    assert.deepEqual([...activeServerOwnedChannels()], []);
+    assert.doesNotThrow(() => assertSlackWriteAllowed({ kind: 'operator' }, null, destination.targetId));
 }));
 
 test('ensure failure skips collection; pre-send parent and reply failures prevent delivery', async () => fresh(async () => {

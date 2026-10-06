@@ -16,7 +16,8 @@ export async function slackSendHandler(
     }
     if (req.slackCredentialKey && slackCredentialKey(client.token) !== req.slackCredentialKey) return { ok: false, error: 'slack_credential_changed', status: 409, retryable: false };
     if (req.signal?.aborted) return { ok: false, error: 'slack_send_aborted', status: 499, retryable: false };
-    const signalOpt = req.signal ? { signal: req.signal } : {};
+    const signalOpt = { ...(req.signal ? { signal: req.signal } : {}),
+        ...(req.slackWriteGuard ? { writeGuard: req.slackWriteGuard } : {}) };
     let target = req.target;
     if (!target) return { ok: false, error: 'slack_target_missing', status: 400 };
 

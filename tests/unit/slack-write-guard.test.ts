@@ -15,7 +15,9 @@ import { SlackActionStore } from '../../src/slack/action-store.ts';
 import { defineAction } from '../../src/slack/action-types.ts';
 import { baseAction } from '../../src/slack/task-input.ts';
 import { publishSlackQuote } from '../../src/slack/quote.ts';
-import { activeServerOwnedChannels, activateSlackToolGrant, reserveSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, slackCredentialKey } from '../../src/slack/tool-context.ts';
+import { sendSlackText } from '../../src/slack/send-only-client.ts';
+import { sendSlackFile } from '../../src/slack/slack-file.ts';
+import { activeServerOwnedChannels, activateSlackToolGrant, holdServerOwnedChannel, reserveSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, slackCredentialKey } from '../../src/slack/tool-context.ts';
 import { assertSlackWriteAllowed } from '../../src/slack/write-guard.ts';
 import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
 import type { SlackToolPrincipal } from '../../src/slack/tool-access.ts';
@@ -60,6 +62,87 @@ test('live lease and frozen grant distinguish server-owned, operator, turn, and 
     revokeSlackToolGrant(owned.id);
     assert.deepEqual([...activeServerOwnedChannels()], []);
     assert.doesNotThrow(() => assertSlackWriteAllowed(operator, null, LEASED));
+});
+
+test('independent channel leases retain the channel until the last owner releases', () => {
+    const first = holdServerOwnedChannel(LEASED);
+    const second = holdServerOwnedChannel(LEASED);
+    first(); first();
+    assert.deepEqual([...activeServerOwnedChannels()], [LEASED]);
+    second();
+    assert.deepEqual([...activeServerOwnedChannels()], []);
+});
+
+test('agent channel send checks the actual write after asynchronous transport work', async () => {
+    const previous = settings.slack;
+    settings.slack = { ...previous, enabled: true, botToken: TOKEN, channelIds: [LEASED] };
+    let resume!: () => void;
+    let entered!: () => void;
+    const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+    const resumePromise = new Promise<void>(resolve => { resume = resolve; });
+    let posts = 0;
+    registerSendTransport('slack', async request => {
+        entered(); await resumePromise;
+        request.slackWriteGuard?.(request.target!.targetId);
+        posts++;
+        return { ok: true, sent: true };
+    });
+    const app = express(); app.use(express.json());
+    registerMessagingRoutes(app, (_req, _res, next) => next(), { validateSlackOperator: token => token === 'test-operator', isFullAccess: () => true });
+    const server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    let release: (() => void) | undefined;
+    try {
+        const address = server.address(); assert.ok(address && typeof address === 'object');
+        const post = fetch(`http://127.0.0.1:${address.port}/api/channel/send`, { method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-jaw-slack-operator': 'test-operator' },
+            body: JSON.stringify({ channel: 'slack', type: 'text', text: 'test', target: target(LEASED) }) });
+        await enteredPromise;
+        release = holdServerOwnedChannel(LEASED);
+        resume();
+        const response = await post;
+        assert.equal(response.status, 409);
+        assert.equal((await response.json() as { code: string }).code, 'slack_channel_leased_by_heartbeat');
+        assert.equal(posts, 0);
+    } finally {
+        release?.(); resume(); server.closeAllConnections();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+        settings.slack = previous;
+    }
+});
+
+test('text post and file completion recheck a lease activated during preparation', async () => {
+    let release = () => {};
+    let posts = 0;
+    const guard = (channelId: string) => assertSlackWriteAllowed(operator, null, channelId);
+    const textFetch = (async () => { posts++; return Response.json({ ok: true, ts: THREAD }); }) as typeof fetch;
+    const text = await sendSlackText(TOKEN, target(LEASED), 'test', {
+        fetchImpl: textFetch, writeGuard: channelId => { release = holdServerOwnedChannel(channelId); guard(channelId); },
+    }).then(() => 'sent', error => (error as { code?: string }).code);
+    assert.equal(text, 'slack_channel_leased_by_heartbeat');
+    assert.equal(posts, 0);
+    release();
+    const dir = mkdtempSync(join(tmpdir(), 'slack-write-file-'));
+    const file = join(dir, 'fixture.txt'); writeFileSync(file, 'fixture');
+    const calls: string[] = [];
+    const fetchImpl = (async input => {
+        const url = String(input);
+        calls.push(url);
+        if (url.endsWith('/files.getUploadURLExternal')) return Response.json({ ok: true, upload_url: 'https://upload.example.test/file', file_id: 'F0TEST' });
+        if (url === 'https://upload.example.test/file') {
+            release = holdServerOwnedChannel(LEASED);
+            return new Response('', { status: 200 });
+        }
+        return Response.json({ ok: true, files: [{ id: 'F0TEST' }] });
+    }) as typeof fetch;
+    try {
+        const result = await sendSlackFile(TOKEN, target(LEASED), file, { fetchImpl, writeGuard: guard })
+            .then(() => 'sent', error => (error as { code?: string }).code);
+        assert.equal(result, 'slack_channel_leased_by_heartbeat');
+        assert.equal(calls.some(url => url.endsWith('/files.completeUploadExternal')), false);
+        // Server-owned delivery does not carry an agent guard.
+        assert.equal((await sendSlackText(TOKEN, target(LEASED), 'server', { fetchImpl: textFetch })).ok, true);
+    } finally { release(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('channel sends reject root, thread and file writes; lease release and other channel remain usable', async () => {
@@ -137,6 +220,36 @@ test('action post, schedule and reaction reject writes while history and replies
         }
         assert.equal(methods.some(method => ['chat.postMessage', 'chat.scheduleMessage', 'reactions.add'].includes(method)), false);
     } finally { db.close(); }
+});
+
+test('action rechecks after beforeDispatch activates a channel lease', async () => {
+    const db = new Database(':memory:');
+    let release = () => {};
+    const methods: string[] = [];
+    const fetchImpl: typeof fetch = async url => {
+        const method = String(url).split('/').at(-1)!; methods.push(method);
+        if (method === 'auth.test') return Response.json({ ok: true, team_id: 'T0TEST', user_id: 'U0TESTBOT' });
+        if (method === 'conversations.info') return Response.json({ ok: true, channel: { id: LEASED, context_team_id: 'T0TEST' } });
+        if (method === 'conversations.members') return Response.json({ ok: true, members: ['U0TEST', 'U0TESTBOT'], response_metadata: { next_cursor: '' } });
+        return Response.json({ ok: true, ts: THREAD });
+    };
+    try {
+        const runtime = new SlackActionRuntime({ getToken: () => TOKEN, store: new SlackActionStore(db), fetchImpl, evidenceSource: 'fixture' });
+        const action = defineAction({ operation: 'interaction.url', mutates: true, scopes: [], methods: ['chat.postMessage'],
+            parse(raw) { return baseAction(raw, [], true); },
+            async execute(ctx) {
+                await ctx.api('chat.postMessage', { channel: ctx.channel, text: 'test' }, async () => {
+                    release = holdServerOwnedChannel(LEASED);
+                });
+                return ctx.result('verified');
+            },
+        });
+        const result = await runtime.execute(action, { operation: 'interaction.url', channel: LEASED, invocationId: 'late-lease' }, operator);
+        assert.equal(result.error, 'slack_channel_leased_by_heartbeat');
+        assert.equal(result.ok, false);
+        assert.equal(result.verification, 'failed');
+        assert.equal(methods.includes('chat.postMessage'), false);
+    } finally { release(); db.close(); }
 });
 
 test('quote checks posting channel in both source/destination directions', async () => {

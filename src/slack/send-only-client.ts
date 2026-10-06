@@ -96,6 +96,7 @@ export async function sendSlackText(
     target: RemoteTarget,
     text: string,
     options: { fetchImpl?: SlackFetch; blocks?: unknown; signal?: AbortSignal; requireBodyDelivery?: boolean; sensitiveResponse?: boolean;
+        writeGuard?: (channelId: string) => void;
         onPosted?: (info: { ts?: string; messageTs: string[]; postedChunks: number; totalChunks: number }) => void | Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string; status?: number; ts?: string; sent?: boolean;
     retryable?: boolean; delivery?: SlackDeliveryReceipt } & Partial<LiveDeliveryFields>> {
@@ -159,6 +160,7 @@ export async function sendSlackText(
             channel: target.targetId, ...chunk,
             ...(target.threadId ? { thread_ts: target.threadId } : {}),
         };
+        options.writeGuard?.(target.targetId);
         let result = await slackApi<{ ts?: string }>(token, 'chat.postMessage', payload, callOpts);
         if (!result.ok) {
             if (result.error === 'slack_send_aborted') return failure('slack_send_aborted', 499);
@@ -168,6 +170,7 @@ export async function sendSlackText(
                 await abortableDelay(wait, options.signal);
                 if (options.signal?.aborted) return failure('slack_send_aborted', 499);
                 // Retry exactly the same redacted payload, including its blocks.
+                options.writeGuard?.(target.targetId);
                 result = await slackApi<{ ts?: string }>(token, 'chat.postMessage', payload, callOpts);
             }
             if (!result.ok) {

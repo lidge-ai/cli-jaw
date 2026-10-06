@@ -102,6 +102,7 @@ export async function publishSlackQuote(token: string, principal: SlackToolPrinc
             if (signal?.aborted) throw slackToolDenied('slack_rts_publisher_cancelled', 409);
         }
         // A hold is created only after the source reread; normal source access cannot mask itself.
+        assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, destination.targetId);
         if (rtsInvocation && !store!.begin(teamId, destination.targetId, rtsInvocation, { threadTs: destination.threadId ?? null, expectedOutputs: 1, actor: principal.kind === 'turn' ? principal.grant.actorId : '', botUserId: publisherBot!, credentialKey: slackCredentialKey(token) })) throw slackToolDenied('slack_rts_publication_pending', 409);
         const lease = rtsInvocation ? store!.publication(teamId, destination.targetId, rtsInvocation)!.lease : undefined;
         let contentVerified = false;
@@ -110,11 +111,13 @@ export async function publishSlackQuote(token: string, principal: SlackToolPrinc
         try {
             // RTS owns exactly one direct POST; the ordinary quote path retains its renderer/retry policy.
             const result = rtsInvocation ? await (async () => {
+                assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, destination.targetId);
                 const posted = await slackApi<{ ts?: string }>(token, 'chat.postMessage', {
                     channel: destination.targetId, ...rtsPayload!, ...(destination.threadId ? { thread_ts: destination.threadId } : {}),
                 }, callOptions);
                 return { ok: posted.ok, ts: posted.data?.ts, sent: posted.ok };
-            })() : await sendSlackText(token, destination, '원문을 확인한 인용을 전달했습니다.', { ...callOptions, blocks });
+            })() : await sendSlackText(token, destination, '원문을 확인한 인용을 전달했습니다.', { ...callOptions, blocks,
+                writeGuard: channelId => assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, channelId) });
             const ids = ('delivery' in result ? result.delivery?.messageTs : undefined) ?? (result.ts ? [result.ts] : []);
             if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !/^\d{1,13}\.\d{1,6}$/.test(id))) { sent = 'unknown'; throw new Error('slack_quote_output_id_invalid'); }
             sent = ids.length > 0 && (result.ok || result.sent === true) ? true : 'unknown';

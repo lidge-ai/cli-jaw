@@ -9,7 +9,7 @@ import {
 } from './period-thread-state.js';
 
 export type PeriodThreadCode =
-    | 'root_missing' | 'root_multiple' | 'root_identity_mismatch' | 'root_marker_ambiguous'
+    | 'root_missing' | 'root_multiple' | 'root_identity_mismatch' | 'root_marker_ambiguous' | 'shared_state_corrupt'
     | 'history_incomplete' | 'history_unavailable' | 'slack_rate_limited' | 'slack_auth_failed'
     | 'parent_invalid' | 'parent_unverified' | 'create_uncertain' | 'create_rejected'
     | 'create_in_progress' | 'period_rolled_over' | 'slot_already_attempted'
@@ -65,7 +65,9 @@ export async function ensurePeriodThreadRoot(
     const botUserId = verified.userId;
     const expectedAuthor = p.role === 'creator' ? botUserId : p.creatorUserId!;
     if (p.role === 'creator' && p.creatorUserId && p.creatorUserId !== botUserId) return { ok: false, code: 'root_identity_mismatch' };
-    if (!registerPeriodThreadMarker(destination, captured)) return { ok: false, code: 'root_marker_ambiguous' };
+    const marker = registerPeriodThreadMarker(destination, captured);
+    if (marker === 'corrupt') return { ok: false, code: 'shared_state_corrupt' };
+    if (!marker) return { ok: false, code: 'root_marker_ambiguous' };
     const rootHash = periodThreadRootHash(verified.teamId, destination, captured);
     const record = (code: string, ts?: string) => writePeriodRootInfo(rootHash, {
         schema: 1, teamId: verified.teamId, channelId: destination.targetId,

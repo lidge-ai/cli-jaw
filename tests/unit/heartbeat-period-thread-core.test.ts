@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { isHeartbeatDestination, saveHeartbeatFile } from '../../src/core/config.ts';
 import { capturePeriodKey } from '../../src/memory/period-thread-key.ts';
 import { ensurePeriodThreadRoot, listBotRepliesSince } from '../../src/memory/period-thread-root.ts';
-import { acquirePeriodConsumerSlot, periodThreadRootHash, readPeriodThreadDiagnostic, registerPeriodThreadMarker } from '../../src/memory/period-thread-state.ts';
+import { acquirePeriodConsumerSlot, periodThreadMarkerHash, periodThreadRootHash, readPeriodThreadDiagnostic, registerPeriodThreadMarker } from '../../src/memory/period-thread-state.ts';
 import { registerHeartbeatRoutes } from '../../src/routes/heartbeat.ts';
 import { stopHeartbeat } from '../../src/memory/heartbeat.ts';
 
@@ -237,6 +237,8 @@ test('marker registration is shared across homes within one period and resets ne
     try {
         process.env['CLI_JAW_HOME'] = homeA;
         assert.equal(registerPeriodThreadMarker(first, day), true);
+        const markerDir = path.join(process.env['CLI_JAW_SHARED_HOME']!, 'period-threads', 'claims');
+        assert.deepEqual(fs.readdirSync(markerDir), [`marker.${periodThreadMarkerHash(first, day)}`]);
         process.env['CLI_JAW_HOME'] = homeB;
         assert.equal(registerPeriodThreadMarker(second, day), false);
         assert.equal(registerPeriodThreadMarker(second, capturePeriodKey(day.endMs, 'day')), true);
@@ -247,6 +249,45 @@ test('marker registration is shared across homes within one period and resets ne
     }
 }));
 
+test('empty and malformed published markers hold without Slack reads or writes', async () => {
+    for (const content of ['', '{broken', '{}']) await shared(async home => {
+        const claims = path.join(home, 'period-threads', 'claims');
+        fs.mkdirSync(claims, { recursive: true });
+        fs.writeFileSync(path.join(claims, `marker.${periodThreadMarkerHash(destination(), day)}`), content);
+        const api = fakeSlack();
+        assert.deepEqual(await ensurePeriodThreadRoot(destination(), day, deps(api.fetchImpl)), { ok: false, code: 'shared_state_corrupt' });
+        assert.deepEqual(api.calls, []);
+    });
+});
+
+test('sequence receipts compact after repeated acquisitions without recycling numbers', async () => shared(async home => {
+    const slots = path.join(home, 'period-threads', 'slots');
+    for (let index = 0; index < 100; index++) {
+        const release = await acquirePeriodConsumerSlot(1, 0);
+        assert.ok(release);
+        release();
+    }
+    const names = fs.readdirSync(slots);
+    assert.ok(names.length <= 3, `unbounded receipts: ${names.length}`);
+    assert.ok(names.includes('issued.100'));
+    const release = await acquirePeriodConsumerSlot(1, 0);
+    assert.ok(release);
+    release();
+    assert.ok(fs.readdirSync(slots).includes('issued.101'));
+}));
+
+test('compaction preserves receipts at and above the oldest active consumer', async () => shared(async home => {
+    const slots = path.join(home, 'period-threads', 'slots');
+    const first = await acquirePeriodConsumerSlot(2, 0);
+    const second = await acquirePeriodConsumerSlot(2, 0);
+    assert.ok(first && second);
+    second();
+    assert.ok(fs.readdirSync(slots).includes('issued.2'));
+    assert.ok(fs.readdirSync(slots).includes('issued.1'));
+    first();
+    assert.deepEqual(fs.readdirSync(slots), ['done.2', 'issued.2']);
+}));
+
 test('reply scan requires every page and detects the bot reply from this run', async () => shared(async () => {
     const replyTs = String(Number(ts) + 100);
     const fetchImpl = (async () => Response.json({ ok: true, messages: [{ ts }, { ts: replyTs, user: bot }], has_more: false })) as typeof fetch;
@@ -255,12 +296,39 @@ test('reply scan requires every page and detects the bot reply from this run', a
     assert.deepEqual(await listBotRepliesSince(destination(), ts, bot, Number(ts) * 1000, deps(incomplete)), { ok: false, code: 'replies_unverified' });
 }));
 
-test('GET diagnostic reads shared files without Slack calls or claims', async () => shared(async () => {
+test('HTTP GET diagnostic leaves claims and Slack call count unchanged', async () => shared(async home => {
     const api = fakeSlack();
     await ensurePeriodThreadRoot(destination(), day, deps(api.fetchImpl));
-    const summary = readPeriodThreadDiagnostic(destination(), day);
-    assert.equal(summary.root?.ts, ts);
-    assert.equal(summary.claims.create, 1);
+    saveHeartbeatFile({ jobs: [{ id: 'diagnostic', name: 'diagnostic', enabled: false,
+        schedule: { kind: 'every', minutes: 10 }, prompt: 'Check', destination: destination() }] });
+    const claims = path.join(home, 'period-threads', 'claims');
+    const before = fs.readdirSync(claims).map(name => [name, fs.readFileSync(path.join(claims, name), 'utf8')]);
+    const callsBefore = api.calls.length;
+    const originalFetch = globalThis.fetch;
+    let slackCalls = 0;
+    globalThis.fetch = (async (input, init) => {
+        if (String(input).includes('slack.com/api/')) { slackCalls++; throw new Error('GET invoked Slack'); }
+        return originalFetch(input, init);
+    }) as typeof fetch;
+    const app = express(); app.use(express.json());
+    registerHeartbeatRoutes(app, (_req, _res, next) => next());
+    const server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+        const address = server.address(); assert.ok(address && typeof address === 'object');
+        const response = await fetch(`http://127.0.0.1:${address.port}/api/heartbeat`);
+        assert.equal(response.status, 200);
+        const body = await response.json() as { jobs: Array<{ periodThread?: unknown }> };
+        assert.ok(body.jobs[0]?.periodThread);
+        assert.deepEqual(fs.readdirSync(claims).map(name => [name, fs.readFileSync(path.join(claims, name), 'utf8')]), before);
+        assert.equal(api.calls.length, callsBefore);
+        assert.equal(slackCalls, 0);
+    } finally {
+        globalThis.fetch = originalFetch;
+        stopHeartbeat(); server.closeAllConnections();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+        saveHeartbeatFile({ jobs: [] });
+    }
 }));
 
 test('PUT rejects conflicting marker, root contract and mention watch; GET keeps deferred visible', async () => shared(async () => {

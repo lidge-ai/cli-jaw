@@ -104,6 +104,7 @@ export function heartbeatHoldMessage(reason: HeartbeatHoldReason): string {
         case 'root_multiple': return 'multiple period roots match the marker';
         case 'root_identity_mismatch': return 'the period root author differs from the configured creator';
         case 'root_marker_ambiguous': return 'another root key owns this marker for the period';
+        case 'shared_state_corrupt': return 'the shared period marker is corrupt; manual review is required';
         case 'history_incomplete': return 'Slack history could not be scanned completely';
         case 'history_unavailable': return 'Slack history is unavailable';
         case 'slack_rate_limited': return 'Slack rate limited the period scan';

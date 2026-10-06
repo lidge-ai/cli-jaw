@@ -31,8 +31,14 @@ function readJson<T>(file: string): T | null {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 function claim(file: string, value: object): boolean {
-    try { fs.writeFileSync(file, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    try {
+        fs.writeFileSync(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+        try { fs.linkSync(temporary, file); return true; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
+    } finally {
+        try { fs.unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
 }
 function info(file: string, value: object): void {
     const temporary = `${file}.${randomUUID()}.tmp`;
@@ -41,10 +47,17 @@ function info(file: string, value: object): void {
 }
 function claimIdentity() { return { pid: process.pid, host: os.hostname(), at: Date.now() }; }
 
-export function registerPeriodThreadMarker(destination: HeartbeatDestination, captured: CapturedPeriod): boolean {
+export function registerPeriodThreadMarker(destination: HeartbeatDestination, captured: CapturedPeriod): boolean | 'corrupt' {
     const file = path.join(dir('claims'), `marker.${periodThreadMarkerHash(destination, captured)}`);
     if (claim(file, { rootKey: destination.periodThread!.rootKey })) return true;
-    return readJson<{ rootKey?: string }>(file)?.rootKey === destination.periodThread!.rootKey;
+    try {
+        const existing = readJson<{ rootKey?: unknown }>(file);
+        if (!existing || typeof existing.rootKey !== 'string') return 'corrupt';
+        return existing.rootKey === destination.periodThread!.rootKey;
+    } catch (error) {
+        if (error instanceof SyntaxError) return 'corrupt';
+        throw error;
+    }
 }
 export function claimPeriodThreadCreation(rootHash: string): { status: 'claimed' | 'in_progress' | 'uncertain' | 'exhausted'; attempt: number } {
     const claims = dir('claims');
@@ -144,12 +157,35 @@ function cleanupDead(entries: ReturnType<typeof sequences>): ReturnType<typeof s
         return false;
     });
 }
+/** Keep the highest issue receipt as a durable high-water mark. Older completed
+ * receipts are safe to remove only below every live sequence. */
+function compactSequences(location: string): void {
+    const names = fs.readdirSync(location);
+    const issued = names.flatMap(name => {
+        const match = /^issued\.(\d+)$/.exec(name);
+        return match ? [Number(match[1])] : [];
+    });
+    const highest = issued.reduce((maximum, number) => Math.max(maximum, number), 0);
+    const live = cleanupDead(sequences());
+    const lowestLive = live.reduce((minimum, item) => Math.min(minimum, item.number), Infinity);
+    const done = new Set(names.flatMap(name => {
+        const match = /^done\.(\d+)$/.exec(name);
+        return match ? [Number(match[1])] : [];
+    }));
+    for (const number of issued) {
+        if (number >= highest || number >= lowestLive || !done.has(number)) continue;
+        for (const prefix of ['issued', 'done', 'seq']) {
+            try { fs.unlinkSync(path.join(location, `${prefix}.${number}`)); }
+            catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+    }
+}
 export async function acquirePeriodConsumerSlot(maxConcurrent = 2, waitSeconds = 300): Promise<(() => void) | null> {
     const token = randomUUID();
     const location = dir('slots');
-    // Permanent issue receipts prevent a number from being recycled after every
-    // active sequence has gone. Otherwise a concurrent dead-sequence collector
-    // could unlink a new owner's sequence under the same name.
+    compactSequences(location);
+    // The highest issue receipt survives compaction so a number is never
+    // recycled after every active sequence has gone.
     const issued = fs.readdirSync(location).flatMap(name => {
         const match = /^(?:issued|seq)\.(\d+)$/.exec(name);
         return match ? [Number(match[1])] : [];
@@ -163,6 +199,7 @@ export async function acquirePeriodConsumerSlot(maxConcurrent = 2, waitSeconds =
         if (readJson<Sequence>(file)?.token === token) {
             claim(path.join(location, `done.${number}`), { at: Date.now() });
             try { fs.unlinkSync(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            compactSequences(location);
         }
     };
     const deadline = Date.now() + waitSeconds * 1000;

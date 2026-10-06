@@ -201,7 +201,9 @@ export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddlewar
         return withSlackToolAccess(client.token, principal, principal.kind === 'turn' ? principal.grant.destination.targetId : undefined,
             signal => {
                 if (targetId) assertSlackWriteAllowed(principal, scopedGrant ?? null, targetId);
-                return sendChannelOutput({ ...request, slackCredentialKey: slackCredentialKey(client.token!), ...(signal ? { signal } : {}), fromAgentSurface: true });
+                return sendChannelOutput({ ...request, slackCredentialKey: slackCredentialKey(client.token!), ...(signal ? { signal } : {}),
+                    fromAgentSurface: true,
+                    slackWriteGuard: channelId => assertSlackWriteAllowed(principal, scopedGrant ?? null, channelId) });
             }, undefined,
             result => ({ ...result, ok: false, error: 'slack_grant_cancelled_after_dispatch', sent: result['sent'] === 'unknown' ? 'unknown' : result.ok || result['sent'] === true, retryable: false, status: 409 }));
     };

@@ -35,10 +35,13 @@ Capabilities report `authorization.mode` and keep authorization separate from
 provider availability and verified results.
 
 An active heartbeat grant marked `serverOwnedDelivery` reserves its Slack channel
-for server delivery. Agent writes through that grant return HTTP 409
+for server delivery. A separate channel lease persists from parent resolution through
+the final send or skip decision, including the interval after the model grant ends.
+Agent writes through that grant return HTTP 409
 `slack_server_owned_delivery`, even when the target matches. Grant-free operator
 writes to that channel return HTTP 409 `slack_channel_leased_by_heartbeat` until
-the grant is revoked or expires. This covers channel sends (including files),
+the lease ends. Writes are checked again at the actual Slack POST, including file
+completion and action dispatch. This covers channel sends (including files),
 action mutations, and quote publication at the posting channel; history and
 other reads remain available. Other channels, inbound Slack turn grants, and
 ordinary grants retain their existing behavior. The heartbeat's final

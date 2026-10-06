@@ -30,6 +30,7 @@ import {
     reserveSlackToolGrant,
     activateSlackToolGrant,
     revokeSlackToolGrant,
+    holdServerOwnedChannel,
     slackCredentialKey,
     SLACK_TOOL_GRANT_ENV,
 } from '../slack/tool-context.js';
@@ -900,6 +901,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
     // and a record saying so is more useful than one quietly claiming success.
     let outcome: HeartbeatRunOutcome = { execution: 'error', delivery: 'not_requested', reason: 'no outcome recorded' };
     let releaseConsumerSlot: (() => void) | null = null;
+    let releaseServerOwnedChannel: (() => void) | null = null;
     try {
         // A mention watch replaces the prompt path entirely: its prompt describes
         // how to answer a message that has not been found yet, so running it bare
@@ -955,6 +957,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
                 outcome = { execution: 'skipped', delivery: 'not_requested', reason: root.code };
                 return;
             }
+            releaseServerOwnedChannel = holdServerOwnedChannel(destination.targetId);
             const replyHash = periodThreadReplyHash(periodThreadRootHash(root.teamId, destination, captured), destination.periodThread!.slot, root.botUserId);
             if (hasPeriodThreadReplyClaim(replyHash)) {
                 updateHeartbeatLiveDestinationHold(job, 'slot_already_attempted');
@@ -1183,6 +1186,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         log.error(`[heartbeat:${job["name"]}] error:`, (err as Error).message);
         outcome = { execution: 'error', delivery: 'not_requested', reason: (err as Error).message };
     } finally {
+        releaseServerOwnedChannel?.();
         releaseConsumerSlot?.();
         heartbeatBusy = false;
         if (jobId) inFlightJobs.delete(jobId);
