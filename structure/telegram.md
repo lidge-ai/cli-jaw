@@ -63,6 +63,35 @@ destination invalidates the old reason immediately. The read is not retried and 
 results are not cached. `channel_root` and non-Slack destinations need no Slack read. Mention-watch is
 separate: its destination is the hit thread it just discovered.
 
+Server-owned period threads (`scope: "period_thread"`) let a Slack heartbeat write into
+one parent post per day or per week without the model choosing where. The destination
+carries `periodThread: { rootKey, period: "day"|"week", role: "creator"|"consumer", slot,
+title, intro?, creatorUserId?, maxPages?, maxConcurrent?, concurrencyWaitSeconds? }` and no
+`threadId`. `resolveHeartbeatBinding` returns `deferred` for it; nothing is decided at save
+time and `GET /api/heartbeat` only reads the shared state files. At the start of a run the
+server captures the KST period key once (day = that date, week = that Monday; it does not
+move if the run crosses midnight) and resolves the parent before any runner starts:
+`conversations.history` is read to the end of its cursor for that period, every parent whose
+first line equals `<title> <label>` is counted regardless of author, and exactly one with the
+expected author (`auth.test` for a creator, `creatorUserId` for a consumer) is adopted.
+Two or more, an incomplete scan, a rate limit, an auth or transport failure, a consumer
+that finds none, or a creation whose outcome is unknown all hold the tick. Only a creator
+that read the whole period and found zero creates the parent, from the fixed template,
+after claiming `claims/<rootHash>.create.<n>` with an exclusive create under
+`~/.cli-jaw-shared/period-threads/`; an explicit Slack rejection marks that claim
+`.rejected` and allows the next attempt, anything uncertain does not. The adopted ts then
+becomes an ordinary bound `threadId` target: the same `enforceDestination` grant, the same
+exact-match checks in `/api/channel/send` and the action runtime, and the same final send.
+That grant also carries `serverOwnedDelivery`, so writes made through it are refused
+(`slack_server_owned_delivery`), and while it is live grant-less operator writes whose
+destination is that channel are refused (`slack_channel_leased_by_heartbeat`); reads stay
+open. Before the server posts the model's output it re-verifies the parent, reads the
+thread's replies to the end for a reply by this bot since the run started, and claims
+`claims/<replyHash>.reply` (rootKey, period, slot, bot user) exclusively; any doubt means no
+post. The shared directory stores keys, ids, ts values, status codes and times only.
+Not covered: a full-access agent calling Slack directly with the bot token, outside
+cli-jaw's grant paths.
+
 Every Slack heartbeat runner reserves a server-owned tool grant for the same target.
 The grant carries `enforceDestination: true` and lives for 25 minutes, longer than the
 20-minute collector ceiling. `spawnAgent` activates it before any runtime branch:
