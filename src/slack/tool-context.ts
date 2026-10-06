@@ -15,11 +15,28 @@ export type SlackToolSource = {
      *  full-local Auto authority. Ordinary interactive turn grants omit this:
      *  Auto remains instance-wide for the trusted operator (#745). */
     enforceDestination?: boolean;
+    /** The server alone publishes this heartbeat's final Slack response. */
+    serverOwnedDelivery?: boolean;
 };
 export type SlackToolGrant = Readonly<SlackToolSource & { requestId: string; scope: string; chatSessionId: string; expiresAt: number; signal: AbortSignal }>;
 type Entry = { grant: SlackToolGrant; secret: string; active: boolean; controller: AbortController; timer: ReturnType<typeof setTimeout> };
 const requests = new Map<string, Entry>();
 const secrets = new Map<string, Entry>();
+const serverOwnedLeases = new Map<string, number>();
+
+/** Hold a server-owned channel through final delivery, independently of the
+ * shorter-lived model grant. Each caller releases only its own reference. */
+export function holdServerOwnedChannel(channelId: string): () => void {
+    serverOwnedLeases.set(channelId, (serverOwnedLeases.get(channelId) ?? 0) + 1);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        const count = serverOwnedLeases.get(channelId) ?? 0;
+        if (count <= 1) serverOwnedLeases.delete(channelId);
+        else serverOwnedLeases.set(channelId, count - 1);
+    };
+}
 
 export function slackCredentialKey(token: string): string { return createHash('sha256').update(token).digest('hex'); }
 
@@ -85,6 +102,18 @@ export function hasActiveEnforcedSlackDestination(): boolean {
             && !entry.controller.signal.aborted) return true;
     }
     return false;
+}
+
+/** Channels leased by live server-owned heartbeat grants. Reservations count
+ * from creation through revocation, including the time before activation. */
+export function activeServerOwnedChannels(): Set<string> {
+    const channels = new Set(serverOwnedLeases.keys());
+    const now = Date.now();
+    for (const entry of requests.values()) {
+        if (entry.grant.serverOwnedDelivery === true && entry.grant.expiresAt > now
+            && !entry.controller.signal.aborted) channels.add(entry.grant.destination.targetId);
+    }
+    return channels;
 }
 
 export function redactSlackToolSecrets(text: string): string {

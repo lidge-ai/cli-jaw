@@ -334,8 +334,12 @@ cli-jaw/
 │   │   ├── advanced.ts       ← Advanced Memory re-export stub
 │   │   ├── bootstrap.ts      ← legacy memory/bootstrap import + structured root 초기화
 │   │   ├── heartbeat.ts      ← Heartbeat 잡 스케줄 + cron/anchored-every timer orchestration + minute-slot dedupe + in-flight skip + generation/abort teardown + per-job map prune + 틱마다 run record fold + mention-watch 답변 예산 + script env 채널 시크릿 차단 + fs.watch
+│   │   ├── heartbeat-prompt-skills.ts ← heartbeat job에 고정된 SKILL.md 본문을 경계·크기 검증 후 로드
 │   │   ├── heartbeat-run-record.ts ← 틱 결과 어휘 (execution/delivery 분리) + 연속 실패·연속 skip 2-카운터 fold + failing 임계값
 │   │   ├── heartbeat-schedule.ts ← Heartbeat schedule normalize + cron validate/match + timezone validate + immediate cron loop helper
+│   │   ├── period-thread-key.ts ← KST day/week period capture and fixed parent marker label
+│   │   ├── period-thread-state.ts ← Shared exclusive claims, diagnostics and consumer sequence semaphore
+│   │   ├── period-thread-root.ts ← Slack period parent scan, creation, verification and bot reply scan
 │   │   ├── heartbeat-mention-watch.ts ← Slack mention 항목 loop + busy yield + 답변 단계 wall-clock 예산 + scanIncomplete/hitCapReached drain 신호 + server-owned thread send + WatchNamespace 경유 ledger 접근
 │   │   ├── mention-watch-ledger.ts ← v2 ledger 단일 접근 경로 (WatchNamespace = job+workspace+user, 모든 SQL이 3파트 predicate 유지, A/B 대칭 테스트가 최종 보증) ✨
 │   │   ├── legacy-mention-watch-quarantine.ts ← v1 ledger 격리 상태 기계 (durable pending, downgrade 재출현 시 재격리, fresh-start 승인은 archive→delete→CAS 단일 트랜잭션) ✨
@@ -393,6 +397,7 @@ cli-jaw/
 │   │   ├── attachment-recovery.ts ← app_mention 봉투에 없는 첨부를 channel+ts 재조회로 복구 (oldest+inclusive+limit=1)
 │   │   ├── commands.ts       ← slash command → 공유 parseCommand/executeCommand 파이프라인
 │   │   ├── slack-file.ts     ← files.getUploadURLExternal → upload → completeUploadExternal 3단계 업로드 (파일명·캡션 모두 아웃바운드 마스킹)
+│   │   ├── write-guard.ts    ← serverOwnedDelivery grant와 활성 채널 lease의 Slack 쓰기 거절
 │   │   ├── ingress.ts        ← 세션별 ingress lane + synthetic top-level followup override + admitSlackRun 동기 실행 예약(sessionLanes) + 전역 다운로드 세마포어 + shutdown abort/drain ✨
 │   │   ├── inbound-file.ts   ← 인바운드 첨부 단일 IO owner (files.info → 인증 스트리밍 다운로드 → saveUpload, 파일/메시지 바이트 예산, 고정 error code) ✨
 │   │   ├── inbound-url.ts    ← 인바운드 다운로드 URL 검증 (Slack host allowlist + https-only hop + 사설망 거부) ✨
@@ -668,12 +673,18 @@ cli-jaw/
 │       ├── dispatch-batch-summary.ts ← batch dispatch safe summary printer + recovery command fallback
 │       └── tui/              ← chat 터미널 TUI 분리 (api, channel, fullscreen-mode, input-handler, overlays, raw-pipe-mode, renderer, simple-mode, tui-io, types, ws-handler)
 ├── tests/                    ← 회귀 방지 테스트 (root/unit/integration/browser/fixtures/smoke)
-│   └── unit/
+│   ├── unit/
 │       ├── manager-system-trash-options.test.ts ← literal trash-path forwarding without glob expansion
 │       ├── manager-process-control.test.ts ← loading/error feedback, single-flight actions, confirmation and stale-response guards
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
+│       ├── heartbeat-period-thread-core.test.ts ← KST keys, root scan, PUT and cross-process claims/consumer bounds
+│       ├── heartbeat-prompt-skills.test.ts ← 스킬 로드 실패·PUT 상속·실행 주입 회귀
+│       ├── heartbeat-prompt-skills-integration.test.ts ← 격리 PUT/GET/재로드 + 멘션 워치 실패·복구 틱
+│       ├── heartbeat-period-thread-run.test.ts ← heartbeat binding, grant, parent and final delivery guards
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
+│   └── fixtures/
+│       └── period-thread-child.ts ← process-isolated root claim and consumer sequence fixture
 ├── scripts/                  ← 도구 스크립트 (TypeScript + Shell + CJS; atomic build, sidecar bundle, release gates, install-risk evidence)
 ├── officecli/                ← OfficeCLI 포크 서브모듈 (lidge-jun/OfficeCLI, Apache 2.0)
 ├── skills_ref/               ← 레퍼런스 스킬

@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import type { AuthMiddleware } from './types.js';
-import { loadHeartbeatFile, saveHeartbeatFile, isHeartbeatDestination, isHeartbeatMentionWatch, settings } from '../core/config.js';
+import { loadHeartbeatFile, saveHeartbeatFile, isHeartbeatDestination, isHeartbeatMentionWatch, isHeartbeatPromptSkills, settings } from '../core/config.js';
 import type { HeartbeatDestination, HeartbeatMentionWatch, HeartbeatJob } from '../core/config.js';
 import { getHeartbeatLiveDestinationHold, getHeartbeatRunRecord, startHeartbeat } from '../memory/heartbeat.js';
 import type { HeartbeatRunRecord } from '../memory/heartbeat-run-record.js';
@@ -11,6 +11,9 @@ import { verifiedSlackWorkspace } from '../slack/verified-workspace.js';
 import { getEmployees } from '../core/db.js';
 import type { EmployeeRow } from '../core/employees.js';
 import { stripUndefined } from '../core/strip-undefined.js';
+import { capturePeriodKey } from '../memory/period-thread-key.js';
+import { periodThreadFirstLine } from '../memory/period-thread-root.js';
+import { readPeriodThreadDiagnostic } from '../memory/period-thread-state.js';
 
 type RunnerFields = Pick<import('../core/config.js').HeartbeatJob, 'runner' | 'employee' | 'command' | 'reportPolicy'>;
 export type HeartbeatPutRunnerResult = { ok: true; fields: RunnerFields } | { ok: false; error: string };
@@ -56,6 +59,19 @@ function heldForDestination(job: HeartbeatJob): (HeartbeatJob & { held: string }
     return live ? { ...job, held: live } : null;
 }
 
+function withPeriodThreadDiagnostic<T extends HeartbeatJob>(job: T): T | (T & { periodThread: object }) {
+    const destination = job.destination;
+    if (!isHeartbeatDestination(destination) || destination.scope !== 'period_thread' || !destination.periodThread) return job;
+    const captured = capturePeriodKey(Date.now(), destination.periodThread.period);
+    const p = destination.periodThread;
+    return { ...job, periodThread: {
+        rootKey: p.rootKey, period: p.period, role: p.role, slot: p.slot,
+        periodKey: captured.periodKey, label: captured.label,
+        firstLine: periodThreadFirstLine(destination, captured),
+        ...readPeriodThreadDiagnostic(destination, captured),
+    } };
+}
+
 /** Resolve the mention-watch a PUT should persist.
  *
  *  Same inheritance rule as `destination`, for the same reason: every shipped UI
@@ -77,6 +93,15 @@ export function resolveHeartbeatMentionWatch(
     if (raw === null) return { ok: true, mentionWatch: undefined };
     if (!isHeartbeatMentionWatch(raw)) return { ok: false, error: 'invalid heartbeat mention watch' };
     return { ok: true, mentionWatch: raw };
+}
+
+export function resolveHeartbeatPromptSkills(
+    job: Record<string, unknown>, existing: string[] | undefined,
+): { ok: true; promptSkills: string[] | undefined } | { ok: false; error: string } {
+    if (!Object.prototype.hasOwnProperty.call(job, 'promptSkills')) return { ok: true, promptSkills: existing };
+    if (job['promptSkills'] === null) return { ok: true, promptSkills: undefined };
+    if (!isHeartbeatPromptSkills(job['promptSkills'])) return { ok: false, error: 'invalid heartbeat prompt skills' };
+    return { ok: true, promptSkills: job['promptSkills'] };
 }
 
 export function normalizeHeartbeatPutRunnerFields(
@@ -131,9 +156,9 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
         detectLegacyMentionWatch(Date.now());
         res.json({
             ...file,
-            jobs: file.jobs.map(job => withLastRun(job.mentionWatch && job.id && isQuarantined(job.id)
+            jobs: file.jobs.map(job => withLastRun(withPeriodThreadDiagnostic(job.mentionWatch && job.id && isQuarantined(job.id)
                 ? { ...job, held: 'unmigrated_mention_watch_ledger' as const }
-                : heldForDestination(job) ?? job)),
+                : heldForDestination(job) ?? job))),
         });
     });
 
@@ -148,6 +173,8 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
         const employeeNames = new Set((getEmployees.all() as EmployeeRow[]).map(employee => employee.name));
         const idPrefix = `hb_${Date.now()}`;
         const seenIds = new Set<string>();
+        const markerOwners = new Map<string, string>();
+        const rootContracts = new Map<string, string>();
         for (const [index, rawJob] of data.jobs.entries()) {
             const job = (rawJob && typeof rawJob === 'object') ? rawJob as Record<string, unknown> : {};
             const scheduleResult = validateHeartbeatScheduleInput(job["schedule"]);
@@ -176,16 +203,41 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
             const existing = existingById.get(jobId);
             const runnerResult = normalizeHeartbeatPutRunnerFields(job, existing, employeeNames);
             if (!runnerResult.ok) { res.status(400).json({ error: runnerResult.error, index, jobId }); return; }
+            const skillResult = resolveHeartbeatPromptSkills(job, existing?.promptSkills);
+            if (!skillResult.ok) { res.status(400).json({ error: skillResult.error, index, jobId }); return; }
+            if (runnerResult.fields.runner === 'script' && skillResult.promptSkills) {
+                res.status(400).json({ error: 'script runner cannot use promptSkills', index, jobId }); return;
+            }
             const destResult = resolveHeartbeatDestination(job, existing?.destination);
             if (!destResult.ok) { res.status(400).json({ error: destResult.error, index, jobId }); return; }
             const watchResult = resolveHeartbeatMentionWatch(job, existing?.mentionWatch);
             if (!watchResult.ok) { res.status(400).json({ error: watchResult.error, index, jobId }); return; }
+            const destination = destResult.destination;
+            if (destination?.scope === 'period_thread' && watchResult.mentionWatch) {
+                res.status(400).json({ error: 'period_thread cannot be combined with mentionWatch', index, jobId }); return;
+            }
+            if (destination?.scope === 'period_thread') {
+                const p = destination.periodThread!;
+                const marker = `${destination.targetId}|${p.title}`;
+                const owner = markerOwners.get(marker);
+                if (owner !== undefined && owner !== p.rootKey) {
+                    res.status(400).json({ error: 'period_thread title must be unique per channel', index, jobId }); return;
+                }
+                markerOwners.set(marker, p.rootKey);
+                const contract = `${destination.targetId}|${p.period}|${p.title}`;
+                const prior = rootContracts.get(p.rootKey);
+                if (prior !== undefined && prior !== contract) {
+                    res.status(400).json({ error: 'period_thread rootKey must agree on channel, period and title', index, jobId }); return;
+                }
+                rootContracts.set(p.rootKey, contract);
+            }
             normalizedJobs.push(stripUndefined({
                 id: jobId,
                 name: typeof job["name"] === 'string' ? job["name"] : '',
                 enabled: job["enabled"] !== false,
                 schedule: scheduleResult.schedule,
                 prompt: typeof job["prompt"] === 'string' ? job["prompt"] : '',
+                promptSkills: skillResult.promptSkills,
                 ...runnerResult.fields,
                 destination: destResult.destination,
                 mentionWatch: watchResult.mentionWatch,

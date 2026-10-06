@@ -1866,6 +1866,7 @@ export interface HeartbeatJob {
     name?: string;
     enabled?: boolean;
     prompt?: string;
+    promptSkills?: string[];
     schedule?: unknown;
     runner?: 'main' | 'employee' | 'script';
     employee?: string;
@@ -1918,7 +1919,39 @@ export interface HeartbeatDestination {
     /** Opt in to posting at the conversation root instead of inside a thread.
      *  Written explicitly so a job that simply has not been given a thread yet
      *  is distinguishable from one whose audience really is the channel (#745). */
-    scope?: 'channel_root';
+    scope?: 'channel_root' | 'period_thread';
+    periodThread?: HeartbeatPeriodThread;
+}
+
+export interface HeartbeatPeriodThread {
+    rootKey: string;
+    period: 'day' | 'week';
+    role: 'creator' | 'consumer';
+    slot: string;
+    title: string;
+    intro?: string;
+    creatorUserId?: string;
+    maxPages?: number;
+    maxConcurrent?: 1 | 2;
+    concurrencyWaitSeconds?: number;
+}
+
+export function isHeartbeatPeriodThread(value: unknown): value is HeartbeatPeriodThread {
+    if (!value || typeof value !== 'object') return false;
+    const p = value as Record<string, unknown>;
+    const key = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    if (typeof p['rootKey'] !== 'string' || !key.test(p['rootKey'])) return false;
+    if (typeof p['slot'] !== 'string' || !key.test(p['slot'])) return false;
+    if (p['period'] !== 'day' && p['period'] !== 'week') return false;
+    if (p['role'] !== 'creator' && p['role'] !== 'consumer') return false;
+    if (typeof p['title'] !== 'string' || Array.from(p['title']).length < 1 || Array.from(p['title']).length > 80 || /[\x00-\x1f\x7f]/.test(p['title'])) return false;
+    if (p['intro'] !== undefined && (typeof p['intro'] !== 'string' || Array.from(p['intro']).length > 300 || /[\r\n\x00-\x08\x0b-\x1f\x7f]/.test(p['intro']))) return false;
+    if (p['creatorUserId'] !== undefined && (typeof p['creatorUserId'] !== 'string' || !/^[UW][A-Z0-9]{2,}$/.test(p['creatorUserId']))) return false;
+    if (p['role'] === 'consumer' && p['creatorUserId'] === undefined) return false;
+    if (p['maxPages'] !== undefined && (!Number.isInteger(p['maxPages']) || (p['maxPages'] as number) < 1 || (p['maxPages'] as number) > 100)) return false;
+    if (p['maxConcurrent'] !== undefined && p['maxConcurrent'] !== 1 && p['maxConcurrent'] !== 2) return false;
+    if (p['concurrencyWaitSeconds'] !== undefined && (!Number.isInteger(p['concurrencyWaitSeconds']) || (p['concurrencyWaitSeconds'] as number) < 0 || (p['concurrencyWaitSeconds'] as number) > 1800)) return false;
+    return true;
 }
 
 /** Channels one mention-watch job may cover.
@@ -1959,10 +1992,20 @@ export function isHeartbeatDestination(value: unknown): value is HeartbeatDestin
     if (d['channel'] !== 'telegram' && d['channel'] !== 'discord' && d['channel'] !== 'slack') return false;
     if (typeof d['targetId'] !== 'string' || !d['targetId'].trim()) return false;
     if (d['threadId'] !== undefined && typeof d['threadId'] !== 'string') return false;
-    if (d['scope'] !== undefined && d['scope'] !== 'channel_root') return false;
+    if (d['scope'] !== undefined && d['scope'] !== 'channel_root' && d['scope'] !== 'period_thread') return false;
+    if (d['scope'] === 'period_thread') return d['channel'] === 'slack' && d['threadId'] === undefined && isHeartbeatPeriodThread(d['periodThread']);
+    if (d['periodThread'] !== undefined) return false;
     return true;
 }
 export interface HeartbeatFile { jobs: HeartbeatJob[] }
+
+/** Pinned skill ids are path components, never paths supplied by a client. */
+export function isHeartbeatPromptSkills(value: unknown): value is string[] {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 8) return false;
+    const ids = Array.from(value);
+    return ids.every(id => typeof id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(id))
+        && new Set(ids).size === ids.length;
+}
 
 export function loadHeartbeatFile(): HeartbeatFile {
     try {
@@ -1984,6 +2027,10 @@ export function loadHeartbeatFile(): HeartbeatFile {
 
 function normalizeHeartbeatJob(job: HeartbeatJob): HeartbeatJob {
     const runner = job.runner ?? 'main';
+    if (job.promptSkills !== undefined && (!isHeartbeatPromptSkills(job.promptSkills) || runner === 'script')) {
+        console.warn(`[heartbeat:${job.name || job.id || 'unknown'}] invalid prompt skills or script runner combination; disabling job`);
+        return { ...job, enabled: false };
+    }
     const validRunner = runner === 'main' || runner === 'employee' || runner === 'script';
     const validEmployee = runner !== 'employee' || (typeof job.employee === 'string' && job.employee.trim().length > 0);
     const validCommand = runner !== 'script' || (Array.isArray(job.command) && job.command.length > 0 && job.command.every(part => typeof part === 'string' && part.length > 0));

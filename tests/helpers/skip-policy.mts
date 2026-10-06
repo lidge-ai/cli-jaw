@@ -37,6 +37,11 @@ export interface SkipEntry {
 export const TESTS_ROOT = resolve(import.meta.dirname, '..');
 
 export const SKIP_POLICY: SkipEntry[] = [
+    {
+        file: 'tests/unit/heartbeat-prompt-skills.test.ts',
+        policy: 'platform',
+        why: 'The FIFO case needs mkfifo, which Windows does not have. It proves a named pipe at SKILL.md is refused before a blocking open; it runs on the Linux and macOS lanes and skips only on win32.',
+    },
     // ── integration ──────────────────────────────────────────────────────────
     {
         file: 'tests/integration/api-smoke.test.ts',

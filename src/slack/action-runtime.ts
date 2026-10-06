@@ -8,6 +8,7 @@ import { slackApi, addSlackReaction, removeSlackReaction, deleteSlackMessage, re
 import { readSlackAuthSnapshot } from './verified-workspace.js';
 import { slackCredentialKey } from './tool-context.js';
 import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+import { assertSlackWriteAllowed } from './write-guard.js';
 import type { RemoteTarget } from '../messaging/types.js';
 
 function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
@@ -18,6 +19,7 @@ function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
 import { redactOutboundPayload } from '../messaging/redact.js';
 import { validateSlackDownloadUrl, type SlackInboundUrlOptions } from './inbound-url.js';
 const WRITE_METHODS = new Set(['reactions.add','reactions.remove','chat.update','chat.delete','chat.postMessage','chat.scheduleMessage','chat.deleteScheduledMessage','pins.add','pins.remove','bookmarks.add','bookmarks.edit','bookmarks.remove','canvases.create','canvases.edit','canvases.access.set','slackLists.create','slackLists.items.create','slackLists.items.update','slackLists.access.set']);
+const WRITE_ACTIONS = new Set(['reaction.add','reaction.remove','message.update','message.delete','schedule.create','schedule.cancel','schedule.update','pin.add','pin.remove','bookmark.add','bookmark.edit','bookmark.remove','canvas.create','canvas.edit','list.create','list.item.add','list.item.update','interaction.url','interaction.choice']);
 const SAFE_ERRORS = new Set(['missing_scope','invalid_auth','not_authed','not_in_channel','channel_not_found','message_not_found','invalid_scheduled_message_id','already_reacted','no_reaction','not_pinned','already_pinned','bookmark_not_found','invalid_arguments','invalid_name','permission_denied','restricted_action','list_not_found','row_not_found','canvas_not_found']);
 export type ActionRuntimeOptions = { getToken(): string | null; store: SlackActionStore; fetchImpl?: SlackFetch; rateLimiter?: SlackActionRateLimiter; inboundReady?: () => boolean; evidenceSource: 'slack_api' | 'fixture'; resolveHost?: SlackInboundUrlOptions['resolveHost']; now?: () => number };
 export class SlackActionRuntime {
@@ -31,6 +33,9 @@ export class SlackActionRuntime {
             if (['schedule.create', 'schedule.update', 'interaction.url', 'interaction.choice'].includes(definition.operation) && thread) raw = { ...raw, threadTs: thread };
         }
         const prepared = definition.prepare(raw); const args = prepared.args;
+        if (WRITE_ACTIONS.has(definition.operation) || definition.mutates) {
+            assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, args.channel);
+        }
         const token = this.options.getToken();
         if (!token) throw slackToolDenied('slack_unavailable', 503);
         if (definition.requiresInbound && !this.options.inboundReady?.()) throw slackToolDenied('slack_interaction_inbound_unavailable', 409);
@@ -87,6 +92,7 @@ export class SlackActionRuntime {
                     if (Array.isArray(body['channel_ids']) && body['channel_ids'].some(value => value !== args.channel)) throw slackToolDenied('slack_action_target_contract', 400);
                     await this.rate.admit(workspace, method, signal); checkCurrent();
                     if (WRITE_METHODS.has(method)) {
+                        assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, args.channel);
                         if (pinnedDest) {
                             const thread = pinnedDest.threadId ?? '';
                             if (['chat.postMessage', 'chat.scheduleMessage'].includes(method)) {
@@ -103,10 +109,14 @@ export class SlackActionRuntime {
                         }
                         await withSlackToolAccess(token, principal, args.channel, async () => true, this.options.fetchImpl, undefined, true);
                         if (beforeDispatch) await beforeDispatch();
-                        checkCurrent(); store.dispatched(workspace, actor, args.invocationId!); dispatched = true;
+                        checkCurrent();
                     }
                     if (!WRITE_METHODS.has(method) && beforeDispatch) { await beforeDispatch(); checkCurrent(); }
                     const options = { ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}), ...(signal ? { signal } : {}), sensitiveResponse: true, maxResponseBytes: 1048576, timeoutMs: 10000 };
+                    if (WRITE_METHODS.has(method)) {
+                        assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, args.channel);
+                        store.dispatched(workspace, actor, args.invocationId!); dispatched = true;
+                    }
                     const result = method === 'reactions.add' ? await addSlackReaction(token, String(body['channel']), String(body['timestamp']), String(body['name']), options)
                         : method === 'reactions.remove' ? await removeSlackReaction(token, String(body['channel']), String(body['timestamp']), String(body['name']), options)
                         : method === 'chat.delete' ? await deleteSlackMessage(token, String(body['channel']), String(body['ts']), options)

@@ -146,6 +146,8 @@ export type ChannelSendRequest = {
      *  would let an unrelated background message suppress a real answer, and a
      *  swallowed answer is far worse than a repeated one. */
     fromAgentSurface?: boolean;
+    /** Captured principal check, called by Slack transport at each actual write. */
+    slackWriteGuard?: (channelId: string) => void;
 };
 
 // ─── Transport Send Registry ────────────────────────
