@@ -11,6 +11,9 @@ import { verifiedSlackWorkspace } from '../slack/verified-workspace.js';
 import { getEmployees } from '../core/db.js';
 import type { EmployeeRow } from '../core/employees.js';
 import { stripUndefined } from '../core/strip-undefined.js';
+import { capturePeriodKey } from '../memory/period-thread-key.js';
+import { periodThreadFirstLine } from '../memory/period-thread-root.js';
+import { readPeriodThreadDiagnostic } from '../memory/period-thread-state.js';
 
 type RunnerFields = Pick<import('../core/config.js').HeartbeatJob, 'runner' | 'employee' | 'command' | 'reportPolicy'>;
 export type HeartbeatPutRunnerResult = { ok: true; fields: RunnerFields } | { ok: false; error: string };
@@ -54,6 +57,19 @@ function heldForDestination(job: HeartbeatJob): (HeartbeatJob & { held: string }
     if (binding.state === 'held') return { ...job, held: binding.reason };
     const live = getHeartbeatLiveDestinationHold(job);
     return live ? { ...job, held: live } : null;
+}
+
+function withPeriodThreadDiagnostic<T extends HeartbeatJob>(job: T): T | (T & { periodThread: object }) {
+    const destination = job.destination;
+    if (!isHeartbeatDestination(destination) || destination.scope !== 'period_thread' || !destination.periodThread) return job;
+    const captured = capturePeriodKey(Date.now(), destination.periodThread.period);
+    const p = destination.periodThread;
+    return { ...job, periodThread: {
+        rootKey: p.rootKey, period: p.period, role: p.role, slot: p.slot,
+        periodKey: captured.periodKey, label: captured.label,
+        firstLine: periodThreadFirstLine(destination, captured),
+        ...readPeriodThreadDiagnostic(destination, captured),
+    } };
 }
 
 /** Resolve the mention-watch a PUT should persist.
@@ -131,9 +147,9 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
         detectLegacyMentionWatch(Date.now());
         res.json({
             ...file,
-            jobs: file.jobs.map(job => withLastRun(job.mentionWatch && job.id && isQuarantined(job.id)
+            jobs: file.jobs.map(job => withLastRun(withPeriodThreadDiagnostic(job.mentionWatch && job.id && isQuarantined(job.id)
                 ? { ...job, held: 'unmigrated_mention_watch_ledger' as const }
-                : heldForDestination(job) ?? job)),
+                : heldForDestination(job) ?? job))),
         });
     });
 
@@ -148,6 +164,8 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
         const employeeNames = new Set((getEmployees.all() as EmployeeRow[]).map(employee => employee.name));
         const idPrefix = `hb_${Date.now()}`;
         const seenIds = new Set<string>();
+        const markerOwners = new Map<string, string>();
+        const rootContracts = new Map<string, string>();
         for (const [index, rawJob] of data.jobs.entries()) {
             const job = (rawJob && typeof rawJob === 'object') ? rawJob as Record<string, unknown> : {};
             const scheduleResult = validateHeartbeatScheduleInput(job["schedule"]);
@@ -180,6 +198,25 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
             if (!destResult.ok) { res.status(400).json({ error: destResult.error, index, jobId }); return; }
             const watchResult = resolveHeartbeatMentionWatch(job, existing?.mentionWatch);
             if (!watchResult.ok) { res.status(400).json({ error: watchResult.error, index, jobId }); return; }
+            const destination = destResult.destination;
+            if (destination?.scope === 'period_thread' && watchResult.mentionWatch) {
+                res.status(400).json({ error: 'period_thread cannot be combined with mentionWatch', index, jobId }); return;
+            }
+            if (destination?.scope === 'period_thread') {
+                const p = destination.periodThread!;
+                const marker = `${destination.targetId}|${p.title}`;
+                const owner = markerOwners.get(marker);
+                if (owner !== undefined && owner !== p.rootKey) {
+                    res.status(400).json({ error: 'period_thread title must be unique per channel', index, jobId }); return;
+                }
+                markerOwners.set(marker, p.rootKey);
+                const contract = `${destination.targetId}|${p.period}|${p.title}`;
+                const prior = rootContracts.get(p.rootKey);
+                if (prior !== undefined && prior !== contract) {
+                    res.status(400).json({ error: 'period_thread rootKey must agree on channel, period and title', index, jobId }); return;
+                }
+                rootContracts.set(p.rootKey, contract);
+            }
             normalizedJobs.push(stripUndefined({
                 id: jobId,
                 name: typeof job["name"] === 'string' ? job["name"] : '',

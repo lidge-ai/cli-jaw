@@ -48,6 +48,11 @@ import { runSingleAgent } from '../orchestrator/distribute.js';
 import { getState } from '../orchestrator/state-machine.js';
 import { getGoalContinuationPrompt } from '../goal/heartbeat.js';
 import { log } from '../core/logger.js';
+import { capturePeriodKey } from './period-thread-key.js';
+import type { CapturedPeriod } from './period-thread-key.js';
+import { ensurePeriodThreadRoot, verifyPeriodThreadParent, listBotRepliesSince, type PeriodRootResult } from './period-thread-root.js';
+import { acquirePeriodConsumerSlot, claimPeriodThreadReply, hasPeriodThreadReplyClaim, periodThreadReplyHash, periodThreadRootHash, writePeriodReplyInfo } from './period-thread-state.js';
+import type { HeartbeatDestination } from '../core/config.js';
 
 const HEARTBEAT_SCOPE = 'default';
 /** Execution scope prefix for a mention-watch answer.
@@ -544,8 +549,8 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
     // its own. A destination that IS stored still has to be readable: a broken
     // one means the operator meant something this code cannot honour.
     const binding = heartbeatTarget(job["destination"]);
-    if (binding.state === 'held' && binding.reason !== 'unbound_destination') {
-        log.error(`[heartbeat:${job["name"]}] refuse: ${binding.reason} — mention watch not run`);
+    if (binding.state === 'deferred' || (binding.state === 'held' && binding.reason !== 'unbound_destination')) {
+        log.error(`[heartbeat:${job["name"]}] refuse: ${binding.state === 'deferred' ? 'period_thread_with_mention_watch' : binding.reason} — mention watch not run`);
         return null;
     }
 
@@ -612,6 +617,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             const release = await reserveHeartbeatDestinationGrant(
                 { state: 'bound', target, verification: 'unverified' },
                 requestId,
+                {},
                 { scope: placement.scope, chatSessionId: placement.chatSessionId },
             );
             if (!release) {
@@ -816,8 +822,15 @@ export function buildMentionWatchPrompt(
 }
 
 export type HeartbeatJobDeps = {
+    now?: () => number;
     verifyDestination?: (destination: unknown) => Promise<HeartbeatBinding>;
-    reserveDestinationGrant?: (binding: Extract<HeartbeatBinding, { state: 'bound' }>, requestId: string) =>
+    ensurePeriodThread?: (destination: HeartbeatDestination, captured: CapturedPeriod) => Promise<PeriodRootResult>;
+    verifyPeriodParent?: typeof verifyPeriodThreadParent;
+    listPeriodReplies?: typeof listBotRepliesSince;
+    collectData?: typeof orchestrateAndCollectData;
+    sendOutput?: typeof sendChannelOutput;
+    runScript?: typeof runHeartbeatScript;
+    reserveDestinationGrant?: (binding: Extract<HeartbeatBinding, { state: 'bound' }>, requestId: string, options?: { serverOwnedDelivery?: boolean }) =>
         Promise<(() => void) | null>;
     activateDestinationGrant?: (requestId: string) => string | undefined;
 };
@@ -825,6 +838,7 @@ export type HeartbeatJobDeps = {
 async function reserveHeartbeatDestinationGrant(
     binding: Extract<HeartbeatBinding, { state: 'bound' }>,
     requestId: string,
+    options: { serverOwnedDelivery?: boolean } = {},
     activation: { scope: string; chatSessionId: string } = { scope: HEARTBEAT_SCOPE, chatSessionId: 'default' },
 ): Promise<(() => void) | null> {
     if (binding.target.channel !== 'slack') return () => {};
@@ -837,6 +851,7 @@ async function reserveHeartbeatDestinationGrant(
         destination: binding.target,
         credentialKey: slackCredentialKey(token),
         enforceDestination: true,
+        ...(options.serverOwnedDelivery ? { serverOwnedDelivery: true } : {}),
     }, { requestId, scope: activation.scope, chatSessionId: activation.chatSessionId });
     return reserved ? () => revokeSlackToolGrant(requestId) : null;
 }
@@ -880,10 +895,11 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         forgetPendingJob(jobId);
     }
     if (!heartbeatAbort) heartbeatAbort = new AbortController();
-    const startedAt = Date.now();
+    const startedAt = deps.now?.() ?? Date.now();
     // Deliberately `error`: a path that leaves without naming its outcome is a bug,
     // and a record saying so is more useful than one quietly claiming success.
     let outcome: HeartbeatRunOutcome = { execution: 'error', delivery: 'not_requested', reason: 'no outcome recorded' };
+    let releaseConsumerSlot: (() => void) | null = null;
     try {
         // A mention watch replaces the prompt path entirely: its prompt describes
         // how to answer a message that has not been found yet, so running it bare
@@ -917,7 +933,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         // model, employee or script work. A report whose address is stale or
         // unverified must not run first and discover only at delivery time that
         // it has nowhere safe to go (#745).
-        const destinationBinding = await (deps.verifyDestination
+        let destinationBinding = await (deps.verifyDestination
             ?? ((destination: unknown) => verifyHeartbeatThreadBindingLive(destination, {
                 token: String(settings["slack"]?.botToken ?? ''),
             })))(job["destination"]);
@@ -926,6 +942,38 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             log.error(`[heartbeat:${job["name"]}] refuse: ${destinationBinding.reason} — ${heartbeatHoldMessage(destinationBinding.reason)}`);
             outcome = { execution: 'skipped', delivery: 'not_requested', reason: destinationBinding.reason };
             return;
+        }
+        let periodContext: { destination: HeartbeatDestination; captured: CapturedPeriod; root: Extract<PeriodRootResult, {ok: true}>; replyHash: string } | null = null;
+        if (destinationBinding.state === 'deferred') {
+            const destination = destinationBinding.destination;
+            const captured = capturePeriodKey(startedAt, destination.periodThread!.period);
+            const root = await (deps.ensurePeriodThread ?? ((d, c) => ensurePeriodThreadRoot(d, c, {
+                token: String(settings["slack"]?.botToken ?? ''),
+            })))(destination, captured);
+            if (!root.ok) {
+                updateHeartbeatLiveDestinationHold(job, root.code);
+                outcome = { execution: 'skipped', delivery: 'not_requested', reason: root.code };
+                return;
+            }
+            const replyHash = periodThreadReplyHash(periodThreadRootHash(root.teamId, destination, captured), destination.periodThread!.slot, root.botUserId);
+            if (hasPeriodThreadReplyClaim(replyHash)) {
+                updateHeartbeatLiveDestinationHold(job, 'slot_already_attempted');
+                outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'slot_already_attempted' };
+                return;
+            }
+            if (destination.periodThread!.role === 'consumer') {
+                releaseConsumerSlot = await acquirePeriodConsumerSlot(
+                    destination.periodThread!.maxConcurrent ?? 2,
+                    destination.periodThread!.concurrencyWaitSeconds ?? 300,
+                );
+                if (!releaseConsumerSlot) {
+                    updateHeartbeatLiveDestinationHold(job, 'consumer_concurrency_full');
+                    outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'consumer_concurrency_full' };
+                    return;
+                }
+            }
+            periodContext = { destination, captured, root, replyHash };
+            destinationBinding = { state: 'bound', target: { ...targetFromChatId('slack', destination.targetId), threadId: root.ts }, verification: 'verified' };
         }
         updateHeartbeatLiveDestinationHold(job, null);
         // `reserveHeartbeatDestinationGrant` returns a bare releaser for any
@@ -942,7 +990,10 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         const now = formatHeartbeatNow(schedule);
         const goalPrompt = getGoalContinuationPrompt();
         const goalSection = goalPrompt ? `\n\n--- Active Goal ---\n${goalPrompt}\n--- End Goal ---\n` : '';
-        const prompt = `[heartbeat:${job["name"]}] 현재 시간: ${now} (${timeZone})\n\nBefore responding, you MUST search memory (cli-jaw memory search) for recent conversation context, user preferences, and ongoing tasks. Use this context to ground your response.${goalSection}\n\n${job["prompt"] || '정기 점검입니다. 할 일 없으면 [SILENT]로 응답.'}`;
+        const periodInstructions = periodContext
+            ? `서버 지정 Slack 대상: 채널 ${periodContext.destination.targetId}, 스레드 ${periodContext.root.ts}, 기간 ${periodContext.captured.label}. 이 스레드의 기존 답글은 /api/slack/history?channel=${encodeURIComponent(periodContext.destination.targetId)}&thread_ts=${encodeURIComponent(periodContext.root.ts)}로 읽을 수 있다. 본문만 출력하라. 서버가 이 스레드에 올린다. 이 실행의 Slack 전송 시도는 거절된다. 보낼 것이 없으면 [SILENT].\n\n`
+            : '';
+        const prompt = `${periodInstructions}[heartbeat:${job["name"]}] 현재 시간: ${now} (${timeZone})\n\nBefore responding, you MUST search memory (cli-jaw memory search) for recent conversation context, user preferences, and ongoing tasks. Use this context to ground your response.${goalSection}\n\n${job["prompt"] || '정기 점검입니다. 할 일 없으면 [SILENT]로 응답.'}`;
         log.info(`[heartbeat:${job["name"]}] tick (${describeHeartbeatSchedule(schedule)})`);
         const withDestinationGuard = async <T>(
             operation: (requestId: string) => Promise<T>,
@@ -951,6 +1002,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             const release = await (deps.reserveDestinationGrant ?? reserveHeartbeatDestinationGrant)(
                 destinationBinding,
                 requestId,
+                periodContext ? { serverOwnedDelivery: true } : undefined,
             );
             if (!release) {
                 updateHeartbeatLiveDestinationHold(job, 'slack_grant_unavailable');
@@ -982,7 +1034,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
                     if (!secret) throw new Error('slack_grant_activation_failed');
                     grantEnv = { [SLACK_TOOL_GRANT_ENV]: secret };
                 }
-                return runHeartbeatScript(job["command"] || [], grantEnv);
+                return (deps.runScript ?? runHeartbeatScript)(job["command"] || [], grantEnv);
             });
             if (!guarded.ok) {
                 log.error(`[heartbeat:${job["name"]}] refuse: slack_grant_unavailable — script authority could not be reserved`);
@@ -996,7 +1048,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         } else {
             const collect = async () => {
                 const guarded = await withDestinationGuard(
-                    requestId => orchestrateAndCollectData(prompt, {
+                    requestId => (deps.collectData ?? orchestrateAndCollectData)(prompt, {
                         origin: 'heartbeat',
                         requestId,
                         scope: HEARTBEAT_SCOPE,
@@ -1059,9 +1111,41 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         // recently. Widening `slack.channelIds` is not the alternative: that
         // list also gates inbound, so naming the report channels there would
         // stop the bot answering mentions everywhere else.
+        if (decision.send && periodContext) {
+            const ctx = periodContext;
+            const rootDeps = { token: String(settings["slack"]?.botToken ?? '') };
+            const parent = await (deps.verifyPeriodParent ?? verifyPeriodThreadParent)(
+                ctx.destination, ctx.captured, ctx.root.ts,
+                ctx.destination.periodThread!.role === 'creator' ? ctx.root.botUserId : ctx.destination.periodThread!.creatorUserId!, rootDeps,
+            );
+            if (!parent.ok) {
+                updateHeartbeatLiveDestinationHold(job, parent.code);
+                outcome = { execution: 'ok', delivery: 'not_delivered', reason: parent.code };
+                return;
+            }
+            const replies = await (deps.listPeriodReplies ?? listBotRepliesSince)(
+                ctx.destination, ctx.root.ts, ctx.root.botUserId, startedAt, rootDeps,
+            );
+            if (!replies.ok) {
+                updateHeartbeatLiveDestinationHold(job, replies.code);
+                outcome = { execution: 'ok', delivery: 'not_delivered', reason: replies.code };
+                return;
+            }
+            if (replies.found) {
+                if (claimPeriodThreadReply(ctx.replyHash)) writePeriodReplyInfo(ctx.replyHash, 'delivered_by_agent');
+                outcome = { execution: 'ok', delivery: 'delivered' };
+                return;
+            }
+            if (!claimPeriodThreadReply(ctx.replyHash)) {
+                updateHeartbeatLiveDestinationHold(job, 'slot_already_attempted');
+                outcome = { execution: 'ok', delivery: 'not_delivered', reason: 'slot_already_attempted' };
+                return;
+            }
+            writePeriodReplyInfo(ctx.replyHash, 'claimed');
+        }
         const sendResult = !decision.send
             ? { ok: true as const }
-            : await sendChannelOutput({ channel: destinationBinding.target.channel, type: 'text', text: formatted,
+            : await (deps.sendOutput ?? sendChannelOutput)({ channel: destinationBinding.target.channel, type: 'text', text: formatted,
                 target: destinationBinding.target, allowActiveFallback: false, fullAccess: true })
                 // A transport that THROWS is still a delivery failure, not a failed
                 // job. Without this it lands in the catch below beside a crashed
@@ -1070,6 +1154,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         if (!sendResult.ok) {
             log.error(`[heartbeat:${job["name"]}] send failed: ${sendResult.error}`);
         }
+        if (decision.send && periodContext) writePeriodReplyInfo(periodContext.replyHash, sendResult.ok ? 'delivered' : 'failed');
 
         // Record heartbeat anchor for context injection on next user turn
         if (decision.anchor && sendResult.ok) {
@@ -1098,6 +1183,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         log.error(`[heartbeat:${job["name"]}] error:`, (err as Error).message);
         outcome = { execution: 'error', delivery: 'not_requested', reason: (err as Error).message };
     } finally {
+        releaseConsumerSlot?.();
         heartbeatBusy = false;
         if (jobId) inFlightJobs.delete(jobId);
         if (jobId) {

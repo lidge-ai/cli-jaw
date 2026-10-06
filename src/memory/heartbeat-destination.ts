@@ -16,6 +16,7 @@ import { targetFromChatId } from '../messaging/send.js';
 import type { RemoteTarget } from '../messaging/types.js';
 import { fetchSlackReplies } from '../slack/history.js';
 import type { SlackFetch } from '../slack/api.js';
+import type { PeriodThreadCode } from './period-thread-root.js';
 
 export type HeartbeatHoldReason =
     | 'unbound_destination'
@@ -24,7 +25,8 @@ export type HeartbeatHoldReason =
     | 'thread_channel_mismatch'
     | 'stale_thread'
     | 'live_lookup_failed'
-    | 'slack_grant_unavailable';
+    | 'slack_grant_unavailable'
+    | PeriodThreadCode;
 
 /** Whether the bound conversation was actually PROVEN to exist this tick.
  *
@@ -37,6 +39,7 @@ export type HeartbeatVerification = 'verified' | 'unverified' | 'unsupported';
 
 export type HeartbeatBinding =
     | { state: 'bound'; target: RemoteTarget; verification: HeartbeatVerification }
+    | { state: 'deferred'; kind: 'period_thread'; destination: HeartbeatDestination }
     | { state: 'held'; reason: HeartbeatHoldReason };
 
 /** True when a stored destination names a conversation precisely enough to send.
@@ -50,7 +53,7 @@ export function isCompleteHeartbeatDestination(value: unknown): value is Heartbe
     const dest = value as HeartbeatDestination;
     if (dest.threadId !== undefined && !dest.threadId.trim()) return false;
     if (dest.channel !== 'slack') return true;
-    return Boolean(dest.threadId?.trim()) || dest.scope === 'channel_root';
+    return Boolean(dest.threadId?.trim()) || dest.scope === 'channel_root' || dest.scope === 'period_thread';
 }
 
 /**
@@ -71,6 +74,7 @@ export function resolveHeartbeatBinding(destination: unknown): HeartbeatBinding 
         return { state: 'held', reason: 'incomplete_destination' };
     }
     const dest = destination as HeartbeatDestination;
+    if (dest.scope === 'period_thread') return { state: 'deferred', kind: 'period_thread', destination: dest };
     const base = targetFromChatId(dest.channel, dest.targetId);
     const threadId = dest.threadId?.trim();
     // A pure parse proves the destination is well formed, never that the
@@ -96,6 +100,23 @@ export function heartbeatHoldMessage(reason: HeartbeatHoldReason): string {
             return 'the configured Slack thread could not be verified for this tick';
         case 'slack_grant_unavailable':
             return 'destination-bound Slack authority could not be reserved for this tick';
+        case 'root_missing': return 'the period root has not been posted';
+        case 'root_multiple': return 'multiple period roots match the marker';
+        case 'root_identity_mismatch': return 'the period root author differs from the configured creator';
+        case 'root_marker_ambiguous': return 'another root key owns this marker for the period';
+        case 'history_incomplete': return 'Slack history could not be scanned completely';
+        case 'history_unavailable': return 'Slack history is unavailable';
+        case 'slack_rate_limited': return 'Slack rate limited the period scan';
+        case 'slack_auth_failed': return 'Slack bot identity could not be verified';
+        case 'parent_invalid': return 'the period root no longer matches its verified parent';
+        case 'parent_unverified': return 'the period root could not be verified';
+        case 'create_uncertain': return 'root creation may have reached Slack; automatic retry is held';
+        case 'create_rejected': return 'Slack rejected root creation';
+        case 'create_in_progress': return 'another execution claimed root creation';
+        case 'period_rolled_over': return 'the captured period ended before root creation';
+        case 'slot_already_attempted': return 'this bot already claimed the period reply slot';
+        case 'consumer_concurrency_full': return 'consumer concurrency limit was reached';
+        case 'replies_unverified': return 'bot replies could not be scanned completely';
     }
 }
 
@@ -123,6 +144,7 @@ export async function verifyHeartbeatThreadBindingLive(
 ): Promise<HeartbeatBinding> {
     const binding = resolveHeartbeatBinding(destination);
     if (binding.state === 'held') return binding;
+    if (binding.state === 'deferred') return binding;
     const { target } = binding;
     // No live check exists for these shapes: only Slack has threads to read, and a
     // `channel_root` job names the channel itself. `unsupported` says that, rather
