@@ -23,6 +23,10 @@ cli-jaw/
 ├── lib/                      ← 외부 통합/공용 헬퍼 (root files + mcp/)
 │   ├── mcp-sync.ts           ← MCP 통합 + 스킬 복사 + softResetSkills + runSkillReset + trusted repair gate + clone cooldown
 │   ├── mcp/                  ← MCP 모듈 분리
+│   │   ├── computer-use-constants.ts ← Computer Use MCP 이름·정책 환경 변수 상수
+│   │   ├── computer-use-proxy.ts ← cua_repl 탐색·승인 중계 프록시
+│   │   ├── computer-use-proxy-main.ts ← Computer Use 프록시 프로세스 진입점
+│   │   ├── computer-use-config.ts ← Computer Use MCP 설정 보존형 등록
 │   │   ├── mcp-registry.ts   ← MCP 레지스트리 관리
 │   │   ├── format-converters.ts ← CLI별 MCP 포맷 변환
 │   │   ├── skills-distribution.ts ← 스킬 배포/복사 로직

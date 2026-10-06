@@ -1490,6 +1490,10 @@ module-level policy로 `browser start` mode 정규화 + agent/debug/manual launc
 
 Antigravity MCP sync is an existing config target at `~/.gemini/antigravity/mcp_config.json` via `lib/mcp/format-converters.ts`. It remains separate from the AGY runtime registry key `agy`; adding AGY runtime support does not register `agy` as a wrapper provider.
 
+서버 시작 시 `ensureComputerUseMcp()`는 Codex의 `unified-computer-use` 플러그인을 찾으면 `jaw-computer-use` 프록시 항목을 통합 MCP 설정과 이미 존재하는 JSON 대상에 등록한다. 각 파일은 엄격히 읽고, 읽을 수 없는 파일과 같은 이름의 사용자 항목은 보존한다. 테스트용 Jaw home 또는 `NODE_ENV=test`에서는 전역 대상 설정을 건드리지 않는다. Codex `config.toml`은 이 등록 단계에서 수정하지 않는다. 프록시의 Computer Use 승인은 실행마다 전달하는 `JAW_COMPUTER_USE_APPROVAL` 값이 정확히 `auto`일 때만 자동 수락한다.
+
+일반 `syncToAll()`은 Copilot, Cursor, Antigravity의 기존 `mcpServers`를 병합하며, Codex에서는 이번 동기화가 실제로 출력한 서버 이름의 섹션과 하위 테이블만 교체한다. Codex 자체의 `computer-use`, `node_repl`, 사용자 `jaw-computer-use` 항목은 보존한다. 통합 설정에서 서버를 지워도 각 대상의 기존 항목을 자동 삭제하지 않는다.
+
 ### symlink 보호 정책
 
 - 실디렉토리 충돌 시 `fs.rmSync` 대신 `renameSync`로 백업
