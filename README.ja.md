@@ -445,7 +445,7 @@ jaw dispatch --virtual "security" --task "Review this branch for auth and secret
 
 ### ブラウザとデスクトップの自動化
 
-DevTools Protocol 経由で Chrome を操作し、`jaw browser vision-click "Login button"` で説明からクリックし、macOS と Windows では Codex Computer Use でデスクトップアプリを操作し、`jaw browser web-ai` で ChatGPT、Gemini、Grok の Web UI に問い合わせられます。
+DevTools Protocol 経由で Chrome を操作し、`jaw browser vision-click "Login button"` で説明からクリックできます。対応する macOS および Windows ホストでは `jaw-computer-use` MCP ツール（または Codex 標準の Computer Use プラグイン）でデスクトップアプリを操作し、`jaw browser web-ai` で ChatGPT、Gemini、Grok の Web UI に問い合わせられます。
 
 ### メッセージング
 
@@ -589,6 +589,5 @@ npm run electron:dev   # desktop app with hot reload
 ---
 
 <p align="center"><a href="LICENSE"><b>MIT License</b></a> · AI アプリのタブ切り替えに疲れた開発者たちが作りました。</p>
-
 
 

@@ -29,8 +29,8 @@ const dbEmployee: RuntimeEmployeeRecord = {
 };
 
 const staticEmployee: RuntimeEmployeeRecord = {
-    id: 'static:control',
-    name: 'Control',
+    id: 'static:future-specialist',
+    name: 'Future Specialist',
     cli: 'codex',
     model: 'gpt-5.4',
     role: 'Computer use',

@@ -162,6 +162,7 @@ const KNOWN_A1_SOURCE_HASHES = new Set([
     '546d162f31b8a42008f815cbe928a434', // ecc958a sub-agent
     '2e2a3de20b9803bec3c7843ab2859ace', // 4b92441 browser
     'e0e1d2495f2859382b61bf0a816943ad', // 4f5e91a discord
+    'f28f38d49953c2ecee5cec6afa8e7bca', // v2.17.68 source before Computer Use MCP routing
 ]);
 
 // ─── Migration Helpers ───────────────────────────────
@@ -394,6 +395,7 @@ const KNOWN_DESKTOP_CONTROL_ANCHOR_HASHES = new Set<string>([
     // Without this, an install carrying the current stock block reads as
     // user-edited and keeps pointing at skill paths that no longer exist.
     '9158b57a4c1aeab8f50c347c8500da34',
+    '072518ccd3493d45e7035533a5756fa8', // v2.17.68 — Control dispatch block, retired for the jaw-computer-use MCP
 ]);
 
 export function hashAnchorBlock(block: string): string {
@@ -494,6 +496,19 @@ function migrateDesktopControlAnchor(fileContent: string, rendered: string): str
     }
 }
 
+const PRE_MCP_COMPUTER_USE_ROUTING_LINE = '5. **`$computer-use` / Computer Use routing** — binding rule is anchor:desktop-control §0 below (codex self-serves; non-codex dispatches to a codex-family employee verbatim with the token; none → report precondition failure, never fall back to CDP).';
+
+/** Replace only the single, complete stock line outside the desktop anchor. */
+function migrateComputerUseRoutingLine(fileContent: string, rendered: string): string | null {
+    const lines = fileContent.split('\n');
+    const matches = lines.flatMap((line, index) => line === PRE_MCP_COMPUTER_USE_ROUTING_LINE ? [index] : []);
+    if (matches.length !== 1) return null;
+    const current = rendered.split('\n').find(line => line.startsWith('5. **`$computer-use` / Computer Use routing**'));
+    if (!current || current === PRE_MCP_COMPUTER_USE_ROUTING_LINE) return null;
+    lines[matches[0]!] = current;
+    return lines.join('\n');
+}
+
 function ensureDashboardConnectorAnchor(fileContent: string, rendered: string): string | null {
     return appendAnchorIfMissing(
         fileContent,
@@ -583,6 +598,8 @@ export function initPromptFiles() {
                 if (appendedDesktop) {
                     userText = appendedDesktop;
                 }
+                const migratedComputerUseLine = migrateComputerUseRoutingLine(userText, a1Content);
+                if (migratedComputerUseLine) userText = migratedComputerUseLine;
                 const appendedConnector = ensureDashboardConnectorAnchor(userText, a1Content);
                 if (appendedConnector) {
                     userText = appendedConnector;
@@ -590,7 +607,7 @@ export function initPromptFiles() {
                 }
                 const appendedSessionPoll = migrateSessionPollAnchor(userText, a1Content);
                 if (appendedSessionPoll) userText = appendedSessionPoll;
-                if (appendedDesktop || appendedConnector || appendedSessionPoll) {
+                if (appendedDesktop || migratedComputerUseLine || appendedConnector || appendedSessionPoll) {
                     fs.writeFileSync(A1_PATH, userText);
                 } else {
                     log.info('[prompt] A-1.md has user edits — preserved');
@@ -622,7 +639,8 @@ export function initPromptFiles() {
             // block forever: the hash is advanced here and the hash-present
             // branch above never revisits an anchor that already exists.
             const migrated = migrateDesktopControlAnchor(fileContent, a1Content);
-            if (migrated) fs.writeFileSync(A1_PATH, migrated);
+            const migratedComputerUseLine = migrateComputerUseRoutingLine(migrated ?? fileContent, a1Content);
+            if (migrated || migratedComputerUseLine) fs.writeFileSync(A1_PATH, migratedComputerUseLine ?? migrated!);
             fs.writeFileSync(hashPath, currentHash);
             log.info('[prompt] A-1.md preserved (customized legacy file)');
         }
@@ -1183,7 +1201,7 @@ export function getEmployeePromptV2(
 
     let prompt = getEmployeePrompt(emp, opts);
 
-    // Static-employee system prompt patch (Control etc.) injected near the top
+    // Static-employee system prompt patch injected near the top
     // so role-specific guidance downstream can still override style/tone.
     const staticSpec = findStaticEmployee(emp?.name || '');
     if (staticSpec?.systemPromptPatchFile) {

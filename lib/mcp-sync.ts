@@ -32,6 +32,9 @@ export {
     syncToAll,
 } from './mcp/format-converters.js';
 
+export { ensureComputerUseMcp, computerUseServerEntry, isManagedComputerUseEntry } from './mcp/computer-use-config.js';
+export { COMPUTER_USE_MCP_NAME } from './mcp/computer-use-constants.js';
+
 // ─── skills-utils ──────────────────────────────────
 export {
     shouldSkipClone,

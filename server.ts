@@ -73,7 +73,7 @@ import { MemorySearchProvider } from './src/search/providers/memory.js';
 import { createDashboardBoardRouter } from './src/manager/board/routes.js';
 import { createDashboardScheduleRouter } from './src/manager/schedule/routes.js';
 import {
-    ensureWorkingDirSkillsLinks, initMcpConfig, copyDefaultSkills,
+    ensureWorkingDirSkillsLinks, initMcpConfig, copyDefaultSkills, ensureComputerUseMcp,
 } from './lib/mcp-sync.js';
 
 // ─── src/ modules ────────────────────────────────────
@@ -696,6 +696,12 @@ server.listen(PORT, bindHost, async () => {
 
     try {
         initMcpConfig(settings["workingDir"]);
+        try {
+            const computerUse = ensureComputerUseMcp();
+            console.log(`  Computer Use MCP: ${computerUse.action} (${computerUse.targets.length} updated, ${computerUse.skipped.length} skipped)`);
+        } catch (e: unknown) {
+            console.error('[computer-use-mcp]', (e as Error).message);
+        }
         const symlinks = ensureWorkingDirSkillsLinks(settings["workingDir"], { onConflict: 'skip', includeClaude: true, allowReplaceManaged: true });
         copyDefaultSkills();
         const moved = (symlinks?.links || []).filter(x => x.action === 'backup_replace');

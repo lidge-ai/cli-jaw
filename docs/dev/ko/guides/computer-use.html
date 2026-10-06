@@ -66,13 +66,13 @@
 <main class="docs-main">
 
 <h1>컴퓨터 사용</h1>
-<p class="lead">CLI-JAW는 브라우저 CDP 통합과 Codex 기반 비전 클릭 파이프라인을 통해 데스크톱 자동화를 지원합니다. 에이전트는 스크린샷 촬영, 요소 클릭, 텍스트 입력, 탐색을 브라우저와 데스크톱 모두에서 수행할 수 있습니다.</p>
+<p class="lead">CLI-JAW는 브라우저 DOM에는 CDP를, 데스크톱 상호작용에는 Computer Use를 사용합니다. Computer Use는 직원이 아닌 MCP 도구입니다.</p>
 
 <h2>두 가지 접근 방식</h2>
 <table>
 <tr><th>접근 방식</th><th>방법</th><th>적합한 용도</th></tr>
 <tr><td><strong>CDP (Chrome DevTools Protocol)</strong></td><td><code>src/browser/</code>를 통한 브라우저 자동화</td><td>웹 페이지, 정밀한 DOM 상호작용</td></tr>
-<tr><td><strong>Computer Use (CU)</strong></td><td>Codex employee를 통한 데스크톱 자동화</td><td>네이티브 앱, 데스크톱 UI 상호작용</td></tr>
+<tr><td><strong>Computer Use (CU)</strong></td><td>jaw-computer-use MCP 또는 Codex 기본 플러그인으로 데스크톱 자동화</td><td>네이티브 앱, 데스크톱 UI 상호작용</td></tr>
 </table>
 
 <h2>CDP 브라우저 자동화</h2>
@@ -102,13 +102,13 @@ jaw browser text</code></pre>
 <p>DOM ref 속성이나 직접 좌표 지정이 적합하지 않은 경우, 비전 클릭 파이프라인은 AI 비전을 사용하여 UI 요소를 찾고 클릭합니다:</p>
 <pre><code>jaw browser vision-click "Submit button" --provider codex</code></pre>
 <p>파이프라인 흐름: 스크린샷 촬영 → AI 비전으로 좌표 추출 → DPR 보정 → 클릭 → 검증.</p>
-<div class="callout callout-info">프롬프트에서 <code>$computer-use</code> 토큰을 사용하면 데스크톱 수준의 자동화 작업을 위해 Codex employee가 트리거됩니다.</div>
+<div class="callout callout-info">명시적 <code>$computer-use</code> 요청에는 노출된 Computer Use 도구를 사용하며 CDP로 대체하지 않습니다. Jaw는 Codex 외 MCP 지원 CLI에 <code>jaw-computer-use</code> 서버(<code>js</code> 도구, Claude에서는 <code>mcp__jaw-computer-use__js</code>)를 등록합니다. Codex는 기본 플러그인을 사용합니다. 첫 도구 호출이 반환한 문서에서 <code>cua.getApp(name)</code>, <code>app.getAXState()</code>, <code>app.click(index|[x,y])</code> 등 지원 동작을 확인합니다.</div>
 
 <h2>macOS TCC 권한</h2>
-<p>macOS에서는 데스크톱 자동화를 위해 화면 녹화 및 손쉬운 사용 권한이 필요합니다. CLI-JAW에는 TCC 권한 확인 도구가 포함되어 있습니다:</p>
+<p>Computer Use가 포함된 ChatGPT 데스크톱 앱을 설치하고 연 뒤 jaw를 다시 시작합니다. macOS에서는 jaw 서비스를 실행한 프로세스/바이너리에 다른 앱 데이터 접근 권한(TCC App Data, ChatGPT Computer Use 컨테이너)이 필요할 수 있습니다. 개인정보 보호 및 보안의 정확한 패널 이름은 macOS 버전에 따라 다릅니다. 권한 없는 Terminal 실행 jaw는 첫 앱 호출에서 멈출 수 있습니다. 다른 TCC 권한은 다음으로 확인합니다:</p>
 <pre><code># Check TCC permissions
 jaw doctor --tcc</code></pre>
-<p>시스템 환경설정 > 개인정보 보호 및 보안 > 화면 녹화 및 손쉬운 사용에서 권한을 부여해야 할 수 있습니다.</p>
+<p>Jaw는 실행 권한 정책에 따라 앱 승인 요청에 답합니다. auto는 승인하고 safe는 거절하며 <code>not approved</code>로 보고합니다. 도구가 없으면 <code>precondition failed: no Computer Use surface</code>, 첫 앱 호출이 막히면 <code>precondition failed: computer-use app access blocked</code>로 보고합니다. Windows에도 Codex 데스크톱 플러그인 캐시가 필요합니다. Linux, WSL, Docker에는 호스트 Computer Use 표면이 없으며 DOM 작업에는 CDP를 사용할 수 있습니다.</p>
 
 <h2>Safari 팁</h2>
 <p>Safari 자동화를 사용하려면 Safari의 개발자 메뉴에서 "원격 자동화 허용"을 활성화하세요. 다만, CDP를 통한 Chrome이 권장되는 최적의 경로입니다.</p>

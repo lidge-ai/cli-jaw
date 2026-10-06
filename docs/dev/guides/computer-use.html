@@ -90,13 +90,13 @@
 <main class="docs-main">
 
 <h1>Computer Use</h1>
-<p class="lead">CLI-JAW supports desktop automation through its browser CDP integration and the Codex-based vision click pipeline. The agent can take screenshots, click elements, type text, and navigate -- both in browsers and on the desktop.</p>
+<p class="lead">CLI-JAW supports browser DOM automation through CDP and desktop interaction through Computer Use. Computer Use is an MCP tool, not an employee.</p>
 
 <h2>Two Approaches</h2>
 <table>
 <tr><th>Approach</th><th>Method</th><th>Best For</th></tr>
 <tr><td><strong>CDP (Chrome DevTools Protocol)</strong></td><td>Browser automation via <code>src/browser/</code></td><td>Web pages, precise DOM interaction</td></tr>
-<tr><td><strong>Computer Use (CU)</strong></td><td>Desktop automation via Codex employee</td><td>Native apps, desktop UI interaction</td></tr>
+<tr><td><strong>Computer Use (CU)</strong></td><td>Desktop automation via jaw-computer-use MCP or the Codex native plugin</td><td>Native apps, desktop UI interaction</td></tr>
 </table>
 
 <h2>CDP Browser Automation</h2>
@@ -126,13 +126,13 @@ jaw browser text</code></pre>
 <p>When neither DOM ref attributes nor direct coordinates are suitable, the vision click pipeline uses AI vision to locate and click UI elements:</p>
 <pre><code>jaw browser vision-click "Submit button" --provider codex</code></pre>
 <p>The pipeline: screenshot → AI vision extracts coordinates → DPR correction → click → verify.</p>
-<div class="callout callout-info">The <code>$computer-use</code> token in prompts triggers the Codex employee for desktop-level automation tasks.</div>
+<div class="callout callout-info">An explicit <code>$computer-use</code> request uses the exposed Computer Use tool. Never substitute CDP. Jaw registers the <code>jaw-computer-use</code> server (tool <code>js</code>; <code>mcp__jaw-computer-use__js</code> in Claude) for MCP-aware CLIs except Codex. Codex uses its native plugin. Read the first tool call's documentation for <code>cua.getApp(name)</code>, <code>app.getAXState()</code>, <code>app.click(index|[x,y])</code>, and other supported actions.</div>
 
 <h2>macOS TCC Permissions</h2>
-<p>On macOS, screen recording and accessibility permissions are required for desktop automation. CLI-JAW includes a TCC permission checker:</p>
+<p>Install and open the ChatGPT desktop app with Computer Use and restart jaw to register the MCP server. On macOS, the responsible jaw service process or binary may need permission to access data from other apps (TCC App Data for the ChatGPT Computer Use container). The exact Privacy &amp; Security pane name varies by macOS version. A Terminal-launched jaw without this grant can block on the first app call. Check other TCC permissions with:</p>
 <pre><code># Check TCC permissions
 jaw doctor --tcc</code></pre>
-<p>You may need to grant permissions in System Preferences > Privacy & Security > Screen Recording and Accessibility.</p>
+<p>Jaw answers app-approval prompts from the run permission policy: auto approves; safe declines and reports <code>not approved</code>. If no tool is exposed, report <code>precondition failed: no Computer Use surface</code>. If the first app call blocks, report <code>precondition failed: computer-use app access blocked</code>. On Windows, the same mechanism requires the Codex desktop plugin cache. Linux, WSL, and Docker have no host Computer Use surface; CDP remains available for DOM work.</p>
 
 <h2>Safari Tip</h2>
 <p>For Safari automation, enable "Allow Remote Automation" in Safari's Develop menu. However, Chrome via CDP is the recommended and best-supported path.</p>

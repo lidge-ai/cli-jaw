@@ -6,6 +6,7 @@
 import fs from 'fs';
 import os from 'os';
 import { join, dirname } from 'path';
+import { COMPUTER_USE_MCP_NAME } from './computer-use-constants.js';
 
 type McpServerConfig = {
     type?: string;
@@ -56,6 +57,7 @@ export function toClaudeMcp(config: UnifiedMcpConfig) {
 export function toCodexToml(config: UnifiedMcpConfig) {
     let toml = '';
     for (const [name, srv] of Object.entries(getServers(config))) {
+        if (name === COMPUTER_USE_MCP_NAME) continue;
         toml += `[mcp_servers.${name}]\n`;
         if (srv.url) {
             toml += `url = ${tomlString(srv.url)}\n`;
@@ -101,21 +103,28 @@ export function toOpenCodeMcp(config: UnifiedMcpConfig) {
 
 // ─── Patch helpers ─────────────────────────────────
 
-/** Replace only [mcp_servers.*] sections in existing TOML, keep everything else */
-export function patchCodexToml(existingToml: string, newMcpToml: string) {
+/** Replace only sections for MCP names emitted in this sync, including their subtables. */
+export function patchCodexToml(existingToml: string, newMcpToml: string, emittedNames: ReadonlySet<string> = new Set()) {
+    if (emittedNames.size === 0) return existingToml;
     const lines = existingToml.split('\n');
-    const output = [];
-    let inMcp = false;
+    const output: string[] = [];
+    let removeSection = false;
 
     for (const line of lines) {
-        if (/^\[mcp_servers\./.test(line)) {
-            inMcp = true;
-            continue;
+        const header = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line);
+        if (header) {
+            removeSection = false;
+            const section = header[1]!;
+            if (section.startsWith('mcp_servers.')) {
+                const suffix = section.slice('mcp_servers.'.length);
+                const quoted = /^("(?:\\.|[^"\\])*")(?=\.|$)/.exec(suffix);
+                const literal = /^'([^']+)'(?=\.|$)/.exec(suffix);
+                const bare = /^([^\.\s]+)(?=\.|$)/.exec(suffix);
+                const name = quoted ? JSON.parse(quoted[1]!) as string : literal?.[1] ?? bare?.[1];
+                removeSection = name !== undefined && emittedNames.has(name);
+            }
         }
-        if (inMcp && /^\[/.test(line) && !/^\[mcp_servers\./.test(line)) {
-            inMcp = false;
-        }
-        if (!inMcp) output.push(line);
+        if (!removeSection) output.push(line);
     }
 
     // Remove trailing blank lines before appending MCP section
@@ -159,7 +168,8 @@ export function syncToAll(config: UnifiedMcpConfig) {
         if (fs.existsSync(codexPath)) {
             const existing = fs.readFileSync(codexPath, 'utf8');
             const mcpToml = toCodexToml(config);
-            fs.writeFileSync(codexPath, patchCodexToml(existing, mcpToml));
+            const emittedNames = new Set(Object.keys(config.servers ?? {}).filter(name => name !== COMPUTER_USE_MCP_NAME));
+            fs.writeFileSync(codexPath, patchCodexToml(existing, mcpToml, emittedNames));
             results.codex = true;
             console.log(`[mcp-sync] ✅ Codex: ${codexPath}`);
         } else {
@@ -201,7 +211,7 @@ export function syncToAll(config: UnifiedMcpConfig) {
         fs.mkdirSync(copilotDir, { recursive: true });
         let existing: Record<string, unknown> = {};
         try { existing = JSON.parse(fs.readFileSync(copilotPath, 'utf8')) as Record<string, unknown>; } catch { }
-        existing["mcpServers"] = copilotData.mcpServers;
+        existing["mcpServers"] = { ...(existing["mcpServers"] as Record<string, unknown> ?? {}), ...copilotData.mcpServers };
         fs.writeFileSync(copilotPath, JSON.stringify(existing, null, 4) + '\n');
         results.copilot = true;
         console.log(`[mcp-sync] ✅ Copilot: ${copilotPath}`);
@@ -215,7 +225,7 @@ export function syncToAll(config: UnifiedMcpConfig) {
         fs.mkdirSync(cursorDir, { recursive: true });
         let existing: Record<string, unknown> = {};
         try { existing = JSON.parse(fs.readFileSync(cursorPath, 'utf8')) as Record<string, unknown>; } catch { }
-        existing["mcpServers"] = cursorData.mcpServers;
+        existing["mcpServers"] = { ...(existing["mcpServers"] as Record<string, unknown> ?? {}), ...cursorData.mcpServers };
         fs.writeFileSync(cursorPath, JSON.stringify(existing, null, 4) + '\n');
         results.cursor = true;
         console.log(`[mcp-sync] ✅ Cursor: ${cursorPath}`);
@@ -228,7 +238,7 @@ export function syncToAll(config: UnifiedMcpConfig) {
         fs.mkdirSync(dirname(antigravityPath), { recursive: true });
         let existing: Record<string, unknown> = {};
         try { existing = JSON.parse(fs.readFileSync(antigravityPath, 'utf8')) as Record<string, unknown>; } catch { }
-        existing["mcpServers"] = antigravityData.mcpServers;
+        existing["mcpServers"] = { ...(existing["mcpServers"] as Record<string, unknown> ?? {}), ...antigravityData.mcpServers };
         fs.writeFileSync(antigravityPath, JSON.stringify(existing, null, 4) + '\n');
         results.antigravity = true;
         console.log(`[mcp-sync] ✅ Antigravity: ${antigravityPath}`);

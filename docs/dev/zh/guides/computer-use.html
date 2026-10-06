@@ -66,13 +66,13 @@
 <main class="docs-main">
 
 <h1>计算机控制</h1>
-<p class="lead">CLI-JAW 通过浏览器 CDP 集成和基于 Codex 的视觉点击管线支持桌面自动化。代理可以截取屏幕截图、点击元素、输入文本和导航——既支持浏览器，也支持桌面。</p>
+<p class="lead">CLI-JAW 使用 CDP 自动操作网页 DOM，使用 Computer Use 操作桌面界面。Computer Use 是 MCP 工具，不是员工。</p>
 
 <h2>两种方式</h2>
 <table>
 <tr><th>方式</th><th>方法</th><th>最适用于</th></tr>
 <tr><td><strong>CDP (Chrome DevTools Protocol)</strong></td><td>通过 <code>src/browser/</code> 进行浏览器自动化</td><td>网页、精确的 DOM 交互</td></tr>
-<tr><td><strong>Computer Use (CU)</strong></td><td>通过 Codex employee 进行桌面自动化</td><td>原生应用、桌面 UI 交互</td></tr>
+<tr><td><strong>Computer Use (CU)</strong></td><td>通过 jaw-computer-use MCP 或 Codex 原生插件操作桌面</td><td>原生应用、桌面 UI 交互</td></tr>
 </table>
 
 <h2>CDP 浏览器自动化</h2>
@@ -102,13 +102,13 @@ jaw browser text</code></pre>
 <p>当 DOM ref 属性和直接坐标都不适用时，视觉点击管线使用 AI 视觉来定位并点击 UI 元素：</p>
 <pre><code>jaw browser vision-click "Submit button" --provider codex</code></pre>
 <p>管线流程：截图 → AI 视觉提取坐标 → DPR 校正 → 点击 → 验证。</p>
-<div class="callout callout-info">提示中的 <code>$computer-use</code> 令牌会触发 Codex employee 执行桌面级自动化任务。</div>
+<div class="callout callout-info">明确指定 <code>$computer-use</code> 时使用暴露的 Computer Use 工具，不得改用 CDP。Jaw 为除 Codex 以外支持 MCP 的 CLI 注册 <code>jaw-computer-use</code> 服务器（<code>js</code> 工具；在 Claude 中为 <code>mcp__jaw-computer-use__js</code>）。Codex 使用原生插件。先阅读首次工具调用返回的文档，确认 <code>cua.getApp(name)</code>、<code>app.getAXState()</code>、<code>app.click(index|[x,y])</code> 等受支持操作。</div>
 
 <h2>macOS TCC 权限</h2>
-<p>在 macOS 上，桌面自动化需要屏幕录制和辅助功能权限。CLI-JAW 内置了 TCC 权限检查器：</p>
+<p>安装并打开带有 Computer Use 的 ChatGPT 桌面应用，然后重启 jaw 以注册 MCP 服务器。在 macOS 上，启动 jaw 服务的进程或二进制文件可能需要访问其他应用数据的权限（ChatGPT Computer Use 容器的 TCC App Data）。具体“隐私与安全性”面板名称因 macOS 版本而异。未获授权的 Terminal 启动实例可能在首次应用调用时阻塞。其他 TCC 权限可用下列命令检查：</p>
 <pre><code># Check TCC permissions
 jaw doctor --tcc</code></pre>
-<p>您可能需要在"系统偏好设置" > "隐私与安全性" > "屏幕录制"和"辅助功能"中授予权限。</p>
+<p>Jaw 按本次运行的权限策略处理应用批准提示：auto 批准，safe 拒绝并报告 <code>not approved</code>。若未暴露工具，报告 <code>precondition failed: no Computer Use surface</code>；若首次应用调用被阻塞，报告 <code>precondition failed: computer-use app access blocked</code>。Windows 同样需要 Codex 桌面插件缓存。Linux、WSL 和 Docker 没有主机 Computer Use 接口；普通 DOM 工作仍可使用 CDP。</p>
 
 <h2>Safari 提示</h2>
 <p>要进行 Safari 自动化，请在 Safari 的"开发"菜单中启用"允许远程自动化"。不过，通过 CDP 使用 Chrome 是推荐的最佳支持路径。</p>

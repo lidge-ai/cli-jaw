@@ -31,13 +31,11 @@ function windowsLines(source: string): string {
         .join('\n');
 }
 
-for (const file of ['a1-system.md', 'control-system.md', 'employee.md']) {
+for (const file of ['a1-system.md', 'employee.md']) {
     test(`PLAT-001 (${file}): tells the agent to establish the surface, not assume it`, () => {
         const src = read(file);
-        assert.match(src, /surface belongs to the host|host-provided|host-owned/i,
-            'the prompt must say the tool surface is host-provided');
-        assert.match(src, /do not assume tool names|Do not assume a tool name/i,
-            'the prompt must forbid assuming tool names');
+        assert.match(src, /jaw-computer-use/);
+        assert.match(src, /do not assume (?:a tool name|tool names|APIs)/i);
     });
 
     test(`PLAT-002 (${file}): keeps the platform shape distinction`, () => {
@@ -88,7 +86,7 @@ test('PLAT-007: Linux and WSL remain denied', () => {
 test('PLAT-008: no template hard-codes a Computer Use MCP tool name as the contract', () => {
     // The retired names may appear at most once per file, and only as historical
     // context explaining that older builds exposed them.
-    for (const file of ['a1-system.md', 'control-system.md', 'employee.md']) {
+    for (const file of ['a1-system.md', 'employee.md']) {
         const src = read(file);
         const hits = src.match(/mcp__computer_use__/g) ?? [];
         assert.ok(hits.length <= 1,
@@ -99,4 +97,3 @@ test('PLAT-008: no template hard-codes a Computer Use MCP tool name as the contr
         }
     }
 });
-

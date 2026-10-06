@@ -42,11 +42,12 @@ Do NOT open a visible test browser for debug/log inspection; use the Web UI debu
 
 ## `$computer-use` trigger token
 If the task text contains **`$computer-use`**, the user explicitly requested the Computer Use desktop path (macOS or Windows):
-- Your CLI is codex: use Computer Use only. **The tool surface is host-provided and version-dependent — do not assume tool names.** Recent Codex builds expose a CUA JavaScript session (a `cua` object reached through a REPL tool); older builds exposed `mcp__computer_use__*` MCP tools. Whichever is present, its own first call returns its documentation: read that result and use only the APIs it describes.
-  - **macOS** is app-scoped; **Windows** is window-scoped and needs the desktop app running in the logged-on session. On Windows an empty window list is a transport/session precondition failure, not "no windows open", and an app enumeration that answers proves nothing about the connection.
-  - If no Computer Use surface is exposed at all, report `precondition failed: no Computer Use surface` and stop.
-  - **Linux/WSL/Docker:** no Computer Use host. Report the precondition failure instead of substituting CDP.
-- Your CLI is not codex: stop and report `precondition failed: not codex - $computer-use requires a Computer Use host`. Do not try `cli-jaw browser` as a substitute and do not re-dispatch.
+- Any CLI with the `jaw-computer-use` MCP server (`js`; `mcp__jaw-computer-use__js` in Claude), or Codex with its native computer-use plugin, self-serves. Computer Use is an MCP tool, not an employee. The first tool call returns its own documentation for the `cua` API (`cua.getApp(name)`, `app.getAXState()`, `app.click(index|[x,y])`, `app.typeText`, `app.pressKey`, ...); read it and use only what it describes. Do not assume tool names or APIs beyond the exposed surface.
+- `jaw-computer-use` needs the ChatGPT desktop app with Computer Use. If no surface is exposed, report `precondition failed: no Computer Use surface`; install/open the app and restart jaw so it registers the server.
+- On macOS the jaw service's responsible process/binary needs permission to access data from other apps (TCC App Data for the ChatGPT Computer Use container). Without it the first app call can block; report `precondition failed: computer-use app access blocked`. The grant lives in Privacy & Security (exact pane name varies by macOS version).
+- jaw answers Computer Use app-approval prompts from the run's permission policy: `auto` approves; `safe` declines. Report a declined prompt as "not approved".
+- macOS is app-scoped; Windows is window-scoped and needs the desktop app in the logged-on session. On Windows an empty window list is a transport/session precondition failure, not "no windows open"; an enumeration that answers proves nothing about the connection.
+- Linux/WSL/Docker have no Computer Use host. Report the no-surface precondition failure. Never substitute CDP for `$computer-use`; CDP is only for DOM work.
 
 ### Screenshot-first when uncertain (GUI tasks, any path)
 Whenever you are handling a GUI task and catch yourself guessing, stop and re-read state before the next action:

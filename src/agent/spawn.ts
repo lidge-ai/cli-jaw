@@ -1,5 +1,6 @@
 import { calendarContext } from './calendar-context.js';
 import { createSlackToolSecretStream, activateSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, redactSlackToolSecrets, SLACK_TOOL_GRANT_ENV } from '../slack/tool-context.js';
+import { COMPUTER_USE_APPROVAL_ENV } from '../../lib/mcp/computer-use-constants.js';
 // ─── Agent Spawn + Kill/Steer/Queue ──────────────────
 
 import fs from 'fs';
@@ -1342,6 +1343,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     const envDefaultsCli = cli;
     const cliEnv = applyCliEnvDefaults(envDefaultsCli, opts.env);
     const spawnEnv = makeCleanEnv(cliEnv);
+    spawnEnv[COMPUTER_USE_APPROVAL_ENV] = permissions === 'auto' ? 'auto' : 'safe';
     // Capture a request grant before ANY runtime branch acquires or launches a
     // process. Scheduled work also permits employee runtimes: its server-owned
     // grant is narrower than their ordinary credentials and is the only way

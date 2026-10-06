@@ -16,7 +16,7 @@ import {
 } from '../core/employees.js';
 import { settings, saveSettings } from '../core/config.js';
 
-// Static employee IDs look like `static:control` — routes use this prefix to
+// Static employee IDs look like `static:<name>` — routes use this prefix to
 // branch between DB CRUD and settings-backed override storage.
 const STATIC_ID_PREFIX = 'static:';
 function parseStaticId(id: string): string | null {
