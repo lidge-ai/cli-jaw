@@ -28,10 +28,23 @@ last-active destination or change inbound allowlists. Invalid paths, file limits
 provider scopes, resource integrity and privacy exclusions still apply.
 
 Full authority is independent of a stale automatically attached grant. A valid
-grant supplies context only for the protected `search.quote` workflow, which
-retains its existing turn, token, expiry, membership and privacy checks.
+ordinary grant supplies context for the protected `search.quote` workflow, which
+retains its existing turn, token, expiry, membership and privacy checks. A
+`serverOwnedDelivery` grant also applies the write refusal below.
 Capabilities report `authorization.mode` and keep authorization separate from
 provider availability and verified results.
+
+An active heartbeat grant marked `serverOwnedDelivery` reserves its Slack channel
+for server delivery. Agent writes through that grant return HTTP 409
+`slack_server_owned_delivery`, even when the target matches. Grant-free operator
+writes to that channel return HTTP 409 `slack_channel_leased_by_heartbeat` until
+the grant is revoked or expires. This covers channel sends (including files),
+action mutations, and quote publication at the posting channel; history and
+other reads remain available. Other channels, inbound Slack turn grants, and
+ordinary grants retain their existing behavior. The heartbeat's final
+`sendChannelOutput` call is server-owned and does not use this tool guard.
+An Auto agent with direct access to the bot token can call Slack outside Jaw;
+that path remains outside this server-side guard.
 
 Safe/custom instance policies receive no automatic promotion. Each new HTTP
 request is checked again; already-admitted requests may finish. This is an

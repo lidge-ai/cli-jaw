@@ -1,7 +1,8 @@
 import { slackCredentialKey } from '../slack/tool-context.js';
 import type { Express, Request, Response } from 'express';
 import { resolveSlackToolPrincipal, slackToolContext, withSlackToolAccess, slackToolDenied, type SlackOperatorValidator } from '../slack/tool-access.js';
-import { getHomeChannel } from '../messaging/runtime.js';
+import { assertSlackWriteAllowed } from '../slack/write-guard.js';
+import { getHomeChannel, getLastActiveTarget, getLatestSeenTarget } from '../messaging/runtime.js';
 import type { AuthMiddleware } from './types.js';
 import { httpStatus, httpCode, httpDetail } from './_http-error.js';
 import fs from 'fs';
@@ -16,7 +17,7 @@ import { getTelegramSendClient, getLatestTelegramChatId } from '../telegram/bot.
 import { validateFileSize, sendTelegramFile } from '../telegram/telegram-file.js';
 import { assertSendFilePath, hostPathEnvironment } from '../security/path-guards.js';
 import { decodeFilenameSafe } from '../security/decode.js';
-import { sendChannelOutput, normalizeChannelSendRequest, validateExplicitChatId } from '../messaging/send.js';
+import { sendChannelOutput, normalizeChannelSendRequest, targetFromChatId, validateExplicitChatId, validateTarget } from '../messaging/send.js';
 import { recordSelfDelivery } from '../messaging/turn-delivery.js';
 import type { RemoteTarget } from '../messaging/types.js';
 
@@ -187,8 +188,21 @@ export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddlewar
                 || (request.chatId !== undefined && String(request.chatId) !== destination.targetId)) throw slackToolDenied('slack_destination_mismatch');
             request = { ...request, target: destination, channel: 'slack' };
         }
+        const implicitTarget = !request.target && request.chatId === undefined
+            ? [request.turnTarget, getLastActiveTarget('slack'), getLatestSeenTarget('slack'),
+                settings['slack']?.channelIds?.[0] ? targetFromChatId('slack', settings['slack'].channelIds[0]) : null]
+                .find(candidate => candidate && validateTarget(candidate, 'slack'))
+            : null;
+        const targetId = request.target?.targetId ?? (request.chatId !== undefined ? String(request.chatId) : implicitTarget?.targetId);
+        if (scopedGrant?.serverOwnedDelivery === true) {
+            assertSlackWriteAllowed(principal, scopedGrant, targetId ?? scopedGrant.destination.targetId);
+        }
+        if (targetId) assertSlackWriteAllowed(principal, scopedGrant ?? null, targetId);
         return withSlackToolAccess(client.token, principal, principal.kind === 'turn' ? principal.grant.destination.targetId : undefined,
-            signal => sendChannelOutput({ ...request, slackCredentialKey: slackCredentialKey(client.token!), ...(signal ? { signal } : {}), fromAgentSurface: true }), undefined,
+            signal => {
+                if (targetId) assertSlackWriteAllowed(principal, scopedGrant ?? null, targetId);
+                return sendChannelOutput({ ...request, slackCredentialKey: slackCredentialKey(client.token!), ...(signal ? { signal } : {}), fromAgentSurface: true });
+            }, undefined,
             result => ({ ...result, ok: false, error: 'slack_grant_cancelled_after_dispatch', sent: result['sent'] === 'unknown' ? 'unknown' : result.ok || result['sent'] === true, retryable: false, status: 409 }));
     };
     app.post('/api/upload', requireAuth, express.raw({ type: '*/*', limit: '20mb' }), (req, res) => {

@@ -15,6 +15,8 @@ export type SlackToolSource = {
      *  full-local Auto authority. Ordinary interactive turn grants omit this:
      *  Auto remains instance-wide for the trusted operator (#745). */
     enforceDestination?: boolean;
+    /** The server alone publishes this heartbeat's final Slack response. */
+    serverOwnedDelivery?: boolean;
 };
 export type SlackToolGrant = Readonly<SlackToolSource & { requestId: string; scope: string; chatSessionId: string; expiresAt: number; signal: AbortSignal }>;
 type Entry = { grant: SlackToolGrant; secret: string; active: boolean; controller: AbortController; timer: ReturnType<typeof setTimeout> };
@@ -85,6 +87,18 @@ export function hasActiveEnforcedSlackDestination(): boolean {
             && !entry.controller.signal.aborted) return true;
     }
     return false;
+}
+
+/** Channels leased by live server-owned heartbeat grants. Reservations count
+ * from creation through revocation, including the time before activation. */
+export function activeServerOwnedChannels(): Set<string> {
+    const channels = new Set<string>();
+    const now = Date.now();
+    for (const entry of requests.values()) {
+        if (entry.grant.serverOwnedDelivery === true && entry.grant.expiresAt > now
+            && !entry.controller.signal.aborted) channels.add(entry.grant.destination.targetId);
+    }
+    return channels;
 }
 
 export function redactSlackToolSecrets(text: string): string {

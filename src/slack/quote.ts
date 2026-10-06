@@ -8,6 +8,7 @@ import { buildSlackBlockPayloads } from './blocks.js';
 import { verifiedSlackWorkspace } from './verified-workspace.js';
 import { sendSlackText } from './send-only-client.js';
 import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
+import { assertSlackWriteAllowed } from './write-guard.js';
 
 function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
     if (principal.kind === 'turn') return principal.grant.destination;
@@ -45,6 +46,7 @@ export async function publishSlackQuote(token: string, principal: SlackToolPrinc
     if (!destination || destination.channel !== 'slack') throw slackToolDenied('slack_quote_destination_required', 400);
     if (pinnedDest && input.destination && (input.destination.targetId !== pinnedDest.targetId
         || (input.destination.threadId ?? '') !== (pinnedDest.threadId ?? ''))) throw slackToolDenied('slack_destination_mismatch');
+    assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, destination.targetId);
     const sensitive = { ...options, sensitiveResponse: true };
     return withSlackToolAccess<SlackQuoteReceipt>(token, principal, input.source.channel, async signal => {
         const callOptions = { ...sensitive, ...(signal ? { signal } : {}) };
@@ -81,6 +83,7 @@ export async function publishSlackQuote(token: string, principal: SlackToolPrinc
         const current = await readExactSlackMessage(token, input.source, callOptions);
         if (slackMessageRevision(current) !== snapshot.revision) throw slackToolDenied('slack_source_changed', 409);
         await withSlackToolAccess(token, principal, input.source.channel, async () => true, options.fetchImpl, undefined, true);
+        assertSlackWriteAllowed(principal, slackToolContext(principal) ?? null, destination.targetId);
         if (options.currentCredential && options.currentCredential() !== token) throw slackToolDenied('slack_credential_changed', 409);
         const store = rtsInvocation ? getRtsOutputStore() : null;
         if (rtsInvocation && (!store || principal.kind !== 'turn')) throw slackToolDenied('slack_rts_privacy_unavailable', 503);
