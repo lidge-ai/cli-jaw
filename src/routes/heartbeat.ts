@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import type { AuthMiddleware } from './types.js';
-import { loadHeartbeatFile, saveHeartbeatFile, isHeartbeatDestination, isHeartbeatMentionWatch, settings } from '../core/config.js';
+import { loadHeartbeatFile, saveHeartbeatFile, isHeartbeatDestination, isHeartbeatMentionWatch, isHeartbeatPromptSkills, settings } from '../core/config.js';
 import type { HeartbeatDestination, HeartbeatMentionWatch, HeartbeatJob } from '../core/config.js';
 import { getHeartbeatLiveDestinationHold, getHeartbeatRunRecord, startHeartbeat } from '../memory/heartbeat.js';
 import type { HeartbeatRunRecord } from '../memory/heartbeat-run-record.js';
@@ -93,6 +93,15 @@ export function resolveHeartbeatMentionWatch(
     if (raw === null) return { ok: true, mentionWatch: undefined };
     if (!isHeartbeatMentionWatch(raw)) return { ok: false, error: 'invalid heartbeat mention watch' };
     return { ok: true, mentionWatch: raw };
+}
+
+export function resolveHeartbeatPromptSkills(
+    job: Record<string, unknown>, existing: string[] | undefined,
+): { ok: true; promptSkills: string[] | undefined } | { ok: false; error: string } {
+    if (!Object.prototype.hasOwnProperty.call(job, 'promptSkills')) return { ok: true, promptSkills: existing };
+    if (job['promptSkills'] === null) return { ok: true, promptSkills: undefined };
+    if (!isHeartbeatPromptSkills(job['promptSkills'])) return { ok: false, error: 'invalid heartbeat prompt skills' };
+    return { ok: true, promptSkills: job['promptSkills'] };
 }
 
 export function normalizeHeartbeatPutRunnerFields(
@@ -194,6 +203,11 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
             const existing = existingById.get(jobId);
             const runnerResult = normalizeHeartbeatPutRunnerFields(job, existing, employeeNames);
             if (!runnerResult.ok) { res.status(400).json({ error: runnerResult.error, index, jobId }); return; }
+            const skillResult = resolveHeartbeatPromptSkills(job, existing?.promptSkills);
+            if (!skillResult.ok) { res.status(400).json({ error: skillResult.error, index, jobId }); return; }
+            if (runnerResult.fields.runner === 'script' && skillResult.promptSkills) {
+                res.status(400).json({ error: 'script runner cannot use promptSkills', index, jobId }); return;
+            }
             const destResult = resolveHeartbeatDestination(job, existing?.destination);
             if (!destResult.ok) { res.status(400).json({ error: destResult.error, index, jobId }); return; }
             const watchResult = resolveHeartbeatMentionWatch(job, existing?.mentionWatch);
@@ -223,6 +237,7 @@ export function registerHeartbeatRoutes(app: Express, requireAuth: AuthMiddlewar
                 enabled: job["enabled"] !== false,
                 schedule: scheduleResult.schedule,
                 prompt: typeof job["prompt"] === 'string' ? job["prompt"] : '',
+                promptSkills: skillResult.promptSkills,
                 ...runnerResult.fields,
                 destination: destResult.destination,
                 mentionWatch: watchResult.mentionWatch,

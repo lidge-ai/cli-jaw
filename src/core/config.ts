@@ -1866,6 +1866,7 @@ export interface HeartbeatJob {
     name?: string;
     enabled?: boolean;
     prompt?: string;
+    promptSkills?: string[];
     schedule?: unknown;
     runner?: 'main' | 'employee' | 'script';
     employee?: string;
@@ -1998,6 +1999,14 @@ export function isHeartbeatDestination(value: unknown): value is HeartbeatDestin
 }
 export interface HeartbeatFile { jobs: HeartbeatJob[] }
 
+/** Pinned skill ids are path components, never paths supplied by a client. */
+export function isHeartbeatPromptSkills(value: unknown): value is string[] {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 8) return false;
+    const ids = Array.from(value);
+    return ids.every(id => typeof id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(id))
+        && new Set(ids).size === ids.length;
+}
+
 export function loadHeartbeatFile(): HeartbeatFile {
     try {
         const parsed = JSON.parse(fs.readFileSync(HEARTBEAT_JOBS_PATH, 'utf8')) as HeartbeatFile;
@@ -2018,6 +2027,10 @@ export function loadHeartbeatFile(): HeartbeatFile {
 
 function normalizeHeartbeatJob(job: HeartbeatJob): HeartbeatJob {
     const runner = job.runner ?? 'main';
+    if (job.promptSkills !== undefined && (!isHeartbeatPromptSkills(job.promptSkills) || runner === 'script')) {
+        console.warn(`[heartbeat:${job.name || job.id || 'unknown'}] invalid prompt skills or script runner combination; disabling job`);
+        return { ...job, enabled: false };
+    }
     const validRunner = runner === 'main' || runner === 'employee' || runner === 'script';
     const validEmployee = runner !== 'employee' || (typeof job.employee === 'string' && job.employee.trim().length > 0);
     const validCommand = runner !== 'script' || (Array.isArray(job.command) && job.command.length > 0 && job.command.every(part => typeof part === 'string' && part.length > 0));

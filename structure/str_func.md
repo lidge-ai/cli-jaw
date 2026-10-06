@@ -334,6 +334,7 @@ cli-jaw/
 │   │   ├── advanced.ts       ← Advanced Memory re-export stub
 │   │   ├── bootstrap.ts      ← legacy memory/bootstrap import + structured root 초기화
 │   │   ├── heartbeat.ts      ← Heartbeat 잡 스케줄 + cron/anchored-every timer orchestration + minute-slot dedupe + in-flight skip + generation/abort teardown + per-job map prune + 틱마다 run record fold + mention-watch 답변 예산 + script env 채널 시크릿 차단 + fs.watch
+│   │   ├── heartbeat-prompt-skills.ts ← heartbeat job에 고정된 SKILL.md 본문을 경계·크기 검증 후 로드
 │   │   ├── heartbeat-run-record.ts ← 틱 결과 어휘 (execution/delivery 분리) + 연속 실패·연속 skip 2-카운터 fold + failing 임계값
 │   │   ├── heartbeat-schedule.ts ← Heartbeat schedule normalize + cron validate/match + timezone validate + immediate cron loop helper
 │   │   ├── period-thread-key.ts ← KST day/week period capture and fixed parent marker label
@@ -678,6 +679,8 @@ cli-jaw/
 │       ├── claude-sdk-history-loader.test.ts ← checked lazy history-helper load and retry
 │       ├── code-claude-history-contract.test.ts ← installed SDK history/fork contract on synthetic transcripts in a temp CLAUDE_CONFIG_DIR
 │       ├── heartbeat-period-thread-core.test.ts ← KST keys, root scan, PUT and cross-process claims/consumer bounds
+│       ├── heartbeat-prompt-skills.test.ts ← 스킬 로드 실패·PUT 상속·실행 주입 회귀
+│       ├── heartbeat-prompt-skills-integration.test.ts ← 격리 PUT/GET/재로드 + 멘션 워치 실패·복구 틱
 │       ├── heartbeat-period-thread-run.test.ts ← heartbeat binding, grant, parent and final delivery guards
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
 │   └── fixtures/

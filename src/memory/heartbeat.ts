@@ -54,6 +54,7 @@ import type { CapturedPeriod } from './period-thread-key.js';
 import { ensurePeriodThreadRoot, verifyPeriodThreadParent, listBotRepliesSince, type PeriodRootResult } from './period-thread-root.js';
 import { acquirePeriodConsumerSlot, claimPeriodThreadReply, hasPeriodThreadReplyClaim, periodThreadReplyHash, periodThreadRootHash, writePeriodReplyInfo } from './period-thread-state.js';
 import type { HeartbeatDestination } from '../core/config.js';
+import { loadHeartbeatPromptSkills } from './heartbeat-prompt-skills.js';
 
 const HEARTBEAT_SCOPE = 'default';
 /** Execution scope prefix for a mention-watch answer.
@@ -536,7 +537,7 @@ async function runEmployee(
  *
  *  Returns false when the job is not runnable as a mention watch at all, so the
  *  caller can say so rather than silently running the prompt against nothing. */
-async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMentionWatch): Promise<MentionWatchTickResult | null> {
+async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMentionWatch, skillBlock = ''): Promise<MentionWatchTickResult | null> {
     // Per-hit delivery anchor, read before the agent turn and consumed by the
     // send. Scoped to this call so nothing survives the tick.
     const answerAnchors = new Map<string, number>();
@@ -601,7 +602,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             return mentionThreadYield(hit);
         },
         answer: async (hit) => {
-            const prompt = buildMentionWatchPrompt(job, watch, hit);
+            const prompt = buildMentionWatchPrompt(job, watch, hit, skillBlock);
             // Anchored BEFORE the turn runs. The agent is told not to post, and
             // `/api/channel/send` is a tool it can reach anyway; if it does, that
             // send is recorded as a delivery claim. Reading the anchor first is
@@ -795,6 +796,7 @@ export function buildMentionWatchPrompt(
     job: Record<string, any>,
     watch: HeartbeatMentionWatch,
     hit: MentionHit,
+    skillBlock = '',
 ): string {
     const author = hit.authorId ? `<@${hit.authorId}>` : 'unknown';
     const subjectId = hit.subjectId || watch.userId;
@@ -818,6 +820,7 @@ export function buildMentionWatchPrompt(
         'Reply with the ANSWER TEXT ONLY. Do not call any Slack send API yourself —',
         'the server posts your reply into that thread. Answer [SILENT] if no reply is warranted.',
         '',
+        skillBlock,
         job["prompt"] || '',
     ].join('\n');
 }
@@ -903,6 +906,19 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
     let releaseConsumerSlot: (() => void) | null = null;
     let releaseServerOwnedChannel: (() => void) | null = null;
     try {
+        const loadedSkills = job['promptSkills'] === undefined
+            ? { ok: true as const, block: '' }
+            : loadHeartbeatPromptSkills(job['promptSkills']);
+        if (!loadedSkills.ok) {
+            log.error(`[heartbeat:${job["name"]}] ${loadedSkills.reason}: ${loadedSkills.id}; tick skipped`);
+            outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'prompt_skill_unavailable' };
+            return;
+        }
+        if (runner === 'script' && job['promptSkills'] !== undefined) {
+            log.error(`[heartbeat:${job["name"]}] script runner cannot use promptSkills; tick skipped`);
+            outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'prompt_skill_unavailable' };
+            return;
+        }
         // A mention watch replaces the prompt path entirely: its prompt describes
         // how to answer a message that has not been found yet, so running it bare
         // would answer nothing and deliver that to the job's destination. Inside
@@ -924,7 +940,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
                 outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'mention_watch_backoff' };
                 return;
             }
-            const ran = await runMentionWatchJob(job, watch);
+            const ran = await runMentionWatchJob(job, watch, loadedSkills.block);
             if (ran && jobId) recordMentionWatchTick(jobId, ran.failed, Date.now());
             outcome = ran
                 ? { execution: 'ok', delivery: 'not_requested' }
@@ -996,7 +1012,7 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         const periodInstructions = periodContext
             ? `서버 지정 Slack 대상: 채널 ${periodContext.destination.targetId}, 스레드 ${periodContext.root.ts}, 기간 ${periodContext.captured.label}. 이 스레드의 기존 답글은 /api/slack/history?channel=${encodeURIComponent(periodContext.destination.targetId)}&thread_ts=${encodeURIComponent(periodContext.root.ts)}로 읽을 수 있다. 본문만 출력하라. 서버가 이 스레드에 올린다. 이 실행의 Slack 전송 시도는 거절된다. 보낼 것이 없으면 [SILENT].\n\n`
             : '';
-        const prompt = `${periodInstructions}[heartbeat:${job["name"]}] 현재 시간: ${now} (${timeZone})\n\nBefore responding, you MUST search memory (cli-jaw memory search) for recent conversation context, user preferences, and ongoing tasks. Use this context to ground your response.${goalSection}\n\n${job["prompt"] || '정기 점검입니다. 할 일 없으면 [SILENT]로 응답.'}`;
+        const prompt = `${periodInstructions}[heartbeat:${job["name"]}] 현재 시간: ${now} (${timeZone})\n\nBefore responding, you MUST search memory (cli-jaw memory search) for recent conversation context, user preferences, and ongoing tasks. Use this context to ground your response.${goalSection}\n\n${loadedSkills.block ? `${loadedSkills.block}\n\n` : ''}${job["prompt"] || '정기 점검입니다. 할 일 없으면 [SILENT]로 응답.'}`;
         log.info(`[heartbeat:${job["name"]}] tick (${describeHeartbeatSchedule(schedule)})`);
         const withDestinationGuard = async <T>(
             operation: (requestId: string) => Promise<T>,
