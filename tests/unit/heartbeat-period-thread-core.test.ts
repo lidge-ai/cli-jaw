@@ -35,9 +35,14 @@ type FakePage = Record<string, unknown>;
 function fakeSlack(pages: FakePage[] = [{ ok: true, messages: [], has_more: false }], post: FakePage = { ok: true, ts }) {
     const calls: string[] = [];
     let index = 0;
-    const fetchImpl = async (input: RequestInfo | URL) => {
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
         const method = String(input).split('/').pop()!;
         calls.push(method);
+        // Real Slack answers invalid_arguments to a JSON body on read methods.
+        const contentType = String((init?.headers as Record<string, string> | undefined)?.['Content-Type'] ?? '');
+        if (method.startsWith('conversations.') && !contentType.startsWith('application/x-www-form-urlencoded')) {
+            return Response.json({ ok: false, error: 'invalid_arguments' });
+        }
         if (method === 'conversations.history') return Response.json(pages[Math.min(index++, pages.length - 1)]);
         if (method === 'conversations.replies') return Response.json({ ok: true, messages: [{ ts, user: bot, text: `Test period ${day.label}` }] });
         if (method === 'chat.postMessage') return Response.json(post);
@@ -404,4 +409,11 @@ test('three child processes admit at most two consumers and recover a dead seque
     assert.equal(await acquirePeriodConsumerSlot(1, 0), null);
     occupied();
     assert.equal(fs.readdirSync(path.join(home, 'period-threads', 'slots')).filter(name => name.startsWith('seq.')).length, 0);
+}));
+
+test('period thread reads are form-encoded so Slack accepts conversations.replies', async () => shared(async () => {
+    const api = fakeSlack([{ ok: true, messages: [{ ts, user: bot, text: `Test period ${day.label}` }], has_more: false }]);
+    const result = await ensurePeriodThreadRoot(destination({ role: 'consumer', creatorUserId: bot }), day, deps(api.fetchImpl));
+    assert.deepEqual(result, { ok: true, ts, teamId: team, botUserId: bot });
+    assert.ok(api.calls.includes('conversations.replies'));
 }));
