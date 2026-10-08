@@ -33,7 +33,10 @@ export function periodThreadFirstLine(destination: HeartbeatDestination, capture
     return `${destination.periodThread!.title} ${captured.label}`;
 }
 function call<T>(deps: PeriodRootDeps, method: string, body: Record<string, unknown>): Promise<SlackApiResult<T>> {
-    return slackApi<T>(deps.token, method, body, { sensitiveResponse: true, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) });
+    // Form-encoded on purpose: conversations.replies rejects a JSON body with
+    // invalid_arguments (same contract as src/slack/history.ts). A JSON read here
+    // made every consumer hold on parent_unverified in production.
+    return slackApi<T>(deps.token, method, body, { sensitiveResponse: true, form: true, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) });
 }
 function pageFailure(result: SlackApiResult<unknown>, fallback: PeriodThreadCode): PeriodThreadCode {
     return result.status === 429 || result.error === 'ratelimited' ? 'slack_rate_limited' : fallback;
