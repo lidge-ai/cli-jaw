@@ -159,7 +159,7 @@ test('SSP-012: common dev skill points external current evidence to search', { s
 
     assert.match(devSkill, /External\/current evidence/);
     assert.match(devSkill, /current versions, release notes, CVEs, package\/source checks, or provider\s+behavior/);
-    assert.match(devSkill, /read the active `search` skill/);
+    assert.match(devSkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devSkill, /query-rewrite, source-fetch, and\s+evidence-status rules/);
     assert.doesNotMatch(devSkill, /\/Users\/jun\/\.cli-jaw-\d+/);
 });
@@ -169,7 +169,7 @@ test('SSP-013: debugging skill routes current upstream bug evidence to search', 
 
     assert.match(devDebuggingSkill, /third-party library\/API\/framework behavior/);
     assert.match(devDebuggingSkill, /current\s+error workarounds, upstream issues, changelogs, or migration guides/);
-    assert.match(devDebuggingSkill, /read the\s+active `search` skill/);
+    assert.match(devDebuggingSkill, /read the\s+active `(?:jaw-)?search` skill/);
     assert.match(devDebuggingSkill, /source-fetch and evidence-status rules/);
     assert.doesNotMatch(devDebuggingSkill, /4-tier escalation/);
     assert.doesNotMatch(devDebuggingSkill, /\/Users\/jun\/\.cli-jaw-\d+/);
@@ -180,7 +180,7 @@ test('SSP-014: security skill routes current supply-chain evidence to search', {
 
     assert.match(devSecuritySkill, /current CVEs, advisories, package maintainer\/source checks/);
     assert.match(devSecuritySkill, /release\s+integrity claims, or registry trust changes/);
-    assert.match(devSecuritySkill, /read the active `search` skill/);
+    assert.match(devSecuritySkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devSecuritySkill, /query-rewrite, original-source fetch, and evidence-status rules/);
     assert.doesNotMatch(devSecuritySkill, /4-tier escalation/);
     assert.doesNotMatch(devSecuritySkill, /\/Users\/jun\/\.cli-jaw-\d+/);
@@ -191,7 +191,7 @@ test('SSP-015: devops skill routes current release and provider evidence to sear
 
     assert.match(devDevopsSkill, /release, registry-auth, provider-doc, service-status/);
     assert.match(devDevopsSkill, /image\/platform\s+version, or package-manager behavior/);
-    assert.match(devDevopsSkill, /read\s+the active `search` skill/);
+    assert.match(devDevopsSkill, /read\s+the active `(?:jaw-)?search` skill/);
     assert.match(devDevopsSkill, /source-fetch and evidence-status rules/);
     assert.doesNotMatch(devDevopsSkill, /4-tier escalation/);
     assert.doesNotMatch(devDevopsSkill, /\/Users\/jun\/\.cli-jaw-\d+/);
@@ -203,7 +203,7 @@ test('SSP-016: backend skill routes current API and provider evidence to search'
     assert.match(devBackendSkill, /current external API docs, API lifecycle\s+changes/);
     assert.match(devBackendSkill, /LLM\/RAG provider behavior, dependency freshness/);
     assert.match(devBackendSkill, /package\/source\s+evidence/);
-    assert.match(devBackendSkill, /read the active `search` skill/);
+    assert.match(devBackendSkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devBackendSkill, /query-rewrite,\s+source-fetch, and evidence-status rules/);
     assert.doesNotMatch(devBackendSkill, /4-tier escalation/);
     assert.doesNotMatch(devBackendSkill, /\/Users\/jun\/\.cli-jaw-\d+/);
@@ -218,10 +218,10 @@ test('SSP-017: frontend skill routes current UI platform evidence to search', { 
 
     assert.match(devFrontendSkill, /current framework, design-system, browser API/);
     assert.match(devFrontendSkill, /package\/source freshness/);
-    assert.match(devFrontendSkill, /`search` skill/);
+    assert.match(devFrontendSkill, /`(?:jaw-)?search` skill/);
     assert.match(
         devFrontendSkill,
-        /(read the active `search` skill[\s\S]{0,120}source-fetch and evidence-status\s+rules|follow `dev` §External\s+Evidence and Recall Routing)/,
+        /(read the active `(?:jaw-)?search` skill[\s\S]{0,120}source-fetch and evidence-status\s+rules|follow `(?:jaw-)?dev` §External\s+Evidence and Recall Routing)/,
         'must either restate the search policy or delegate to the dev owner section',
     );
     assert.doesNotMatch(devFrontendSkill, /4-tier escalation/);
@@ -234,7 +234,7 @@ test('SSP-018: testing skill routes current provider and environment evidence to
     assert.match(devTestingSkill, /current external API behavior, provider docs/);
     assert.match(devTestingSkill, /CI service\s+behavior, test-environment versions/);
     assert.match(devTestingSkill, /dependency audit evidence, or recorded\s+mock\/fixture sources/);
-    assert.match(devTestingSkill, /read the active `search` skill/);
+    assert.match(devTestingSkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devTestingSkill, /source-fetch and evidence-status rules/);
     assert.doesNotMatch(devTestingSkill, /4-tier escalation/);
     assert.doesNotMatch(devTestingSkill, /\/Users\/jun\/\.cli-jaw-\d+/);
@@ -246,7 +246,7 @@ test('SSP-019: data skill routes current dataset and pipeline evidence to search
     assert.match(devDataSkill, /External\/current data evidence/);
     assert.match(devDataSkill, /current external dataset contracts, source freshness/);
     assert.match(devDataSkill, /pipeline\/tool version\s+behavior, provider data API changes/);
-    assert.match(devDataSkill, /read the\s+active `search` skill/);
+    assert.match(devDataSkill, /read the\s+active `(?:jaw-)?search` skill/);
     assert.match(devDataSkill, /query-rewrite, source-fetch, and\s+evidence-status rules/);
     assert.match(devDataSkill, /candidate URLs exist/);
     assert.doesNotMatch(devDataSkill, /4-tier escalation/);
@@ -259,7 +259,7 @@ test('SSP-020: code reviewer routes current review evidence to search', { skip: 
     assert.match(devCodeReviewerSkill, /External\/current review evidence/);
     assert.match(devCodeReviewerSkill, /dependency CVEs, release-note claims/);
     assert.match(devCodeReviewerSkill, /package maintainer\/source checks,\s+provider behavior/);
-    assert.match(devCodeReviewerSkill, /read the\s+active `search` skill/);
+    assert.match(devCodeReviewerSkill, /read the\s+active `(?:jaw-)?search` skill/);
     assert.match(devCodeReviewerSkill, /source-fetch, and\s+evidence-status rules/);
     assert.match(devCodeReviewerSkill, /not a raw-query search substitute/);
     assert.doesNotMatch(devCodeReviewerSkill, /4-tier escalation/);
@@ -272,7 +272,7 @@ test('SSP-021: architecture skill routes current platform evidence to search', {
     assert.match(devArchitectureSkill, /External\/current architecture evidence/);
     assert.match(devArchitectureSkill, /current framework guidance, cloud\/provider reference\s+architecture/);
     assert.match(devArchitectureSkill, /package deprecation, platform limits/);
-    assert.match(devArchitectureSkill, /read the active `search` skill/);
+    assert.match(devArchitectureSkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devArchitectureSkill, /query-rewrite, source-fetch, and\s+evidence-status rules/);
     assert.match(devArchitectureSkill, /candidate URLs exist/);
     assert.doesNotMatch(devArchitectureSkill, /4-tier escalation/);
@@ -285,7 +285,7 @@ test('SSP-022: scaffolding skill routes current generator and template evidence 
     assert.match(devScaffoldingSkill, /External\/current scaffolding evidence/);
     assert.match(devScaffoldingSkill, /current generator behavior, template commands/);
     assert.match(devScaffoldingSkill, /package versions, framework\s+recommendations/);
-    assert.match(devScaffoldingSkill, /read the active `search` skill/);
+    assert.match(devScaffoldingSkill, /read the active `(?:jaw-)?search` skill/);
     assert.match(devScaffoldingSkill, /query-rewrite, source-fetch, and\s+evidence-status rules/);
     assert.match(devScaffoldingSkill, /candidate URLs exist/);
     assert.doesNotMatch(devScaffoldingSkill, /4-tier escalation/);
@@ -297,10 +297,10 @@ test('SSP-023: UI/UX design skill routes current design evidence to search', { s
 
     assert.match(devUiuxDesignSkill, /External\/current design evidence/);
     assert.match(devUiuxDesignSkill, /live product-reference claims, current\s+design-system docs/);
-    assert.match(devUiuxDesignSkill, /`search` skill/);
+    assert.match(devUiuxDesignSkill, /`(?:jaw-)?search` skill/);
     assert.match(
         devUiuxDesignSkill,
-        /(read the active `search` skill[\s\S]{0,160}evidence-status rules|follow `dev` §External\s+Evidence and Recall Routing)/,
+        /(read the active `(?:jaw-)?search` skill[\s\S]{0,160}evidence-status rules|follow `(?:jaw-)?dev` §External\s+Evidence and Recall Routing)/,
         'must either restate the search policy or delegate to the dev owner section',
     );
     assert.match(devUiuxDesignSkill, /candidate URLs exist/);
@@ -317,12 +317,12 @@ test('SSP-016b: routers that delegate the search policy point at a real dev sect
         ['dev-uiux-design', hasDevUiuxDesignSkill, devUiuxDesignSkillPath],
     ];
     const delegates = delegators.filter(([, present, path]) =>
-        present && /follow `dev` §External\s+Evidence and Recall Routing/.test(fs.readFileSync(path, 'utf8')));
+        present && /follow `(?:jaw-)?dev` §External\s+Evidence and Recall Routing/.test(fs.readFileSync(path, 'utf8')));
     if (!delegates.length) return;
     assert.match(
         devSkill,
         /^##+ External Evidence and Recall Routing$/m,
         `${delegates.map(([name]) => name).join(', ')} delegate to a dev section that must exist`,
     );
-    assert.match(devSkill, /`search` skill/);
+    assert.match(devSkill, /`(?:jaw-)?search` skill/);
 });
