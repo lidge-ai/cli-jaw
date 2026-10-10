@@ -13,7 +13,7 @@ import { resolveScopedSessionBucket } from '../args.js';
 import { buildAsideResumeKey } from '../spawn-env.js';
 import { buildPromptForArgs, PROMPT_HISTORY_MAX_CHARS, PROMPT_HISTORY_MAX_ROWS } from '../prompt-context.js';
 import { shouldResumeBucketSession } from './resume.js';
-import { beginLiveRun, setLiveRunTraceId } from '../live-run-state.js';
+import { beginLiveRun, setLiveRunTraceId, getLiveRun, clearLiveRun } from '../live-run-state.js';
 import { isCurrentSessionOwner } from '../session-persistence.js';
 import { handleAgentExit } from '../lifecycle-handler.js';
 import { handoffRuntimeOutcome } from '../runtime/outcome.js';
@@ -55,7 +55,9 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
     const model = locals.model || 'default', effort = locals.effort || 'default';
     const sysPrompt = locals.sysPrompt;
     const originalPrompt = locals.prompt;
-    const owned = () => host.activeMainProcesses.get(scopeKey) === run
+    // Generation fences session mutations, not control of captured commands.
+    const controlsRun = () => host.activeMainProcesses.get(scopeKey) === run;
+    const owned = () => controlsRun()
         && run.ownerGeneration === ownerGeneration && isCurrentSessionOwner(persistenceOwner, scopeKey);
     let child: ChildProcess | null = null;
     let childClosed = true;
@@ -74,6 +76,14 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
     run.cancelTurn = cancel;
     void (async () => {
         let ctx: SpawnContext | undefined;
+        const retireCapturedRun = () => {
+            if (!controlsRun() || !childClosed || (handle && !handle.commandsClosed())) return false;
+            // Identity above prevents releasing a replacement, including process=null.
+            // The same captured run may have had its generation invalidated in place.
+            const released = host.releaseMainRun(scopeKey, child, run.ownerGeneration);
+            if (released && ctx?.traceRunId && getLiveRun(scopeKey).traceRunId === ctx.traceRunId) clearLiveRun(scopeKey);
+            return released;
+        };
         let bucket = '', resumeKey: string | null = null, selectedModel = model, selectedEffort = '';
         let isResume = false;
         let result: AsideRunResult;
@@ -125,7 +135,7 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
                         if (sealed) return;
                         child = proc; childClosed = false;
                         proc.once('close', () => { childClosed = true; host.consumeKillReason(proc.pid); });
-                        if (owned()) { run.process = proc; run.starting = false; }
+                        if (controlsRun()) { run.process = proc; run.starting = false; }
                     },
                     onSession(id) { if (!sealed) capturedCtx.sessionId = id; },
                     onOutput(text) {
@@ -147,27 +157,27 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
         }
         sealed = true;
         uncertain = result.cleanup === 'uncertain';
-        if (uncertain && owned()) {
+        if (uncertain && controlsRun()) {
             run.starting = true;
             const acknowledgementToken = randomUUID();
             const recovery = 'aside_control_uncertain: reconcile the captured session in Aside, then POST /api/orchestrate/aside/reconcile with sessionId, acknowledgementToken and acknowledged:true. All captured local commands must close. Send fresh input afterward.';
             result = { ...result, diagnostic: `${result.diagnostic || 'Aside cleanup is unresolved.'} Jaw chat ID: ${chatSessionId}. External Aside ID: ${result.sessionId || 'unavailable'} (account ${context.account}, local). Acknowledgement token: ${acknowledgementToken}. ${recovery}` };
             // Repeated Stop closes captured commands without repeating external control.
             run.cancelTurn = () => {
-                if (owned() && handle) void handle.closeCommands().catch(() => {});
+                if (controlsRun() && handle) void handle.closeCommands().catch(() => {});
             };
             run.reconcileAside = token => {
-                if (token !== acknowledgementToken || !owned() || !childClosed || (handle && !handle.commandsClosed())) return false;
+                if (token !== acknowledgementToken || !controlsRun() || !childClosed || (handle && !handle.commandsClosed())) return false;
                 host.queueCtrl.purgeQueueOnStop(scopeKey, 'aside-manual-reconciliation');
                 delete run.cancelTurn;
                 delete run.reconcileAside;
-                return host.releaseMainRun(scopeKey, child, ownerGeneration);
+                return retireCapturedRun();
             };
         }
         try { opts.lifecycle?.onExit?.(result.exitCode); } catch { /* observer only */ }
         if (!owned()) {
             // A captured terminal still settles its caller, but cannot mutate a newer
-            // session's MESSAGE history, flush counters, goal or queue via lifecycle.
+            // session's MESSAGE history, flush counters, goal or persistence via lifecycle.
             const outcome = cancelled ? { ...result, status: 'stopped' as const, finalText: null } : result;
             if (ctx) {
                 handoffRuntimeOutcome(ctx, outcome);
@@ -180,11 +190,12 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
                 code: outcome.status === 'done' ? 0 : outcome.status === 'stopped' ? 130 : 1,
                 runtimeOutcome: outcome, ...(ctx?.traceRunId ? { traceRunId: ctx.traceRunId } : {}) });
             if (run.cancelTurn === cancel) delete run.cancelTurn;
+            if (!uncertain && retireCapturedRun() && !cancelled) void host.processQueue(scopeKey);
             settleCapturedExit(scopeKey, exitArm);
             return;
         }
         if (!ctx) {
-            if (!uncertain && owned()) host.releaseMainRun(scopeKey, child, ownerGeneration);
+            if (!uncertain) retireCapturedRun();
             const text = result.status === 'error' ? result.diagnostic || 'Aside unavailable.' : '';
             settleOnce(opts.requestId, result.status === 'stopped' ? 'cancelled' : 'failed', {
                 text, scope: scopeKey, sessionId: chatSessionId });
@@ -236,7 +247,7 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
         } finally {
             if (!uncertain) {
                 if (capturedRun.cancelTurn === cancel) delete capturedRun.cancelTurn;
-                if (owned()) host.releaseMainRun(scopeKey, child, ownerGeneration);
+                if (retireCapturedRun() && !cancelled) void host.processQueue(scopeKey);
             }
             settleCapturedExit(scopeKey, exitArm);
         }

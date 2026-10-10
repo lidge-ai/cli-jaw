@@ -690,6 +690,11 @@ control command must have closed, including probes launched before main admissio
 The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
 purges pending input, drops the retained owner, and requires fresh input; it never resumes
 or retries the uncertain turn. External tool physical completion is not proved by Stop.
-Completions whose captured run or session generation lost ownership settle only their
+Completions whose captured run or session generation lost ownership settle their
 original caller and close their trace/Activity; they cannot enter shared lifecycle
-mutations of MESSAGE history, memory flush counters, goals or queue draining.
+mutations of MESSAGE history, memory flush counters, goals or session persistence.
+Physical control follows the captured run object and command handles independently of
+session generation. Confirmed local closure retires that run only while it still owns
+its map entry, clears only its matching live projection, and resumes its scope's queue
+under the normal non-cancelled policy. Uncertain commands retain cleanup and manual
+reconciliation control across generation changes. A replacement run is never released.

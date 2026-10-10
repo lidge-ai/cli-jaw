@@ -26,16 +26,16 @@ mock.module('../../src/agent/aside-catalog.js', { namedExports: { ...catalogs,
         return { ...catalog, context };
     },
 } });
-const runs: Array<{ input: AsideRunInput; callbacks: AsideRunCallbacks; result: PromiseWithResolvers<AsideRunResult>; cancelCount: number }> = [];
+const runs: Array<{ input: AsideRunInput; callbacks: AsideRunCallbacks; result: PromiseWithResolvers<AsideRunResult>; cancelCount: number; commandsClosed: boolean; closeCount: number }> = [];
 const realRuntime = await import('../../src/agent/aside-runtime.ts');
 let runtimeStart: typeof realRuntime.startAsideRun | undefined;
 mock.module('../../src/agent/aside-runtime.js', { namedExports: {
     startAsideRun(input: AsideRunInput, callbacks: AsideRunCallbacks = {}) {
         if (runtimeStart) return runtimeStart(input, callbacks);
-        const run = { input, callbacks, result: Promise.withResolvers<AsideRunResult>(), cancelCount: 0 };
+        const run = { input, callbacks, result: Promise.withResolvers<AsideRunResult>(), cancelCount: 0, commandsClosed: true, closeCount: 0 };
         runs.push(run);
         return { result: run.result.promise, cancel() { run.cancelCount++; return Promise.resolve(); },
-            commandsClosed: () => true, closeCommands: async () => true };
+            commandsClosed: () => run.commandsClosed, closeCommands: async () => { run.closeCount++; return run.commandsClosed; } };
     },
 } });
 const config = await import('../../src/core/config.ts');
@@ -99,6 +99,7 @@ const { clearGoalTimers } = await import('../../src/agent/lifecycle-handler.ts')
 const { settleAllPending, admitRequest, pendingRequestIds } = await import('../../src/orchestrator/request-registry.ts');
 const { resolveSelectedContext } = await import('../../src/orchestrator/dispatch-admission.ts');
 const { createChatSession } = await import('../../src/core/chat-sessions.ts');
+const { beginLiveRun, setLiveRunTraceId, getLiveRun, clearLiveRun } = await import('../../src/agent/live-run-state.ts');
 const { readActivityControl } = await import('../../src/trace/activity-control.ts');
 const snapshot = config.snapshotSettingsState();
 let serial = 0;
@@ -121,7 +122,9 @@ test.beforeEach(t => {
     t.mock.method(console, 'warn', () => {});
 });
 test.afterEach(() => {
-    readGate?.resolve(); clearGoalTimers(); spawn.activeMainProcesses.clear();
+    readGate?.resolve(); clearGoalTimers();
+    for (const scope of spawn.activeMainProcesses.keys()) clearLiveRun(scope);
+    spawn.activeMainProcesses.clear();
     spawn.messageQueue.splice(0); settleAllPending('cancelled', 'fixture-cleanup');
     Object.assign(testSettings, structuredClone(snapshot.value));
 });
@@ -375,19 +378,24 @@ test('late uncertain result never retains or clears a newer run', async () => {
 });
 
 for (const loss of ['new-run', 'run-generation', 'scope-generation', 'global-generation'] as const) {
-    test(`late successful final after ${loss} loss settles only its captured caller`, async t => {
+    test(`late successful final after ${loss} loss fences lifecycle and retires only its captured run`, async t => {
         const requestId = `stale-request-${++serial}`;
         const scopeKey = `stale-scope-${serial}`;
         const chatSessionId = createChatSession('Stale ownership fixture', { activate: false }).id;
         const first = { scopeKey, chatSessionId, ...spawn.spawnAgent('current task', { cli: 'aside', scopeKey, chatSessionId, requestId }) };
         await turn();
         const old = runs[0]!;
+        const child = new ChildProcess(); old.callbacks.onChild?.(child);
+        upsertSessionBucket.run(`aside:${first.scopeKey}`, 'KEEP SESSION', 'p/model', 'unmatched-key', 0);
         admitRequest(requestId, first.scopeKey);
         const originalOwner = spawn.activeMainProcesses.get(first.scopeKey)!;
         const newer: MainRunState = { process: null, starting: true, steering: false,
             ownerGeneration: getSessionOwnershipGeneration(first.scopeKey).global,
             meta: { cli: 'aside', origin: 'web', chatSessionId: first.chatSessionId } };
-        if (loss === 'new-run') spawn.activeMainProcesses.set(first.scopeKey, newer);
+        if (loss === 'new-run') {
+            spawn.activeMainProcesses.set(first.scopeKey, newer);
+            beginLiveRun(first.scopeKey, 'aside'); setLiveRunTraceId(first.scopeKey, 'replacement-trace');
+        }
         else if (loss === 'run-generation') originalOwner.ownerGeneration++;
         else if (loss === 'scope-generation') bumpScopeSessionGeneration(first.scopeKey);
         else bumpSessionOwnershipGeneration();
@@ -400,6 +408,7 @@ for (const loss of ['new-run', 'run-generation', 'scope-generation', 'global-gen
             if (type === 'request_settled' && data['requestId'] === requestId) events.push(data);
         };
         addBroadcastListener(listener); t.after(() => removeBroadcastListener(listener));
+        child.emit('close', 0, null);
         old.result.resolve(success('OLD', 'STALE SUCCESS\n/goal done'));
         const result = await first.promise;
         assert.equal(result.code, 0); assert.equal(result.text, 'STALE SUCCESS\n/goal done');
@@ -410,11 +419,113 @@ for (const loss of ['new-run', 'run-generation', 'scope-generation', 'global-gen
         assert.equal(events.length, 1);
         assert.equal(events[0]!['outcome'], 'completed');
         assert.equal(lifecycleExitCount, 0, 'stale completions bypass shared lifecycle entirely');
-        assert.equal(spawn.activeMainProcesses.get(first.scopeKey), loss === 'new-run' ? newer : originalOwner);
+        assert.equal((getSessionBucket.get(`aside:${first.scopeKey}`) as { session_id: string }).session_id, 'KEEP SESSION');
+        assert.equal(spawn.activeMainProcesses.get(first.scopeKey), loss === 'new-run' ? newer : undefined);
+        assert.equal(spawn.isAgentBusy(first.scopeKey), loss === 'new-run');
+        assert.equal(getLiveRun(first.scopeKey).running, loss === 'new-run');
+        if (loss === 'new-run') assert.equal(getLiveRun(first.scopeKey).traceRunId, 'replacement-trace');
         assert.equal(trace.getTraceRun(result.traceRunId!)?.status, 'done');
         assert.equal(readActivityControl(result.traceRunId!)?.state.closed, true);
+        if (loss !== 'new-run') {
+            const fresh = spawn.spawnAgent('FRESH USER INPUT', { cli: 'aside', scopeKey, chatSessionId });
+            await turn(); assert.equal(runs.length, 2); assert.match(runs[1]!.input.prompt, /FRESH USER INPUT/);
+            assert.notEqual(spawn.activeMainProcesses.get(scopeKey), originalOwner);
+            runs[1]!.result.resolve(success('FRESH')); await fresh.promise;
+        }
     });
 }
+
+test('confirmed close after selector invalidation resumes queued input in the captured scope', async () => {
+    const scopeKey = `queued-generation-${++serial}`;
+    const chatSessionId = createChatSession('Queued generation fixture', { activate: false }).id;
+    const first = spawn.spawnAgent('OLD INPUT', { cli: 'aside', scopeKey, chatSessionId });
+    await turn();
+    const old = runs[0]!;
+    assert.equal(submitMessage('QUEUED FRESH INPUT', { origin: 'web', scope: scopeKey, chatSessionId,
+        skipOrchestrate: true }).action, 'queued');
+    const before = getSessionOwnershipGeneration(scopeKey);
+    assert.equal(reloadSettingsFromDisk({ lastSavedRaw: null, readImpl: () => JSON.stringify({
+        perCli: { aside: { account: 'u8' } } }) }), true);
+    assert.notEqual(getSessionOwnershipGeneration(scopeKey).global, before.global);
+    old.result.resolve(success('OLD')); await first.promise;
+    for (let attempt = 0; attempt < 20 && runs.length < 2; attempt++) await turn();
+    assert.equal(runs.length, 2, 'release restarts the pending scope queue');
+    assert.match(runs[1]!.input.prompt, /QUEUED FRESH INPUT/);
+    assert.equal(runs[1]!.input.selection.account, 'u8');
+    assert.equal(spawn.messageQueue.filter(row => row.scope === scopeKey).length, 0);
+    runs[1]!.result.resolve(success('FRESH')); await turn();
+});
+
+test('generation-invalidated retirement clears only the matching live projection', async () => {
+    const first = start(); await turn(); const old = runs[0]!;
+    bumpScopeSessionGeneration(first.scopeKey);
+    beginLiveRun(first.scopeKey, 'aside'); setLiveRunTraceId(first.scopeKey, 'unrelated-live-trace');
+    old.result.resolve(success('OLD')); await first.promise;
+    assert.equal(spawn.isAgentBusy(first.scopeKey), false);
+    assert.equal(getLiveRun(first.scopeKey).traceRunId, 'unrelated-live-trace');
+    clearLiveRun(first.scopeKey);
+});
+
+for (const loss of ['run-generation', 'scope-generation', 'global-generation'] as const) {
+    for (const timing of ['before-terminal', 'after-terminal'] as const) {
+        test(`uncertain cleanup survives ${loss} invalidation ${timing} until every command closes`, async () => {
+            const first = start(); await turn(); const old = runs[0]!;
+            const owner = spawn.activeMainProcesses.get(first.scopeKey)!;
+            const invalidate = () => {
+                if (loss === 'run-generation') owner.ownerGeneration++;
+                else if (loss === 'scope-generation') bumpScopeSessionGeneration(first.scopeKey);
+                else bumpSessionOwnershipGeneration();
+            };
+            if (timing === 'before-terminal') invalidate();
+            // Main admission after generation loss must still capture its physical handle.
+            const child = new ChildProcess(); old.callbacks.onChild?.(child);
+            old.commandsClosed = false;
+            old.result.resolve({ status: 'error', finalText: null, partialText: '', sessionId: 'UNCERTAIN',
+                reusable: false, exitCode: null, cleanup: 'uncertain' });
+            const result = await first.promise;
+            const token = timing === 'before-terminal'
+                ? (result.runtimeOutcome as AsideRunResult).diagnostic?.match(/Acknowledgement token: ([0-9a-f-]{36})\./)?.[1]
+                : tokenFor(first.scopeKey);
+            assert.ok(token, 'captured reconciliation token survives generation loss');
+            assert.equal(typeof owner.reconcileAside, 'function');
+            if (timing === 'after-terminal') invalidate();
+            assert.equal(spawn.activeMainProcesses.get(first.scopeKey), owner);
+            assert.equal(spawn.isAgentBusy(first.scopeKey), true);
+            assert.equal(spawn.reconcileAsideScope(first.scopeKey, first.chatSessionId, token), false);
+            assert.equal(spawn.killActiveAgent(first.scopeKey, 'user'), true);
+            await turn(); assert.equal(old.closeCount, 1, 'Stop still closes captured commands');
+            child.emit('close', null, 'SIGTERM');
+            assert.equal(spawn.reconcileAsideScope(first.scopeKey, first.chatSessionId, token), false, 'probe still open');
+            old.commandsClosed = true;
+            assert.equal(spawn.reconcileAsideScope(first.scopeKey, first.chatSessionId, 'wrong-token'), false);
+            assert.equal(spawn.reconcileAsideScope(first.scopeKey, first.chatSessionId, token), true);
+            assert.equal(spawn.isAgentBusy(first.scopeKey), false);
+            assert.equal(getLiveRun(first.scopeKey).running, false);
+            const fresh = spawn.spawnAgent('FRESH AFTER RECONCILIATION', { cli: 'aside', scopeKey: first.scopeKey, chatSessionId: first.chatSessionId });
+            await turn(); assert.equal(runs.length, 2);
+            runs[1]!.result.resolve(success('FRESH')); await fresh.promise;
+        });
+    }
+}
+
+test('captured reconciliation and command cleanup never control a replacement run', async () => {
+    const first = start(); await turn(); const old = runs[0]!;
+    const owner = spawn.activeMainProcesses.get(first.scopeKey)!;
+    old.result.resolve({ status: 'error', finalText: null, partialText: '', sessionId: 'UNCERTAIN',
+        reusable: false, exitCode: null, cleanup: 'uncertain' });
+    await first.promise;
+    const token = tokenFor(first.scopeKey), reconcile = owner.reconcileAside!, close = owner.cancelTurn!;
+    const newer: MainRunState = { process: null, starting: true, steering: false,
+        ownerGeneration: owner.ownerGeneration, meta: { cli: 'aside', origin: 'web', chatSessionId: first.chatSessionId } };
+    spawn.activeMainProcesses.set(first.scopeKey, newer);
+    beginLiveRun(first.scopeKey, 'aside'); setLiveRunTraceId(first.scopeKey, 'replacement-trace');
+    assert.equal(submitMessage('KEEP REPLACEMENT QUEUE', { origin: 'web', scope: first.scopeKey, chatSessionId: first.chatSessionId }).action, 'queued');
+    close('user'); await turn(); assert.equal(old.closeCount, 0);
+    assert.equal(reconcile(token), false);
+    assert.equal(spawn.activeMainProcesses.get(first.scopeKey), newer);
+    assert.equal(getLiveRun(first.scopeKey).traceRunId, 'replacement-trace');
+    assert.equal(spawn.messageQueue.filter(row => row.scope === first.scopeKey).length, 1);
+});
 
 for (const phase of ['baseline', 'final-replay'] as const) {
     test(`unconfirmed ${phase} probe retains scope and reconciliation waits for all closes`, async () => {
