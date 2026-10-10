@@ -39,6 +39,8 @@ export function shouldResumeBucketSession(
         if (!bucketModel) return false;
         return normalizeModelForCli('kiro-code', requestedModel) === normalizeModelForCli('kiro-code', bucketModel);
     }
+    if (cli === 'aside') return Boolean(requestedResumeKey) && requestedResumeKey === bucketResumeKey
+        && requestedModel === bucketModel;
     if (cli === 'opencode' && requestedResumeKey) {
         return requestedResumeKey === (bucketResumeKey ?? null);
     }

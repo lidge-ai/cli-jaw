@@ -174,3 +174,15 @@ Opted-in workflow requests use the `followup` queue when busy; never steer or co
 - `structure/` reading map: start at `structure/INDEX.md`; depth — `telegram.md` (Hub), `prompt_flow.md` (attest/hooks/bounded search), `stream-events.md` (pause gate/SSE), `infra.md` (test scripts), `commands.md` + `server_api.md` (slash/API surfaces). Concurrent inbound gateway docs: `structure/INDEX.md` §gateway, `structure/infra.md` §`src/messaging/`, `structure/telegram.md` §common messaging layer; legacy `settings.channel` is a deprecated read-only alias for one major version.
 
 - Grok main native ACP requires literal auto, existing advertised authentication/model/effort, and no leader. Its optional common replacement strategy waits for original cancellation and drain, preserves one logical final, commits input only after local dispatch with current ownership, and never queues fatal failures. Restrictive policies and workers fail before preparation. Sync `structure/runtime-integration.md`.
+
+
+- Aside is an experimental main-only CLI backend with explicit `perCli.aside.account=uN`
+  and `host=local`. Catalog-selected concrete model/effort and cwd/policy are captured
+  before awaits; Safe maps to guard, Auto to full-access, other policies fail closed.
+  Workers/internal flush/images/native Code/pools/automatic retries and fallback are
+  unsupported. Normal steer and `/steer` queue; `/queue steer` rejects. Owned structured
+  replay supplies exact finals; diagnostic CLI logs never do. Uncertain cleanup retains
+  the captured scope and blocks queue draining. Manual external reconciliation followed
+  by authenticated `POST /api/orchestrate/aside/reconcile` with `{sessionId, acknowledgementToken, acknowledged:true}`
+  validates exact chat/run token and local child close, purges pending input and allows fresh input only. See
+  `structure/runtime-integration.md` (or `runtime-integration.md` from structure/).

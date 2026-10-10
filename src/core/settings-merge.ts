@@ -66,6 +66,31 @@ export function sanitizeSettingsInput(
         value['perCli'] = perCli;
     }
 
+    // Aside owns only selectors. Unknown runtime knobs cannot silently widen authority.
+    for (const group of ['perCli', 'activeOverrides']) {
+        const entries = isPlainRecord(value[group]) ? { ...value[group] } : value[group];
+        if (!isPlainRecord(entries) || !Object.hasOwn(entries, 'aside')) continue;
+        const entry = entries['aside'];
+        if (!isPlainRecord(entry)) {
+            delete entries['aside']; value[group] = entries; invalidPaths.push(`${group}.aside`); continue;
+        }
+        const allowed = group === 'perCli' ? ['account', 'host', 'model', 'effort'] : ['model', 'effort'];
+        const provider = { ...entry };
+        for (const [key, field] of Object.entries(entry)) {
+            const valid = allowed.includes(key) && (
+                key === 'account' ? typeof field === 'string' && /^u(?:0|[1-9][0-9]{0,8})$/.test(field)
+                : key === 'host' ? field === 'local'
+                : key === 'effort' ? typeof field === 'string' && ['', 'default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(field)
+                : typeof field === 'string' && (field === '' || field === 'default'
+                    || field.length <= 513 && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9][a-zA-Z0-9_./:+\[\]-]*$/.test(field)
+                        && !field.split('/').some(part => !part || part === '.' || part === '..')));
+            if (!valid) { delete provider[key]; invalidPaths.push(`${group}.aside.${key}`); }
+        }
+        if (Object.hasOwn(provider, 'model') && provider['model'] === '') provider['model'] = 'default';
+        if (Object.hasOwn(provider, 'effort') && provider['effort'] === '') provider['effort'] = 'default';
+        value[group] = { ...entries, aside: provider };
+    }
+
     const runtimeInput = isPlainRecord(input["runtime"]) ? input["runtime"] : null;
     const codexAppInput = runtimeInput && isPlainRecord(runtimeInput["codexApp"])
         ? runtimeInput["codexApp"]

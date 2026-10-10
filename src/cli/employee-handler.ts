@@ -83,6 +83,7 @@ export async function employeeHandler(args: string[], ctx: CliCommandContext): P
         const name = args[1]?.trim();
         const cli = args[2]?.trim();
         if (!name || !cli) return { ok: false, text: t('cmd.employee.cliUsage', {}, L) };
+        if (cli === 'aside') return { ok: false, text: 'Aside supports main sessions only.' };
         if (isRetiredCliSelection(cli)) {
             return { ok: false, text: `${retiredRuntimeDiagnostic(cli)}: Select an available runtime: ${CLI_KEYS.join(', ')}` };
         }

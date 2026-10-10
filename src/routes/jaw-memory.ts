@@ -219,6 +219,7 @@ export function registerJawMemoryRoutes(app: Express, requireAuth: AuthMiddlewar
             const { triggerMemoryFlushForCurrentSession } = await import('../agent/memory-flush-controller.js');
             // Single-session by design; the merged flush is the automatic one.
             const outcome = await triggerMemoryFlushForCurrentSession();
+            if (outcome === 'unavailable') { res.status(409).json({ error: 'aside_memory_flush_unsupported' }); return; }
             if (outcome === 'locked') {
                 // 409 rather than 500: nothing failed, the writer is simply busy.
                 res.status(409).json({ ok: false, outcome, message: 'A memory flush is already running' });

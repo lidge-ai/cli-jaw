@@ -25,7 +25,7 @@ export const DEFAULT_EMPLOYEES = [
  * is retained to avoid a renaming churn across employees.ts call sites; it
  * will be removed in P19/P20 cleanup once consumers have migrated.
  */
-export type EmployeeCli = CliEngine;
+export type EmployeeCli = Exclude<CliEngine, 'aside'>;
 
 export interface StaticEmployeeRuntimeHints {
     /**
@@ -299,7 +299,7 @@ export function checkModelSupport(
     _model: string | undefined | null,
     _env: NodeJS.ProcessEnv = process.env,
 ): RuntimeHintCheckResult {
-    return { fail: [], warn: [] };
+    return { fail: _cli === 'aside' ? ['Aside supports main sessions only.'] : [], warn: [] };
 }
 
 async function resolveStaticEmployeeModel(
@@ -320,6 +320,7 @@ export async function resolveDispatchableEmployee(
     const needle = name.trim().toLowerCase();
     for (const r of dbRows) {
         if ((r.name ?? '').toLowerCase() === needle) {
+            if (r.cli === 'aside') return null;
             return { row: r, source: 'db', spec: findStaticEmployee(r.name) };
         }
     }
@@ -394,7 +395,7 @@ export async function listEmployees(): Promise<EmployeeListing[]> {
 }
 
 export async function seedDefaultEmployees({ reset = false, notify = false } = {}) {
-    if (!db.open) return { seeded: 0, cli: settings["cli"], skipped: true };
+    if (settings['cli'] === 'aside' || !db.open) return { seeded: 0, cli: settings['cli'], skipped: true };
     const existing = getEmployees.all() as EmployeeRow[];
     if (reset) {
         clearAllEmployeeSessions.run();

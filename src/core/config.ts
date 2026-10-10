@@ -610,6 +610,7 @@ function claudeDefaultModelStampForDefaults(): ClaudeDefaultModelMigration {
 
 export function normalizeModelForCli(cli: string, model: unknown): unknown {
     if (typeof model !== 'string') return model;
+    if (cli === 'aside' && model === '') return 'default';
     if (cli === 'claude' || cli === 'claude-e') return migrateLegacyClaudeValue(model);
     if (cli === 'copilot' && model === 'claude-opus-4.6-fast') return 'claude-opus-4.6';
     return model;
@@ -1575,6 +1576,9 @@ export function loadSettings() {
             if (sourceVersion >= 2) throw new Error('invalid_settings_permissions');
             console.warn('[jaw:settings] repaired unrecognized legacy permissions value to safe');
             raw['permissions'] = 'safe';
+        }
+        if (sanitized.invalidPaths.some(path => path.startsWith('perCli.aside') || path.startsWith('activeOverrides.aside'))) {
+            throw new Error('invalid_aside_selectors');
         }
         // A document claiming the current schema must actually carry what this schema
         // writes. Checked before the merge, because after it the absence is gone.

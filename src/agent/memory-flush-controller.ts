@@ -213,7 +213,7 @@ function loadFlushSysPrompt(): string {
 
 // ─── Collection ──────────────────────────────────────
 
-export type FlushOutcome = 'started' | 'insufficient' | 'locked';
+export type FlushOutcome = 'started' | 'insufficient' | 'locked' | 'unavailable';
 
 type FlushRow = { id: number; role: string; content: string };
 type FlushSlice = { sessionId: string; rows: FlushRow[] };
@@ -325,6 +325,8 @@ export async function triggerMemoryFlushForCurrentSession(): Promise<FlushOutcom
 
 async function runFlush(opts: { merged: boolean }): Promise<FlushOutcome> {
     const multiSessionEnabled = settings["multiSession"]?.enabled === true;
+    const configuredFlushCli = settings['memory']?.cli || settings['cli'];
+    if (configuredFlushCli === 'aside') return 'unavailable';
 
     if (_flushLock) {
         // Only the merged path is worth remembering: its trigger is a counter already

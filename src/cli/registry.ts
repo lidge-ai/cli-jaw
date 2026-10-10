@@ -31,6 +31,11 @@ export const CODEX_MODEL_CHOICES = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5
 export const CODEX_EFFORT_CHOICES = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 export const CLI_REGISTRY = {
+    aside: {
+        label: 'Aside', binary: 'aside', experimental: true,
+        defaultModel: 'default', defaultEffort: '', efforts: [], models: ['default'],
+        modelNote: 'Models come from the explicitly selected local Aside account.',
+    },
     agy: {
         label: 'Antigravity',
         binary: 'agy',

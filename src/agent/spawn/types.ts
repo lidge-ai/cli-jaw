@@ -35,6 +35,8 @@ export type MainRunState = {
     ownerGeneration: number;
     meta: MainSessionMeta;
     cancelPending?: (reason: string) => void;
+    /** Explicit human reconciliation; never retries a provider turn or drains queued work. */
+    reconcileAside?: (acknowledgementToken: string) => boolean;
     cancelTurn?: (reason: string) => void;
     /**
      * In-band same-turn steer for runtimes that support it (codex-app turn/steer).

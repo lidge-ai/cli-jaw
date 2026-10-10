@@ -31,6 +31,7 @@ export function registerEmployeeRoutes(app: Express, requireAuth: AuthMiddleware
     app.post('/api/employees', requireAuth, async (req, res) => {
         const id = crypto.randomUUID();
         const { name = 'New Agent', cli = 'claude', model = 'default', role = '' } = req.body || {};
+        if (cli === 'aside') { res.status(400).json({ error: 'aside_main_only' }); return; }
         const nextModel = (!model || model === 'default')
             ? await resolveCliDefaultModel(cli)
             : model;
@@ -48,6 +49,7 @@ export function registerEmployeeRoutes(app: Express, requireAuth: AuthMiddleware
 
     app.put('/api/employees/:id', requireAuth, async (req, res) => {
         const updates = req.body || {};
+        if (updates.cli === 'aside') { res.status(400).json({ error: 'aside_main_only' }); return; }
         const employeeId = String(req.params["id"] || '');
         const staticSlug = parseStaticId(employeeId);
 

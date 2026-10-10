@@ -664,3 +664,37 @@ A new home configured with `CLI_JAW_DEFAULT_CLI=jwc` also keeps that retired
 selection and skips runtime readiness probes. An explicit supported selection in
 an existing settings file still wins. Unknown environment values and genuinely
 corrupt settings retain their existing handling.
+
+## Aside experimental main CLI
+
+Aside is an experimental main-session CLI backend (`aside`), restricted to an explicit
+`perCli.aside.account` (`uN`) and `host: local`. Its model is `default` or a qualified
+`provider/modelId`; empty model/effort selectors normalize to default, resolved once from
+that account's local catalog. The execution identity captures account, host, concrete
+provider/model/effort, cwd and policy before asynchronous preparation. Safe maps only to
+Aside `guard`, Auto only to `full-access`; arrays and other policies are rejected.
+Scheduled heartbeat runs fail closed before catalog/runtime dispatch with code 78 and
+`aside_scheduled_unsupported`. The `jaw-computer-use` proxy is not registered for Aside;
+its approval environment is pinned to the captured policy (`auto` or `safe`), overriding
+inherited values. Main metadata captures request ID, chat/session scope, policy and
+delivery target for request-bound dispatch lookup, then carries the resolved model.
+Workers, internal/flush calls, images, blind retries/fallbacks and native Code/pools are
+unsupported. Normal/default steer and `/steer` queue one follow-up; `/queue steer` is
+rejected before queue removal or process control. Structured owned replay selects finals,
+including exact empty/whitespace answers; CLI logs remain diagnostic. Failed/stopped or
+uncertain sessions never persist a resumable ID. `cleanup: uncertain` retains only the
+captured scope and blocks automatic queue draining. After manually reconciling that exact
+session in Aside, acknowledge with authenticated `POST /api/orchestrate/aside/reconcile`
+`{sessionId, acknowledgementToken, acknowledged:true}`; every captured main, read and
+control command must have closed, including probes launched before main admission.
+The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
+purges pending input, drops the retained owner, and requires fresh input; it never resumes
+or retries the uncertain turn. External tool physical completion is not proved by Stop.
+Completions whose captured run or session generation lost ownership settle their
+original caller and close their trace/Activity; they cannot enter shared lifecycle
+mutations of MESSAGE history, memory flush counters, goals or session persistence.
+Physical control follows the captured run object and command handles independently of
+session generation. Confirmed local closure retires that run only while it still owns
+its map entry, clears only its matching live projection, and resumes its scope's queue
+under the normal non-cancelled policy. Uncertain commands retain cleanup and manual
+reconciliation control across generation changes. A replacement run is never released.
