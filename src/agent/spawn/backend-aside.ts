@@ -27,8 +27,9 @@ import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js'
 import type { SpawnResult } from './types.js';
 
 /** Admission is deliberately before bootstrap, isolation, generic argv or NDJSON. */
-export function asideAdmissionError(mainManaged: boolean, opts: SpawnBackendLocals['opts'], policy: unknown): string | null {
+export function asideAdmissionError(mainManaged: boolean, opts: SpawnBackendLocals['opts'], policy: unknown, origin?: SpawnBackendLocals['origin']): string | null {
     if (!mainManaged || opts.agentId || opts.employeeSessionId || opts.internal || opts.forceNew) return 'aside_main_only';
+    if (origin === 'heartbeat') return 'aside_scheduled_unsupported';
     if (opts._isFallback || opts._retryAttempt !== undefined || opts._isSmokeContinuation || opts._isGoalContinuation
         || opts._isCapacityFallback || opts._employeeFreshSessionRetry) return 'aside_automatic_retry_unsupported';
     if (opts.images?.length) return 'aside_images_unsupported';

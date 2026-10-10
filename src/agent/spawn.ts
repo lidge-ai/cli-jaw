@@ -1251,7 +1251,7 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     }
 
     if (cli === 'aside') {
-        const admission = asideAdmissionError(mainManaged, opts, permissions);
+        const admission = asideAdmissionError(mainManaged, opts, permissions, origin);
         const cfg = { ...settings['perCli']?.aside };
         const overrides = { ...settings['activeOverrides']?.aside };
         const account = cfg.account, selectedHost = cfg.host;
@@ -1268,10 +1268,21 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
         const cwd = settings['workingDir'] || process.cwd();
         const detected = detectCli('aside');
         const env = makeCleanEnv(applyCliEnvDefaults('aside', opts.env));
+        env[COMPUTER_USE_APPROVAL_ENV] = permissions === 'auto' ? 'auto' : 'safe';
+        const model = (opts.model ?? overrides.model ?? cfg.model) || 'default';
+        if (mainManaged) {
+            setCurrentMainMeta(scopeKey, stripUndefined({
+                origin, cli: 'aside', permissions: capturedPermissions, target: opts.target,
+                chatId: opts.chatId, requestId: opts.requestId, replyViaTarget: opts.replyViaTarget,
+                scopeId: scopeKey, chatSessionId,
+                ...(opts.remoteKey ? { remoteKey: opts.remoteKey } : {}),
+                model, effectiveProvider: 'aside',
+            }));
+        }
         return runAsideBackend({ mainRun, scopeKey, chatSessionId, opts, origin, ownerGeneration,
             persistenceOwner, runPin, prompt, resolve: value => resolve(value), resultPromise,
             binary: detected.path || 'aside', context: { account, host: 'local' }, policy: permissions as 'auto' | 'safe',
-            spawnCwd: cwd, spawnEnv: env, model: (opts.model ?? overrides.model ?? cfg.model) || 'default',
+            spawnCwd: cwd, spawnEnv: env, model,
             effort: (opts.effort ?? overrides.effort ?? cfg.effort) || 'default',
             sysPrompt: customSysPrompt !== undefined ? customSysPrompt : getSystemPrompt(stripUndefined({
                 currentPrompt: prompt, forDisk: false, memorySnapshot, activeCli: 'aside', freshSession: true })) },

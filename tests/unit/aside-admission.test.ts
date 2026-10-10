@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import type { AsideCatalog } from '../../src/shared/aside-contract.ts';
 import type { AsideRunInput, AsideRunCallbacks, AsideRunResult } from '../../src/agent/aside-runtime.ts';
 import type { SpawnOpts, MainRunState } from '../../src/agent/spawn/types.ts';
+import { COMPUTER_USE_APPROVAL_ENV } from '../../lib/mcp/computer-use-constants.ts';
+import { SLACK_TOOL_GRANT_ENV } from '../../src/slack/tool-context.ts';
 
 const catalog: AsideCatalog = {
     context: { account: 'u7', host: 'local' }, entries: [{ id: 'p/model', provider: 'p', modelId: 'model',
@@ -60,7 +62,7 @@ const { submitMessage, __resetSubmitDedupForTest } = await import('../../src/orc
 const { steerHandler } = await import('../../src/cli/handlers-runtime.ts');
 const { makeCommandCtx } = await import('../../src/cli/command-context.ts');
 const { withSessionScope } = await import('../../src/core/session-context.ts');
-const { addBroadcastListener } = await import('../../src/core/bus.ts');
+const { addBroadcastListener, removeBroadcastListener } = await import('../../src/core/bus.ts');
 const terminalNotices = new Map<string, string>();
 addBroadcastListener((type, data) => {
     if (type === 'agent_done' && typeof data['scope'] === 'string') terminalNotices.set(data['scope'], String(data['text'] || ''));
@@ -79,7 +81,9 @@ const { seedDefaultEmployees, checkModelSupport, resolveDispatchableEmployee } =
 const { reloadSettingsFromDisk } = await import('../../src/core/settings-watch.ts');
 const { settingsPatchPreservesActiveRun } = await import('../../src/core/runtime-settings.ts');
 const { clearGoalTimers } = await import('../../src/agent/lifecycle-handler.ts');
-const { settleAllPending } = await import('../../src/orchestrator/request-registry.ts');
+const { settleAllPending, admitRequest, pendingRequestIds } = await import('../../src/orchestrator/request-registry.ts');
+const { resolveSelectedContext } = await import('../../src/orchestrator/dispatch-admission.ts');
+const { createChatSession } = await import('../../src/core/chat-sessions.ts');
 const snapshot = config.snapshotSettingsState();
 let serial = 0;
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -134,6 +138,100 @@ for (const [name, opts, policy, expected] of [
         assert.equal(peekPendingBootstrapPrompt(scopeKey), 'KEEP BOOTSTRAP');
     });
 }
+
+test('heartbeat fails closed before catalog/bootstrap/runtime and settles the captured request once', async t => {
+    const scopeKey = `heartbeat-reject-${++serial}`, requestId = `heartbeat-request-${serial}`;
+    setPendingBootstrapPrompt('KEEP SCHEDULED BOOTSTRAP', scopeKey);
+    admitRequest(requestId, scopeKey);
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const listener = (type: string, data: Record<string, unknown>) => {
+        if (data['requestId'] === requestId) events.push({ type, data });
+    };
+    addBroadcastListener(listener);
+    t.after(() => removeBroadcastListener(listener));
+    const exits: number[] = [];
+    const result = await spawn.spawnAgent('scheduled input', { cli: 'aside', origin: 'heartbeat',
+        scopeKey, chatSessionId: scopeKey, requestId, lifecycle: { onExit: code => { exits.push(code); } } }).promise;
+    assert.equal(result.code, 78); assert.equal(result.text, 'aside_scheduled_unsupported');
+    assert.equal(readCount, 0); assert.equal(runs.length, 0);
+    assert.equal(peekPendingBootstrapPrompt(scopeKey), 'KEEP SCHEDULED BOOTSTRAP');
+    assert.deepEqual(exits, [78]);
+    assert.equal(spawn.activeMainProcesses.has(scopeKey), false);
+    assert.equal(pendingRequestIds().includes(requestId), false);
+    const settlements = events.filter(event => event.type === 'request_settled');
+    assert.equal(settlements.length, 1);
+    assert.equal(settlements[0]!.data['outcome'], 'failed');
+    assert.equal(settlements[0]!.data['error'], 'aside_scheduled_unsupported');
+    const done = events.filter(event => event.type === 'agent_done');
+    assert.equal(done.length, 1); assert.equal(done[0]!.data['text'], 'aside_scheduled_unsupported');
+    assert.equal(done[0]!.data['error'], true);
+    assert.equal(asideAdmissionError(false, {}, 'safe', 'heartbeat'), 'aside_main_only');
+});
+
+test('web origin remains admitted', async () => {
+    const first = start({ origin: 'web' }); await turn();
+    assert.equal(readCount, 1); assert.equal(runs.length, 1);
+    runs[0]!.result.resolve(success());
+    assert.equal((await first.promise).code, 0);
+});
+
+for (const policy of ['safe', 'auto'] as const) {
+    test(`captured ${policy} pins computer-use approval and strips parent/option Slack grants`, async t => {
+        const oldApproval = process.env[COMPUTER_USE_APPROVAL_ENV];
+        const oldGrant = process.env[SLACK_TOOL_GRANT_ENV];
+        t.after(() => {
+            if (oldApproval === undefined) delete process.env[COMPUTER_USE_APPROVAL_ENV];
+            else process.env[COMPUTER_USE_APPROVAL_ENV] = oldApproval;
+            if (oldGrant === undefined) delete process.env[SLACK_TOOL_GRANT_ENV];
+            else process.env[SLACK_TOOL_GRANT_ENV] = oldGrant;
+        });
+        process.env[COMPUTER_USE_APPROVAL_ENV] = 'auto';
+        process.env[SLACK_TOOL_GRANT_ENV] = 'fixture-parent-grant';
+        readGate = Promise.withResolvers<void>();
+        const first = start({ permissions: policy, env: {
+            [COMPUTER_USE_APPROVAL_ENV]: policy === 'safe' ? 'auto' : 'safe',
+            [SLACK_TOOL_GRANT_ENV]: 'fixture-option-grant',
+        } });
+        testSettings.permissions = policy === 'safe' ? 'auto' : 'safe';
+        readGate.resolve(); await turn();
+        const run = runs[0]!;
+        assert.equal(run.input.env?.[COMPUTER_USE_APPROVAL_ENV], policy);
+        assert.equal(Object.hasOwn(run.input.env!, SLACK_TOOL_GRANT_ENV), false);
+        assert.equal(run.input.permission, policy === 'auto' ? 'full-access' : 'guard');
+        run.result.resolve(success()); await first.promise;
+    });
+}
+
+test('running Aside main captures request policy and delivery for request-bound dispatch', async () => {
+    const scopeKey = `meta-aside-${++serial}`, requestId = `meta-request-${serial}`;
+    const chatSessionId = createChatSession('Aside dispatch fixture', { activate: false }).id;
+    const target: NonNullable<SpawnOpts['target']> = { channel: 'slack', targetKind: 'channel',
+        peerKind: 'channel', targetId: 'C_FIXTURE', threadId: '123.456' };
+    readGate = Promise.withResolvers<void>();
+    const first = spawn.spawnAgent('captured metadata', { cli: 'aside', origin: 'web', scopeKey,
+        chatSessionId, requestId, target, chatId: 'C_FIXTURE', replyViaTarget: true,
+        remoteKey: 'fixture-remote-key', model: 'p/model', permissions: 'safe' });
+    // The main metadata must already exist before asynchronous catalog preparation.
+    assert.equal(spawn.getCurrentMainMeta(scopeKey)?.model, 'p/model');
+    testSettings.permissions = 'auto';
+    readGate.resolve(); await turn();
+    assert.equal(runs.length, 1);
+    assert.deepEqual(spawn.getCurrentMainMeta(scopeKey), { origin: 'web', cli: 'aside', permissions: 'safe',
+        target, chatId: 'C_FIXTURE', requestId, replyViaTarget: true, scopeId: scopeKey,
+        chatSessionId, remoteKey: 'fixture-remote-key', model: 'p/model', effectiveProvider: 'aside' });
+    const selected = resolveSelectedContext({ scopeKey, chatSessionId, requestId });
+    assert.equal(selected.ok, true);
+    if (!selected.ok) assert.fail(selected.error);
+    assert.equal(selected.ctx.parentRequestId, requestId);
+    assert.equal(selected.ctx.scopeKey, scopeKey); assert.equal(selected.ctx.chatSessionId, chatSessionId);
+    assert.equal(selected.ctx.permissions, 'safe');
+    assert.deepEqual(selected.ctx.replayMeta.target, target);
+    assert.equal(selected.ctx.replayMeta.replyViaTarget, true);
+    assert.deepEqual(resolveSelectedContext({ scopeKey, chatSessionId, requestId: `${requestId}-wrong` }),
+        { ok: false, status: 409, error: 'dispatch_context_conflict' });
+    runs[0]!.result.resolve(success()); await first.promise;
+    assert.equal(spawn.getCurrentMainMeta(scopeKey), null);
+});
 
 test('capture account/cwd/policy before await; resolve empty defaults once; persist concrete identity and exact final', async () => {
     readGate = Promise.withResolvers<void>();

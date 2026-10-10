@@ -673,6 +673,11 @@ Aside is an experimental main-session CLI backend (`aside`), restricted to an ex
 that account's local catalog. The execution identity captures account, host, concrete
 provider/model/effort, cwd and policy before asynchronous preparation. Safe maps only to
 Aside `guard`, Auto only to `full-access`; arrays and other policies are rejected.
+Scheduled heartbeat runs fail closed before catalog/runtime dispatch with code 78 and
+`aside_scheduled_unsupported`. The `jaw-computer-use` proxy is not registered for Aside;
+its approval environment is pinned to the captured policy (`auto` or `safe`), overriding
+inherited values. Main metadata captures request ID, chat/session scope, policy and
+delivery target for request-bound dispatch lookup, then carries the resolved model.
 Workers, internal/flush calls, images, blind retries/fallbacks and native Code/pools are
 unsupported. Normal/default steer and `/steer` queue one follow-up; `/queue steer` is
 rejected before queue removal or process control. Structured owned replay selects finals,
