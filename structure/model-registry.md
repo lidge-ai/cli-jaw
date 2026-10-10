@@ -187,3 +187,62 @@ probe." 카탈로그 렌더 한 번이 프로세스를 띄우면 로그인 프�
 - [runtime integration](runtime-integration.md) — transport 선택과 native adapter
 - [server API](server_api.md) — `/api/cli-registry`, `/api/cli-status`
 - [commands](commands.md) — 슬래시 커맨드에서의 모델 선택
+
+## Aside account catalog boundary
+
+Aside is not yet an executable Jaw engine in this layer. Its installed CLI can
+be invoked separately with an explicit account and host; registering model data
+does not by itself add a Jaw runtime or a native Code provider.
+
+Aside keeps custom provider models in the selected account's `models.json`, under
+`providers.<provider>.models`. Model identity includes the provider and model ID;
+a model ID alone can collide across providers. Readers must project only model
+metadata, because the same provider object can also contain credentials. No raw
+provider object belongs in a registry response, log, or browser bundle.
+
+The account's configured `defaultModel` is a preference, separate from registered
+models. An account model-ID cache is also separate: its presence does not establish
+current entitlement, model capabilities, or a complete builtin catalog. A missing
+or malformed profile must not silently borrow another account's models. A remote
+host must not be represented by a local profile's inventory.
+
+`src/agent/aside-catalog.ts` implements `readAsideCatalog(context, {homeDir?})`.
+The caller must select `account: uN` and `host: local`; the optional trusted home
+injection still resolves only `.aside/u/N/{models,settings}.json`. There is no
+arbitrary catalog filepath, profile fallback, CLI invocation, login, settings
+write, or provider query. Each read is fresh and bounded to 2 MiB per file,
+64 providers, 512 registered models per provider, 2048 registered models total,
+and 2048 cached IDs total. IDs and names are bounded to 256 characters. Profile
+components and files reject symlinks, catalog files reject hard links, and opened
+file/profile identities are checked again before accepting parsed data.
+
+The shared types live in `src/shared/aside-contract.ts`. Registered `entries`
+carry qualified IDs, safe metadata, and only non-null known `thinkingLevelMap`
+entries; `efforts` derives from those entries, including numeric zero. Initial
+selectable levels are `off|minimal|low|medium|high|xhigh|max`; unknown advertised
+levels and the proactive `ultrabrowse` mode are excluded from selection. Missing
+maps report unknown capability. `cachedIds` always report unknown capability and
+never become registered entries. `configuredDefault` projects only provider,
+modelId, thinkingLevel and fastMode; `defaultModel` is its concrete qualified ID,
+never a guess from catalog order. These observations establish neither provider
+entitlement nor builtin catalog completeness.
+
+`resolveAsideSelection(catalog, model, effort)` resolves the `default` sentinel
+through the observed preference or selects an exact registered qualified ID.
+Cached IDs alone cannot select a model. A default-only profile is partial and
+can resolve its concrete preference, but unknown capabilities cannot admit a
+new effort. Unsupported effort values fail explicitly rather than degrading.
+The result carries account, local host, provider, modelId, qualified model and
+nullable effort; fastMode remains preference metadata rather than an effort.
+
+Missing/empty inventory is unavailable; cached/default-only inventory and usable
+metadata with a failed companion file are partial. Malformed, oversized or
+duplicate model data discards that file's projection and returns stable sanitized
+diagnostics without raw JSON, credentials or paths. A failed models read blocks
+selection, including default resolution; a failed settings read still permits an
+explicit registered model. No failed read retains an earlier account snapshot.
+
+Catalog discovery reads bounded local data without starting an agent turn,
+logging in, modifying Aside settings, or querying a paid model. Execution remains
+a separate capability: a successful CLI exit alone does not prove a completed
+agent turn, and terminating that CLI does not prove the Aside session stopped.
