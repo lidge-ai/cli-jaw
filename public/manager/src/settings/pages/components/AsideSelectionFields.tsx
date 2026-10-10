@@ -14,7 +14,7 @@ export function AsideSelectionFields({ id, account, host, model, effort, invento
     const efforts = asideEffortChoices(inventory, model);
     const error = asideSelectionError(inventory, model, effort);
     return <>
-        <p className="settings-percli-note">Experimental · local main agent only. Account selection does not confirm sign-in or model access.</p>
+        <p className="settings-percli-note">Experimental · local main agent only. Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected. Account selection does not confirm sign-in or model access.</p>
         <TextField id={`${id}-account`} label="Aside account" value={account} placeholder="uN" disabled={disabled}
             error={isAsideAccount(account) ? null : 'Enter an explicit account (uN).'} onChange={onAccountChange} />
         <TextField id={`${id}-host`} label="Host" value={host || 'local'} disabled

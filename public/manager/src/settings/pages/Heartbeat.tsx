@@ -65,6 +65,7 @@ type HeartbeatBlock = {
     target?: string;
 };
 type SettingsSnapshot = {
+    cli?: string;
     heartbeat?: HeartbeatBlock;
     perCli?: Record<string, unknown>;
     [key: string]: unknown;
@@ -178,6 +179,11 @@ export default function Heartbeat({ port, client, dirty, registerSave }: Setting
                 title="Heartbeat"
                 hint="Background prompts the agent runs on a schedule."
             >
+                {settingsSnap.state.data.cli === 'aside' ? (
+                    <div className="settings-inline-notice" role="status">
+                        <p>Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected. Choose another main runtime in Agent settings to use heartbeat.</p>
+                    </div>
+                ) : null}
                 <ToggleField
                     id="hb-enabled"
                     label="Heartbeat enabled"

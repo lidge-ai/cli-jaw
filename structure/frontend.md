@@ -860,3 +860,11 @@ Aside exposes no fast-mode or transport switch. Employee, flush and fallback cho
 exclude it. Classic standalone settings uses this same Manager implementation rather
 than a second account form. Binary presence and registered metadata do not establish
 login status; authentication remains unknown until independently observed.
+
+Both selection surfaces explicitly warn that scheduled heartbeat runs with Aside as
+the main runtime are unsupported and will be rejected. The Manager Heartbeat page
+shows an actionable notice when the saved main CLI is Aside, directing the user to
+choose another main runtime in Agent settings. The Classic heartbeat modal reads
+the saved main CLI when opened and shows the same guidance. Classic picker help and
+heartbeat notices use the shipped ko/en/ja/zh locale dictionaries. These notices do
+not change heartbeat enablement or save settings.

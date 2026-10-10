@@ -522,7 +522,7 @@ export function onCliChange(save = true): void {
         const defaultOption = Array.from(modelSel.options).find(o => o.value === 'default');
         if (defaultOption && meta?.observedDefaultModel) defaultOption.textContent = `Default (${meta.observedDefaultModel})`;
         modelSel.disabled = models.length === 0;
-        modelSel.title = 'Experimental · local main agent only. Configure the explicit account in Settings / Agent.';
+        modelSel.title = t('cli.asideHelp');
     } else if (meta?.modelNote && modelSel) {
         modelSel.innerHTML = `<option value="">${escapeHtml(meta.modelNote)}</option>`;
         modelSel.title = meta.modelNote;

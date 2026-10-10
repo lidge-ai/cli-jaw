@@ -14,6 +14,7 @@ for (const [key, value] of Object.entries(replacements)) globals[key] = value;
 const { act, createElement } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { default: Agent } = await import('../../public/manager/src/settings/pages/Agent');
+const { default: Heartbeat } = await import('../../public/manager/src/settings/pages/Heartbeat');
 const { default: ModelProvider } = await import('../../public/manager/src/settings/pages/ModelProvider');
 const { useAsideModels, asideModelChoices, asideEffortChoices, asideSelectionError, unwrapAsideCatalog } = await import('../../public/manager/src/settings/pages/components/aside-models');
 const { runtimeModelFor, auxiliaryRuntimeOptions } = await import('../../public/manager/src/settings/pages/components/agent/agent-meta');
@@ -57,6 +58,8 @@ function apiFixture(initial = {
             reads.push(path);
             if (path.startsWith('/api/aside/models?')) return await readCatalog(new URL(path, 'http://fixture').searchParams.get('account')!) as T;
             if (path === '/api/settings') return snapshot as T;
+            if (path === '/api/heartbeat') return { jobs: [] } as T;
+            if (path === '/api/heartbeat-md') return { content: '' } as T;
             if (path === '/api/cli-registry') return { ok: true, data: { aside: { label: 'Aside', models: ['default'], efforts: [] }, claude: { label: 'Claude', models: ['sonnet'], efforts: [] } } } as T;
             if (path === '/api/cli-status') return { aside: { available: true, capabilityReady: true, checkedCapability: 'main', probeState: 'fresh' } } as T;
             if (path === '/api/memory-files') return { cli: 'claude', model: 'sonnet' } as T;
@@ -71,9 +74,9 @@ function apiFixture(initial = {
         },
         async post() { throw new Error('Unexpected POST'); }, async delete() { throw new Error('Unexpected DELETE'); },
     };
-    return { client, writes, reads, snapshot: () => snapshot, fail: (error: Error | null) => { failure = error; }, catalogs: (fn: typeof readCatalog) => { readCatalog = fn; } };
+    return { client, writes, reads, snapshot: () => snapshot, mainCli: (cli: string) => { snapshot = { ...snapshot, cli, heartbeat: { enabled: true } }; }, fail: (error: Error | null) => { failure = error; }, catalogs: (fn: typeof readCatalog) => { readCatalog = fn; } };
 }
-async function mount(t: TestContext, page: typeof Agent | typeof ModelProvider, client: SettingsClient) {
+async function mount(t: TestContext, page: typeof Agent | typeof ModelProvider | typeof Heartbeat, client: SettingsClient) {
     const container = dom.window.document.createElement('div'); dom.window.document.body.append(container);
     const root = createRoot(container), dirty = createDirtyStore();
     let save: SaveHandler | null = null;
@@ -135,6 +138,7 @@ for (const [name, page, prefix] of [['Agent', Agent, 'agent-aside'], ['Model def
         const api = apiFixture();
         const view = await mount(t, page, api.client);
         assert.equal(api.writes.length, 0);
+        assert.match(view.container.textContent!, /Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected/);
         assert.equal(view.dirty.isDirty(), false);
         await view.input(`${prefix}-account`, 'u2');
         await view.choose(`${prefix}-model`, 'vendor/second');
@@ -309,3 +313,20 @@ test('Agent CLI switch roundtrip restores pending Aside model and effort without
     await view.save();
     assert.deepEqual((api.writes[0]!['activeOverrides'] as Record<string, unknown>)['aside'], { model: 'vendor/first', effort: 'low' });
 });
+
+for (const cli of ['aside', 'claude']) {
+    test(`Heartbeat: scheduled-run notice ${cli === 'aside' ? 'appears' : 'is absent'} with main CLI ${cli}`, async t => {
+        const api = apiFixture(); api.mainCli(cli);
+        const view = await mount(t, Heartbeat, api.client);
+        const notice = view.container.querySelector('.settings-inline-notice[role="status"]');
+        if (cli === 'aside') {
+            assert.ok(notice);
+            assert.match(notice.textContent!, /Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected/);
+            assert.match(notice.textContent!, /Choose another main runtime in Agent settings to use heartbeat/);
+        } else {
+            assert.equal(notice, null);
+        }
+        assert.equal(view.container.querySelector<HTMLInputElement>('#hb-enabled')!.checked, true);
+        assert.equal(api.writes.length, 0);
+    });
+}

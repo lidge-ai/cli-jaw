@@ -14,8 +14,14 @@ interface HeartbeatData {
     jobs: HeartbeatJob[];
 }
 
+let mainCli: string | undefined;
+
 export async function openHeartbeatModal(): Promise<void> {
-    const data = await api<HeartbeatData>('/api/heartbeat');
+    const [data, settings] = await Promise.all([
+        api<HeartbeatData>('/api/heartbeat'),
+        api<{ cli?: string }>('/api/settings'),
+    ]);
+    mainCli = settings?.cli;
     state.heartbeatJobs = (data?.jobs || []).map(normalizeHeartbeatJob);
     state.heartbeatErrors = collectHeartbeatErrors(state.heartbeatJobs as HeartbeatJob[]);
     renderHeartbeatJobs();
@@ -74,6 +80,13 @@ export function renderHeartbeatJobs(): void {
                 </div>
             `;
         }).join('');
+    }
+    if (mainCli === 'aside') {
+        const notice = document.createElement('p');
+        notice.className = 'hb-schedule-meta hb-help';
+        notice.setAttribute('role', 'status');
+        notice.textContent = t('hb.asideUnsupported');
+        container.prepend(notice);
     }
     const active = jobs.filter(j => j.enabled).length;
     const btn = document.getElementById('hbSidebarBtn');
