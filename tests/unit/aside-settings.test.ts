@@ -52,6 +52,7 @@ function apiFixture(initial = {
     const writes: Record<string, unknown>[] = [];
     const reads: string[] = [];
     const client: SettingsClient = {
+        url: (path: string) => `/i/3457${path}`,
         async get<T>(path: string) {
             reads.push(path);
             if (path.startsWith('/api/aside/models?')) return await readCatalog(new URL(path, 'http://fixture').searchParams.get('account')!) as T;
