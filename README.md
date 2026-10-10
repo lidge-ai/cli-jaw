@@ -623,7 +623,9 @@ Public code and product docs live here. Private planning and history live only i
 
 ### Aside (experimental)
 
-Aside can run main sessions on the local host with an explicit account selector:
+Select Aside in Settings → Agent, then enter the local account ID and select a
+registered model. Model defaults uses the same account-scoped controls. You can also
+configure the explicit account selector:
 `perCli.aside = { "account": "u0", "host": "local", "model": "default", "effort": "default" }`.
 Catalog discovery reads only that account's allowlisted local model metadata; installed
 binary detection does not verify authentication. Safe uses guard; Auto uses full-access.

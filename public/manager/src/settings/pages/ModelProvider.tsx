@@ -16,6 +16,7 @@ import {
     usePageSnapshot,
     type SnapshotState,
 } from './page-shell';
+import { useAsideModels, asideSelectionError } from './components/aside-models';
 import { PerCliRow, type PiRegistration } from './components/PerCliRow';
 import { metaFor, normalizeCliMetaRegistry, selectableRuntimeOptions, isRetiredCliSelection, retiredRuntimeLabel } from './components/agent/agent-meta';
 import type { CliMeta, PerCliEntry } from './components/agent/agent-meta';
@@ -29,9 +30,9 @@ type ModelSnapshot = {
     pi?: PiSettingsView;
     [key: string]: unknown;
 };
-type ModelInstance = Pick<SettingsPageProps, 'client' | 'port' | 'dirty'>;
+type ModelInstance = Pick<SettingsPageProps, 'client' | 'port' | 'instanceUrl' | 'dirty'>;
 type BoundSnapshot = { instance: ModelInstance; value: ModelSnapshot };
-const ownsModelKey = (key: string) => key === 'fallbackOrder' || key.startsWith('perCli.');
+const ownsModelKey = (key: string) => key === 'fallbackOrder' || key.startsWith('perCli.') || key === 'activeOverrides.aside.model' || key === 'activeOverrides.aside.effort';
 
 function savedModelSnapshot(updated: unknown): ModelSnapshot {
     const value = updated && typeof updated === 'object' && 'data' in updated ? updated.data : updated;
@@ -62,8 +63,8 @@ export function buildResetOverridesPatch(snapshot: ModelSnapshot): {
     return { activeOverrides };
 }
 
-export default function ModelProvider({ port, client, dirty, registerSave }: SettingsPageProps) {
-    const instance = useMemo<ModelInstance>(() => ({ client, port, dirty }), [client, port, dirty]);
+export default function ModelProvider({ port, instanceUrl, client, dirty, registerSave }: SettingsPageProps) {
+    const instance = useMemo<ModelInstance>(() => ({ client, port, instanceUrl, dirty }), [client, port, instanceUrl, dirty]);
     const activeInstance = useRef<ModelInstance | null>(null);
     const activeOperation = useRef<{ instance: ModelInstance; kind: 'save' | 'reset'; promise: Promise<void> } | null>(null);
     const metadataGeneration = useRef(0);
@@ -87,6 +88,20 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [cliMeta, setCliMeta] = useState<Record<string, CliMeta> | null>(null);
+
+    const asideDraft = perCliDraft['aside'];
+    const aside = useAsideModels(client, instanceUrl, port, asideDraft?.account || '', !!asideDraft);
+    const asideSaveError = asideDraft ? asideDraft.host !== 'local' ? 'Aside requires the local host.'
+        : asideSelectionError(aside.inventory, asideDraft.model || '', asideDraft.effort || '') : null;
+
+    useEffect(() => {
+        for (const [key, entry] of dirty.pending) {
+            if (key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.')) {
+                const valid = !asideSaveError;
+                if (entry.valid !== valid) dirty.set(key, { ...entry, valid });
+            }
+        }
+    }, [asideSaveError, dirty]);
 
     useLayoutEffect(() => {
         activeInstance.current = instance; activeOperation.current = null; ++metadataGeneration.current;
@@ -159,8 +174,15 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
         const pending = activeOperation.current;
         if (pending) return pending.kind === 'save' ? pending.promise
             : Promise.reject(new Error('Wait for the active override reset before saving.'));
+        if ([...dirty.pending.keys()].some(key => key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.')) && asideSaveError) return Promise.reject(new Error(asideSaveError));
         const bundle = Object.fromEntries(Object.entries(dirty.saveBundle()).filter(([key]) => ownsModelKey(key)));
         if (Object.keys(bundle).length === 0) return Promise.resolve();
+        if (Object.keys(bundle).some(key => key.startsWith('perCli.aside.') || key.startsWith('activeOverrides.aside.')) && asideSaveError) return Promise.reject(new Error(asideSaveError));
+        if (bundle['fallbackOrder'] && (bundle['fallbackOrder'] as string[]).includes('aside')) return Promise.reject(new Error('Aside cannot be used as a fallback.'));
+        if (Object.hasOwn(bundle, 'perCli.aside.account')) {
+            bundle['activeOverrides.aside.model'] = '';
+            bundle['activeOverrides.aside.effort'] = '';
+        }
         const patch = expandPatch(bundle);
         const submitted = new Map([...dirty.pending].filter(([key]) => Object.hasOwn(bundle, key)));
         setSaving(true); setSaveError(null);
@@ -182,7 +204,7 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
         });
         activeOperation.current = operation;
         return operation.promise;
-    }, [client, dirty, instance, loadCliMeta, refresh, setData]);
+    }, [client, dirty, instance, loadCliMeta, refresh, setData, asideSaveError]);
 
     useEffect(() => {
         if (!registerSave) return;
@@ -254,6 +276,8 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                             setValue={(next) => { if (canEdit()) setPerCliDraft({ ...perCliDraft, [cli]: next }); }}
                             setEntry={setEntry}
                             client={client}
+                            aside={aside}
+                            asideOverride={overrides[cli] || {}}
                             pi={piDraft}
                             setPi={(next) => { if (canEdit()) setPiDraft(next); }}
                             onPiRegistered={onPiRegistered}
@@ -270,6 +294,7 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                     id="model-fallbackOrder"
                     label="Fallback order"
                     error={(() => {
+                        if (fallback.includes('aside')) return 'Aside is main-only. Remove it from the fallback order.';
                         const retired = fallback.find(isRetiredCliSelection);
                         if (!retired) return null;
                         const name = retiredRuntimeLabel(retired).replace(' (retired)', '');
@@ -283,7 +308,7 @@ export default function ModelProvider({ port, client, dirty, registerSave }: Set
                         setEntry('fallbackOrder', {
                             value: next,
                             original: data.fallbackOrder || [],
-                            valid: !next.some(isRetiredCliSelection),
+                            valid: !next.includes('aside') && !next.some(isRetiredCliSelection),
                         });
                     }}
                     placeholder="cli name"

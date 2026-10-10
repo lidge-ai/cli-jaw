@@ -77,7 +77,7 @@ export function renderEmployees(): void {
         el.innerHTML = `<div style="color:var(--text-dim);font-size:11px;padding:4px 0">${t('emp.addPrompt')}</div>`;
         return;
     }
-    const cliKeys = getCliKeys();
+    const cliKeys = getCliKeys().filter(cli => cli !== 'aside');
     el.innerHTML = employees.map(a => {
         const isStatic = a.source === 'static';
         const models = MODEL_MAP[a.cli] || [];
@@ -115,7 +115,7 @@ export function renderEmployees(): void {
         // the Model column.
         const cliField = isStatic
             ? `<select disabled title="CLI fixed for built-in employee"><option>${escapeHtml(a.cli)}</option></select>`
-            : `<select data-emp-cli="${escapeHtml(a.id)}">${cliKeys.map(c => `<option${a.cli === c ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>`;
+            : `<select data-emp-cli="${escapeHtml(a.id)}">${a.cli === 'aside' ? '<option value="aside" selected disabled>Aside (main-only)</option>' : ''}${cliKeys.map(c => `<option${a.cli === c ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>`;
         const roleField = isStatic
             ? `<div style="font-size:11px;color:var(--text-dim);padding:4px 0">${escapeHtml(a.role || '')}</div>`
             : `<select data-emp-role="${escapeHtml(a.id)}">${ROLE_PRESETS.map(r => `<option value="${r.value}"${presetVal === r.value ? ' selected' : ''}>${r.label}</option>`).join('')}</select>
@@ -136,7 +136,7 @@ export function renderEmployees(): void {
                 </div>
                 <div>
                     <label>Model</label>
-                    <select data-emp-model="${escapeHtml(a.id)}">
+                    <select data-emp-model="${escapeHtml(a.id)}"${a.cli === 'aside' ? ' disabled title="Aside supports the main agent only"' : ''}>
                         <option value="default"${selectedModel === 'default' ? ' selected' : ''}>default</option>
                         ${models.map(m => `<option${selectedModel === m ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
                         ${selectedModel !== 'default' && !models.includes(selectedModel) ? `<option selected>${escapeHtml(selectedModel)}</option>` : ''}

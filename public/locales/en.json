@@ -273,6 +273,8 @@
   "role.label.security": "Security",
   "role.label.testing": "Testing",
   "role.label.custom": "Custom...",
+  "cli.asideHelp": "Experimental · local main agent only. Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected. Configure the explicit account in Settings / Agent.",
+  "hb.asideUnsupported": "Scheduled heartbeat runs are unsupported with Aside as the main runtime and will be rejected. Choose another main runtime in Agent settings to use heartbeat.",
   "hb.empty": "No heartbeats",
   "hb.name": "Name",
   "hb.prompt": "Prompt...",

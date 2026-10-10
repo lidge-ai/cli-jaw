@@ -86,8 +86,11 @@ export function sanitizeSettingsInput(
                         && !field.split('/').some(part => !part || part === '.' || part === '..')));
             if (!valid) { delete provider[key]; invalidPaths.push(`${group}.aside.${key}`); }
         }
-        if (Object.hasOwn(provider, 'model') && provider['model'] === '') provider['model'] = 'default';
-        if (Object.hasOwn(provider, 'effort') && provider['effort'] === '') provider['effort'] = 'default';
+        // Empty overrides clear the active choice; only saved defaults normalize to the sentinel.
+        if (group === 'perCli') {
+            if (Object.hasOwn(provider, 'model') && provider['model'] === '') provider['model'] = 'default';
+            if (Object.hasOwn(provider, 'effort') && provider['effort'] === '') provider['effort'] = 'default';
+        }
         value[group] = { ...entries, aside: provider };
     }
 

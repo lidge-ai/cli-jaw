@@ -271,6 +271,8 @@
   "role.label.security": "安全",
   "role.label.testing": "测试",
   "role.label.custom": "自定义...",
+  "cli.asideHelp": "实验性功能 · 仅限本地主要代理。使用 Aside 作为主运行时时，不支持定时心跳运行，运行将被拒绝。请在设置 / 代理中明确指定账户。",
+  "hb.asideUnsupported": "使用 Aside 作为主运行时时，不支持定时心跳运行，运行将被拒绝。要使用心跳，请在代理设置中选择其他主运行时。",
   "hb.empty": "暂无 heartbeat",
   "hb.name": "名称",
   "hb.prompt": "提示...",

@@ -225,8 +225,9 @@ function syncCliOptionSelects(settings: SettingsData | null = null): void {
     const flushCli = document.getElementById('flushCli') as HTMLSelectElement | null;
     if (flushCli) {
         const current = settings?.memory?.cli || flushCli.value || '';
-        flushCli.innerHTML = '<option value="">(active CLI)</option>' +
-            cliKeys.map(cli => `<option value="${escapeHtml(cli)}">${escapeHtml(cliDisplayLabel(cli))}</option>`).join('');
+        flushCli.innerHTML = (settings?.cli === 'aside' || selCli?.value === 'aside' ? '' : '<option value="">(active CLI)</option>') +
+            cliKeys.filter(cli => cli !== 'aside').map(cli => `<option value="${escapeHtml(cli)}">${escapeHtml(cliDisplayLabel(cli))}</option>`).join('');
+        if (current === 'aside') { appendCustomOption(flushCli, current); const option = Array.from(flushCli.options).find(o => o.value === current); if (option) { option.disabled = true; option.textContent = 'Aside (main-only)'; } }
         preserveRetiredRuntimeOption(flushCli, current);
         if (Array.from(flushCli.options).some(o => o.value === current)) flushCli.value = current;
     }
@@ -290,7 +291,16 @@ function syncActiveEffortOptions(cli: string, selected = '', model?: string): vo
         cli,
         model ?? (document.getElementById('selModel') as HTMLSelectElement | null)?.value ?? '',
     );
-    const effortsList = resolveEffortChoices(meta, activeModel, providerEfforts, cliProvider || undefined);
+    const effortsList = cli === 'aside' ? meta?.effortsByModel?.[activeModel || 'default'] || [] : resolveEffortChoices(meta, activeModel, providerEfforts, cliProvider || undefined);
+    if (cli === 'aside') {
+        const valid = !selected || selected === 'default' || effortsList.includes(selected);
+        selEffort.innerHTML = '<option value="">(default)</option>' + effortsList.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
+        if (!valid) { appendCustomOption(selEffort, selected); const option = Array.from(selEffort.options).find(o => o.value === selected); if (option) { option.disabled = true; option.textContent = `${selected} (unavailable)`; } }
+        selEffort.value = selected === 'default' ? '' : selected;
+        selEffort.disabled = effortsList.length === 0 && valid;
+        selEffort.title = valid ? 'Aside effort belongs to the selected concrete model.' : 'Saved Aside effort is unavailable.';
+        return;
+    }
     if (effortsList.length === 0) {
         const note = meta?.effortNote || '— none';
         selEffort.innerHTML = `<option value="">${escapeHtml(note)}</option>`;
@@ -388,12 +398,13 @@ export async function loadSettings(): Promise<void> {
     const ao = s.activeOverrides?.[s.cli] || {};
     const pc = s.perCli?.[s.cli] || {};
     const activeModel = ao.model || pc.model;
-    const activeEffort = ao.effort ?? pc.effort ?? '';
+    const activeEffort = s.cli === 'aside' ? ao.effort || pc.effort || '' : ao.effort ?? pc.effort ?? '';
     const selModel = document.getElementById('selModel') as HTMLSelectElement | null;
     if (activeModel && selModel) {
         const displayModel = normalizeModelForDisplay(s.cli, activeModel);
         if (displayModel && !Array.from(selModel.options).some(o => o.value === displayModel)) {
             appendCustomOption(selModel, displayModel);
+            if (s.cli === 'aside') { const option = Array.from(selModel.options).find(o => o.value === displayModel); if (option) { option.disabled = true; option.textContent = `${displayModel} (unavailable)`; } }
         }
         selModel.value = displayModel;
     }
@@ -506,7 +517,13 @@ export function onCliChange(save = true): void {
         syncActiveEffortOptions(cli);
         return;
     }
-    if (meta?.modelNote && modelSel) {
+    if (cli === 'aside' && modelSel) {
+        setSelectOptions(modelSel, models);
+        const defaultOption = Array.from(modelSel.options).find(o => o.value === 'default');
+        if (defaultOption && meta?.observedDefaultModel) defaultOption.textContent = `Default (${meta.observedDefaultModel})`;
+        modelSel.disabled = models.length === 0;
+        modelSel.title = t('cli.asideHelp');
+    } else if (meta?.modelNote && modelSel) {
         modelSel.innerHTML = `<option value="">${escapeHtml(meta.modelNote)}</option>`;
         modelSel.title = meta.modelNote;
         modelSel.disabled = true;
@@ -537,7 +554,7 @@ export function onCliChange(save = true): void {
         saveActiveCliSettings();
     };
     if (!modelSel) { if (save) updateSettings(); return; }
-    modelSel.parentElement?.appendChild(inp);
+    if (cli !== 'aside') modelSel.parentElement?.appendChild(inp);
     modelSel.onchange = function () {
         if ((this as HTMLSelectElement).value === '__custom__') {
             inp.style.display = 'block';
@@ -562,13 +579,13 @@ export function onCliChange(save = true): void {
             || selCli.value !== cli
             || document.getElementById('selCliProvider') !== providerSel
             || document.getElementById('selModel') !== modelSel
-            || document.getElementById('selModelCustom') !== inp
+            || (cli !== 'aside' && document.getElementById('selModelCustom') !== inp)
             || document.getElementById('selEffort') !== effortSel
             || ((meta?.providers?.length ?? 0) > 0 && getSelectedCliProvider(cli) !== cliProvider)) return;
         const ao = s.activeOverrides?.[cli] || {};
         const pc = s.perCli?.[cli] || {};
         const model = ao.model || pc.model;
-        const effort = ao.effort ?? pc.effort ?? '';
+        const effort = cli === 'aside' ? ao.effort || pc.effort || '' : ao.effort ?? pc.effort ?? '';
         if (cli !== 'pi' && meta?.providers?.length) {
             const savedProvider = pc.provider || meta.defaultProvider || '';
             if (savedProvider !== cliProvider) return;
@@ -576,6 +593,7 @@ export function onCliChange(save = true): void {
         if (model && modelSel) {
             const displayModel = normalizeModelForDisplay(cli, model);
             appendCustomOption(modelSel, displayModel);
+            if (cli === 'aside' && !models.includes(displayModel)) { const option = Array.from(modelSel.options).find(o => o.value === displayModel); if (option) { option.disabled = true; option.textContent = `${displayModel} (unavailable)`; } }
             modelSel.value = displayModel;
         }
         syncActiveEffortOptions(cli, effort);
@@ -595,7 +613,12 @@ export async function saveActiveCliSettings(): Promise<void> {
     const effortEl = document.getElementById('selEffort') as HTMLSelectElement | null;
     const overrides: Record<string, PerCliConfig> = {};
     overrides[cli] = { model };
-    if (effortEl && !effortEl.disabled) overrides[cli].effort = effortEl.value || '';
+    if (effortEl && (!effortEl.disabled || cli === 'aside')) overrides[cli].effort = effortEl.value || (cli === 'aside' ? 'default' : '');
+    if (cli === 'aside') {
+        const meta = getCliMeta(cli);
+        const effort = effortEl?.value || '';
+        if (!meta?.models.includes(model) || (effort && !meta.effortsByModel?.[model]?.includes(effort))) return;
+    }
     const patch: Record<string, unknown> = { activeOverrides: overrides };
     const patchMeta = getCliMeta(cli);
     if (cli !== 'pi' && patchMeta?.providers?.length) patch['perCli'] = { [cli]: { provider: getSelectedCliProvider(cli) } };
@@ -609,9 +632,10 @@ export async function saveActiveCliSettings(): Promise<void> {
 export function onFlushCliChange(): void {
     const flushCli = (document.getElementById('flushCli') as HTMLSelectElement)?.value || '';
     const effectiveCli = flushCli || (document.getElementById('selCli') as HTMLSelectElement)?.value || 'claude';
-    const models = MODEL_MAP[effectiveCli] || [];
+    const models = effectiveCli === 'aside' ? [] : MODEL_MAP[effectiveCli] || [];
     const flushModelSel = document.getElementById('flushModel') as HTMLSelectElement | null;
-    setSelectOptions(flushModelSel, models, { includeDefault: true });
+    setSelectOptions(flushModelSel, models, { includeDefault: effectiveCli !== 'aside' });
+    if (flushModelSel) { flushModelSel.disabled = effectiveCli === 'aside'; flushModelSel.title = effectiveCli === 'aside' ? 'Aside cannot run memory flush.' : ''; }
     updateFlushBadge();
     saveFlushAgentSettings();
 }
@@ -624,8 +648,9 @@ export async function loadFlushAgentSidebar(): Promise<void> {
     if (flushCliSel && data.cli) flushCliSel.value = data.cli;
 
     const effectiveCli = data.cli || (document.getElementById('selCli') as HTMLSelectElement)?.value || 'claude';
-    const models = MODEL_MAP[effectiveCli] || [];
-    setSelectOptions(flushModelSel, models, { includeDefault: true });
+    const models = effectiveCli === 'aside' ? [] : MODEL_MAP[effectiveCli] || [];
+    setSelectOptions(flushModelSel, models, { includeDefault: effectiveCli !== 'aside' });
+    if (flushModelSel) { flushModelSel.disabled = effectiveCli === 'aside'; flushModelSel.title = effectiveCli === 'aside' ? 'Aside cannot run memory flush.' : ''; }
     if (flushModelSel && data.model) {
         appendCustomOption(flushModelSel, data.model);
         flushModelSel.value = data.model;
@@ -636,6 +661,7 @@ export async function loadFlushAgentSidebar(): Promise<void> {
 async function saveFlushAgentSettings(): Promise<void> {
     const cli = (document.getElementById('flushCli') as HTMLSelectElement)?.value || '';
     const model = (document.getElementById('flushModel') as HTMLSelectElement)?.value || '';
+    if (cli === 'aside' || (!cli && (document.getElementById('selCli') as HTMLSelectElement)?.value === 'aside')) return;
     await apiJson('/api/memory-files/settings', 'PUT', { cli, model });
 }
 

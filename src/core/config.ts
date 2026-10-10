@@ -638,9 +638,11 @@ function normalizeActiveOverrides(activeOverrides: Record<string, any> = {}, per
             : undefined;
         next[cli] = {
             ...cfg,
-            model: provider === 'claude'
-                ? migrateLegacyClaudeValue(cfg?.model || '')
-                : normalizeModelForCli(cli, cfg?.model),
+            // Aside empty/missing overrides inherit the saved selector; nonempty default is explicit.
+            model: cli === 'aside' ? cfg?.model
+                : provider === 'claude'
+                    ? migrateLegacyClaudeValue(cfg?.model || '')
+                    : normalizeModelForCli(cli, cfg?.model),
         };
     }
     return next;

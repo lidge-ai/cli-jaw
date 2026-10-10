@@ -602,6 +602,8 @@ cli-jaw/
 │   │   ├── SettingsPage.tsx ← full workspace Back/navigation layout
 │   │   ├── settings-icons.ts ← category glyph mapping
 │   │   ├── settings-registry.ts ← scope-filtered page registry
+│   │   ├── pages/components/AsideSelectionFields.tsx ← shared local Aside account/model controls
+│   │   ├── pages/components/aside-models.ts ← context-scoped draft inventory and model/effort projection
 │   │   ├── pages/components/SlackSetup.tsx ← native Slack setup dialog
 │   │   ├── pages/manager/shared.tsx ← Manager locale copy and row controls
 │   │   ├── pages/manager/Display.tsx ← Manager display registry UI settings
@@ -684,6 +686,11 @@ cli-jaw/
 │       ├── aside-replay.test.ts ← observed replay interval and finality contracts
 │       ├── aside-runtime.test.ts ← captured cancellation, terminal selection and cleanup contracts
 │       ├── aside-admission.test.ts ← Aside admission, resume identity, Stop, queued steer and reconciliation
+│       ├── aside-models-route.test.ts ← strict authenticated draft catalog route
+│       ├── aside-selection-completions.test.ts ← dynamic model completion and auxiliary exclusions
+│       ├── aside-selection-status.test.ts ← unverified authentication and readiness
+│       ├── aside-settings-classic.test.ts ← Classic live model selection and auxiliary filtering
+│       ├── aside-settings.test.ts ← shared settings account and model behavior
 │       ├── aside-catalog.test.ts ← local profile fixtures, catalog bounds and selection safety
 │       ├── manager-system-trash-options.test.ts ← literal trash-path forwarding without glob expansion
 │       ├── manager-process-control.test.ts ← loading/error feedback, single-flight actions, confirmation and stale-response guards
