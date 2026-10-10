@@ -80,7 +80,7 @@ export function SettingsShell({ port = null, instanceUrl = null, onDirtyChange, 
     const proxyClient = useMemo(() => port === null ? null : createSettingsClient(port), [port]);
     const unavailableClient: SettingsClient = useMemo(() => {
         const reject = async (): Promise<never> => { throw new Error('No selected instance'); };
-        return { get: reject, put: reject, post: reject, delete: reject };
+        return { url: () => { throw new Error('No selected instance'); }, get: reject, put: reject, post: reject, delete: reject };
     }, []);
     const client = suppliedClient ?? proxyClient ?? unavailableClient;
     const available = entriesForScopes(scopes, hasInstance, locale).filter(entry => entry.scope !== 'manager' || manager);
