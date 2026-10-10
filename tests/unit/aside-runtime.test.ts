@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createAsideRuntime, type AsideRunInput } from '../../src/agent/aside-runtime.ts';
 import { completed, snapshot, started, tool, prior } from './fixtures/aside-runtime/transcript.ts';
@@ -166,4 +167,61 @@ test('transport failure reconciles exact running external session and retains er
     const result = await start(input()).result;
     assert.equal(result.status, 'error'); assert.equal(result.cleanup, 'confirmed'); assert.equal(result.reusable, false);
     assert.equal(h.calls.filter(c => c.includes('stop')).length, 1); assert.match(result.diagnostic!, /agent_transport_failed/);
+});
+
+for (const phase of ['baseline', 'final-replay'] as const) {
+    test(`unconfirmed ${phase} probe close retains every captured command`, async () => {
+        const probes: ChildProcess[] = [];
+        const start = createAsideRuntime({ probeMs: 5, closeMs: 5, killMs: 5,
+            spawn(_binary, args) {
+                const child = new ChildProcess();
+                child.stdout = new PassThrough(); child.stderr = new PassThrough();
+                child.kill = () => true;
+                if (args.includes('repl')) probes.push(child);
+                else queueMicrotask(() => {
+                    child.stderr!.emit('data', Buffer.from('created new session: owned-session\n'));
+                    child.emit('close', 0, null);
+                });
+                return child;
+            },
+        });
+        const run = start({ ...input(), ...(phase === 'baseline' ? { sessionId: 'owned-session' } : {}) });
+        const result = await run.result;
+        assert.equal(result.status, 'error'); assert.equal(result.cleanup, 'uncertain');
+        assert.equal(result.reusable, false); assert.match(result.diagnostic!, /repl_close_unconfirmed/);
+        assert.ok(probes.length > 0);
+        assert.equal(run.commandsClosed(), false);
+        for (const probe of probes) probe.emit('exit', 143, null);
+        assert.equal(run.commandsClosed(), false, 'exit alone never confirms probe close');
+        assert.equal(await run.closeCommands(), false);
+        for (const [index, probe] of probes.entries()) {
+            probe.emit('close', 143, null);
+            assert.equal(run.commandsClosed(), index === probes.length - 1);
+        }
+        assert.equal(await run.closeCommands(), true);
+    });
+}
+
+test('unconfirmed control close stays captured after the main command closes', async () => {
+    const sessionSeen = deferred<void>();
+    let main: ChildProcess | undefined, control: ChildProcess | undefined;
+    const run = createAsideRuntime({ probeMs: 5, closeMs: 5, killMs: 5,
+        read: async () => snapshot([...started, tool], 'running'),
+        spawn(_binary, args) {
+            const child = new ChildProcess(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+            child.kill = () => { if (child === main) child.emit('close', 143, null); return true; };
+            if (args.includes('stop')) control = child;
+            else {
+                main = child;
+                queueMicrotask(() => child.stderr!.emit('data', Buffer.from('created new session: owned-session\n')));
+            }
+            return child;
+        },
+    })(input(), { onSession: () => sessionSeen.resolve() });
+    await sessionSeen.promise; await run.cancel();
+    assert.equal((await run.result).cleanup, 'uncertain');
+    assert.equal(run.commandsClosed(), false);
+    assert.ok(control); assert.ok(main);
+    control.emit('close', 143, null);
+    assert.equal(run.commandsClosed(), true);
 });

@@ -6,6 +6,8 @@ import type { AsideRunInput, AsideRunCallbacks, AsideRunResult } from '../../src
 import type { SpawnOpts, MainRunState } from '../../src/agent/spawn/types.ts';
 import { COMPUTER_USE_APPROVAL_ENV } from '../../lib/mcp/computer-use-constants.ts';
 import { SLACK_TOOL_GRANT_ENV } from '../../src/slack/tool-context.ts';
+import { ChildProcess } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 
 const catalog: AsideCatalog = {
     context: { account: 'u7', host: 'local' }, entries: [{ id: 'p/model', provider: 'p', modelId: 'model',
@@ -25,11 +27,15 @@ mock.module('../../src/agent/aside-catalog.js', { namedExports: { ...catalogs,
     },
 } });
 const runs: Array<{ input: AsideRunInput; callbacks: AsideRunCallbacks; result: PromiseWithResolvers<AsideRunResult>; cancelCount: number }> = [];
+const realRuntime = await import('../../src/agent/aside-runtime.ts');
+let runtimeStart: typeof realRuntime.startAsideRun | undefined;
 mock.module('../../src/agent/aside-runtime.js', { namedExports: {
     startAsideRun(input: AsideRunInput, callbacks: AsideRunCallbacks = {}) {
+        if (runtimeStart) return runtimeStart(input, callbacks);
         const run = { input, callbacks, result: Promise.withResolvers<AsideRunResult>(), cancelCount: 0 };
         runs.push(run);
-        return { result: run.result.promise, cancel() { run.cancelCount++; return Promise.resolve(); } };
+        return { result: run.result.promise, cancel() { run.cancelCount++; return Promise.resolve(); },
+            commandsClosed: () => true, closeCommands: async () => true };
     },
 } });
 const config = await import('../../src/core/config.ts');
@@ -41,7 +47,7 @@ mock.module('../../src/core/config.js', { namedExports: { ...config, settings: t
         Object.assign(testSettings, value);
     },
     detectCli: () => ({ available: true, path: '/fixture/aside' }) } });
-let failTraceStart = false, failLifecycleFinalize = false;
+let failTraceStart = false, failLifecycleFinalize = false, lifecycleExitCount = 0;
 const trace = await import('../../src/trace/store.ts');
 mock.module('../../src/trace/store.js', { namedExports: { ...trace,
     startTraceRun: (...args: Parameters<typeof trace.startTraceRun>) => {
@@ -49,9 +55,17 @@ mock.module('../../src/trace/store.js', { namedExports: { ...trace,
         return trace.startTraceRun(...args);
     },
 } });
+const goalStore = await import('../../src/goal/store.ts');
+let currentGoal: import('../../src/goal/types.ts').GoalState | null = null;
+mock.module('../../src/goal/store.js', { namedExports: { ...goalStore,
+    getActiveGoal: () => currentGoal,
+    goalHasCompletionEvidence: () => true,
+    completeGoal: () => { if (currentGoal) currentGoal.status = 'complete'; return currentGoal; },
+} });
 const realLifecycle = await import('../../src/agent/lifecycle-handler.ts');
 mock.module('../../src/agent/lifecycle-handler.js', { namedExports: { ...realLifecycle,
     handleAgentExit: (...args: Parameters<typeof realLifecycle.handleAgentExit>) => {
+        lifecycleExitCount++;
         if (failLifecycleFinalize) throw new Error('fixture lifecycle observer failure');
         return realLifecycle.handleAgentExit(...args);
     },
@@ -74,9 +88,10 @@ function tokenFor(scope: string): string {
 }
 const { getSessionBucket, upsertSessionBucket, db } = await import('../../src/core/db.ts');
 const { buildAsideResumeKey } = await import('../../src/agent/spawn-env.ts');
-const { getSessionOwnershipGeneration } = await import('../../src/agent/session-persistence.ts');
+const { getSessionOwnershipGeneration, bumpScopeSessionGeneration, bumpSessionOwnershipGeneration } = await import('../../src/agent/session-persistence.ts');
 const { setPendingBootstrapPrompt, peekPendingBootstrapPrompt } = await import('../../src/core/main-session.ts');
 const { triggerMemoryFlushForCurrentSession } = await import('../../src/agent/memory-flush-controller.ts');
+const flushState = await import('../../src/agent/memory-flush-controller.ts');
 const { seedDefaultEmployees, checkModelSupport, resolveDispatchableEmployee } = await import('../../src/core/employees.ts');
 const { reloadSettingsFromDisk } = await import('../../src/core/settings-watch.ts');
 const { settingsPatchPreservesActiveRun } = await import('../../src/core/runtime-settings.ts');
@@ -84,6 +99,7 @@ const { clearGoalTimers } = await import('../../src/agent/lifecycle-handler.ts')
 const { settleAllPending, admitRequest, pendingRequestIds } = await import('../../src/orchestrator/request-registry.ts');
 const { resolveSelectedContext } = await import('../../src/orchestrator/dispatch-admission.ts');
 const { createChatSession } = await import('../../src/core/chat-sessions.ts');
+const { readActivityControl } = await import('../../src/trace/activity-control.ts');
 const snapshot = config.snapshotSettingsState();
 let serial = 0;
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -91,7 +107,8 @@ const success = (sessionId = 'provider-new', finalText = 'ANSWER'): AsideRunResu
     status: 'done', finalText, partialText: '', sessionId, reusable: true, exitCode: 0, cleanup: 'confirmed',
 });
 test.beforeEach(t => {
-    failTraceStart = false; failLifecycleFinalize = false;
+    runtimeStart = undefined; currentGoal = null;
+    failTraceStart = false; failLifecycleFinalize = false; lifecycleExitCount = 0;
     readCount = 0; contexts.length = 0; runs.length = 0; readGate = undefined;
     for (const key of Object.keys(testSettings)) delete testSettings[key];
     Object.assign(testSettings, { ...structuredClone(snapshot.value), cli: 'aside', workingDir: config.JAW_HOME,
@@ -356,6 +373,85 @@ test('late uncertain result never retains or clears a newer run', async () => {
     assert.equal((getSessionBucket.get(`aside:${first.scopeKey}`) as { session_id: string }).session_id, 'NEWER');
     assert.equal(newer.cancelTurn, undefined);
 });
+
+for (const loss of ['new-run', 'run-generation', 'scope-generation', 'global-generation'] as const) {
+    test(`late successful final after ${loss} loss settles only its captured caller`, async t => {
+        const requestId = `stale-request-${++serial}`;
+        const scopeKey = `stale-scope-${serial}`;
+        const chatSessionId = createChatSession('Stale ownership fixture', { activate: false }).id;
+        const first = { scopeKey, chatSessionId, ...spawn.spawnAgent('current task', { cli: 'aside', scopeKey, chatSessionId, requestId }) };
+        await turn();
+        const old = runs[0]!;
+        admitRequest(requestId, first.scopeKey);
+        const originalOwner = spawn.activeMainProcesses.get(first.scopeKey)!;
+        const newer: MainRunState = { process: null, starting: true, steering: false,
+            ownerGeneration: getSessionOwnershipGeneration(first.scopeKey).global,
+            meta: { cli: 'aside', origin: 'web', chatSessionId: first.chatSessionId } };
+        if (loss === 'new-run') spawn.activeMainProcesses.set(first.scopeKey, newer);
+        else if (loss === 'run-generation') originalOwner.ownerGeneration++;
+        else if (loss === 'scope-generation') bumpScopeSessionGeneration(first.scopeKey);
+        else bumpSessionOwnershipGeneration();
+        currentGoal = { id: 'current-goal', objective: 'Keep current work', status: 'active',
+            createdAt: '2026-01-01', updatedAt: '2026-01-01', checkpoints: [] };
+        const goalBefore = structuredClone(currentGoal);
+        const countersBefore = [flushState.memoryFlushCounter, flushState.flushCycleCount];
+        const events: Record<string, unknown>[] = [];
+        const listener = (type: string, data: Record<string, unknown>) => {
+            if (type === 'request_settled' && data['requestId'] === requestId) events.push(data);
+        };
+        addBroadcastListener(listener); t.after(() => removeBroadcastListener(listener));
+        old.result.resolve(success('OLD', 'STALE SUCCESS\n/goal done'));
+        const result = await first.promise;
+        assert.equal(result.code, 0); assert.equal(result.text, 'STALE SUCCESS\n/goal done');
+        assert.deepEqual(db.prepare('SELECT content FROM messages WHERE role = ? AND session_id = ?').all('assistant', first.chatSessionId), []);
+        assert.deepEqual([flushState.memoryFlushCounter, flushState.flushCycleCount], countersBefore);
+        assert.deepEqual(currentGoal, goalBefore);
+        assert.equal(pendingRequestIds().includes(requestId), false);
+        assert.equal(events.length, 1);
+        assert.equal(events[0]!['outcome'], 'completed');
+        assert.equal(lifecycleExitCount, 0, 'stale completions bypass shared lifecycle entirely');
+        assert.equal(spawn.activeMainProcesses.get(first.scopeKey), loss === 'new-run' ? newer : originalOwner);
+        assert.equal(trace.getTraceRun(result.traceRunId!)?.status, 'done');
+        assert.equal(readActivityControl(result.traceRunId!)?.state.closed, true);
+    });
+}
+
+for (const phase of ['baseline', 'final-replay'] as const) {
+    test(`unconfirmed ${phase} probe retains scope and reconciliation waits for all closes`, async () => {
+        const probes: ChildProcess[] = [];
+        runtimeStart = realRuntime.createAsideRuntime({ probeMs: 5, closeMs: 5, killMs: 5,
+            spawn(_binary, args) {
+                const child = new ChildProcess(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+                child.kill = () => true;
+                if (args.includes('repl')) probes.push(child);
+                else queueMicrotask(() => {
+                    child.stderr!.emit('data', Buffer.from('created new session: owned-session\n'));
+                    child.emit('close', 0, null);
+                });
+                return child;
+            },
+        });
+        const scopeKey = `probe-${++serial}`, chatSessionId = `probe-chat-${serial}`;
+        if (phase === 'baseline') {
+            const selection = { account: 'u7', host: 'local' as const, provider: 'p', modelId: 'model', model: 'p/model', effort: 'high' as const };
+            upsertSessionBucket.run(`aside:${scopeKey}`, 'owned-session', 'p/model', buildAsideResumeKey(selection, testSettings.workingDir, 'safe'), 0);
+        }
+        const first = spawn.spawnAgent('probe close fixture', { cli: 'aside', scopeKey, chatSessionId });
+        const owner = spawn.activeMainProcesses.get(scopeKey);
+        const result = await first.promise;
+        assert.equal(result.runtimeOutcome?.status, 'error');
+        assert.equal(spawn.activeMainProcesses.get(scopeKey), owner);
+        assert.equal(spawn.isAgentBusy(scopeKey), true);
+        assert.ok(probes.length > 0);
+        const token = tokenFor(scopeKey);
+        assert.equal(spawn.reconcileAsideScope(scopeKey, chatSessionId, token), false);
+        for (const [index, probe] of probes.entries()) {
+            probe.emit('close', 143, null);
+            assert.equal(spawn.reconcileAsideScope(scopeKey, chatSessionId, token), index === probes.length - 1);
+        }
+        assert.equal(spawn.activeMainProcesses.has(scopeKey), false);
+    });
+}
 
 test('complete resume identity is honored by real backend and changed account starts fresh', async () => {
     const scopeKey = `resume-${++serial}`, chatSessionId = `resume-chat-${serial}`;

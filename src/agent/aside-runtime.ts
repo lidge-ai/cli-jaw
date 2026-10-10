@@ -21,7 +21,7 @@ export interface AsideRunCallbacks {
 }
 export interface AsideRunResult extends RuntimeTurnOutcome {
     sessionId: string | null; reusable: boolean; diagnostic?: string; exitCode: number | null;
-    /** External logical terminal/interruption and local child close are both observed. */
+    /** External logical terminal/interruption and every captured local command close are observed. */
     cleanup: 'confirmed' | 'uncertain';
 }
 export interface AsideRuntimeDependencies {
@@ -38,7 +38,7 @@ const CLOSE_UNCERTAIN = 'Aside local CLI closure is unconfirmed. Session cannot 
 /** All dependencies are captured per owner; production has no test-mode switches. */
 export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) {
     const deps = { ...dependencies };
-    return function start(input: AsideRunInput, callbacks: AsideRunCallbacks = {}): { result: Promise<AsideRunResult>; cancel(): Promise<void> } {
+    return function start(input: AsideRunInput, callbacks: AsideRunCallbacks = {}) {
         // Capture selectors, process environment and observers synchronously, before any read.
         const captured = { ...input, selection: Object.freeze({ ...input.selection }), env: { ...input.env } };
         const observers = { ...callbacks };
@@ -46,6 +46,9 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
         let wakeCancel!: () => void;
         const cancellation = new Promise<void>(resolve => { wakeCancel = resolve; });
         let command: AsideCommand | undefined;
+        const commands = new Set<AsideCommand>();
+        const captureCommand = (launched: AsideCommand) => { commands.add(launched); return launched; };
+        const commandsClosed = () => [...commands].every(capturedCommand => capturedCommand.closed);
         let sessionId: string | null = input.sessionId ?? null;
         let receiptSeen = false;
         let resolveReceipt!: (id: string) => void;
@@ -57,16 +60,18 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
         const read = async (id: string) => {
             const value = deps.read
                 ? await asideWithin(deps.read(captured, id), probeMs)
-                : await readAsideSession(captured, captured.selection, id, deps);
+                : await readAsideSession(captured, captured.selection, id, { ...deps, onCommand: captureCommand });
             if (value === undefined) throw new AsideTransportError('replay_timeout');
             return parseAsideReplay(value, id);
         };
         function result(status: 'done' | 'error' | 'stopped', finalText: string | null, exitCode: number | null, diagnostic?: string, cleanup: 'confirmed' | 'uncertain' = 'confirmed'): AsideRunResult {
+            if (!commandsClosed()) cleanup = 'uncertain';
             return { status, finalText, partialText: '', sessionId, reusable: status === 'done' && cleanup === 'confirmed', exitCode, cleanup,
                 ...(diagnostic ? { diagnostic } : {}) };
         }
         async function cleanup(): Promise<boolean> {
-            return command ? closeAsideCommand(command, closeMs, killMs) : true;
+            await Promise.all([...commands].map(capturedCommand => closeAsideCommand(capturedCommand, closeMs, killMs)));
+            return commandsClosed();
         }
         async function stopOwned(status: 'stopped' | 'error' = 'stopped', failure?: string): Promise<AsideRunResult> {
             let verified = false, terminal = false;
@@ -79,7 +84,7 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
                     const before = await read(sessionId);
                     const interval = inspectAsideInterval(before, baseline);
                     if (interval.outcome === null && !interval.interrupted) {
-                        const control = launchAsideCommand(captured, buildAsideStopArgs(captured.selection, sessionId), { ...(deps.spawn ? { spawn: deps.spawn } : {}) });
+                        const control = captureCommand(launchAsideCommand(captured, buildAsideStopArgs(captured.selection, sessionId), { ...(deps.spawn ? { spawn: deps.spawn } : {}) }));
                         const stopped = await asideWithin(control.completion, probeMs);
                         if (!stopped) await closeAsideCommand(control, closeMs, killMs);
                         if (stopped && stopped.exitCode === 0 && !stopped.failed && !stopped.overflow
@@ -115,7 +120,7 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
                 const report = (text: string) => {
                     if (!cancelled && !sealed) observeAsideCallback(observers.onOutput, safeAsideDiagnostic(text));
                 };
-                command = launchAsideCommand(captured, args, {
+                command = captureCommand(launchAsideCommand(captured, args, {
                     ...(deps.spawn ? { spawn: deps.spawn } : {}),
                     onStdout: report,
                     onStderr: text => {
@@ -126,7 +131,7 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
                         }
                         report(text);
                     },
-                });
+                }));
                 observeAsideCallback(observers.onChild, command.child);
                 const admitted = await asideWithin(Promise.race([
                     receipt.then(() => 'receipt' as const), command.completion.then(() => 'closed' as const),
@@ -157,13 +162,16 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
             } catch (error) {
                 const diagnostic = error instanceof AsideTransportError ? error.message : 'Aside runtime boundary failed.';
                 if (command) return await stopOwned(cancelled ? 'stopped' : 'error', cancelled ? undefined : diagnostic);
-                // No child was admitted; validation/baseline/spawn failure needs no child cleanup.
-                return result(cancelled ? 'stopped' : 'error', null, null, diagnostic);
+                // Baseline preparation can launch a probe even before main admission.
+                const closed = await cleanup();
+                return result(cancelled ? 'stopped' : 'error', null, null, diagnostic, closed ? 'confirmed' : 'uncertain');
             } finally { sealed = true; }
         }
         const pending = execute();
         return {
             result: pending,
+            commandsClosed,
+            closeCommands: cleanup,
             cancel() {
                 // Synchronous latch precedes every await and is idempotent after terminal selection.
                 if (!sealed) { cancelled = true; wakeCancel(); }
@@ -174,4 +182,5 @@ export function createAsideRuntime(dependencies: AsideRuntimeDependencies = {}) 
 }
 export const startAsideRun: (input: AsideRunInput, callbacks?: AsideRunCallbacks) => {
     result: Promise<AsideRunResult>; cancel(): Promise<void>;
+    commandsClosed(): boolean; closeCommands(): Promise<boolean>;
 } = createAsideRuntime();

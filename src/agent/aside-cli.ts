@@ -161,9 +161,10 @@ export function parseAsideRepl(stdout: string, frame: string): unknown {
     try { return JSON.parse(text.slice(begin.length, finish)) as unknown; }
     catch { throw new AsideTransportError('invalid_repl_json'); }
 }
-export async function readAsideSession(input: AsideCommandInput, selection: AsideSelection, id: string, deps: { spawn?: AsideSpawn; probeMs?: number; closeMs?: number; killMs?: number } = {}): Promise<unknown> {
+export async function readAsideSession(input: AsideCommandInput, selection: AsideSelection, id: string, deps: { spawn?: AsideSpawn; probeMs?: number; closeMs?: number; killMs?: number; onCommand?: (command: AsideCommand) => void } = {}): Promise<unknown> {
     const frame = randomUUID();
     const command = launchAsideCommand(input, buildAsideReadArgs(selection, id, frame), { ...deps, maxBytes: ASIDE_REPL_BYTES });
+    deps.onCommand?.(command);
     const result = await asideWithin(command.completion, deps.probeMs ?? ASIDE_PROBE_TIMEOUT_MS);
     if (!result) {
         const closed = await closeAsideCommand(command, deps.closeMs, deps.killMs);

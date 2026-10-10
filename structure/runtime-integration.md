@@ -685,6 +685,11 @@ including exact empty/whitespace answers; CLI logs remain diagnostic. Failed/sto
 uncertain sessions never persist a resumable ID. `cleanup: uncertain` retains only the
 captured scope and blocks automatic queue draining. After manually reconciling that exact
 session in Aside, acknowledge with authenticated `POST /api/orchestrate/aside/reconcile`
-`{sessionId, acknowledgementToken, acknowledged:true}`; the captured local child must have closed. The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
+`{sessionId, acknowledgementToken, acknowledged:true}`; every captured main, read and
+control command must have closed, including probes launched before main admission.
+The token must match that exact retained run, and the Jaw chat must exist even with multi-session disabled. The acknowledgement
 purges pending input, drops the retained owner, and requires fresh input; it never resumes
 or retries the uncertain turn. External tool physical completion is not proved by Stop.
+Completions whose captured run or session generation lost ownership settle only their
+original caller and close their trace/Activity; they cannot enter shared lifecycle
+mutations of MESSAGE history, memory flush counters, goals or queue draining.

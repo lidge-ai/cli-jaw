@@ -20,7 +20,6 @@ import { handoffRuntimeOutcome } from '../runtime/outcome.js';
 import { createPrintActivity, finishPrintActivity } from '../runtime/print-activity.js';
 import { captureExitSettler, settleCapturedExit, type ExitSettler } from './exit-settle.js';
 import { isLifecycleSteerReason } from './kill-reason.js';
-import { ownProcess } from './process-kill.js';
 import { FALLBACK_MAX_RETRIES } from './queue.js';
 import { settleOnce } from '../../orchestrator/request-registry.js';
 import type { SpawnBackendHost, SpawnBackendLocals } from './backend-context.js';
@@ -56,7 +55,8 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
     const model = locals.model || 'default', effort = locals.effort || 'default';
     const sysPrompt = locals.sysPrompt;
     const originalPrompt = locals.prompt;
-    const owned = () => host.activeMainProcesses.get(scopeKey) === run;
+    const owned = () => host.activeMainProcesses.get(scopeKey) === run
+        && run.ownerGeneration === ownerGeneration && isCurrentSessionOwner(persistenceOwner, scopeKey);
     let child: ChildProcess | null = null;
     let childClosed = true;
     let handle: ReturnType<typeof startAsideRun> | undefined;
@@ -150,14 +150,14 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
         if (uncertain && owned()) {
             run.starting = true;
             const acknowledgementToken = randomUUID();
-            const recovery = 'aside_control_uncertain: reconcile the captured session in Aside, then POST /api/orchestrate/aside/reconcile with sessionId, acknowledgementToken and acknowledged:true. Local child close is required. Send fresh input afterward.';
+            const recovery = 'aside_control_uncertain: reconcile the captured session in Aside, then POST /api/orchestrate/aside/reconcile with sessionId, acknowledgementToken and acknowledged:true. All captured local commands must close. Send fresh input afterward.';
             result = { ...result, diagnostic: `${result.diagnostic || 'Aside cleanup is unresolved.'} Jaw chat ID: ${chatSessionId}. External Aside ID: ${result.sessionId || 'unavailable'} (account ${context.account}, local). Acknowledgement token: ${acknowledgementToken}. ${recovery}` };
-            // Repeated Stop can still close the exact local child, without repeating external control.
+            // Repeated Stop closes captured commands without repeating external control.
             run.cancelTurn = () => {
-                if (owned() && child && !childClosed) ownProcess(child).terminate('cancel');
+                if (owned() && handle) void handle.closeCommands().catch(() => {});
             };
             run.reconcileAside = token => {
-                if (token !== acknowledgementToken || !owned() || !childClosed) return false;
+                if (token !== acknowledgementToken || !owned() || !childClosed || (handle && !handle.commandsClosed())) return false;
                 host.queueCtrl.purgeQueueOnStop(scopeKey, 'aside-manual-reconciliation');
                 delete run.cancelTurn;
                 delete run.reconcileAside;
@@ -165,6 +165,24 @@ export function runAsideBackend(locals: AsideLocals, host: AsideHost): SpawnResu
             };
         }
         try { opts.lifecycle?.onExit?.(result.exitCode); } catch { /* observer only */ }
+        if (!owned()) {
+            // A captured terminal still settles its caller, but cannot mutate a newer
+            // session's MESSAGE history, flush counters, goal or queue via lifecycle.
+            const outcome = cancelled ? { ...result, status: 'stopped' as const, finalText: null } : result;
+            if (ctx) {
+                handoffRuntimeOutcome(ctx, outcome);
+                finishPrintActivity(ctx, { kind: 'turn-end', status: outcome.status, finalText: outcome.finalText });
+            }
+            settleOnce(opts.requestId, outcome.status === 'done' ? 'completed' : outcome.status === 'stopped' ? 'cancelled' : 'failed', {
+                text: outcome.finalText ?? '', scope: scopeKey, sessionId: chatSessionId,
+                runtimeStatus: outcome.status, runtimeFinality: outcome.finalText === null ? 'absent' : 'present' });
+            locals.resolve({ text: outcome.finalText ?? '',
+                code: outcome.status === 'done' ? 0 : outcome.status === 'stopped' ? 130 : 1,
+                runtimeOutcome: outcome, ...(ctx?.traceRunId ? { traceRunId: ctx.traceRunId } : {}) });
+            if (run.cancelTurn === cancel) delete run.cancelTurn;
+            settleCapturedExit(scopeKey, exitArm);
+            return;
+        }
         if (!ctx) {
             if (!uncertain && owned()) host.releaseMainRun(scopeKey, child, ownerGeneration);
             const text = result.status === 'error' ? result.diagnostic || 'Aside unavailable.' : '';
