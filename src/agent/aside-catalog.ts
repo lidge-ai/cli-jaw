@@ -42,6 +42,8 @@ export class AsideCatalogError extends Error {
 export interface AsideCatalogReadOptions {
     /** Trusted composition/test seam: OS user home, not an arbitrary catalog file. */
     homeDir?: string;
+    /** Test seam: awaited after each file read so interleaved profile replacement is reproducible. */
+    afterRead?: (source: 'models' | 'settings') => Promise<void> | void;
 }
 
 function fail(code: AsideCatalogErrorCode): never { throw new AsideCatalogError(code); }
@@ -177,9 +179,17 @@ async function profileIdentity(home: string, account: string): Promise<Array<{ p
     return identities;
 }
 
-async function readJson(home: string, account: string, filename: 'models.json' | 'settings.json'): Promise<unknown | undefined> {
+type ProfileIdentity = Array<{ path: string; stat: Stats }>;
+function sameIdentity(a: ProfileIdentity, b: ProfileIdentity): boolean {
+    return a.length === b.length && a.every((item, i) => item.path === b[i]!.path && sameFile(item.stat, b[i]!.stat));
+}
+
+/** `expected` pins one profile directory identity across every file of a discovery operation. */
+async function readJson(home: string, account: string, filename: 'models.json' | 'settings.json',
+    expected: ProfileIdentity): Promise<unknown | undefined> {
     try {
         const identity = await profileIdentity(home, account);
+        if (!sameIdentity(identity, expected)) return fail('unsafe_path');
         const path = join(home, '.aside', 'u', account.slice(1), filename);
         const before = await lstat(path);
         if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || await realpath(path) !== path) return fail('unsafe_path');
@@ -221,9 +231,21 @@ export async function readAsideCatalog(context: AsideContext, options: AsideCata
         configuredDefault: null, defaultModel: null, source: 'local-files', status: 'unavailable', diagnostics: [],
     };
     const account = catalog.context.account;
+    // One profile identity for the whole operation: a directory swapped between the two
+    // reads must not combine one profile's models with another profile's default.
+    let expected: ProfileIdentity;
+    try { expected = await profileIdentity(home, account); }
+    catch (error) {
+        if (!missing(error)) {
+            const code = error instanceof AsideCatalogError ? error.code : 'read_failed';
+            for (const source of ['models', 'settings'] as const) catalog.diagnostics.push({ source, code, message: MESSAGES[code] });
+        }
+        return catalog;
+    }
     for (const source of ['models', 'settings'] as const) {
         try {
-            const value = await readJson(home, account, `${source}.json`);
+            const value = await readJson(home, account, `${source}.json`, expected);
+            await options.afterRead?.(source);
             if (value === undefined) continue;
             if (source === 'models') Object.assign(catalog, parseModels(value));
             else {
@@ -234,6 +256,15 @@ export async function readAsideCatalog(context: AsideContext, options: AsideCata
             const code = error instanceof AsideCatalogError ? error.code : 'read_failed';
             catalog.diagnostics.push({ source, code, message: MESSAGES[code] });
         }
+    }
+    let stable = false;
+    try { stable = sameIdentity(await profileIdentity(home, account), expected); } catch { stable = false; }
+    if (!stable) {
+        // Discard the complete projection; partial data from a replaced profile is never retained.
+        catalog.entries = []; catalog.cachedIds = []; catalog.configuredDefault = null; catalog.defaultModel = null;
+        catalog.diagnostics = (['models', 'settings'] as const).map(source => ({ source, code: 'unsafe_path' as const, message: MESSAGES.unsafe_path }));
+        catalog.status = 'unavailable';
+        return catalog;
     }
     const data = catalog.entries.length > 0 || catalog.cachedIds.length > 0 || catalog.defaultModel !== null;
     catalog.status = catalog.entries.length > 0 && catalog.diagnostics.length === 0 ? 'available' : data ? 'partial' : 'unavailable';

@@ -244,3 +244,26 @@ test('caller context changes during an async read cannot redirect the captured p
     assert.equal(catalog.context.account, 'u0');
     assert.equal(catalog.entries[0]?.modelId, 'original');
 });
+
+test('a profile directory replaced between or after file reads discards the whole projection', async t => {
+    for (const swapAfter of ['models', 'settings'] as const) {
+        const f = await fixture(t);
+        await f.put('models.json', models([model('original')]));
+        const replacement = join(f.homeDir, '.aside', 'u', 'replacement');
+        await mkdir(replacement);
+        await writeFile(join(replacement, 'models.json'), JSON.stringify(models([model('swapped')])));
+        await writeFile(join(replacement, 'settings.json'), JSON.stringify({ defaultModel: { provider: 'custom', modelId: 'swapped' } }));
+        const catalog = await readAsideCatalog(context, { homeDir: f.homeDir, afterRead: async source => {
+            if (source !== swapAfter) return;
+            await rename(join(f.homeDir, '.aside', 'u', '0'), join(f.homeDir, '.aside', 'u', 'old'));
+            await rename(replacement, join(f.homeDir, '.aside', 'u', '0'));
+        } });
+        assert.equal(catalog.status, 'unavailable', swapAfter);
+        assert.deepEqual(catalog.entries, []);
+        assert.deepEqual(catalog.cachedIds, []);
+        assert.equal(catalog.defaultModel, null);
+        assert.equal(catalog.configuredDefault, null);
+        assert.ok(catalog.diagnostics.length > 0 && catalog.diagnostics.every(d => d.code === 'unsafe_path'));
+        assert.throws(() => resolveAsideSelection(catalog), error('catalog_unavailable'));
+    }
+});
