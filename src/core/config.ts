@@ -1916,6 +1916,11 @@ export interface HeartbeatMentionWatch {
     since?: string;
     /** OR of mention/talk rules. Absent or empty keeps mention-of-subjects. */
     conditions?: HeartbeatMentionWatchCondition[];
+    /** Minutes between conversations.history scans. Absent = every tick. The event
+     *  capture (mention-watch-inbox) is drained every tick regardless, so a longer
+     *  interval only delays what the stream missed, and stops every tick from
+     *  spending the bot token's Tier 3 history budget across all channels. */
+    historyScanMinutes?: number;
 }
 
 export interface HeartbeatDestination {
@@ -1987,6 +1992,8 @@ export function isHeartbeatMentionWatch(value: unknown): value is HeartbeatMenti
     if (w['since'] !== undefined && (typeof w['since'] !== 'string' || !w['since'].trim())) return false;
     if (w['userIds'] !== undefined && !areMentionWatchUserIdsValid(w['userIds'])) return false;
     if (w['conditions'] !== undefined && !areMentionWatchConditionsValid(w['conditions'], ids)) return false;
+    const every = w['historyScanMinutes'];
+    if (every !== undefined && (typeof every !== 'number' || !Number.isInteger(every) || every < 1 || every > 1440)) return false;
     return true;
 }
 
