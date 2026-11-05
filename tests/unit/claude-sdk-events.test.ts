@@ -274,15 +274,79 @@ test('aggregate text is bounded across messages and reasoning, with explicit cap
     assert.ok(h.projection.diagnostics().withinSnapshotCap);
 });
 
-test('message count is bounded at 128', () => {
+test('message observation stops at 128 while the real result still completes', () => {
     const h = harness(); for (let i = 0; i < 128; i++) h.start('m' + i);
-    assert.throws(() => h.start('overflow'), /Claude.*limit/i);
+    h.block(0, text('last observed'));
+    for (let i = 128; i < 600; i++) { h.start('m' + i); h.block(0, text('omitted')); }
+    assert.deepEqual(h.notices, ['capacity']);
+    assert.equal(h.mapper.partialText, 'last observed');
+    const outcome = h.mapper.accept(result('authoritative final'))!;
+    h.mapper.finish(outcome);
+    assert.equal(outcome.status, 'done');
+    assert.equal(outcome.finalText, 'authoritative final');
+    assert.deepEqual(h.events.filter(e => e.kind === 'turn-end').map(e => e.status), ['done']);
+    assert.ok(!JSON.stringify(h.events).includes('omitted'));
+    assert.ok(h.projection.diagnostics().withinSnapshotCap);
 });
 
-test('block count is bounded across messages at 512', () => {
+test('block observation stops at 512 without failing the provider result', () => {
     const h = harness();
     for (let m = 0; m < 2; m++) { h.start('m' + m); for (let i = 0; i < 256; i++) h.block(i, text('')); }
-    h.start('last'); assert.throws(() => h.block(0, text('')), /Claude.*limit/i);
+    h.start('last'); h.block(0, text('omitted'));
+    assert.ok(h.notices.includes('capacity'));
+    assert.ok(!h.notices.includes('malformed'));
+    assert.equal(h.mapper.accept(result('final'))?.status, 'done');
+});
+
+test('snapshot and tool observation budgets do not become provider failures', () => {
+    for (const kind of ['snapshot', 'tool'] as const) {
+        const h = harness();
+        for (let i = 0; i < 513; i++) {
+            if (kind === 'snapshot') h.assistant('m', [], 'snapshot-' + i);
+            else h.toolResult('tool-' + i, 'ok');
+        }
+        assert.ok(h.notices.includes('capacity'));
+        assert.ok(!h.notices.includes('malformed'));
+        assert.equal(h.mapper.accept(result('final'))?.finalText, 'final');
+    }
+});
+
+test('limited observation preserves failed results and rejects malformed finals', () => {
+    for (const terminal of [
+        { type: 'result', subtype: 'error_during_execution', is_error: true },
+        { ...result(), result: 5 },
+    ]) {
+        const h = harness(); for (let i = 0; i < 129; i++) h.start('m' + i);
+        if (terminal.is_error) assert.equal(h.mapper.accept(terminal)?.status, 'error');
+        else assert.throws(() => h.mapper.accept(terminal), /Malformed Claude SDK frame/);
+    }
+});
+
+test('continuation restores detail observation after the prior segment reached capacity', () => {
+    const h = harness(); for (let i = 0; i < 129; i++) h.start('m' + i);
+    assert.equal(h.mapper.accept(result('segment'), true), undefined);
+    h.mapper.continueAfterResult();
+    h.start('continuation'); h.block(0, text('fresh detail'));
+    assert.equal(h.mapper.partialText, 'fresh detail');
+    assert.equal(h.mapper.accept(result('final'))?.status, 'done');
+});
+
+test('oversized content and snapshot indexes exhaust observation without throwing', () => {
+    for (const kind of ['content', 'index'] as const) {
+        const h = harness();
+        if (kind === 'content') h.assistant('m', Array.from({ length: 513 }, () => text('')));
+        else for (let i = 0; i < 513; i++) h.assistant('m', [text('')]);
+        assert.deepEqual(h.notices, ['capacity']);
+        assert.equal(h.mapper.accept(result('final'))?.status, 'done');
+    }
+});
+
+test('capacity-like errors are not swallowed and limited children cannot settle the parent', () => {
+    const h = harness();
+    assert.throws(() => h.mapper.accept({ get type() { throw new Error('Claude message limit exceeded'); } }), /Malformed Claude SDK frame/);
+    const limited = harness(); for (let i = 0; i < 129; i++) limited.start('m' + i);
+    assert.equal(limited.mapper.accept({ ...result('child final'), parent_tool_use_id: 'child-task' }), undefined);
+    assert.equal(limited.mapper.accept(result('parent final'))?.finalText, 'parent final');
 });
 
 test('malformed known frames and indexes throw constant redacted errors', () => {

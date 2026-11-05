@@ -1,6 +1,6 @@
 import type { RuntimeTurnResult } from './session.js';
 import type { RuntimeProjection, RuntimeEnd } from './projection.js';
-import { ClaudeSdkMessages, CLAUDE_MAX_BLOCKS, CLAUDE_INPUT_BYTES, CLAUDE_TEXT_BYTES,
+import { ClaudeSdkMessages, ClaudeObservationLimitError, CLAUDE_MAX_BLOCKS, CLAUDE_INPUT_BYTES, CLAUDE_TEXT_BYTES,
     type ClaudeBlock } from './claude-sdk-messages.js';
 
 type Obj = Record<string, unknown>;
@@ -43,7 +43,7 @@ function index(value: unknown): number {
 }
 function content(value: unknown): unknown[] {
     if (!Array.isArray(value)) return malformed();
-    if (value.length > CLAUDE_MAX_BLOCKS) throw new Error('Claude block limit exceeded');
+    if (value.length > CLAUDE_MAX_BLOCKS) throw new ClaudeObservationLimitError('block');
     return value;
 }
 
@@ -52,6 +52,7 @@ export class ClaudeSdkEvents {
     private readonly tools = new Set<string>();
     private outcome: RuntimeTurnResult | undefined;
     private finished = false;
+    private observationLimited = false;
     private noticeSeq = 0;
     /** A limit row is open this turn; only then is "allowed" news worth a row. */
     private rateLimitShown = false;
@@ -76,6 +77,8 @@ export class ClaudeSdkEvents {
             if (!['assistant', 'stream_event', 'user', 'result', 'tool_progress', 'system', 'rate_limit_event'].includes(type)) return;
             const parent = frame['parent_tool_use_id'];
             if (parent !== undefined && parent !== null) { identity(parent); return; }
+            // Detail retention is bounded independently of provider execution and finality.
+            if (this.observationLimited && type !== 'result') return;
             if (type === 'assistant') this.assistant(frame);
             else if (type === 'stream_event') this.stream(object(frame['event']));
             else if (type === 'user') this.user(frame);
@@ -84,9 +87,13 @@ export class ClaudeSdkEvents {
             else if (type === 'rate_limit_event') this.rateLimit(object(frame['rate_limit_info']));
             else return this.result(frame, segment);
         } catch (error) {
+            if (error instanceof ClaudeObservationLimitError) {
+                this.observationLimited = true;
+                this.projection.report('capacity');
+                return;
+            }
             this.projection.report('malformed');
             // Never echo untrusted fields, JSON parser snippets or getter exceptions.
-            if (error instanceof Error && /^Claude (message|block|snapshot|tool) limit exceeded$/.test(error.message)) throw error;
             throw new Error('Malformed Claude SDK frame');
         }
         return undefined;
@@ -101,6 +108,7 @@ export class ClaudeSdkEvents {
     continueAfterResult(): void {
         this.messages.retire();
         this.tools.clear();
+        this.observationLimited = false;
         this.outcome = undefined;
         this.failureText = null;
         this.lastUsage = null;
@@ -324,7 +332,7 @@ export class ClaudeSdkEvents {
 
     private toolRef(id: string): string {
         if (!this.tools.has(id)) {
-            if (this.tools.size >= CLAUDE_MAX_BLOCKS) throw new Error('Claude tool limit exceeded');
+            if (this.tools.size >= CLAUDE_MAX_BLOCKS) throw new ClaudeObservationLimitError('tool');
             this.tools.add(id);
         }
         return 'claude:tool:' + id;
