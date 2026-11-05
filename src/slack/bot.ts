@@ -8,6 +8,7 @@ import { captureSlackWorkflow, prepareSlackWorkflow, renderSlackWorkflow, isWork
 // handler that gates then dispatches into submitMessage/orchestrateAndCollect,
 // and a forwarder for non-Slack-origin agent output.
 
+import { tapSlackEvent } from './event-tap.js';
 import { JAW_HOME, SKILLS_DIR, isSettingsPersistenceBlocked, readPersistedSlackAttachPort, saveSettings, settings } from '../core/config.js';
 import { withSessionScope } from '../core/session-context.js';
 import { log } from '../core/logger.js';
@@ -1420,6 +1421,8 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
 
     const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
     const event = payload?.event;
+    // Before the channel/ts check: reaction events carry them under `item`.
+    tapSlackEvent(event);
     if (!event?.channel || !event?.ts) return 'committed';
 
     // BEFORE the gate, and before the journal short-circuit, because this is the
