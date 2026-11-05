@@ -42,6 +42,40 @@ async function fixture(extra: Record<string, unknown> = {}) {
 }
 const result = (text: unknown = 'answer') => ({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: 'native', usage: { input_tokens: 3, output_tokens: 4 } });
 
+for (const terminal of ['success', 'empty', 'absent', 'failure', 'malformed', 'oversized', 'stop', 'eof', 'stale', 'foreign'] as const) {
+    test(`observation capacity keeps the session running until ${terminal}`, async t => {
+        let current = true;
+        const f = await fixture({ getTurnContext: () => ({ runId: 'run1', sessionId: 'jaw', scope: 'scope',
+            turnId: 'turn1', audience: 'internal', isCurrent: () => current }) });
+        t.after(() => f.session.close());
+        let settled = false;
+        const turn = f.session.send({ text: 'long workflow' }, () => {}).then(outcome => { settled = true; return outcome; });
+        for (let i = 0; i < 600; i++) f.output.push({ type: 'stream_event',
+            event: { type: 'message_start', message: { id: 'message-' + i } } });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(settled, false);
+        assert.equal(f.closed, 0);
+        assert.equal(f.session.alive, true);
+        if (terminal === 'stop') await f.session.cancel();
+        else if (terminal === 'eof') f.output.close();
+        else if (terminal === 'malformed') f.output.push(result(5));
+        else if (terminal === 'oversized') f.output.push(result('x'.repeat(8_388_609)));
+        else if (terminal === 'stale') {
+            current = false;
+            f.output.push(result('stale final'));
+        }
+        else if (terminal === 'foreign') f.output.push({ ...result('foreign final'), user_message_uuid: 'foreign' });
+        else if (terminal === 'empty') f.output.push(result(''));
+        else if (terminal === 'absent') f.output.push(result(null));
+        else if (terminal === 'failure') f.output.push({ ...result(), subtype: 'error_during_execution', is_error: true });
+        else f.output.push(result('real final'));
+        const outcome = await turn;
+        assert.equal(outcome.status, ['success', 'empty', 'absent'].includes(terminal) ? 'done' : terminal === 'stop' ? 'stopped' : 'error');
+        assert.equal(outcome.finalText, terminal === 'success' ? 'real final' : terminal === 'empty' ? '' : null);
+        assert.equal(f.events.filter(event => (event as { kind: string }).kind === 'turn-end').length, terminal === 'stale' ? 0 : 1);
+    });
+}
+
 test('session-created hook exposes the owner before the query factory can fail', async () => {
     const order: string[] = [];
     await assert.rejects(fixture({

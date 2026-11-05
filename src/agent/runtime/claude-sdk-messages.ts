@@ -3,6 +3,13 @@ export const CLAUDE_MAX_BLOCKS = 512;
 export const CLAUDE_TEXT_BYTES = 1024 * 1024;
 export const CLAUDE_INPUT_BYTES = 64 * 1024;
 
+export class ClaudeObservationLimitError extends Error {
+    constructor(kind: 'message' | 'block' | 'snapshot' | 'tool') {
+        super(`Claude ${kind} limit exceeded`);
+        this.name = 'ClaudeObservationLimitError';
+    }
+}
+
 export interface ClaudeBlock {
     type: string;
     text: string;
@@ -66,7 +73,7 @@ export class ClaudeSdkMessages {
     message(id: string): Message {
         let message = this.messages.get(id);
         if (!message) {
-            if (this.messages.size >= MAX_MESSAGES) throw new Error('Claude message limit exceeded');
+            if (this.messages.size >= MAX_MESSAGES) throw new ClaudeObservationLimitError('message');
             message = { blocks: new Map(), snapshots: new Set() };
             this.messages.set(id, message);
             this.latestId = id;
@@ -82,7 +89,7 @@ export class ClaudeSdkMessages {
             if (old.type !== type) throw new Error('Malformed Claude block type');
             return old;
         }
-        if (this.blocks >= CLAUDE_MAX_BLOCKS) throw new Error('Claude block limit exceeded');
+        if (this.blocks >= CLAUDE_MAX_BLOCKS) throw new ClaudeObservationLimitError('block');
         const block: ClaudeBlock = { type, text: '', json: '', hasJson: false, jsonRetired: false, emptyInputPending: false,
             streamed, snapshotted: false, stopped: false };
         message.blocks.set(index, block); this.blocks++;
@@ -94,7 +101,7 @@ export class ClaudeSdkMessages {
         // Block replay deduplication only; send/result UUID correlation stays session-owned.
         const seen = this.message(id).snapshots;
         if (seen.has(uuid)) return true;
-        if (this.snapshotCount >= CLAUDE_MAX_BLOCKS) throw new Error('Claude snapshot limit exceeded');
+        if (this.snapshotCount >= CLAUDE_MAX_BLOCKS) throw new ClaudeObservationLimitError('snapshot');
         seen.add(uuid); this.snapshotCount++;
         return false;
     }
@@ -108,7 +115,7 @@ export class ClaudeSdkMessages {
         if (pending) return pending[0];
         if (toolId && matching.length) return matching[0]![0];
         const next = entries.length ? entries.at(-1)![0] + 1 : 0;
-        if (next >= CLAUDE_MAX_BLOCKS) throw new Error('Claude block limit exceeded');
+        if (next >= CLAUDE_MAX_BLOCKS) throw new ClaudeObservationLimitError('block');
         return next;
     }
 
