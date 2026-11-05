@@ -30,7 +30,7 @@ import {
 } from './mention-watch-ledger.js';
 import type { WatchNamespace } from './mention-watch-ledger.js';
 import { scanSlackMentions, MENTION_WATCH_DEFAULT_MAX_HITS } from '../slack/mention-watch.js';
-import type { MentionHit } from '../slack/mention-watch.js';
+import type { MentionHit, MentionScanResult } from '../slack/mention-watch.js';
 import { classifyMentionWatch, mentionWatchSubjects } from '../slack/mention-watch-match.js';
 import { readMentionWatchInbox, clearMentionWatchInbox } from '../slack/mention-watch-inbox.js';
 import type { HeartbeatMentionWatch } from '../core/config.js';
@@ -144,6 +144,9 @@ export function mentionWatchTurnFailure(data: Readonly<Record<string, unknown>> 
     return null;
 }
 
+/** When each job last walked conversations.history (historyScanMinutes). */
+const lastHistoryScan = new Map<string, number>();
+
 export async function runMentionWatchTick(
     ns: WatchNamespace,
     job: Record<string, unknown>,
@@ -222,8 +225,19 @@ export async function runMentionWatchTick(
         });
     }
 
+    // historyScanMinutes: the inbox above is drained every tick; the history walk
+    // below runs only when its interval has passed (in-process clock, so a restart
+    // scans on its first tick).
+    const scanKey = `${ns.workspaceId}:${String(job['id'] ?? watch.userId)}`;
+    const lastScan = lastHistoryScan.get(scanKey);
+    const skipScan = Boolean(watch.historyScanMinutes) && lastScan !== undefined
+        && now() - lastScan < (watch.historyScanMinutes as number) * 60_000;
+    if (!skipScan) lastHistoryScan.set(scanKey, now());
     const rotationAnchor = readRotation(ns);
-    const scan = await scanSlackMentions(deps.token, {
+    const scan: MentionScanResult = skipScan ? {
+        hits: [], cursors: new Map(), resumeBounds: new Map(), lastChannelId: null, failed: [],
+        rateLimited: false, truncated: false, hitCapReached: false, overflowChannels: [],
+    } : await scanSlackMentions(deps.token, {
         userId: watch.userId,
         ...(watch.userIds?.length ? { userIds: watch.userIds } : {}),
         ...(watch.conditions?.length ? { conditions: watch.conditions } : {}),
