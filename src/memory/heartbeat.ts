@@ -390,6 +390,11 @@ export function pruneMentionWatchBackoff(liveJobIds: ReadonlySet<string>): void 
 export function resetMentionWatchBackoffForTests(): void { mentionWatchBackoff.clear(); }
 
 export function startHeartbeat() {
+    // A reload replaces the schedule, not the work already owed. Any save of
+    // heartbeat.json lands here through the file watcher, and a queue dropped by
+    // that save loses a tick whose cron minute has passed for good. Taken before
+    // stopHeartbeat, requeued below from the file just read.
+    const carried = pendingJobs.splice(0);
     stopHeartbeat();
     const { jobs } = loadHeartbeatFile();
     pruneMentionWatchBackoff(new Set(jobs.filter(job => job?.enabled && job.id && job.mentionWatch)
@@ -437,6 +442,25 @@ export function startHeartbeat() {
     for (const key of [...liveDestinationHolds.keys()]) if (!liveKeys.has(key)) liveDestinationHolds.delete(key);
     const n = heartbeatTimers.size;
     log.info(`[heartbeat] ${n} job${n !== 1 ? 's' : ''} active`);
+    requeueCarriedJobs(carried, jobs);
+}
+
+/** Puts a reload's carried ticks back, bound to the job as it now reads on disk.
+ *  A queued entry holds the object it was queued with, so its prompt and
+ *  destination may have just been replaced. A job with no timer now (removed,
+ *  disabled, held, or an invalid cron) was taken out by the operator: dropped. */
+function requeueCarriedJobs(carried: PendingHeartbeatJob[], jobs: Record<string, any>[]): void {
+    for (const { job, reason, policy } of carried) {
+        const id = job["id"];
+        const current = jobs.find(candidate => candidate?.["id"] === id);
+        if (!current || !heartbeatTimers.has(id)) {
+            log.info(`[heartbeat:${job["name"]}] queued tick dropped: job no longer scheduled`);
+            continue;
+        }
+        queueHeartbeatJob(current, reason, policy);
+    }
+    // No run may be left to drain it: a run superseded by this reload is stopping.
+    if (carried.length) void drainPending();
 }
 
 export function stopHeartbeat() {
@@ -447,6 +471,7 @@ export function stopHeartbeat() {
     // orchestrator/pipeline, routes/orchestrate, cli/handlers-runtime and
     // agent/spawn/queue. Bump the generation and abort first so an in-flight run
     // stops at its next checkpoint, then drop the queue it would have replayed.
+    // startHeartbeat takes the queue out first, so only a real stop loses it.
     heartbeatGeneration += 1;
     heartbeatAbort?.abort();
     heartbeatAbort = null;
@@ -1215,10 +1240,10 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             runRecords.set(jobId, record);
             broadcast('heartbeat_run', record);
         }
-        // A superseded run must not hand work to the next one. Draining here after
-        // stopHeartbeat would replay jobs from a configuration the operator has
-        // already replaced, which is exactly what made stop look advisory.
-        if (generation === heartbeatGeneration) await drainPending();
+        // Safe from a superseded run too: stopHeartbeat emptied the queue and
+        // disarmed drainPending, and a reload's queue is bound to the current file,
+        // so nothing from a replaced configuration can start here.
+        await drainPending();
     }
 }
 
