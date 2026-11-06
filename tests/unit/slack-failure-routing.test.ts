@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reportSlackFailure, isSlackTurnFailure, slackFailureRoutingEnabled } from '../../src/slack/failure-routing.ts';
 import { createSlackForwarder } from '../../src/slack/forwarder.ts';
-import { markSlackRecoveryBlocked } from '../../src/slack/tool-context.ts';
+import { markSlackRecoveryBlocked, reserveSlackToolGrant, revokeSlackToolGrant } from '../../src/slack/tool-context.ts';
 
 let database: Database.Database;
 test.beforeEach(() => { database = new Database(':memory:'); configureSlackFailureStore(new SlackFailureStore(database)); });
@@ -88,6 +88,9 @@ test('a refused threaded delivery cannot be replaced by a successful root final'
     try {
         process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
         const { threadId: _thread, ...root } = target;
+        assert.equal(reserveSlackToolGrant({ teamId: 'T000TEST01', actorId: 'U000TEST01',
+            credentialKey: 'fixture-key', destination: root },
+        { requestId: 'blocked-root-final', scope: 'fixture', chatSessionId: 'fixture' }), true);
         markSlackRecoveryBlocked('blocked-root-final', root.targetId);
         const forward = createSlackForwarder({ getToken: () => 'fake' });
         await forward('agent_done', { text: 'Replacement report at channel root', requestId: 'blocked-root-final', target: root });
@@ -97,6 +100,7 @@ test('a refused threaded delivery cannot be replaced by a successful root final'
         assert.equal(calls.at(-1)?.['channel'], target.targetId);
         assert.equal(calls.at(-1)?.['thread_ts'], target.threadId);
     } finally {
+        revokeSlackToolGrant('blocked-root-final');
         globalThis.fetch = oldFetch;
         if (before === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = before;
     }
