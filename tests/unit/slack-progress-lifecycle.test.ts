@@ -1,3 +1,4 @@
+import { configureSlackFailureStore, SlackFailureStore } from '../../src/slack/failure-store.ts';
 import '../setup/isolated-home.ts';
 import test, { mock, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -135,7 +136,7 @@ function deferred<T>(fallback: T) {
 }
 function target(): RemoteTarget { return { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: `D_CASE_${seq + 1}`, threadId: '100.1', guildId: 'T_TEST' }; }
 async function run(context: TestContext, destination = target(), signal = new AbortController().signal) {
-    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: 'im', ts: '100.2' } as never,
+    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId } as never,
         destination, 'hello', signal);
     await until(context, () => admissions.some(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId));
     return admissions.find(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId)!;
@@ -156,7 +157,7 @@ test.beforeEach(async context => {
     Object.assign(settings, { locale: 'en', port: 3457, multiSession: { enabled: true, channels: { slack: true }, maxConcurrent: 4 },
         slack: { enabled: true, botToken: `fake-lifecycle-${++credentialSeq}`, appToken: '', teamId: 'T_TEST', conversationContext: false,
             ack: { enabled: true, scope: 'all' } } });
-    __resetQueueNoticeStoreForTests(); database = new Database(':memory:'); initQueueNoticeStore(database);
+    __resetQueueNoticeStoreForTests(); database = new Database(':memory:'); initQueueNoticeStore(database); configureSlackFailureStore(new SlackFailureStore(database));
     await bot.initSlack(); // Configured outbound-only: no socket or auth request.
     calls.length = 0;
 });
@@ -164,7 +165,7 @@ test.afterEach(async context => {
     for (const release of releases) release();
     const closing = bot.shutdownSlack(); await settle(); context.mock.timers.tick(2000); await settle();
     await closing; await Promise.allSettled([...tails]);
-    __resetQueueNoticeStoreForTests(); database.close(); context.mock.timers.reset();
+    __resetQueueNoticeStoreForTests(); configureSlackFailureStore(null); database.close(); context.mock.timers.reset();
 });
 
 test('direct synchronous tool is observed and final progress follows the real body receipt', async context => {
@@ -782,3 +783,103 @@ for (const admissionMode of ['direct', 'queued', 'restart']) {
         assert.doesNotMatch(encoded, /captured\/project/);
     });
 }
+
+for (const isQueued of [false, true]) test(`operator routing suppresses ${isQueued ? 'queued' : 'direct'} failure bodies and clears failure cards`, async context => {
+    const previous = process.env['JAW_SLACK_FAILURE_DM'];
+    process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    try {
+        queued = isQueued;
+        collect = async () => ({ text: 'PRIVATE_STACK', data: { collectionFailure: 'error' } });
+        const admission = await run(context);
+        if (isQueued) {
+            broadcast('queued_run_started', event(admission));
+            await tick(context);
+            broadcast('orchestrate_done', event(admission, { text: 'PRIVATE_STACK', error: true, fromQueue: true }));
+        }
+        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        const posts = calls.filter(call => call.method === 'chat.postMessage');
+        assert.equal(posts.length, 1);
+        assert.equal(posts[0]?.body['channel'], 'DOPERATORTEST');
+        assert.doesNotMatch(JSON.stringify(calls.map(call => call.body)), /PRIVATE_STACK/);
+        assert.equal(reaction('white_check_mark').length, 0);
+    } finally {
+        if (previous === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = previous;
+    }
+});
+
+for (const ambiguous of [false, true]) test(`next fresh turn uses the original parent after ${ambiguous ? 'unknown' : 'blocked'} delivery without replaying the old body`, async context => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    const destination: RemoteTarget = { ...target(), targetId: `C_RETRY_${seq + 1}`, peerKind: 'channel' };
+    let blocked = false;
+    collect = async () => ({ text: 'first answer', data: {} });
+    override = call => {
+        if (!blocked && call.method === 'chat.postMessage' && call.body['channel'] === destination.targetId) {
+            blocked = true;
+            if (ambiguous) throw new Error('response lost after dispatch');
+            return response({ ok: false, error: 'thread_not_found' });
+        }
+        return undefined;
+    };
+    try {
+        await run(context, destination);
+        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        collect = async () => ({ text: 'fresh second answer', data: {} });
+        await run(context, destination);
+        await until(context, () => calls.some(call => call.method === 'chat.postMessage' && call.body['text'] === 'fresh second answer'));
+        const humanPosts = calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === destination.targetId);
+        assert.deepEqual(humanPosts.map(call => call.body['thread_ts']), [destination.threadId, destination.threadId]);
+        assert.deepEqual(humanPosts.map(call => call.body['text']), ['first answer', 'fresh second answer']);
+        assert.equal(calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === 'DOPERATORTEST').length, 1);
+    } finally {
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
+    }
+});
+
+test('workflow-unconfirmed alone preserves its diagnostic body and progress instead of routing a failed turn', async context => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    collect = async () => ({ text: 'workflow diagnostic', data: { workflowUnconfirmed: true } });
+    try {
+        await run(context); await until(context, complete);
+        assert.equal(calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === 'DOPERATORTEST').length, 0);
+        assert.equal(bodyCalls().length, 1);
+        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+    } finally {
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
+    }
+});
+
+test('file input validation remains visible with operator turn-failure routing enabled', async context => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    const destination = target();
+    try {
+        await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: 'im', ts: '100.2',
+            files: [{ id: 'FOVERSIZE', name: 'oversize.txt', size: 51 * 1024 * 1024 }] }, destination, 'read attachment', new AbortController().signal);
+        await tick(context);
+        assert.equal(admissions.length, 0, 'validation did not admit a model turn');
+        const posts = calls.filter(call => call.method === 'chat.postMessage');
+        assert.equal(posts.length, 1);
+        assert.equal(posts[0]?.body['channel'], destination.targetId);
+        assert.equal(posts[0]?.body['thread_ts'], destination.threadId);
+        assert.match(String(posts[0]?.body['text']), /oversize.txt/);
+    } finally {
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
+    }
+});
+
+test('an individual failed tool remains visible when the turn succeeds', async context => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    collect = async meta => {
+        broadcast('agent_tool', { ...meta, sessionId: meta['chatSessionId'], traceRunId: 'tool-failure-test',
+            stepRef: 'read-failed', label: 'Read', status: 'error', toolType: 'tool' });
+        return { text: 'Recovered and completed', data: {} };
+    };
+    try {
+        await run(context); await until(context, complete);
+        assert.equal(calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === 'DOPERATORTEST').length, 0);
+        assert.equal(bodyCalls().length, 1);
+        assert.match(JSON.stringify(progressMessages()), /Read/);
+        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+    } finally {
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
+    }
+});

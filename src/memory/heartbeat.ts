@@ -1,5 +1,6 @@
 // ─── Heartbeat (Scheduled Jobs + fs.watch) ───────────
 
+import { isSlackTurnFailure, reportSlackFailure, slackFailureRoutingEnabled } from '../slack/failure-routing.js';
 import fs from 'fs';
 import { basename, dirname } from 'path';
 import crypto from 'crypto';
@@ -1116,6 +1117,10 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
                 outcome = { execution: 'skipped', delivery: 'not_requested', reason: 'slack_grant_unavailable' };
                 return;
             }
+            if (destinationBinding.target.channel === 'slack' && slackFailureRoutingEnabled() && isSlackTurnFailure(collected.data)) {
+                outcome = { execution: 'error', delivery: 'suppressed', reason: 'turn_failed' };
+                return;
+            }
             rawResult = String(collected.text);
         }
         const result = applyOutputPolicy(rawResult, { scope: 'heartbeat', channel: 'active' }).text;
@@ -1130,6 +1135,10 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
 
         const report = parseHeartbeatReport(result);
         if (report.recordRequired) setRecordPending(report.evidence || report.summary || result);
+        if (destinationBinding.target.channel === 'slack' && slackFailureRoutingEnabled() && report.status === 'failed') {
+            outcome = { execution: 'error', delivery: 'suppressed', reason: 'report_failed' };
+            return;
+        }
         const policy = job["reportPolicy"] || 'always';
         const decision = decideHeartbeatReport(report, policy);
         const deliveryText = report.summary || result;
@@ -1227,6 +1236,14 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
         log.error(`[heartbeat:${job["name"]}] error:`, (err as Error).message);
         outcome = { execution: 'error', delivery: 'not_requested', reason: (err as Error).message };
     } finally {
+        const configuredDestination = job['destination'];
+        if (slackFailureRoutingEnabled() && configuredDestination?.channel === 'slack'
+            && (outcome.execution === 'error' || outcome.execution === 'skipped' || outcome.delivery === 'not_delivered')) {
+            await reportSlackFailure(String(settings['slack']?.botToken ?? ''),
+                { ...targetFromChatId('slack', configuredDestination.targetId),
+                    ...(configuredDestination.threadId ? { threadId: configuredDestination.threadId } : {}) },
+                `${jobId}:${startedAt}`, outcome.execution === 'skipped' ? 'destination' : outcome.delivery === 'not_delivered' ? 'delivery' : 'turn');
+        }
         releaseServerOwnedChannel?.();
         releaseConsumerSlot?.();
         heartbeatBusy = false;

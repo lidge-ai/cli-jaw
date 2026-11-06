@@ -1,3 +1,5 @@
+import { isSlackTurnFailure, reportSlackFailure, slackFailureRoutingEnabled } from './failure-routing.js';
+import { slackRecoveryBlocksRoot } from './tool-context.js';
 import { verifiedSlackWorkspace } from './verified-workspace.js';
 import { slackCredentialKey, type SlackToolSource } from './tool-context.js';
 import { isSlackMention, matchesTrustedBotTrigger, readTrustedBotTriggers } from './events.js';
@@ -795,6 +797,10 @@ function installSlackTargetReplyForwarder(): void {
             ?? (typeof data['scope'] === 'string' ? data['scope'] : 'default');
         void slackReplyDelivery.deliver(requestId, target, anchor => sessionLanes.runDetachedTurn(scope, async () => {
             if (generation !== lifecycleGeneration || slackStopping) return;
+            if (slackFailureRoutingEnabled() && (isSlackTurnFailure(data) || slackRecoveryBlocksRoot(requestId, target))) {
+                await reportSlackFailure(token, target, requestId);
+                return;
+            }
             if (!text || (requireBodyDelivery && !text.trim())) return;
             const outbound = slackOutboundRegistry.start();
             try {
@@ -803,6 +809,7 @@ function installSlackTargetReplyForwarder(): void {
                     ...(requireBodyDelivery ? { requireBodyDelivery: true } : {}) });
                 if (outbound.signal.aborted || generation !== lifecycleGeneration || slackStopping) return;
                 if (!result.ok) {
+                    await reportSlackFailure(token, target, requestId, 'delivery');
                     log.error('[slack:target-reply]', logErrorText(result.error || 'send failed'));
                     return;
                 }
@@ -815,6 +822,7 @@ function installSlackTargetReplyForwarder(): void {
                 }
                 await relaySlackImages(token, target, text, { signal: outbound.signal });
             } catch (e) {
+                await reportSlackFailure(token, target, requestId, 'delivery');
                 log.error('[slack:target-reply]', logErrorText(e));
             } finally {
                 outbound.done();
@@ -968,7 +976,7 @@ async function slackOrchestrate(
                 log.error('[slack:error]', logErrorText(err));
                 if (current()) executionOutcome ??= 'error';
                 // Never append a second diagnostic after an ambiguous body attempt.
-                if (!bodyAttempted && current()) {
+                if (!bodyAttempted && current() && !slackFailureRoutingEnabled()) {
                     bodyAttempted = true;
                     const outbound = slackOutboundRegistry.start(signal);
                     try {
@@ -1015,7 +1023,8 @@ async function slackOrchestrate(
             log.info('[slack:duplicate] absorbed silently');
             return;
         }
-        await sendSlackText(token, target, `❌ ${result.reason}`);
+        if (slackFailureRoutingEnabled()) await reportSlackFailure(token, target, dedupe.eventKey);
+        else await sendSlackText(token, target, `❌ ${result.reason}`);
         return;
     }
 
@@ -1073,6 +1082,12 @@ async function deliverSlackTurnBody(options: {
     onRelayError?: (error: unknown) => void;
 }): Promise<SlackTurnBodyOutcome> {
     const { token, target, text, data, signal, display, settleAck, current, executionOutcome } = options;
+    const blockedRoot = slackRecoveryBlocksRoot(data['requestId'], target);
+    if (slackFailureRoutingEnabled() && (isSlackTurnFailure(data) || executionOutcome() === 'error' || blockedRoot)) {
+        if (blockedRoot) await reportSlackFailure(token, target, data['requestId'], 'destination');
+        await Promise.allSettled([settleAck('failure'), display.finish('error')]);
+        return { delivered: false, confirmed: false, outcome: 'error' };
+    }
     const requireBodyDelivery = requiresNativeBodyDelivery(data);
     let bodySucceeded = false;
     let bodyConfirmed = false;
@@ -1109,7 +1124,8 @@ async function deliverSlackTurnBody(options: {
         const outcome = bodyProgressOutcome(data, bodySucceeded, executionOutcome(), !current());
         if (bodySucceeded && target.threadId) markThreadParticipated(target.targetId, target.threadId);
         await settleAck(bodySucceeded && outcome === 'complete' ? 'success' : 'failure');
-        await display.finish(outcome, { bodyDelivered: bodyConfirmed });
+        await display.finish(outcome, { bodyDelivered: bodyConfirmed,
+            routeFailure: isSlackTurnFailure(data) || executionOutcome() === 'error' || !bodySucceeded });
         if (current() && (options.relayWhenTextEmpty || Boolean(text))) {
             if (options.relayMode === 'isolated') {
                 const relay = slackOutboundRegistry.start(signal);

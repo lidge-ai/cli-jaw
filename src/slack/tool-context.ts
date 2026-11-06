@@ -23,6 +23,39 @@ type Entry = { grant: SlackToolGrant; secret: string; active: boolean; controlle
 const requests = new Map<string, Entry>();
 const secrets = new Map<string, Entry>();
 const serverOwnedLeases = new Map<string, number>();
+let deliveryRecovery: { prompt(grant: SlackToolGrant): Promise<string>; blocksRoot(requestId: string, target: RemoteTarget): boolean } | undefined;
+const blockedRootTurns = new Map<string, { channel: string; at: number }>();
+const BLOCKED_ROOT_RETENTION_MS = 4 * 60 * 60_000;
+const BLOCKED_ROOT_CAP = 1024;
+let blockedRootCapacityExceeded = false;
+
+export function markSlackRecoveryBlocked(requestId: string, channel: string): void {
+    const now = Date.now();
+    for (const [key, value] of blockedRootTurns) if (now - value.at >= BLOCKED_ROOT_RETENTION_MS) blockedRootTurns.delete(key);
+    if (blockedRootTurns.size >= BLOCKED_ROOT_CAP && !blockedRootTurns.has(requestId)) {
+        blockedRootCapacityExceeded = true;
+        return;
+    }
+    blockedRootTurns.set(requestId, { channel, at: now });
+}
+
+export function configureSlackDeliveryRecovery(provider: typeof deliveryRecovery): void {
+    deliveryRecovery = provider;
+}
+
+export function slackRecoveryBlocksRoot(requestId: unknown, target: RemoteTarget | undefined): boolean {
+    return typeof requestId === 'string' && !!target && target.channel === 'slack' && !target.threadId
+        && (blockedRootCapacityExceeded || blockedRootTurns.get(requestId)?.channel === target.targetId
+            || deliveryRecovery?.blocksRoot(requestId, target) === true);
+}
+
+/** The provider must recheck audience access before returning private held intent. */
+export async function slackRecoveryPromptForRequest(requestId: string | undefined, scope: string, chatSessionId: string): Promise<string> {
+    const entry = requestId ? requests.get(requestId) : undefined;
+    const grant = entry?.grant;
+    return grant && deliveryRecovery && grant.scope === scope && grant.chatSessionId === chatSessionId
+        && !grant.signal.aborted && grant.expiresAt > Date.now() ? deliveryRecovery.prompt(grant) : '';
+}
 
 /** Hold a server-owned channel through final delivery, independently of the
  * shorter-lived model grant. Each caller releases only its own reference. */

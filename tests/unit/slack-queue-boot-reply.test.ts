@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3';
+import { configureSlackFailureStore, SlackFailureStore } from '../../src/slack/failure-store.ts';
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -209,5 +211,36 @@ test('SQB-004: forwarder delivery also deletes the leftover queue notice', async
     } finally {
         globalThis.fetch = realFetch;
         __resetQueueNoticeStoreForTests();
+    }
+});
+
+test('opt-in orphan failure posts only once to the operator DM and never replays into a root', async () => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM'];
+    const priorFetch = globalThis.fetch;
+    const database = new Database(':memory:');
+    configureSlackFailureStore(new SlackFailureStore(database));
+    const notifications: Record<string, unknown>[] = [];
+    process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    globalThis.fetch = (async (_url, init) => {
+        notifications.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ok: true, ts: '123.4' }));
+    }) as typeof fetch;
+    sent.length = 0;
+    try {
+        const { broadcast } = await import('../../src/core/bus.ts');
+        const data = { text: 'PRIVATE failure', error: true, origin: 'slack', requestId: 'optin-orphan-failure',
+            fromQueue: true, target: slackTarget('C_BOOT', '1710000000.000100') };
+        broadcast('orchestrate_done', data);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        broadcast('orchestrate_done', data);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.deepEqual(sent, []);
+        assert.equal(notifications.length, 1);
+        assert.equal(notifications[0]?.['channel'], 'DOPERATORTEST');
+        assert.doesNotMatch(String(notifications[0]?.['text']), /PRIVATE/);
+    } finally {
+        configureSlackFailureStore(null); database.close();
+        globalThis.fetch = priorFetch;
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
     }
 });

@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3';
+import { configureSlackFailureStore, SlackFailureStore } from '../../src/slack/failure-store.ts';
 import '../setup/isolated-home.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -161,5 +163,44 @@ test('default reservation passes serverOwnedDelivery into the active Slack grant
         globalThis.fetch = oldFetch;
         settings['slack'] = oldSlack;
         resetVerifiedSlackWorkspace();
+    }
+}));
+
+test('operator routing holds the exact destination, retries validation next run, and suppresses failed reports', async () => fresh(async () => {
+    const previous = process.env['JAW_SLACK_FAILURE_DM'];
+    const previousFetch = globalThis.fetch;
+    const previousToken = settings['slack'].botToken;
+    const database = new Database(':memory:');
+    configureSlackFailureStore(new SlackFailureStore(database));
+    const posts: Record<string, unknown>[] = [];
+    process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    settings['slack'].botToken = 'fake-failure-route';
+    globalThis.fetch = (async (_url, init) => {
+        posts.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ok: true, ts: '100.2' }));
+    }) as typeof fetch;
+    try {
+        const h = harness({ ensurePeriodThread: async () => ({ ok: false, code: 'root_missing' }) });
+        const configured = structuredClone(h.job.destination);
+        await runHeartbeatJob(h.job, h.deps);
+        assert.equal(h.collected(), 0);
+        assert.equal(h.sent.length, 0);
+        assert.deepEqual(h.job.destination, configured);
+        assert.equal(posts.length, 1);
+        assert.equal(posts[0]?.['channel'], 'DOPERATORTEST');
+        h.deps.ensurePeriodThread = async () => ({ ok: true, ts: '1791349260', teamId, botUserId });
+        await runHeartbeatJob(h.job, h.deps);
+        assert.equal(h.sent.length, 1);
+        assert.equal((h.sent[0]?.['target'] as { threadId: string }).threadId, '1791349260');
+        const failed = harness({}, 'status: failed\nsummary: PRIVATE failure');
+        await runHeartbeatJob(failed.job, failed.deps);
+        assert.equal(failed.sent.length, 0);
+        assert.equal(posts.length, 2);
+        assert.doesNotMatch(JSON.stringify(posts), /PRIVATE failure/);
+    } finally {
+        configureSlackFailureStore(null); database.close();
+        globalThis.fetch = previousFetch;
+        settings['slack'].botToken = previousToken;
+        if (previous === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = previous;
     }
 }));

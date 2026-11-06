@@ -18,11 +18,11 @@ const input = { operation: 'fixture.write', channel: 'C1', invocationId: 'one', 
 const json = (data: unknown, headers?: HeadersInit) => new Response(JSON.stringify(data), { headers });
 test.beforeEach(() => { resetVerifiedSlackWorkspace(); revokeSlackToolScope(); configureRtsOutputStore(undefined); });
 test.afterEach(() => { revokeSlackToolScope(); configureRtsOutputStore(undefined); });
-function turn(threadId?: string): SlackToolPrincipal {
-    assert.equal(reserveSlackToolGrant({ teamId: 'T1', actorId: 'U1', credentialKey: slackCredentialKey(TOKEN),
+function turn(threadId?: string, requestId = 'request', actorId = 'U1'): SlackToolPrincipal {
+    assert.equal(reserveSlackToolGrant({ teamId: 'T1', actorId, credentialKey: slackCredentialKey(TOKEN),
         destination: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1', ...(threadId ? { threadId } : {}) } },
-    { requestId: 'request', scope: 'scope', chatSessionId: 'chat' }), true);
-    const secret = activateSlackToolGrant('request', 'scope', 'chat'); assert.ok(secret);
+    { requestId, scope: 'scope', chatSessionId: 'chat' }), true);
+    const secret = activateSlackToolGrant(requestId, 'scope', 'chat'); assert.ok(secret);
     const grant = resolveSlackToolGrant(secret); assert.ok(grant); return { kind: 'turn', grant };
 }
 function fixture(t: TestContext, scopes: string | null = 'chat:write,channels:history') {
@@ -352,4 +352,73 @@ test('known actor-owned message mutation succeeds while operator can manage untr
     assert.equal((await f.runtime.execute(modify, input, principal)).verification, 'verified');
     assert.equal((await f.runtime.execute(modify, { ...input, invocationId: 'operator-write' }, operator)).verification, 'verified');
     assert.equal(f.calls.filter(method => method === 'chat.delete').length, 2);
+});
+
+const threadWrite = defineAction({ operation: 'fixture.thread-write', mutates: true, scopes: ['chat:write'], methods: ['chat.postMessage'],
+    parse(raw) { return { ...baseAction(raw, ['text', 'threadTs'], true), text: requiredText(raw['text'], 2000), threadTs: requiredText(raw['threadTs'], 100) }; },
+    async execute(ctx, args) {
+        const res = await ctx.api('chat.postMessage', { channel: ctx.channel, thread_ts: args.threadTs, text: args.text });
+        return res.ok ? ctx.result('verified') : ctx.result('unknown');
+    },
+});
+const heldInput = { operation: 'fixture.thread-write', channel: 'C1', invocationId: 'held-one', threadTs: '9.9', text: 'original intended operation' };
+const readForRecovery = action(async ctx => ctx.result('verified', { checked: true }), { mutates: false, methods: [], scopes: [] });
+
+for (const unknown of [false, true]) test(`persisted pre-dispatch thread denial resumes with new matching authority, unknown=${unknown}`, async t => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    t.after(() => { if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior; });
+    const f = fixture(t);
+    const old = turn('1.1', 'old-turn');
+    await assert.rejects(f.runtime.execute(threadWrite, heldInput, old), /thread_mismatch/);
+    assert.equal(f.calls.filter(m => m === 'chat.postMessage').length, 0);
+    assert.equal(f.store.invocation('T1', 'U1', 'held-one'), undefined);
+    revokeSlackToolScope();
+    const reopened = new SlackActionRuntime({ ...f.options, store: new SlackActionStore(f.db) });
+    const wrongThread = turn('1.1', 'wrong-turn');
+    assert.equal((await reopened.execute(readForRecovery, input, wrongThread)).recovery, undefined);
+    await assert.rejects(reopened.execute(threadWrite, { ...heldInput, threadTs: '1.1' }, wrongThread), /blocked_intent_mismatch/);
+    const fresh = turn('9.9', 'new-turn');
+    const context = await reopened.execute(readForRecovery, input, fresh);
+    assert.equal(context.recovery?.held.length, 1);
+    const held = context.recovery!.held[0]!;
+    assert.deepEqual(held.requested, heldInput);
+    assert.deepEqual(held.originalTarget, { channel: 'C1', threadTs: '9.9' });
+    assert.deepEqual(held.sourceTarget, { channel: 'C1', threadTs: '1.1' });
+    assert.doesNotMatch(JSON.stringify(context), /jaw-slack-grant|fixture-action-token/);
+    assert.equal(f.calls.filter(m => m === 'chat.postMessage').length, 0, 'exposing intent never sends it');
+    const bodies: Record<string, unknown>[] = [];
+    f.reply(async (method, body) => {
+        assert.equal(method, 'chat.postMessage'); bodies.push(body);
+        if (unknown) throw new Error('response lost after dispatch');
+        return json({ ok: true, ts: '9.91' });
+    });
+    assert.equal((await reopened.execute(threadWrite, held.requested, fresh)).verification, unknown ? 'unknown' : 'verified');
+    assert.deepEqual(bodies.map(body => [body.channel, body.thread_ts]), [['C1', '9.9']]);
+    const again = new SlackActionRuntime({ ...f.options, store: new SlackActionStore(f.db) });
+    const next = turn('9.9', 'later-turn');
+    assert.equal((await again.execute(readForRecovery, input, next)).recovery, undefined);
+    if (unknown) await assert.rejects(again.execute(threadWrite, held.requested, next), /conflict_or_unknown/);
+    else assert.equal((await again.execute(threadWrite, held.requested, next)).verification, 'verified');
+    assert.equal(bodies.length, 1, 'neither successful nor unknown resumed writes are replayed');
+});
+
+test('held intent stays private when next turn cannot reauthorize membership', async t => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    t.after(() => { if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior; });
+    const f = fixture(t); await assert.rejects(f.runtime.execute(threadWrite, heldInput, turn('1.1', 'old')), /thread_mismatch/);
+    const fresh = turn('9.9', 'new'); f.removeActor();
+    await assert.rejects(f.runtime.execute(readForRecovery, input, fresh), /actor_not_member/);
+    await assert.rejects(f.runtime.execute(threadWrite, heldInput, fresh), /actor_not_member/);
+    assert.equal(f.calls.filter(m => m === 'chat.postMessage').length, 0);
+    assert.equal((f.db.prepare("SELECT state FROM slack_blocked_actions").get() as { state: string }).state, 'held');
+});
+
+test('revoked old authority or malformed intent cannot create a recovery record', async t => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    t.after(() => { if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior; });
+    const f = fixture(t); const old = turn('1.1'); revokeSlackToolScope();
+    await assert.rejects(f.runtime.execute(threadWrite, heldInput, old), /thread_mismatch/);
+    const fresh = turn('1.1', 'valid');
+    await assert.rejects(f.runtime.execute(threadWrite, { ...heldInput, unexpected: true }, fresh), /thread_mismatch/);
+    assert.equal((f.db.prepare('SELECT COUNT(*) AS n FROM slack_blocked_actions').get() as { n: number }).n, 0);
 });

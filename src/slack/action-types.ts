@@ -1,7 +1,7 @@
 import type { SlackApiResult } from './api.js';
-import type { ActionResource } from './action-store.js';
+import type { ActionResource, HeldSlackAction } from './action-store.js';
 export type ActionVerification = 'verified' | 'partial' | 'unknown' | 'failed';
-export type ActionResult = { ok: boolean; operation: string; verification: ActionVerification; retryable: false; resourceIds: string[]; data?: unknown; error?: string; status?: number; partial?: boolean };
+export type ActionResult = { recovery?: { held: HeldSlackAction[]; instruction: string }; ok: boolean; operation: string; verification: ActionVerification; retryable: false; resourceIds: string[]; data?: unknown; error?: string; status?: number; partial?: boolean };
 export type ActionBase = { channel: string; invocationId?: string };
 export type ActionContext = {
     readonly token: string; readonly workspace: string; readonly botUserId: string; readonly actor: string;

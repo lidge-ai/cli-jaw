@@ -1,4 +1,5 @@
 // Request-scoped Slack task streams. Final answer delivery has a separate owner.
+import { slackFailureRoutingEnabled } from './failure-routing.js';
 import { createHash } from 'node:crypto';
 import { slackApi, type SlackApiResult, type SlackFetch } from './api.js';
 import type { DraftStreamOptions } from '../messaging/draft-stream.js';
@@ -46,7 +47,7 @@ export type SlackProgressHandle = {
     projectedTool(entry: SlackActivityTool): void;
     runtimeLiveness(at: number): void;
     phase(value: SlackProgressPhase): void;
-    finish(outcome?: SlackProgressOutcome, options?: { reason?: 'merged' | 'removed'; bodyDelivered?: boolean }): Promise<void>;
+    finish(outcome?: SlackProgressOutcome, options?: { reason?: 'merged' | 'removed'; bodyDelivered?: boolean; routeFailure?: boolean }): Promise<void>;
     ready(): Promise<Ready>;
     abort(): void;
     terminalConfirmed(): boolean;
@@ -379,6 +380,19 @@ export async function startSlackProgress(
                     // the difference now is that no request is spent proving it.
                     if (messageGone) { confirmed = true; return; }
                     const snapshot = model.snapshot();
+                    const quietFailure = finishOptions.routeFailure !== false && slackFailureRoutingEnabled() && (outcome === 'error' || outcome === 'expired');
+                    const neutral = { text: 'Jaw · Finished', blocks: [] };
+                    if (quietFailure) {
+                        // Stop a known stream without publishing failed task chunks, then
+                        // replace its known message with neutral text. Never delete it.
+                        if (state.mode === 'native') {
+                            const stopped = await call('chat.stopStream', { channel: address.targetId, ts: state.ts }, deadline);
+                            if (!stopped.result.ok && stopped.result.error !== 'message_not_in_streaming_state') return;
+                        }
+                        const updated = await call('chat.update', { channel: address.targetId, ts: state.ts, ...neutral }, deadline);
+                        confirmed = updated.result.ok || updated.result.error === 'message_not_found';
+                        return;
+                    }
                     let response = await call(state.mode === 'native' ? 'chat.stopStream' : 'chat.update', {
                         channel: address.targetId, ts: state.ts,
                         ...(state.mode === 'native' ? { chunks: chunks(snapshot) } : fallbackBody(snapshot)),

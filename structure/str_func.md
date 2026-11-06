@@ -417,6 +417,8 @@ cli-jaw/
 │   │   ├── progress-activity.ts ← safe fixed-category activity projection, bounded recent observations and delivery receipt
 │   │   ├── progress-files.ts ← shared bounded file target projection under captured working directory
 │   │   ├── progress-detail.ts ← explicit purposes and finite safe command action summaries
+│   │   ├── failure-store.ts ← permanent hashed SQLite notification claims, fail-closed on unavailable/full storage
+│   │   ├── failure-routing.ts ← opt-in operator IM failures, bounded pre-dispatch claims and no ambiguous replay
 │   │   ├── progress-lifecycle.ts ← request/native identity binding, safe buffers and owned terminal teardown
 │   │   ├── progress-restore.ts ← generation-bound single-flight status recovery and abort ownership
 │   │   ├── reply-delivery.ts ← bounded start proof and atomic reply workflow claims independent of display expiry
