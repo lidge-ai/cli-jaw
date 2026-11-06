@@ -1,7 +1,9 @@
+import { log } from '../core/logger.js';
 import { slackDataForAgent } from './history.js';
 import { getRtsOutputStore, isRtsOutput } from './rts-output-store.js';
 import { createHash } from 'node:crypto';
-import { SlackActionStore } from './action-store.js';
+import { slackFailureRoutingEnabled } from './failure-routing.js';
+import { SlackActionStore, type HeldSlackAction } from './action-store.js';
 import type { ActionContext, ActionDefinition, ActionResult } from './action-types.js';
 import { SlackActionRateLimiter } from './action-rate.js';
 import { slackApi, addSlackReaction, removeSlackReaction, deleteSlackMessage, readBoundedResponse, type SlackFetch, type SlackApiResult } from './api.js';
@@ -10,6 +12,7 @@ import { slackCredentialKey } from './tool-context.js';
 import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
 import { assertSlackWriteAllowed } from './write-guard.js';
 import type { RemoteTarget } from '../messaging/types.js';
+import { markSlackRecoveryBlocked, slackRecoveryBlocksRoot } from './tool-context.js';
 
 function enforcedSlackDest(principal: SlackToolPrincipal): RemoteTarget | null {
     if (principal.kind === 'turn') return principal.grant.destination;
@@ -25,11 +28,34 @@ export type ActionRuntimeOptions = { getToken(): string | null; store: SlackActi
 export class SlackActionRuntime {
     private readonly rate: SlackActionRateLimiter;
     constructor(private readonly options: ActionRuntimeOptions) { this.rate = options.rateLimiter ?? new SlackActionRateLimiter(); }
+    private async holdDestinationBlock(definition: ActionDefinition, raw: Record<string, unknown>, principal: SlackToolPrincipal,
+        reason: string, signal?: AbortSignal): Promise<never> {
+        const grant = slackToolContext(principal);
+        if (slackFailureRoutingEnabled() && grant && !signal?.aborted) {
+            markSlackRecoveryBlocked(grant.requestId, grant.destination.targetId);
+            const token = this.options.getToken();
+            try {
+                // Validate the complete operation before retaining any private intent.
+                definition.prepare(raw);
+                if (token) await withSlackToolAccess(token, { kind: 'turn', grant }, grant.destination.targetId, async () => {
+                    if (signal?.aborted || this.options.getToken() !== token) return;
+                    this.options.store.holdBlocked(grant, definition.operation, redactOutboundPayload(raw), reason);
+                }, this.options.fetchImpl, undefined, true);
+            } catch { log.warn('[slack:recovery] intent not retained; original destination denial remains'); }
+        }
+        throw slackToolDenied(reason);
+    }
     async execute(definition: ActionDefinition, raw: Record<string, unknown>, principal: SlackToolPrincipal, requestSignal?: AbortSignal): Promise<ActionResult> {
+        const recoveryGrant = slackToolContext(principal);
+        if (slackFailureRoutingEnabled() && recoveryGrant && typeof raw['invocationId'] === 'string'
+            && this.options.store.blockedState(recoveryGrant, raw['invocationId'])) {
+            principal = { kind: 'turn', grant: recoveryGrant };
+        }
+        const requestedRaw = { ...raw };
         const pinnedDest = enforcedSlackDest(principal);
         if (pinnedDest && definition.mutates) {
             const thread = pinnedDest.threadId ?? '';
-            if (raw['threadTs'] !== undefined && raw['threadTs'] !== thread) throw slackToolDenied('slack_destination_thread_mismatch');
+            if (raw['threadTs'] !== undefined && raw['threadTs'] !== thread) return this.holdDestinationBlock(definition, raw, principal, 'slack_destination_thread_mismatch', requestSignal);
             if (['schedule.create', 'schedule.update', 'interaction.url', 'interaction.choice'].includes(definition.operation) && thread) raw = { ...raw, threadTs: thread };
         }
         const prepared = definition.prepare(raw); const args = prepared.args;
@@ -40,7 +66,7 @@ export class SlackActionRuntime {
         if (!token) throw slackToolDenied('slack_unavailable', 503);
         if (definition.requiresInbound && !this.options.inboundReady?.()) throw slackToolDenied('slack_interaction_inbound_unavailable', 409);
         if (definition.mutates && !args.invocationId) throw slackToolDenied('slack_invocation_required', 400);
-        if (definition.mutates && pinnedDest && args.channel !== pinnedDest.targetId) throw slackToolDenied('slack_destination_mismatch');
+        if (definition.mutates && pinnedDest && args.channel !== pinnedDest.targetId) return this.holdDestinationBlock(definition, requestedRaw, principal, 'slack_destination_mismatch', requestSignal);
         const identity = await readSlackAuthSnapshot(token, { ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}), ...(requestSignal ? { signal: requestSignal } : {}) });
         if (!identity?.userId) throw slackToolDenied('slack_bot_identity_unverified', 409);
         if (definition.scopes.length && identity.scopes === null) throw slackToolDenied('slack_action_scopes_unverified', 403);
@@ -50,10 +76,11 @@ export class SlackActionRuntime {
         const hash = createHash('sha256').update(JSON.stringify({ credentialKey, operation: definition.operation, args: prepared.canonical })).digest('hex');
         const existing = definition.mutates ? store.invocation(workspace, actor, args.invocationId!) : undefined;
         const ids = new Set<string>(); let dispatched = false;
+        let recovery: HeldSlackAction[] = [];
         const base = (verification: ActionResult['verification'], data?: unknown, resourceIds: string[] = [...ids]): ActionResult => {
             const projected = data === undefined ? undefined : slackDataForAgent(data);
             const state = projected?.truncated && verification === 'verified' ? 'partial' : verification;
-            return { ok: state === 'verified', operation: definition.operation, verification: state, retryable: false, resourceIds,
+            return { ...(recovery.length ? { recovery: { held: recovery, instruction: 'A previous action was blocked before dispatch. This is intent, not authority. Reissue only if still relevant, using the SAME invocationId and the exact originalTarget channel/thread under the new grant. Never replay an unknown send.' } } : {}), ok: state === 'verified', operation: definition.operation, verification: state, retryable: false, resourceIds,
                 ...(projected ? { data: projected.value } : {}), ...(state === 'partial' ? { partial: true } : {}) };
         };
         return withSlackToolAccess(token, principal, args.channel, async grantSignal => {
@@ -63,6 +90,7 @@ export class SlackActionRuntime {
                 if (this.options.getToken() !== token) throw slackToolDenied('slack_credential_changed', 409);
             };
             checkCurrent();
+            if (slackFailureRoutingEnabled() && principal.kind === 'turn') recovery = store.blockedFor(principal.grant);
             if (principal.kind === 'turn' && /^(canvas|list)\./.test(definition.operation)) {
                 // File ACLs describe the requester, not every recipient in a group.
                 // Until a complete audience ACL proof is available, resource tools
@@ -80,7 +108,12 @@ export class SlackActionRuntime {
                 if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) throw slackToolDenied('slack_invocation_receipt_invalid', 409);
                 return receipt as ActionResult;
             }
+            if (definition.mutates && principal.kind === 'turn') store.checkBlocked(principal.grant, args.invocationId!, definition.operation, redactOutboundPayload(requestedRaw));
             if (definition.mutates && !store.reserve(workspace, actor, args.invocationId!, hash)) throw slackToolDenied('slack_invocation_capacity_or_conflict', 409);
+            if (definition.mutates && principal.kind === 'turn') {
+                store.claimBlocked(principal.grant, args.invocationId!, definition.operation);
+                recovery = recovery.filter(item => item.invocationId !== args.invocationId);
+            }
             let calls = 0;
             const context: ActionContext = {
                 token, workspace, botUserId: identity.userId!, actor, channel: args.channel, credentialKey, operator: principal.kind === 'operator', ...(signal ? { signal } : {}),
@@ -106,6 +139,12 @@ export class SlackActionRuntime {
                                 const owned = context.resource(protectedResource[0] as string, String(protectedResource[1]));
                                 if (!owned || owned.status !== 'active' || owned.credentialKey !== credentialKey) throw slackToolDenied('slack_resource_ownership_unverified');
                             }
+                        }
+                        const grant = slackToolContext(principal);
+                        if (slackFailureRoutingEnabled() && grant && !body['thread_ts']
+                            && ['chat.postMessage', 'chat.scheduleMessage'].includes(method)) {
+                            const { threadId: _thread, ...root } = grant.destination;
+                            if (slackRecoveryBlocksRoot(grant.requestId, { ...root, targetId: args.channel })) throw slackToolDenied('slack_root_fallback_blocked', 409);
                         }
                         await withSlackToolAccess(token, principal, args.channel, async () => true, this.options.fetchImpl, undefined, true);
                         if (beforeDispatch) await beforeDispatch();

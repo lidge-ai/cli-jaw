@@ -406,3 +406,17 @@ test('failed unconfirmed diagnostic delivery does not cause automatic resend or 
     assert.equal(bodies().length, 1); assert.equal(admissions.length, 1); assert.equal(collections.length, 1);
     assert.equal(reactions('white_check_mark').length, 0);
 });
+
+test('operator failure routing leaves pre-turn workflow validation visible', async () => {
+    const prior = process.env['JAW_SLACK_FAILURE_DM']; process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    settings['slack'].trustedBotTriggers = [{ ...RULE, workflowSkill: 'example-disabled' }];
+    try {
+        await run();
+        assert.equal(admissions.length, 0);
+        assert.equal(bodies().length, 1);
+        assert.equal(bodies()[0]!.body['text'], t('slack.workflow.unavailable', {}, 'en'));
+        assert.notEqual(bodies()[0]!.body['channel'], 'DOPERATORTEST');
+    } finally {
+        if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
+    }
+});

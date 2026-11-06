@@ -1,4 +1,7 @@
-import { slackCredentialKey } from '../slack/tool-context.js';
+import { markSlackRecoveryBlocked, slackRecoveryBlocksRoot, slackCredentialKey } from '../slack/tool-context.js';
+import type { SlackActionStore } from '../slack/action-store.js';
+import { slackFailureRoutingEnabled } from '../slack/failure-routing.js';
+import { createHash } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { resolveSlackToolPrincipal, slackToolContext, withSlackToolAccess, slackToolDenied, type SlackOperatorValidator } from '../slack/tool-access.js';
 import { assertSlackWriteAllowed } from '../slack/write-guard.js';
@@ -87,7 +90,7 @@ import { settings, JAW_HOME, UPLOADS_DIR } from '../core/config.js';
 import { expandHomePath } from '../core/path-expand.js';
 import { stripUndefined } from '../core/strip-undefined.js';
 import { log } from '../core/logger.js';
-import { redactOutboundText, logErrorText, userErrorText } from '../messaging/redact.js';
+import { redactOutboundText, redactOutboundPayload, logErrorText, userErrorText } from '../messaging/redact.js';
 
 function resolveTelegramChatId(body: Record<string, unknown>): string | number | null {
     const raw = body?.['chat_id'] ?? body?.['chatId'];
@@ -150,7 +153,7 @@ function resolveOpenTarget(rawPath: string): OpenTarget {
 }
 
 export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddleware,
-    options: { validateSlackOperator?: SlackOperatorValidator; isFullAccess?: (req: Request) => boolean } = {}): void {
+    options: { validateSlackOperator?: SlackOperatorValidator; isFullAccess?: (req: Request) => boolean; slackActionStore?: SlackActionStore } = {}): void {
     const fullFor = (req: Request) => options.isFullAccess?.(req) === true;
     const principalFor = (req: Request, full: boolean) => {
         for (const input of [req.body, req.query]) if (input && typeof input === 'object'
@@ -174,6 +177,16 @@ export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddlewar
         const client = getSlackSendClient();
         if (!client.token) throw slackToolDenied('slack_unavailable', 503);
         const scopedGrant = slackToolContext(principal);
+        const recoveryTarget = request.target ?? request.turnTarget;
+        if (slackFailureRoutingEnabled() && scopedGrant
+            && slackRecoveryBlocksRoot(scopedGrant.requestId, recoveryTarget ?? scopedGrant.destination)) {
+            throw slackToolDenied('slack_root_fallback_blocked', 409);
+        }
+        const recoveryDraft = slackFailureRoutingEnabled() && scopedGrant && request.type === 'text'
+            && typeof request.text === 'string' && recoveryTarget?.channel === 'slack' && recoveryTarget.threadId
+            ? { channel: recoveryTarget.targetId, threadTs: recoveryTarget.threadId, type: 'text', text: request.text }
+            : undefined;
+        const recoveryArgs = recoveryDraft ? { ...recoveryDraft, invocationId: `delivery-${createHash('sha256').update(JSON.stringify(recoveryDraft)).digest('hex')}` } : undefined;
         if (principal.kind === 'turn' || scopedGrant?.enforceDestination === true) {
             if (request.filePath) {
                 const inside = (root: string) => {
@@ -185,7 +198,17 @@ export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddlewar
             const destination = scopedGrant!.destination;
             const candidate = request.target ?? request.turnTarget;
             if ((candidate && (candidate.targetId !== destination.targetId || (candidate.threadId ?? '') !== (destination.threadId ?? '')))
-                || (request.chatId !== undefined && String(request.chatId) !== destination.targetId)) throw slackToolDenied('slack_destination_mismatch');
+                || (request.chatId !== undefined && String(request.chatId) !== destination.targetId)) {
+                if (slackFailureRoutingEnabled()) markSlackRecoveryBlocked(scopedGrant!.requestId, destination.targetId);
+                if (recoveryArgs && options.slackActionStore) {
+                    try {
+                        await withSlackToolAccess(client.token, { kind: 'turn', grant: scopedGrant! }, destination.targetId, async () => {
+                            options.slackActionStore!.holdBlocked(scopedGrant!, 'channel.send', redactOutboundPayload(recoveryArgs), 'slack_destination_mismatch');
+                        });
+                    } catch { log.warn('[slack:recovery] audience not verified; delivery intent not retained'); }
+                }
+                throw slackToolDenied('slack_destination_mismatch');
+            }
             request = { ...request, target: destination, channel: 'slack' };
         }
         const implicitTarget = !request.target && request.chatId === undefined
@@ -198,9 +221,18 @@ export function registerMessagingRoutes(app: Express, requireAuth: AuthMiddlewar
             assertSlackWriteAllowed(principal, scopedGrant, targetId ?? scopedGrant.destination.targetId);
         }
         if (targetId) assertSlackWriteAllowed(principal, scopedGrant ?? null, targetId);
-        return withSlackToolAccess(client.token, principal, principal.kind === 'turn' ? principal.grant.destination.targetId : undefined,
+        const recoveryPrincipal = recoveryArgs && scopedGrant && options.slackActionStore?.blockedState(scopedGrant, recoveryArgs.invocationId)
+            ? { kind: 'turn' as const, grant: scopedGrant } : principal;
+        return withSlackToolAccess(client.token, recoveryPrincipal, recoveryPrincipal.kind === 'turn' ? recoveryPrincipal.grant.destination.targetId : undefined,
             signal => {
                 if (targetId) assertSlackWriteAllowed(principal, scopedGrant ?? null, targetId);
+                if (recoveryArgs && scopedGrant && options.slackActionStore) {
+                    options.slackActionStore.checkBlocked(scopedGrant, recoveryArgs.invocationId, 'channel.send', recoveryArgs);
+                    if (options.slackActionStore.blockedState(scopedGrant, recoveryArgs.invocationId) === 'attempted') {
+                        throw slackToolDenied('slack_recovery_already_attempted', 409);
+                    }
+                    options.slackActionStore.claimBlocked(scopedGrant, recoveryArgs.invocationId, 'channel.send');
+                }
                 return sendChannelOutput({ ...request, slackCredentialKey: slackCredentialKey(client.token!), ...(signal ? { signal } : {}),
                     fromAgentSurface: true,
                     slackWriteGuard: channelId => assertSlackWriteAllowed(principal, scopedGrant ?? null, channelId) });

@@ -1,3 +1,4 @@
+import { reportSlackFailure, slackFailureRoutingEnabled } from './failure-routing.js';
 import { addBroadcastListener, removeBroadcastListener } from '../core/bus.js';
 import { subscribe } from '../core/event-bus.js';
 import { log } from '../core/logger.js';
@@ -8,7 +9,7 @@ import type { RemoteTarget } from '../messaging/types.js';
 import { matchesRunPin } from '../messaging/run-pin.js';
 import type { RuntimeLivenessIdentity } from '../shared/runtime-contract.js';
 
-export type SlackProgressFinishOptions = { reason?: 'merged' | 'removed'; bodyDelivered?: boolean };
+export type SlackProgressFinishOptions = { reason?: 'merged' | 'removed'; bodyDelivered?: boolean; routeFailure?: boolean };
 export type SlackProgressLifecycle = {
     start(options: { initialPhase: 'queued' | 'running' }): void;
     phase(value: SlackProgressPhase): void;
@@ -150,6 +151,9 @@ export function createSlackProgressLifecycle(input: SlackProgressLifecycleOption
         if (terminal) return terminal;
         detach();
         terminal = Promise.resolve().then(async () => {
+            if (finishOptions.routeFailure !== false && slackFailureRoutingEnabled() && (outcome === 'error' || outcome === 'expired')) {
+                await reportSlackFailure(config.token, config.target, config.requestId);
+            }
             const active = await handle;
             if (!active) return;
             await active.finish(outcome, finishOptions);

@@ -694,3 +694,27 @@ test('ten simultaneous fallback finishes stay within the deadline and never resu
         'unsent terminal edits remain honestly unconfirmed');
     assert.equal(h.clock.timers.size, 0);
 });
+
+for (const fallback of [false, true]) test(`operator routing neutralizes ${fallback ? 'fallback' : 'native'} failure cards without deleting`, async () => {
+    const previous = process.env['JAW_SLACK_FAILURE_DM'];
+    process.env['JAW_SLACK_FAILURE_DM'] = 'DOPERATORTEST';
+    try {
+        const h = harness(c => fallback && c.method === 'chat.startStream'
+            ? { payload: { ok: false, error: 'unknown_method' } } : ok());
+        const p = await startSlackProgress(h.token, target, '', h.options);
+        await p.ready();
+        const finish = p.finish('error');
+        for (let i = 0; i < 10 && !p.terminalConfirmed(); i++) await h.clock.advance(100);
+        await finish;
+        assert.equal(p.terminalConfirmed(), true);
+        assert.equal(h.calls.at(-1)?.method, 'chat.update');
+        assert.equal(h.calls.at(-1)?.body['text'], 'Jaw · Finished');
+        assert.deepEqual(h.calls.at(-1)?.body['blocks'], []);
+        assert.ok(h.calls.every(c => c.method !== 'chat.delete'));
+        assert.ok(h.calls.filter(c => c.method === 'chat.update').every(c => c.body['ts'] === '111.222'));
+        const stop = h.calls.find(c => c.method === 'chat.stopStream');
+        if (stop) assert.equal(stop.body['chunks'], undefined);
+    } finally {
+        if (previous === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = previous;
+    }
+});

@@ -22,6 +22,7 @@ import { currentSessionScope, withSessionScope } from '../core/session-context.j
 
 import { clearPromptCache } from '../prompt/builder.js';
 import { spawnAgent, killAgentById } from '../agent/spawn.js';
+import { slackRecoveryPromptForRequest } from '../slack/tool-context.js';
 import { readStopCause } from '../agent/spawn/stop-cause.js';
 import { stripStallTruncationNotice } from '../agent/error-classifier.js';
 import {
@@ -519,6 +520,9 @@ export async function orchestrate(
     if (remoteChannelElicitationGuard) {
         prompt = `${prompt}\n\n${remoteChannelElicitationGuard}`;
     }
+
+    const slackRecovery = await slackRecoveryPromptForRequest(requestId, scope, meta['chatSessionId'] || getActiveChatSession());
+    if (slackRecovery) prompt = `${slackRecovery}\n\n${prompt}`;
 
     // spawn/resume agent
     console.log(`[jaw:pabcd] state=${state}, spawning/resuming agent`);

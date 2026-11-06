@@ -3,6 +3,7 @@
 // Mirrors src/discord/forwarder.ts; no client object is needed because the
 // Slack outbound path is stateless HTTP.
 
+import { reportSlackFailure, slackFailureRoutingEnabled, isSlackTurnFailure } from './failure-routing.js';
 import { settings } from '../core/config.js';
 import { log } from '../core/logger.js';
 import { extractLocalImagePaths } from '../messaging/extract-images.js';
@@ -14,6 +15,7 @@ import { sendSlackText } from './send-only-client.js';
 import { logErrorText } from '../messaging/redact.js';
 import { renderAgentErrorBlock } from '../messaging/error-block.js';
 import { resolveForwarderTarget } from '../messaging/forwarder-origin.js';
+import { slackRecoveryBlocksRoot } from './tool-context.js';
 
 export async function relaySlackImages(
     token: string,
@@ -58,6 +60,14 @@ export function createSlackForwarder(opts: {
     prefix?: string;
 }) {
     return async (type: string, data: Record<string, unknown>) => {
+        if (type === 'agent_done' && slackFailureRoutingEnabled() && (isSlackTurnFailure(data)
+            || slackRecoveryBlocksRoot(data['requestId'], resolveForwarderTarget(data, 'slack') ?? undefined))) {
+            if (opts.shouldSkip?.(data)) return;
+            const token = opts.getToken();
+            const target = resolveForwarderTarget(data, 'slack');
+            if (token && target) await reportSlackFailure(token, target, data['requestId'] ?? data['runId'] ?? data['traceRunId']);
+            return;
+        }
         const text = data?.["text"];
         if (type !== 'agent_done' || typeof text !== 'string' || !text) return;
         // A failure the classifier tagged is the one thing worth interrupting a
@@ -76,6 +86,7 @@ export function createSlackForwarder(opts: {
             const body = errorBlock ?? text;
             const result = await sendSlackText(token, target, `${opts.prefix || ''}${body}`);
             if (!result.ok) {
+                await reportSlackFailure(token, target, data['requestId'] ?? data['runId'], 'delivery');
                 log.error('[slack:forward]', logErrorText(result.error || 'send failed'));
                 return;
             }
@@ -83,6 +94,7 @@ export function createSlackForwarder(opts: {
             if (!errorBlock) await relaySlackImages(token, target, text);
             opts.log?.({ channelId: target.targetId, preview: body.slice(0, 60) });
         } catch (e) {
+            await reportSlackFailure(token, target, data['requestId'] ?? data['runId'], 'delivery');
             log.error('[slack:forward]', logErrorText(e));
         }
     };

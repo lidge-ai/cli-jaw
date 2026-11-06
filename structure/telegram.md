@@ -768,3 +768,61 @@ id 로 간다 — 하트비트 쪽 바인딩은 완결돼 보이므로 보류도
 - `watchHeartbeatFile()`는 `heartbeat.json` 파일 변경을 debounce 후 자동 재로드한다
 
 Slack file CLI uses an explicit conversation and completion-only upload receipts (`sent: boolean|unknown`, no auto retry or caption fallback); cancellation preserves known/unknown delivery. Sync commands/API/Slack docs.
+
+### Operator-only Slack failure routing
+
+Set the service environment `JAW_SLACK_FAILURE_DM` to the operator's Slack IM
+conversation ID (`D…`) to opt in. Unset preserves existing behavior. Presence
+with an invalid value still suppresses public failure bodies and logs a local
+configuration warning; it never falls back to a channel or another recipient.
+Use the same workspace bot token already configured for Slack; no new credentials
+or scopes are bypassed. The IM must already exist and be accessible to that bot.
+
+Direct, queued, steered, restored-orphan and generic forwarder turn failures
+suppress failure bodies. Turn failure means native runtime error, legacy terminal
+error/execution failure, collector error/timeout or a latched failed request.
+Individual failed tools do not declare the whole turn failed. Pre-turn workflow
+selection and file/input validation warnings remain visible. Workflow-unconfirmed
+alone preserves its diagnostic body and progress instead of routing a failed turn.
+Actual turn/delivery failure or expiry stops and neutrally rewrites the known
+progress message to `Jaw · Finished`, never deleting or reposting it. Unavailable
+edits retain recovery ownership, so the previous progress message can remain.
+Heartbeat failed reports, execution failures, destination holds and delivery
+failures send a concise operator notification without report/exception text.
+
+Notifications commit a hashed source identity to `slack_failure_claims` in the
+instance database before one POST (five-second HTTP timeout). There is no automatic
+retry, expiry or eviction for any claim, including unknown outcomes. Restarting
+retains the claims. The store contains only a hash and timestamp; no recipient ID,
+source body or exception. Its 100,000-row cap, unavailable storage or a claim write
+failure suppresses notification dispatch. A crash after commit can lose a notice:
+this favors no replay over guaranteed notification delivery. Historical notifications
+sent before durable claims were enabled cannot be reconstructed from this table.
+
+Definite pre-dispatch destination denials retain a bounded intent in
+`slack_blocked_actions` (128 rows, 16 KiB per draft). Both typed actions and text
+sends through `/api/channel/send` or `/api/slack/send` participate. Root substitution
+is suppressed for a turn with a blocked threaded delivery, even when its final
+body is otherwise successful. A failed durable-intent write cannot authorize root
+substitution: a bounded process-local denial marker also protects that turn.
+
+On a later normal turn in the exact requested thread, the orchestrator offers
+one held draft before spawning the runtime. Workspace, actor, credential and
+channel must match, and audience access is checked again before disclosure and
+again on retry. The draft is untrusted data, not authority; current cancellation
+or changed requirements take precedence. Typed retries retain their invocation
+ID; text retries claim the matching draft before transport. Attempted/unknown
+deliveries cannot be replayed. Cross-channel intents and file sends are not
+automatically resumed. A new root message is never redirected into an old thread.
+
+A held heartbeat retains its configured channel/thread, revalidating that exact
+destination next scheduled run. It never posts at channel root as recovery and
+never replays an uncertain prior body. Period-thread reply claims and Slack reply
+ledger rules continue to block blind replay after a send attempt. Operators must
+fix the destination/access issue; enabling this route does not resolve it.
+
+Deployment: build the reviewed checkout, configure the environment on the actual
+service, restart that service, then verify a controlled failed turn produces one
+IM notification with no human-channel failure body and a successful threaded
+turn still reaches its original parent. Build/restart/configuration and live
+Slack verification are separate deployment steps; unit tests do not prove them.
