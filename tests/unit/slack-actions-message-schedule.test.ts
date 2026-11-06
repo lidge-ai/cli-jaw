@@ -247,3 +247,32 @@ test('schedule listing treats absent/old creation fingerprints as pending, not c
     assert.equal(data.complete, false); assert.deepEqual(data.oldCredentialPending.sort(), ['QMISSING', 'QOLD']);
     assert.equal(f.rows.get('QOLD')!.status, 'active'); assert.equal(f.rows.get('QMISSING')!.status, 'active');
 });
+
+for (const tombstone of [true, false]) test(`delete readback recognizes only an explicit tombstone: ${tombstone}`, async () => {
+    let reads = 0;
+    const f = fixture('message.delete', method => method === 'chat.delete' ? ok({})
+        : method === 'conversations.info' ? ok({ channel: { is_member: true } })
+        : ok({ messages: ++reads === 1 ? [{ ts: '1.1', user: 'UBOT' }]
+            : [{ ts: '1.1', user: 'USLACKBOT', text: 'This message was deleted.', ...(tombstone ? { subtype: 'tombstone' } : {}) }], has_more: false }));
+    const result = await f.run({ ts: '1.1' });
+    assert.equal(result.verification, tombstone ? 'verified' : 'failed');
+    assert.deepEqual(result.data, { deleted: tombstone });
+    assert.equal(f.calls.filter(c => c.method === 'chat.delete').length, 1);
+});
+
+test('tombstone after deletion still requires current bot membership', async () => {
+    let reads = 0;
+    const f = fixture('message.delete', method => method === 'chat.delete' ? ok({})
+        : method === 'conversations.info' ? { ok: false, error: 'not_in_channel' }
+        : ok({ messages: ++reads === 1 ? [{ ts: '1.1', user: 'UBOT' }]
+            : [{ ts: '1.1', subtype: 'tombstone' }], has_more: false }));
+    const result = await f.run({ ts: '1.1' });
+    assert.equal(result.verification, 'unknown');
+    assert.deepEqual(result.data, { deleted: null });
+});
+
+test('a preexisting tombstone never authorizes a new deletion', async () => {
+    const f = fixture('message.delete', () => ok({ messages: [{ ts: '1.1', subtype: 'tombstone', user: 'USLACKBOT' }], has_more: false }));
+    assert.equal((await f.run({ ts: '1.1' })).error, 'message_not_bot_owned');
+    assert.equal(f.calls.length, 1);
+});

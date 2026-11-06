@@ -58,7 +58,9 @@ async function modify(ctx: ActionContext, args: MessageArgs, update: boolean) {
             : compareSlackMessageContent(args.payload!, after.message);
         return ctx.result(content, { channel: args.channel, ts: args.ts, content: content === 'verified' ? 'verified' : content === 'partial' ? 'not_checked' : 'mismatch' }, [args.ts]);
     }
-    if (after.message) return ctx.result('failed', { deleted: false }, [args.ts]);
+    // Slack can retain a root placeholder after a successful deletion. Only
+    // the explicit tombstone subtype proves removal; text/user heuristics do not.
+    if (after.message && after.message.subtype !== 'tombstone') return ctx.result('failed', { deleted: false }, [args.ts]);
     const membership = await ctx.api<{ channel?: { is_member?: boolean; is_im?: boolean; is_mpim?: boolean } }>('conversations.info', { channel: args.channel });
     // Runtime admission checks requester membership; this proves the bot still sees the destination.
     const current = membership.ok && (membership.data?.channel?.is_member === true || membership.data?.channel?.is_im === true);
