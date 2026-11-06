@@ -39,6 +39,10 @@ readline.createInterface({input:process.stdin}).on('line',line=> {
  if(text.includes('HOLD_PARTIAL_PROGRESS')) { waiting={message,text}; send({fixturePause:true}); return; }
  if(text.includes('HOLD_NATIVE_FIXTURE')) return;
  if(text.includes('QUOTA_REJECTION_FIXTURE')) {
+  if(text.includes('OBSERVATION_LIMIT')) {
+   for(let i=0;i<130;i++) send({type:'assistant',parent_tool_use_id:null,message:{id:'capacity-'+i,content:[{type:'text',text:'detail'}]}});
+   send({type:'assistant',parent_tool_use_id:null,message:{id:'hidden-write',content:[{type:'tool_use',id:'hidden-write',name:'Write',input:{}}]}});
+  }
   if(text.includes('AFTER_EFFECT')) send({type:'assistant',parent_tool_use_id:null,message:{id:'write-'+turns,
    content:[{type:'tool_use',id:'write-call',name:'Write',input:{file_path:'fixture.txt',content:'changed'}}]}});
   if(text.includes('SPOOF_NOTICE_TOOL')) send({type:'assistant',parent_tool_use_id:null,message:{id:'spoof-'+turns,
@@ -476,7 +480,7 @@ runTest('a weekly quota notice before any actual tool hands the failed turn to C
     } finally { off(); }
 });
 
-for (const marker of ['AFTER_EFFECT', 'SPOOF_NOTICE_TOOL']) {
+for (const marker of ['AFTER_EFFECT', 'SPOOF_NOTICE_TOOL', 'OBSERVATION_LIMIT']) {
     runTest('quota fallback remains blocked after a real tool: ' + marker, async () => {
         config.settings.fallbackOrder = ['cursor'];
         const result = await spawnAgent('QUOTA_REJECTION_FIXTURE ' + marker, options()).promise as Record<string, any>;

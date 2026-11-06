@@ -145,13 +145,13 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         // A start or settle failure never reaches lifecycle, which is where a
         // settled native failure is handed to fallbackOrder. The same decision is
         // made here so a Claude that cannot even start still gets an answer.
+        finishTools(final.status);
         const fallbackCli = !selected && final.status === 'error' && base.mainManaged
             ? pickNativeFallbackCli('claude', base.opts, ctx.toolLog) : null;
         if (fallbackCli) {
             fallbackPending = true; chosenFallbackCli = fallbackCli;
             console.log(`[jaw:fallback] native claude failed to run → ${fallbackCli}`);
         }
-        finishTools(final.status);
         handoffRuntimeOutcome(ctx, final);
         try {
             ensureFallbackStarted();
@@ -192,6 +192,11 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
             try { updateTraceToolRow(tool); } catch { console.warn('[runtime:claude] tool completion trace unavailable'); }
         }
         ctx.toolLog = [...tools.values()];
+        // Keep execution uncertainty outside bounded display/tool observation.
+        // It is deliberately effectful for retry gates; no tool execution is claimed.
+        if (facade?.executionObservationIncomplete) ctx.toolLog.push({ icon: '⚠️',
+            label: 'Execution observation incomplete', toolType: 'execution-uncertainty',
+            status: 'stopped', detail: 'Unobserved work may have run; automatic prompt replay is blocked.' });
         try {
             syncOwnedTools();
             if (workerSlot && getWorkerSlot(base.agentLabel) === workerSlot) updateWorkerTools(base.agentLabel, ctx.toolLog);

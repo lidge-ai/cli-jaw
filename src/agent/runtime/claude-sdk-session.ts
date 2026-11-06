@@ -101,6 +101,7 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private failure = false;
     private failureCode: string | null = null;
     private turnFailureText: string | null = null;
+    private lastObservationIncomplete = false;
     private exited = false;
     private readonly registry: RuntimeRequests;
     private readonly terminalIds = new Set<string>();
@@ -308,6 +309,10 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private current(context: Readonly<ClaudeTurnContext>): boolean {
         try { return context.isCurrent() === true; } catch { return false; }
     }
+    get executionObservationIncomplete(): boolean {
+        return (this.turn ?? this.pendingFinal?.turn)?.mapper.executionObservationIncomplete ?? this.lastObservationIncomplete;
+    }
+
     isRateLimitNotice(itemId: string): boolean {
         return (this.turn ?? this.pendingFinal?.turn)?.mapper.isRateLimitNotice(itemId) === true;
     }
@@ -334,6 +339,7 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
         if (outcome.status !== 'done' && !outcome.partialText) outcome = { ...outcome, partialText: turn.mapper.interruptedText };
         this.finishing = true;
         this.turn = null; clearTimeout(turn.timer);
+        this.lastObservationIncomplete = turn.mapper.executionObservationIncomplete;
         this.turnFailureText = outcome.status === 'error' ? turn.mapper.failureText : null;
         const usage = turn.mapper.contextUsage;
         if (usage) {

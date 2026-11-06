@@ -66,6 +66,8 @@ export class ClaudeSdkEvents {
         this.messages = new ClaudeSdkMessages(reason => projection.report(reason));
     }
 
+    get executionObservationIncomplete(): boolean { return this.observationLimited; }
+
     get partialText(): string { return this.messages.partialText; }
     get interruptedText(): string { return this.messages.interruptedText; }
 
