@@ -38,6 +38,16 @@ readline.createInterface({input:process.stdin}).on('line',line=> {
  send({type:'assistant',parent_tool_use_id:null,message:{id:'partial-'+turns,content:[{type:'text',text:'PRE-TOOL COMMENTARY'}]}});
  if(text.includes('HOLD_PARTIAL_PROGRESS')) { waiting={message,text}; send({fixturePause:true}); return; }
  if(text.includes('HOLD_NATIVE_FIXTURE')) return;
+ if(text.includes('QUOTA_REJECTION_FIXTURE')) {
+  if(text.includes('AFTER_EFFECT')) send({type:'assistant',parent_tool_use_id:null,message:{id:'write-'+turns,
+   content:[{type:'tool_use',id:'write-call',name:'Write',input:{file_path:'fixture.txt',content:'changed'}}]}});
+  if(text.includes('SPOOF_NOTICE_TOOL')) send({type:'assistant',parent_tool_use_id:null,message:{id:'spoof-'+turns,
+   content:[{type:'tool_use',id:'spoof-call',name:'Claude rate limit',input:{}}]}});
+  send({type:'rate_limit_event',rate_limit_info:{status:'rejected',rateLimitType:'seven_day',resetsAt:1900000000}});
+  send({type:'result',subtype:'error_during_execution',is_error:true,session_id:'private-claude-session',
+   errors:['weekly limit reached'],num_turns:turns,duration_ms:25});
+  return;
+ }
  const tool='Read', id='private-tool-'+turns, input={file_path:'fixture.txt'};
  send({type:'assistant',parent_tool_use_id:null,message:{id:'tool-'+turns,content:[{type:'tool_use',id,name:tool,input}]}});
  if(text.includes('HOLD_TOOL_PROGRESS')) { waiting={message,text,id}; send({fixturePause:true}); return; }
@@ -447,6 +457,33 @@ runTest('a native fallback run that fails again reports its error and does not c
         assert.equal(done[0]!.data.error, true);
     } finally { off(); }
 });
+
+runTest('a weekly quota notice before any actual tool hands the failed turn to Cursor', async () => {
+    config.settings.fallbackOrder = ['cursor'];
+    const opts = options(), events: Array<{ type: string; data: Record<string, any> }> = [];
+    const off = subscribe(event => events.push({ type: event.event, data: event.data }));
+    try {
+        const result = await spawnAgent('QUOTA_REJECTION_FIXTURE', opts).promise as Record<string, any>;
+        assert.equal(result.runtimeOutcome?.status, 'error');
+        assert.equal(result.nativeFallbackCli, 'cursor');
+        const done = events.filter(event => event.type === 'agent_done');
+        assert.equal(done.length, 1);
+        assert.equal(done[0]!.data.fallbackPending, 'cursor');
+        assert.equal(done[0]!.data.error, undefined);
+        assert.ok(events.some(event => event.type === 'agent_runtime' && event.data.name === 'Claude rate limit'),
+            'the quota diagnostic stays visible');
+        assert.deepEqual(assistantRows(opts.chatSessionId), [], 'the failed attempt is not saved as the answer');
+    } finally { off(); }
+});
+
+for (const marker of ['AFTER_EFFECT', 'SPOOF_NOTICE_TOOL']) {
+    runTest('quota fallback remains blocked after a real tool: ' + marker, async () => {
+        config.settings.fallbackOrder = ['cursor'];
+        const result = await spawnAgent('QUOTA_REJECTION_FIXTURE ' + marker, options()).promise as Record<string, any>;
+        assert.equal(result.runtimeOutcome?.status, 'error');
+        assert.equal(result.nativeFallbackCli, undefined, 'actual tools must not be replayed');
+    });
+}
 
 runTest('journal failure still persists interrupted salvage before the actual exit-settle barrier', async () => {
     failJournal = true; const opts = options(), watermark = getMaxMessageId(opts.chatSessionId);

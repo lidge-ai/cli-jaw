@@ -140,7 +140,9 @@ const EMP_MAX_RETRIES = 2;
  * The same "a real turn ran tools" reasoning already guards stale-resume
  * invalidation elsewhere in this file.
  */
-const REPEATABLE_TOOL_TYPES = new Set(['search', 'thinking']);
+// The Claude adapter marks only its exact SDK quota-notice item as provider-notice.
+// It reports provider capacity; it never executes the prompt's work.
+const REPEATABLE_TOOL_TYPES = new Set(['search', 'thinking', 'provider-notice']);
 
 function performedSideEffects(ctx: ExitContext): boolean {
     return ctx.toolLog.some(tool => !REPEATABLE_TOOL_TYPES.has(tool.toolType));

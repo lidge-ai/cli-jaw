@@ -308,6 +308,10 @@ export class ClaudeSdkSession implements NativeRuntimeSession {
     private current(context: Readonly<ClaudeTurnContext>): boolean {
         try { return context.isCurrent() === true; } catch { return false; }
     }
+    isRateLimitNotice(itemId: string): boolean {
+        return (this.turn ?? this.pendingFinal?.turn)?.mapper.isRateLimitNotice(itemId) === true;
+    }
+
     private recordEvent(turn: Turn, body: RuntimeEventBody): RuntimeEvent | null {
         if (!turn.passiveFinalizing && !this.current(turn.context)) return null;
         return this.publishEvent(turn, turn.context, body);
