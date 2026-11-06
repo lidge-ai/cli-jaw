@@ -86,6 +86,7 @@ import { createSlackForwarder, relaySlackImages } from './forwarder.js';
 import { nextDeliverySeq, wasSelfDelivered } from '../messaging/turn-delivery.js';
 import { shouldSkipForwarding } from '../messaging/forwarder-origin.js';
 import { requiresNativeBodyDelivery } from '../messaging/native-body.js';
+import { visibleReplyText } from '../messaging/silent-reply.js';
 import { createQueueNoticeRecorder } from '../messaging/queue-notice-record.js';
 import { admitTargetReply } from '../messaging/target-reply-guard.js';
 import { handleSlackSlashCommand } from './commands.js';
@@ -698,7 +699,7 @@ function trackSlackReply(options: SlackReplyOptions): void {
                 if (unconfirmed) outcomeData = { ...data, workflowUnconfirmed: true };
                 const text = unconfirmed ? workflowDiagnosticText(rawText, t('slack.workflow.unconfirmed', {}, locale))
                     : data['error'] === true && !requireBodyDelivery ? t('slack.progress.failure', {}, locale)
-                    : requireBodyDelivery && !rawText.trim() ? '' : rawText;
+                    : requireBodyDelivery && !rawText.trim() ? '' : visibleReplyText(rawText, t('tg.noResponse', {}, locale));
                 display.phase('delivering');
                 // Same rule as the direct path, and now literally the same code:
                 // the queued/steer turn differs only in where its text and anchor
@@ -791,7 +792,8 @@ function installSlackTargetReplyForwarder(): void {
         const text = data['workflowUnconfirmed'] === true
             ? workflowDiagnosticText(String(data['text'] ?? ''), t('slack.workflow.unconfirmed', {}, currentLocale()))
             : data['error'] === true && !requireBodyDelivery
-            ? t('slack.progress.failure', {}, currentLocale()) : String(data['text'] ?? '');
+            ? t('slack.progress.failure', {}, currentLocale())
+            : visibleReplyText(String(data['text'] ?? ''), t('tg.noResponse', {}, currentLocale()));
         const requestId = admitted.requestId;
         const scope = slackReplyDelivery.scope(requestId, target)
             ?? (typeof data['scope'] === 'string' ? data['scope'] : 'default');
@@ -956,7 +958,8 @@ async function slackOrchestrate(
                 if (unconfirmed) resultData = { ...resultData, workflowUnconfirmed: true };
                 const text = unconfirmed ? workflowDiagnosticText(collected.text, t('slack.workflow.unconfirmed', {}, locale))
                     : collected.data.collectionFailure === 'error' ? t('slack.progress.failure', {}, locale)
-                    : collected.data.collectionFailure === 'timeout' ? t('tg.timeout', {}, locale) : collected.text;
+                    : collected.data.collectionFailure === 'timeout' ? t('tg.timeout', {}, locale)
+                    : visibleReplyText(collected.text, t('tg.noResponse', {}, locale));
                 display.phase('delivering');
                 await deliverSlackTurnBody({
                     token, target, text, data: resultData, signal, display, settleAck, current,
