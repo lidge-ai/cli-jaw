@@ -805,6 +805,16 @@ sends through `/api/channel/send` or `/api/slack/send` participate. Root substit
 is suppressed for a turn with a blocked threaded delivery, even when its final
 body is otherwise successful. A failed durable-intent write cannot authorize root
 substitution: a bounded process-local denial marker also protects that turn.
+Denial-marker capacity is reserved when admitting a grant: at 1,024 retained
+markers plus live grants, new grants are refused until inactive markers expire
+(four hours). Existing unrelated turns remain deliverable. Unknown request IDs
+cannot allocate markers; live denied turns retain protection until revocation.
+The 128-row durable intent ceiling includes attempted rows; exhaustion retains
+root-substitution protection but stops retaining new drafts. Operators must inspect
+held/attempted intents locally; automated eviction or replay is not authorized.
+Text recovery deduplicates exact destination/thread/content, including later
+identical requests after an attempt. A genuinely new identical send currently
+requires operator handling; it is not automatically distinguished from replay.
 
 On a later normal turn in the exact requested thread, the orchestrator offers
 one held draft before spawning the runtime. Workspace, actor, credential and
