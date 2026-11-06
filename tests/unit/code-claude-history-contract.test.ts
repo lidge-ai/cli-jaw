@@ -171,7 +171,7 @@ test('a prompt stopped before Claude recorded it is passed over, up to the next 
 });
 
 for (const preserved of [false, true]) {
-    test(`a compaction ${preserved ? 'with' : 'without'} a preserved segment fails closed across it`, async () => {
+    test(`a compaction ${preserved ? 'with' : 'without'} a preserved segment rejects compacted targets and verifies a later fork`, async () => {
         const w = workspace();
         const t = transcript(w.cwd);
         const t1 = t.user('one'); t.assistant(t.text('A1'));
@@ -187,16 +187,21 @@ for (const preserved of [false, true]) {
                 rejects('rollback_boundary_unavailable'), `turn ${target + 1} was compacted away`);
         }
         assert.deepEqual(w.files(), [`${t.sessionId}.jsonl`], 'no fork before the boundaries are proven');
-        const after = rollback(w.cwd, t.sessionId, turns.slice(0, 3), turns.slice(3));
-        if (preserved) {
-            await assert.rejects(after, rejects('rollback_unavailable'), 'the fork drops the preserved segment, so it cannot be verified');
-            assert.deepEqual(w.files(), [`${t.sessionId}.jsonl`], 'the unverified fork was deleted');
-        } else {
-            const result = await after;
-            assert.deepEqual(result.remapped.map(turn => turn.turnId), ['turn-3']);
-            assert.deepEqual(result.cleared, ['turn-1', 'turn-2'], 'compacted kept turns lose their boundary');
-            const body = JSON.stringify(await sdk.getSessionMessages(result.forkCursor, { dir: w.cwd }));
-            assert.ok(body.includes('SUMMARY') && body.includes('A3') && !body.includes('four'));
-        }
+        const sourceBytes = readFileSync(join(w.dir, `${t.sessionId}.jsonl`));
+        const source = await sdk.getSessionMessages(t.sessionId, { dir: w.cwd, includeSystemMessages: true });
+        const result = await rollback(w.cwd, t.sessionId, turns.slice(0, 3), turns.slice(3));
+        assert.deepEqual(result.remapped.map(turn => turn.turnId), ['turn-3']);
+        assert.deepEqual(result.cleared, ['turn-1', 'turn-2'], 'compacted kept turns lose their boundary');
+        const copied = await sdk.getSessionMessages(result.forkCursor, { dir: w.cwd, includeSystemMessages: true });
+        const conversation = (message: typeof source[number]) => message.type === 'user' || message.type === 'assistant';
+        const boundary = source.findIndex(message => message.uuid === t4);
+        assert.ok(boundary > 0);
+        assert.deepEqual(copied.filter(conversation).map(message => message.message),
+            source.slice(0, boundary).filter(conversation).map(message => message.message),
+            'the pinned SDK preserves every retained conversation body, including preserved segments');
+        const body = JSON.stringify(copied);
+        assert.ok(body.includes('SUMMARY') && body.includes('A3') && !body.includes('four'));
+        assert.equal(body.includes('A2'), preserved, 'preserved assistant context survives only when configured');
+        assert.deepEqual(readFileSync(join(w.dir, `${t.sessionId}.jsonl`)), sourceBytes, 'the source is unchanged');
     });
 }
