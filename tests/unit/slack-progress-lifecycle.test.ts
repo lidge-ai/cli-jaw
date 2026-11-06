@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
 import { settings } from '../../src/core/config.ts';
-import { loadLocales } from '../../src/core/i18n.ts';
+import { loadLocales, t } from '../../src/core/i18n.ts';
 import { broadcast } from '../../src/core/bus.ts';
 import { sessionLanes } from '../../src/orchestrator/session-lanes.ts';
 import { recordSelfDelivery } from '../../src/messaging/turn-delivery.ts';
@@ -239,6 +239,38 @@ test('collector exception provenance chooses fixed diagnostic without raw error 
     await run(context); await until(context, complete);
     assert.equal(bodyCalls().length, 1); assert.equal(reaction('white_check_mark').length, 0);
     assert.doesNotMatch(JSON.stringify(calls.map(call => call.body)), /SECRET_STACK|private\/path/);
+});
+
+for (const [reply, shown] of [['[SILENT]', 'tg.noResponse'], ['Checked the thread.\n\n[SILENT]', 'Checked the thread.']] as const) {
+    const expected = () => shown === 'tg.noResponse' ? t(shown, {}, 'en') : shown;
+    test(`direct reply ${JSON.stringify(reply)} never posts the SILENT marker`, async context => {
+        collect = async () => ({ text: reply, data: {} });
+        await run(context); await until(context, complete);
+        assert.deepEqual(bodyCalls().map(call => call.body['text']), [expected()]);
+        assert.equal(reaction('white_check_mark').length, 1); assert.equal(reaction('x').length, 0);
+    });
+    test(`queued reply ${JSON.stringify(reply)} never posts the SILENT marker`, async context => {
+        queued = true;
+        const admission = await run(context); await until(context, () => progressMessages().length === 1);
+        broadcast('queued_run_started', event(admission));
+        broadcast('orchestrate_done', event(admission, { text: reply, fromQueue: true }));
+        await until(context, complete);
+        assert.deepEqual(bodyCalls().map(call => call.body['text']), [expected()]);
+        assert.equal(reaction('white_check_mark').length, 1); assert.equal(reaction('x').length, 0);
+    });
+    test(`orphan reply ${JSON.stringify(reply)} never posts the SILENT marker`, async context => {
+        const destination = target();
+        broadcast('orchestrate_done', { requestId: `silent-orphan-${++seq}`, origin: 'slack', scope: `silent-orphan-${seq}`,
+            target: destination, replyViaTarget: true, text: reply });
+        await until(context, () => bodyCalls().length === 1);
+        assert.deepEqual(bodyCalls().map(call => call.body['text']), [expected()]);
+    });
+}
+
+test('a SILENT marker inside a sentence is ordinary text', async context => {
+    collect = async () => ({ text: 'Reply [SILENT] when idle.', data: {} });
+    await run(context); await until(context, complete);
+    assert.deepEqual(bodyCalls().map(call => call.body['text']), ['Reply [SILENT] when idle.']);
 });
 
 test('a queued request has one stream and its started run survives the original queue deadline', async context => {

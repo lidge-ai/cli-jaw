@@ -5,6 +5,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { matchingTrustedBotTriggers, type SlackGateConfig, type SlackMessageEvent, type TrustedBotTrigger } from './events.js';
 import { assertSkillId } from '../security/path-guards.js';
 import type { RemoteTarget } from '../messaging/types.js';
+import { hasSilentLine, withoutSilentLines } from '../messaging/silent-reply.js';
 
 export type SlackWorkflowMetadata = Readonly<{
     skillId: string;
@@ -147,9 +148,9 @@ export function renderSlackWorkflow(route: Extract<SlackWorkflowRoute, { kind: '
 export function isWorkflowReplyUnconfirmed(text: string, data: Readonly<Record<string, unknown>>): boolean {
     if (data['superseded'] === true || data['executionInterrupted'] === true || data['runtimeStatus'] === 'stopped'
         || data['runtimeStatus'] === 'error' || data['executionFailed'] === true || data['collectionFailure']) return false;
-    return !text.trim() || /(?:^|\n)\s*\[SILENT\]\s*(?:\n|$)/i.test(text);
+    return !text.trim() || hasSilentLine(text);
 }
 export function workflowDiagnosticText(text: string, diagnostic: string): string {
-    const body = text.replace(/(?:^|\n)\s*\[SILENT\]\s*(?=\n|$)/gi, '').trim();
+    const body = withoutSilentLines(text).trim();
     return body ? `${diagnostic}\n\n${body}` : diagnostic;
 }

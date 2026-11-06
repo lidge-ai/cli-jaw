@@ -283,7 +283,7 @@ test('legacy event held before enablement stays ordinary after workflow is added
     assert.equal(collections[0]!.prompt, 'EXAMPLE_READY_V1 task');
     assert.equal(admissions[0]!.meta['slackWorkflow'], undefined);
     assert.equal(collections[0]!.meta['slackWorkflow'], undefined);
-    assert.equal(bodies().length, 1); assert.equal(bodies()[0]!.body['text'], '[SILENT]');
+    assert.equal(bodies().length, 1); assert.equal(bodies()[0]!.body['text'], t('tg.noResponse', {}, 'en'));
     assert.equal(reactions('x').length, 0);
 });
 
@@ -343,7 +343,7 @@ for (const sender of ['legacy-bot', 'human'] as const) test(`direct ${sender} SI
     assert.equal(progressOptions[0]!.workflowResponse, false);
     assert.equal(reactions('white_check_mark')[0]!.body['timestamp'], incoming.ts);
     assert.equal(bodies().length, 1);
-    assert.equal(bodies()[0]!.body['text'], '[SILENT]');
+    assert.equal(bodies()[0]!.body['text'], t('tg.noResponse', {}, 'en'));
     assert.equal(collections.length, 1);
 });
 
@@ -386,7 +386,7 @@ test('two queued requests keep ACK anchors and workflow authority separate', asy
     assert.equal(reactions('x').some(call => call.body['timestamp'] === first.ts), false);
     assert.equal(reactions('white_check_mark').some(call => call.body['timestamp'] === first.ts), false);
     assert.equal(bodies().length, 1);
-    assert.equal(bodies()[0]!.body['text'], '[SILENT]', 'public result metadata cannot enable the workflow diagnostic');
+    assert.equal(bodies()[0]!.body['text'], t('tg.noResponse', {}, 'en'), 'public result metadata cannot enable the workflow diagnostic');
     assert.equal(reactions('white_check_mark').filter(call => call.body['timestamp'] === second.ts).length, 1);
     broadcast('queued_run_started', done(0));
     broadcast('orchestrate_done', done(0, { text: '[SILENT]', slackWorkflow: null }));
