@@ -203,7 +203,8 @@ export function startClaudeNativeRun(input: ClaudeNativeRunOptions): { child: nu
         if (!tool && tools.size >= 160) return;
         const detail = [value.input, value.output, value.detail].filter(part => part !== undefined && part !== '').join('\n');
         if (!tool) {
-            tool = { icon: '🔧', label: value.name, toolType: 'tool', status: value.status, detail,
+            tool = { icon: '🔧', label: value.name,
+                toolType: facade?.isRateLimitNotice?.(value.itemId) ? 'provider-notice' : 'tool', status: value.status, detail,
                 stepRef: `runtime:${traceRunId}:${value.itemId}` };
             stampTraceTool(tool, ctx, 'tool'); tools.set(value.itemId, tool);
         } else { Object.assign(tool, { label: value.name, status: value.status, detail }); updateTraceToolRow(tool); }

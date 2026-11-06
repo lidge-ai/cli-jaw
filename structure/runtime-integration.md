@@ -214,6 +214,13 @@ default pooled lifetime and its idle reuse remain unchanged.
 
 Stop hard-closes the query, and the existing default steer policy resumes with interrupted context after MESSAGE persistence and exit-settle. Explicit followup/collect queues; jaw has no native-input hook (Code's in-band follow-up is a separate, Code-only path). No-start failure and Stop-before-acquisition use one cached fallback projection, started before compatibility completion and closed once. Exceptional trace finalization updates only a still-running header, preserving a prior lifecycle's status/timestamp/error.
 
+Claude SDK quota notices remain visible but do not count as executed work in the
+retry/fallback side-effect gate. The adapter identifies the exact quota item from
+its captured turn's mapper; tool names and diagnostic text cannot claim this
+exemption. Actual tools, hooks, unknown tool kinds and already executed work still
+block prompt replay. Provider selection continues to use the configured fallback
+order and availability checks.
+
 Current-message partial text still resets on a new assistant message. Interruption
 uses a separate bounded view of the latest parent message containing a text block:
 a later tool-only boundary does not erase progress, but an explicit empty text

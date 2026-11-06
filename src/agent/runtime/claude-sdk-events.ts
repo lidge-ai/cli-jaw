@@ -69,6 +69,11 @@ export class ClaudeSdkEvents {
     get partialText(): string { return this.messages.partialText; }
     get interruptedText(): string { return this.messages.interruptedText; }
 
+    /** Exact provider-notice identity; an actual tool with the same name is still effectful. */
+    isRateLimitNotice(itemId: string): boolean {
+        return this.projection.itemId('tool', 'claude:notice:rate-limit') === itemId;
+    }
+
     /** `segment`: this frame's result ends one CLI turn of a logical turn a Code follow-up continues. */
     accept(raw: unknown, segment = false): RuntimeTurnResult | undefined {
         if (this.finished || this.outcome) return this.outcome;
