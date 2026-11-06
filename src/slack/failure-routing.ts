@@ -3,6 +3,7 @@ import { requiresNativeBodyDelivery } from '../messaging/native-body.js';
 import { getSlackFailureStore } from './failure-store.js';
 import { slackApi } from './api.js';
 import { log } from '../core/logger.js';
+import { logErrorText } from '../messaging/redact.js';
 import type { RemoteTarget } from '../messaging/types.js';
 
 // Presence opts in. Invalid destinations still suppress public failure output.
@@ -38,6 +39,6 @@ export async function reportSlackFailure(
             channel: dm, text: `Jaw ${reason} failed (ref ${key.slice(0, 12)}). Check the local trace.`,
             unfurl_links: false, unfurl_media: false,
         }, { timeoutMs: 5000 });
-        if (!result.ok) log.warn('[slack:failure] operator notification unconfirmed; no retry');
+        if (!result.ok) log.warn(logErrorText('[slack:failure] operator notification unconfirmed; no retry'));
     } catch { log.warn('[slack:failure] operator notification unconfirmed; no retry'); }
 }

@@ -450,7 +450,7 @@ export function startHeartbeat() {
  *  A queued entry holds the object it was queued with, so its prompt and
  *  destination may have just been replaced. A job with no timer now (removed,
  *  disabled, held, or an invalid cron) was taken out by the operator: dropped. */
-function requeueCarriedJobs(carried: PendingHeartbeatJob[], jobs: Record<string, any>[]): void {
+function requeueCarriedJobs(carried: PendingHeartbeatJob[], jobs: PendingHeartbeatJob['job'][]): void {
     for (const { job, reason, policy } of carried) {
         const id = job["id"];
         const current = jobs.find(candidate => candidate?.["id"] === id);
