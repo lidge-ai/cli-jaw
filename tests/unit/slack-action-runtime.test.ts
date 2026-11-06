@@ -55,6 +55,11 @@ function action(execute: (ctx: ActionContext, text: string) => Promise<ActionRes
 }
 const write = action(async (ctx, text) => { const result = await ctx.api('chat.postMessage', { channel: ctx.channel, text }); return result.ok ? ctx.result('verified') : ctx.fail('slack_write_failed'); });
 
+const interactiveActorProbe = defineAction({ operation: 'interaction.choice', mutates: true, scopes: [], methods: [], requiresInbound: true,
+    parse(raw) { return { ...baseAction(raw, ['text'], true), text: requiredText(raw.text, 2000) }; },
+    execute(ctx) { return Promise.resolve(ctx.result(ctx.operator ? 'failed' : 'verified', { actor: ctx.actor, operator: ctx.operator })); },
+});
+
 for (const [label, scopes, error] of [['unknown', null, /scopes_unverified/], ['missing', 'channels:history', /scopes_missing/]] as const) {
     test(`${label} scopes reject before action dispatch or reservation`, async t => {
         const f = fixture(t, scopes);
@@ -108,6 +113,17 @@ test('turn fixture proves membership and rejects foreign destination and revoked
     await assert.rejects(f.runtime.execute(write, { ...input, invocationId: 'two' }, principal), /actor_not_member/);
     assert.equal(f.calls.filter(m => m === 'chat.postMessage').length, 1);
     assert.equal(f.store.verified('T1', slackCredentialKey(TOKEN), 'fixture.write'), null);
+});
+
+test('full-local Auto uses its captured turn grant for interactive choices', async t => {
+    const f = fixture(t); const captured = turn();
+    const runtime = new SlackActionRuntime({ ...f.options, inboundReady: () => true });
+    const principal: SlackToolPrincipal = { kind: 'operator', source: 'full-local', context: captured.grant };
+    const result = await runtime.execute(interactiveActorProbe,
+        { operation: 'interaction.choice', channel: 'C1', invocationId: 'interactive-choice', text: 'Approve' }, principal);
+    assert.equal(result.verification, 'verified');
+    assert.deepEqual(result.data, { actor: 'U1', operator: false });
+    assert.deepEqual(f.calls, ['auth.test']);
 });
 for (const mode of ['rotate', 'cancel'] as const) test(`${mode} immediately before write leaves zero mutations`, async t => {
     const f = fixture(t); const controller = new AbortController();
