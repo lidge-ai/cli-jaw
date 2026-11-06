@@ -27,16 +27,18 @@ let deliveryRecovery: { prompt(grant: SlackToolGrant): Promise<string>; blocksRo
 const blockedRootTurns = new Map<string, { channel: string; at: number }>();
 const BLOCKED_ROOT_RETENTION_MS = 4 * 60 * 60_000;
 const BLOCKED_ROOT_CAP = 1024;
-let blockedRootCapacityExceeded = false;
+function pruneBlockedRootTurns(): void {
+    const now = Date.now();
+    for (const [key, value] of blockedRootTurns) if (now - value.at >= BLOCKED_ROOT_RETENTION_MS && !requests.has(key)) blockedRootTurns.delete(key);
+}
 
 export function markSlackRecoveryBlocked(requestId: string, channel: string): void {
-    const now = Date.now();
-    for (const [key, value] of blockedRootTurns) if (now - value.at >= BLOCKED_ROOT_RETENTION_MS) blockedRootTurns.delete(key);
-    if (blockedRootTurns.size >= BLOCKED_ROOT_CAP && !blockedRootTurns.has(requestId)) {
-        blockedRootCapacityExceeded = true;
-        return;
-    }
-    blockedRootTurns.set(requestId, { channel, at: now });
+    // Admission reserves capacity for every live grant. Unknown request IDs cannot
+    // consume markers, and a denial can never poison another request's result.
+    const entry = requests.get(requestId);
+    if (!entry || entry.grant.destination.targetId !== channel) return;
+    pruneBlockedRootTurns();
+    blockedRootTurns.set(requestId, { channel, at: Date.now() });
 }
 
 export function configureSlackDeliveryRecovery(provider: typeof deliveryRecovery): void {
@@ -45,7 +47,7 @@ export function configureSlackDeliveryRecovery(provider: typeof deliveryRecovery
 
 export function slackRecoveryBlocksRoot(requestId: unknown, target: RemoteTarget | undefined): boolean {
     return typeof requestId === 'string' && !!target && target.channel === 'slack' && !target.threadId
-        && (blockedRootCapacityExceeded || blockedRootTurns.get(requestId)?.channel === target.targetId
+        && (blockedRootTurns.get(requestId)?.channel === target.targetId
             || deliveryRecovery?.blocksRoot(requestId, target) === true);
 }
 
@@ -76,6 +78,8 @@ export function slackCredentialKey(token: string): string { return createHash('s
 /** Authenticated ingress or a server-owned heartbeat supplies source; the HTTP
  * API itself cannot mint grants. */
 export function reserveSlackToolGrant(source: SlackToolSource, binding: { requestId: string; scope: string; chatSessionId: string }): boolean {
+    pruneBlockedRootTurns();
+    if (blockedRootTurns.size + requests.size >= BLOCKED_ROOT_CAP) return false;
     if (!/^[UW][A-Z0-9]{1,63}$/.test(source.actorId) || !/^T[A-Z0-9]{1,63}$/.test(source.teamId)
         || !/^[CGD][A-Z0-9]{1,63}$/.test(source.destination.targetId) || (source.actionToken !== undefined && source.actionToken.length > 8192)
         || source.destination.channel !== 'slack' || !binding.requestId
