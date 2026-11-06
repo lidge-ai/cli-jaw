@@ -128,6 +128,7 @@ const { bumpScopeSessionGeneration } = await import('../../src/agent/session-per
 const { getLiveRun, beginLiveRun, setLiveRunTraceId, replaceLiveRunTools, clearLiveRun } = await import('../../src/agent/live-run-state.ts');
 const { claimWorker, getWorkerSlot, getWorkerProgressSnapshot, clearWorkersForScope } = await import('../../src/orchestrator/worker-registry.ts');
 const { createChatSession, setActiveChatSession } = await import('../../src/core/chat-sessions.ts');
+const { reserveSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, slackCredentialKey } = await import('../../src/slack/tool-context.ts');
 let serial = 0;
 const gates: Array<() => void> = [];
 function deferred() {
@@ -486,6 +487,39 @@ for (const marker of ['AFTER_EFFECT', 'SPOOF_NOTICE_TOOL', 'OBSERVATION_LIMIT'])
         const result = await spawnAgent('QUOTA_REJECTION_FIXTURE ' + marker, options()).promise as Record<string, any>;
         assert.equal(result.runtimeOutcome?.status, 'error');
         assert.equal(result.nativeFallbackCli, undefined, 'actual tools must not be replayed');
+    });
+}
+
+// The orchestrator re-runs a failed native turn with the same request identity
+// (pipeline.ts spawn({ cli })). That launch must carry the Slack turn grant, or
+// the fallback answers a Slack request without being able to read Slack.
+for (const failure of ['settled', 'start'] as const) {
+    runTest('a native fallback relaunch of a Slack turn carries a fresh turn grant: ' + failure, async () => {
+        config.settings.fallbackOrder = ['cursor'];
+        const opts = options();
+        assert.equal(reserveSlackToolGrant({ teamId: 'T1', actorId: 'U1', credentialKey: slackCredentialKey('fixture-fallback-token'),
+            destination: { channel: 'slack', targetKind: 'channel', peerKind: 'channel', targetId: 'C1' } },
+            { requestId: opts.requestId, scope: opts.scopeKey, chatSessionId: opts.chatSessionId }), true);
+        const launched: Array<{ secret: string | undefined; resolves: boolean }> = [];
+        const record = (input: ClaudeSessionOptions) => {
+            const secret = (input.prepared.env as Record<string, string> | undefined)?.['JAW_SLACK_TURN_GRANT'];
+            launched.push({ secret, resolves: secret ? resolveSlackToolGrant(secret)?.requestId === opts.requestId : false });
+        };
+        beforeFactory = async input => { record(input); if (failure === 'start') throw new Error('session limit fixture'); };
+        try {
+            const first = await spawnAgent(failure === 'start' ? 'no SDK input' : 'QUOTA_REJECTION_FIXTURE', opts).promise as Record<string, any>;
+            assert.equal(first.nativeFallbackCli, 'cursor');
+            beforeFactory = async input => { record(input); };
+            const fallback = await spawnAgent('fallback answer', { ...opts, _isFallback: true, _skipInsert: true }).promise;
+            assert.equal(fallback.code, 0);
+            assert.equal(launched.length, 2);
+            assert.ok(launched[0]!.secret && launched[0]!.resolves, 'the first launch holds the turn grant');
+            assert.ok(launched[1]!.secret, 'the fallback launch must receive JAW_SLACK_TURN_GRANT');
+            assert.equal(launched[1]!.resolves, true, 'the fallback grant resolves to the same request');
+            assert.notEqual(launched[1]!.secret, launched[0]!.secret, 'the failed process secret is not reused');
+            assert.equal(resolveSlackToolGrant(launched[0]!.secret!), null, 'the failed process authority ended');
+        } finally { revokeSlackToolGrant(opts.requestId); }
+        assert.equal(resolveSlackToolGrant(launched[1]!.secret ?? ''), null, 'request settlement ends the fallback grant');
     });
 }
 

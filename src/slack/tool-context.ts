@@ -108,6 +108,30 @@ export function activateSlackToolGrant(requestId: string | undefined, scope: str
     return entry.secret;
 }
 
+/** End a main process's authority at its exit. The reservation stays until the
+ *  request settles, so only a fallback relaunch of the same request can take it. */
+export function retireSlackToolGrant(requestId: string | undefined | null): void {
+    const entry = requestId ? requests.get(requestId) : undefined;
+    if (!entry) return;
+    secrets.delete(entry.secret); entry.controller.abort();
+}
+
+/** Move a request's authority to its fallback launch: the earlier process's
+ *  secret and signal end, and the new one keeps the request, scope, session and
+ *  original expiry. A settled, stopped or expired request has nothing to move. */
+export function reissueSlackToolGrant(requestId: string | undefined, scope: string, chatSessionId: string): string | undefined {
+    const entry = requestId ? requests.get(requestId) : undefined;
+    if (!entry || entry.grant.scope !== scope || entry.grant.chatSessionId !== chatSessionId
+        || entry.grant.expiresAt <= Date.now()) return undefined;
+    secrets.delete(entry.secret); entry.controller.abort();
+    entry.controller = new AbortController();
+    entry.grant = Object.freeze({ ...entry.grant, signal: entry.controller.signal });
+    entry.secret = `jaw-slack-grant-${randomBytes(32).toString('hex')}`;
+    entry.active = true;
+    secrets.set(entry.secret, entry);
+    return entry.secret;
+}
+
 export function resolveSlackToolGrant(secret: string): SlackToolGrant | null {
     const entry = secrets.get(secret);
     if (!entry || !entry.active || entry.controller.signal.aborted) return null;
