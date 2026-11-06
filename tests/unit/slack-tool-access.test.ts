@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reserveSlackToolGrant, activateSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope,
+    retireSlackToolGrant, reissueSlackToolGrant,
     slackCredentialKey, createSlackToolSecretStream } from '../../src/slack/tool-context.ts';
 import { resolveSlackToolPrincipal, withSlackToolAccess } from '../../src/slack/tool-access.ts';
 import { initializeSlackOperatorAuth, SLACK_OPERATOR_TOKEN_FILE } from '../../src/slack/operator-auth.ts';
@@ -29,6 +30,33 @@ test('grants activate only for captured request scope/session and revoke indepen
     assert.equal(resolveSlackToolGrant(old), null);
     assert.equal(resolveSlackToolGrant(newer.secret), newer.value);
     revokeSlackToolScope('scope'); assert.equal(newer.value.signal.aborted, true);
+});
+
+test('a fallback relaunch takes over only its own retired request grant', () => {
+    const first = grant('relaunch');
+    retireSlackToolGrant('relaunch');
+    assert.equal(resolveSlackToolGrant(first.secret), null); assert.equal(first.value.signal.aborted, true);
+    assert.equal(activateSlackToolGrant('relaunch', 'scope', 'chat'), undefined, 'an ordinary launch cannot reactivate it');
+    assert.equal(reissueSlackToolGrant('foreign', 'scope', 'chat'), undefined);
+    assert.equal(reissueSlackToolGrant('relaunch', 'other-scope', 'chat'), undefined);
+    assert.equal(reissueSlackToolGrant('relaunch', 'scope', 'other-chat'), undefined);
+    const secret = reissueSlackToolGrant('relaunch', 'scope', 'chat')!;
+    const value = resolveSlackToolGrant(secret)!;
+    assert.equal(value.requestId, 'relaunch'); assert.equal(value.expiresAt, first.value.expiresAt);
+    assert.notEqual(secret, first.secret); assert.equal(resolveSlackToolGrant(first.secret), null);
+    const again = reissueSlackToolGrant('relaunch', 'scope', 'chat')!;
+    assert.equal(resolveSlackToolGrant(secret), null, 'each relaunch ends the previous secret');
+    assert.equal(value.signal.aborted, true);
+    revokeSlackToolGrant('relaunch');
+    assert.equal(resolveSlackToolGrant(again), null);
+    assert.equal(reissueSlackToolGrant('relaunch', 'scope', 'chat'), undefined, 'a settled or stopped request has nothing to take over');
+});
+
+test('an expired request grant cannot be reissued', t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+    grant('late'); retireSlackToolGrant('late');
+    t.mock.timers.tick(15 * 60_000);
+    assert.equal(reissueSlackToolGrant('late', 'scope', 'chat'), undefined);
 });
 
 test('grant expiry aborts retained handles and prevents reuse', t => {

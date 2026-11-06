@@ -1,5 +1,5 @@
 import { calendarContext } from './calendar-context.js';
-import { createSlackToolSecretStream, activateSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, redactSlackToolSecrets, SLACK_TOOL_GRANT_ENV } from '../slack/tool-context.js';
+import { createSlackToolSecretStream, activateSlackToolGrant, reissueSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, redactSlackToolSecrets, SLACK_TOOL_GRANT_ENV } from '../slack/tool-context.js';
 import { COMPUTER_USE_APPROVAL_ENV } from '../../lib/mcp/computer-use-constants.js';
 // ─── Agent Spawn + Kill/Steer/Queue ──────────────────
 
@@ -1400,8 +1400,10 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
     // they may address Slack during this assignment.
     const slackToolGrantEligible = origin === 'heartbeat'
         || (!isEmployee && ['cursor', 'claude', 'codex', 'grok'].includes(cli));
+    // A fallback re-runs the same request after its first process exited or
+    // never started, so it takes over that request's grant instead of a new one.
     const slackToolGrant = slackToolGrantEligible
-        ? activateSlackToolGrant(opts.requestId, scopeKey, chatSessionId)
+        ? (opts._isFallback ? reissueSlackToolGrant : activateSlackToolGrant)(opts.requestId, scopeKey, chatSessionId)
         : undefined;
     if (slackToolGrant) spawnEnv[SLACK_TOOL_GRANT_ENV] = slackToolGrant;
     const bucketRow = currentBucket ? getSessionBucket.get(currentBucket) as SessionBucketRow | undefined : null;
