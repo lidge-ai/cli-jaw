@@ -18,7 +18,13 @@ export interface CodeDraft {
     createUnknown: boolean;
     creationKey: string | null;
     attachToken: number;
-    restore: { token: number; operationId: string | null; settled: boolean; stopRequested: boolean; cancelSent: boolean } | null;
+    /**
+     * The restore (attach or attach-then-send) this draft started, in memory only. `operationId` is the
+     * identity this client sent, so Stop can only ever cancel its own attach. `cancel` is that Stop's
+     * request state; a failed one waits for an explicit retry and is never resent on its own.
+     */
+    restore: { token: number; operationId: string | null; settled: boolean; stopRequested: boolean;
+        cancel: 'none' | 'sending' | 'failed' | 'accepted' } | null;
     requiredSequence: number;
     stopTarget: { turnId: string | null; operationId?: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
     permissionOperations: CodeControllerModel['permissionOperations'];

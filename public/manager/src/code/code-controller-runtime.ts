@@ -18,6 +18,9 @@ const MAX_INDEX = 1000;
 const INDEX_PAGE_SIZE = 100;
 const MAX_CATCHUP_PAGES = 32;
 const INDEX_DEBOUNCE_MS = 150;
+/** Reads an early Stop makes to find its own attach when no live event names it. */
+const RESTORE_READS = 5;
+const RESTORE_READ_MS = 400;
 const message = (error: unknown) => error instanceof CodeClientError ? error.message : 'Connection lost. Refresh to check the current state.';
 const rejected = (error: unknown) => error instanceof CodeClientError && error.status >= 400 && error.status < 500;
 // A lost response may still be committed, so its message can arrive; a `steer_outcome_unknown` answer
@@ -257,7 +260,7 @@ export class CodeController {
             if (victim) { this.summaries.delete(victim); this.attention.delete(victim); }
         }
         const draft = this.book.sessions.get(session.sessionId);
-        if (draft?.restore?.stopRequested && !draft.restore.settled && !draft.restore.cancelSent) {
+        if (draft?.restore?.stopRequested && !draft.restore.settled && draft.restore.cancel === 'none') {
             void this.cancelRestore(session.sessionId, draft, draft.restore, session);
         }
         // Once the server reports the turn, its own status carries the working state.
@@ -799,7 +802,7 @@ export class CodeController {
     pin = async (id: string, pinned: boolean): Promise<void> => { await this.sidebarPatch(id, { pinned }); };
     markUnread = async (id: string, unread: boolean): Promise<void> => { await this.sidebarPatch(id, { unread }); };
     private async restoreSession(id: string, draft: CodeDraft, sending: boolean): Promise<NonNullable<CodeDraft['restore']> | null> {
-        const restore: NonNullable<CodeDraft['restore']> = { token: ++draft.attachToken, operationId: crypto.randomUUID(), settled: false, stopRequested: false, cancelSent: false };
+        const restore: NonNullable<CodeDraft['restore']> = { token: ++draft.attachToken, operationId: crypto.randomUUID(), settled: false, stopRequested: false, cancel: 'none' };
         draft.restore = restore;
         draft.operation = { kind: 'resuming', error: null }; this.notify();
         let error: unknown = null;
@@ -1001,15 +1004,38 @@ export class CodeController {
         this.notify();
     }
     private async cancelRestore(id: string, draft: CodeDraft, restore: NonNullable<CodeDraft['restore']>, session = this.info(id)): Promise<void> {
-        if (restore.cancelSent || restore.settled || !restore.operationId || !session || session.status !== 'starting'
+        if (restore.cancel !== 'none' || restore.settled || !restore.operationId || !session || session.status !== 'starting'
             || codeOperationId(session) !== restore.operationId || session.turnId !== null) return;
-        restore.cancelSent = true;
+        restore.cancel = 'sending';
         try {
             this.accept(await this.client.cancelPrompt(id, { operationId: restore.operationId, epoch: session.epoch }));
+            restore.cancel = 'accepted';
         } catch (error) {
-            if (!rejected(error) && draft.restore === restore && !restore.settled) draft.operation = { kind: 'stopping', error: message(error) };
+            restore.cancel = 'failed';
+            // Surfaced, never resent: Stop stays available while this exact operation is current.
+            if (draft.restore === restore && !restore.settled) draft.operation = { kind: 'idle', error: rejected(error)
+                ? `Stop was refused: ${message(error)}`
+                : 'Stop could not be confirmed. The restore may still be running; press Stop to retry.' };
         }
         this.notify(); this.scheduleIndex();
+    }
+    /**
+     * An early Stop must not depend on a live event to learn its attach's epoch: read the session a
+     * bounded number of times until the owned attach is visible (then cancel exactly it) or settles.
+     */
+    private async reconcileRestore(id: string, draft: CodeDraft, restore: NonNullable<CodeDraft['restore']>): Promise<void> {
+        const pending = () => this.active && draft.restore === restore && !restore.settled && restore.cancel === 'none';
+        for (let attempt = 0; attempt < RESTORE_READS && pending(); attempt++) {
+            if (attempt > 0) await new Promise(resolve => setTimeout(resolve, RESTORE_READ_MS));
+            if (!pending()) return;
+            try {
+                const snapshot = await this.client.snapshot(id, this.abort.signal);
+                if (!pending()) return;
+                this.observe(snapshot.session);
+                this.accept(snapshot.session);
+                await this.cancelRestore(id, draft, restore);
+            } catch { /* the next read, or the attach response itself, settles it */ }
+        }
     }
     stop = async (): Promise<void> => {
         const id = this.book.selectedId, session = this.info(id);
@@ -1017,16 +1043,19 @@ export class CodeController {
         const draft = this.draft(id);
         const restore = draft.restore;
         if (restore) {
-            if (restore.stopRequested) return;
-            draft.attachToken++; restore.stopRequested = true;
+            if (!restore.stopRequested) { draft.attachToken++; restore.stopRequested = true; }
+            else if (restore.cancel === 'sending' || restore.cancel === 'accepted') return;
             if (restore.settled) {
                 draft.restore = null;
                 draft.operation = { kind: 'idle', error: 'Stopped before sending. Your text was not sent.' };
                 this.notify();
-            } else {
-                draft.operation = { kind: 'stopping', error: null }; this.notify();
-                await this.cancelRestore(id, draft, restore, session);
+                return;
             }
+            // An explicit press after a failed cancel retries the same owned {operationId, epoch}.
+            if (restore.cancel === 'failed') restore.cancel = 'none';
+            draft.operation = { kind: 'stopping', error: null }; this.notify();
+            await this.cancelRestore(id, draft, restore, session);
+            if (restore.cancel === 'none') await this.reconcileRestore(id, draft, restore);
             return;
         }
         if (!session || !codeCanStop(session)) return;

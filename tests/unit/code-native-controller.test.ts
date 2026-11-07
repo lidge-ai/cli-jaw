@@ -1589,6 +1589,59 @@ test('Stop owns a held attach by operationId and prevents its late continuation'
     assert.equal(f.controller.getModel().input, 'keep');
 });
 
+test('an early Stop finds its own attach by reading when the starting event never arrives', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    // No code_session event is delivered; only a read shows the owned starting attach.
+    f.snapshots.set('a', snap(session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 })));
+    await f.controller.stop();
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+});
+
+for (const failure of ['lost', 'refused'] as const) {
+    test(`a ${failure} owned-restore cancel is surfaced and retried only by an explicit Stop`, async t => {
+        const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+        await f.controller.refresh(); await f.controller.selectSession('a');
+        const attach = deferred<Response>();
+        const idle = session('a', { status: 'idle', epoch: 2, sequence: 9 });
+        let cancels = 0;
+        f.intercept(call => {
+            if (call.path.endsWith('/attach')) return attach.promise;
+            if (call.path.endsWith('/cancel')) {
+                cancels++;
+                if (cancels === 1) return failure === 'lost' ? Promise.reject(new TypeError('connection reset'))
+                    : response({ ok: false, error: 'session_busy' }, 409);
+                return response({ ok: true, session: idle });
+            }
+            return undefined;
+        });
+        f.controller.setInput('keep'); const sending = f.controller.send();
+        const operationId = String(f.posts()[0]!.body['operationId']);
+        const starting = session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 });
+        f.snapshots.set('a', snap(starting));
+        f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2, session: starting });
+        await f.controller.stop();
+        assert.equal(cancels, 1);
+        assert.match(f.controller.getModel().operation.error!, failure === 'lost' ? /could not be confirmed/ : /Stop was refused/);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        assert.equal(cancels, 1, 'a failed cancel is never resent on its own');
+        await f.controller.stop();
+        assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }, { operationId, epoch: 2 }]);
+        attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+        await sending;
+        assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    });
+}
+
 test('Stop waits for its delayed starting event and ignores a different attach', async t => {
     const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
     await f.controller.refresh(); await f.controller.selectSession('a');
