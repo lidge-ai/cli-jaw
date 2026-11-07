@@ -100,6 +100,20 @@ Canvas and List tools in Slack turns currently require a freshly verified reques
 
 Choices allow at most ten options and require the connected Socket transport. The server binds opaque controls to the captured requester, conversation, posted message, credential and expiry. A valid callback stores the selected value once; it does not execute code, an API method, or a model prompt. `interaction.get` reads that owned result with a turn grant; a full-local Auto request can post a choice for its captured requester but cannot read it back. Choice verification in the catalog requires an observed callback; URL controls use posted-content readback. General modal opening is explicitly unsupported.
 
+### Buttons on the app's own messages
+
+A message the app posts itself (with `chat.postMessage` blocks, a scheduled job, or `message.update`) can carry its own Block Kit controls. A click on a control whose `action_id` starts with `agent:` starts an agent turn, exactly as a message would: it is journaled before the Socket ack, Slack's redelivery of one click runs once, and the turn answers in the clicked message's thread. The turn prompt is
+
+```text
+[Slack block action]
+action_id: "agent:decision:approve"
+block_id: "card_42"
+value: "approve"
+message_ts: "1700000000.000100"
+```
+
+and the clicker is the turn's requester, so the turn can record the decision and edit the card with `message.update`. `value` is the button value, the selected option(s) joined by commas, or the picked date, time, user or conversation. A click counts only from a person in this workspace on a non-ephemeral message in an allowed conversation; `mentionOnly` does not apply to it. Each click is its own turn, so a double click runs twice and the turn should treat a repeated decision as already made. `payload.token`, `response_url` and `trigger_id` are never read. Controls with any other `action_id` keep their handlers (`appr:`/`aprd:` approvals, `jaw_choice_` choices) or are dropped. Slack delivers clicks only while Interactivity is on in the app settings; Socket Mode needs no request URL.
+
 `rts.reconcile` sends no message and returns no source text. It can release only a terminal publication hold with matching ownership and exact scope after a complete scan proves the expected output count. Active publishers, incomplete scans, legacy holds, and crash records without terminal evidence remain protected. New RTS publication uses one payload and one POST attempt.
 
 Source tools retain their separate shapes: `message`, `permalink`, and `quote` use `source:{channel,ts,threadTs?}`. `quote` requires `invocationId`; a direct `excerpt` must occur in the fresh source, while `summary` is labelled separately. `search.quote` requires the current inbound action token and publishes approved source excerpts in Slack, returning only output receipts. Search response bodies remain excluded from subsequent agent history.

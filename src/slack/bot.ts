@@ -71,7 +71,7 @@ import { getQueueNoticeStore } from '../messaging/queue-notice-store.js';
 import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
 import { slackInboundEnvelope } from '../messaging/inbound-envelope.js';
-import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, type SlackMessageEvent } from './events.js';
+import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, slackBlockActionEvent, type SlackMessageEvent } from './events.js';
 import { captureMentionWatchInbox } from './mention-watch-inbox.js';
 import {
     markThreadParticipated, threadParticipationKind,
@@ -1352,7 +1352,7 @@ async function runSlackMessageEvent(
             : opts.preResolvedScope !== undefined ? { preResolvedScope: opts.preResolvedScope } : {}),
         // The ACK anchor is the user's own message. Only this caller has the raw
         // event, so the scope inputs are resolved here rather than re-derived.
-        ...(event.ts ? { ackTs: event.ts } : {}),
+        ...(event.ts && event.type !== 'block_actions' ? { ackTs: event.ts } : {}),
         ...(event.user ? { recipientUserId: event.user } : {}),
         preSendContext: { requester: event.user || 'unknown', jobKind: 'slack_turn' },
         isDirect: event.channel_type === 'im',
@@ -1490,12 +1490,13 @@ function raceContextDeadline(work: Promise<string>, ms: number): Promise<string>
  * never recorded as delivered.
  */
 export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
-    if (envelope.type !== 'events_api') return 'committed';
+    if (envelope.type !== 'events_api' && envelope.type !== 'interactive') return 'committed';
 
-    const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
-    const event = payload?.event;
-    // Before the channel/ts check: reaction events carry them under `item`.
-    tapSlackEvent(event);
+    const event = slackEnvelopeEvent(envelope);
+    if (envelope.type === 'events_api') {
+        // Before the channel/ts check: reaction events carry them under `item`.
+        tapSlackEvent(event);
+    }
     if (!event?.channel || !event?.ts) return 'committed';
 
     // BEFORE the gate, and before the journal short-circuit, because this is the
@@ -1503,7 +1504,7 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
     // — correctly, since the bot was not addressed — and conversations.history
     // will never show it again if it lives inside a thread. Capturing here is
     // what makes a thread reply answerable at all.
-    captureMentionWatchInbox(event);
+    if (envelope.type === 'events_api') captureMentionWatchInbox(event);
 
     const journal = getIngressJournal();
     if (!journal) return 'committed';
@@ -1546,9 +1547,22 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
 const SLACK_ADMISSION_TTL_MS = 10 * 60 * 1000;
 const slackAdmissions = new Map<string, { admission: IngressAdmission; expiresAt: number }>();
 
+function slackEnvelopeEvent(envelope: SlackEnvelope): SlackMessageEvent | undefined {
+    if (envelope.type === 'interactive') {
+        return slackBlockActionEvent(envelope.payload, String(settings['slack']?.teamId || '')) ?? undefined;
+    }
+    return (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+}
+
+function slackEnvelopeTeamId(envelope: SlackEnvelope): string | undefined {
+    const payload = envelope.payload;
+    const team = envelope.type === 'interactive' ? (payload?.['team'] as { id?: unknown } | undefined)?.id : payload?.['team_id'];
+    return typeof team === 'string' && team ? team : undefined;
+}
+
 function slackAdmissionKey(envelope: SlackEnvelope): string {
     if (envelope.envelope_id) return `eid:${envelope.envelope_id}`;
-    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    const event = slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (event?.channel && event?.ts && team) return `ev:${team}:${event.channel}:${event.ts}`;
     return '';
@@ -1574,7 +1588,7 @@ function takeSlackAdmission(envelope: SlackEnvelope): IngressAdmission | undefin
     const row = slackAdmissions.get(key);
     slackAdmissions.delete(key);
     if (row && row.expiresAt > Date.now()) return row.admission;
-    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    const event = slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (!event?.channel || !event.ts || !team) return undefined;
     const record = getIngressJournal()?.find('slack', team, `${team}:${event.channel}:${event.ts}`);
@@ -1629,7 +1643,9 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         await handleSlackSlashCommand(envelope.payload || {});
         return;
     }
-    if (envelope.type === 'interactive') {
+    const event = slackEnvelopeEvent(envelope);
+    const socketTeamId = slackEnvelopeTeamId(envelope);
+    if (envelope.type === 'interactive' && !event) {
         const payload = envelope.payload || {};
         const actions = payload['actions'];
         const actionId = Array.isArray(actions) && actions[0] && typeof actions[0] === 'object'
@@ -1665,8 +1681,6 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         }
         return;
     }
-    const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
-    const event = payload?.event;
     if (!event) {
         settleOk();
         return;
@@ -1799,7 +1813,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                 try {
                     await processSlackMessageEvent(event, target, text, signal, {
                         workflowSelection,
-                        ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
+                        ...(socketTeamId ? { socketTeamId } : {}),
                         prefetchToken,
                         ...(prefetchOwner ? { prefetchOwner } : {}),
                         preResolvedScope,
