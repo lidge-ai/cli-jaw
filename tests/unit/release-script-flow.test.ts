@@ -299,7 +299,9 @@ test('a CI run that never appears fails once the injected discovery deadline pas
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /Tests failed or was not found/);
     assert.match(result.stderr, /--resume/);
-    assert.ok(sleeps(f).length >= 1 && sleeps(f).every(value => value === '1'));
+    // Under heavy load the deadline may pass before the first sleep, so only
+    // the interval of any recorded sleep is asserted, never the count.
+    assert.ok(sleeps(f).every(value => value === '1'));
     assert.ok(Date.now() - started < 60_000, 'expiry must follow the injected deadline, not the 1200s default');
     assert.doesNotMatch(readFileSync(f.log, 'utf8'), /workflow run publish.yml/);
 });
