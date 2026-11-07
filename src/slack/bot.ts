@@ -842,7 +842,7 @@ function installSlackTargetReplyForwarder(): void {
                     isPreSendBaseContext(data['preSendContext']) ? data['preSendContext'] : undefined,
                     requestId, data));
             if (!checked.ok) {
-                log.warn(`[slack:pre-send] blocked target-reply ${requestId}: ${checked.error}`);
+                log.warn(`[slack:pre-send] blocked target-reply ${redactOutboundText(requestId)}: ${redactOutboundText(checked.error)}`);
                 return;
             }
             const outbound = slackOutboundRegistry.start();
@@ -1140,7 +1140,7 @@ async function deliverSlackTurnBody(options: {
     const requireBodyDelivery = requiresNativeBodyDelivery(data);
     const checked = await runSlackPreSendHook(text, target, options.preSendContext, { signal });
     if (!checked.ok) {
-        log.warn(`[slack:pre-send] blocked ${options.preSendContext.requestId}: ${checked.error}`);
+        log.warn(`[slack:pre-send] blocked ${redactOutboundText(options.preSendContext.requestId)}: ${redactOutboundText(checked.error)}`);
         await Promise.allSettled([settleAck('failure'), display.finish('error')]);
         return { delivered: false, confirmed: false, outcome: 'error' };
     }
