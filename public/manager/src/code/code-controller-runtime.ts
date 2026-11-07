@@ -18,9 +18,9 @@ const MAX_INDEX = 1000;
 const INDEX_PAGE_SIZE = 100;
 const MAX_CATCHUP_PAGES = 32;
 const INDEX_DEBOUNCE_MS = 150;
-/** Reads an early Stop makes to find its own attach when no live event names it. */
-const RESTORE_READS = 5;
-const RESTORE_READ_MS = 400;
+/** Deadline of the one read an early Stop makes to find its own attach when no live event names it. */
+const RESTORE_READ_TIMEOUT_MS = 1500;
+const EARLY_STOP = 'Stop requested before the restore reached the server. Your text will not be sent; the restore is cancelled if it starts while this page is connected.';
 const message = (error: unknown) => error instanceof CodeClientError ? error.message : 'Connection lost. Refresh to check the current state.';
 const rejected = (error: unknown) => error instanceof CodeClientError && error.status >= 400 && error.status < 500;
 // A lost response may still be committed, so its message can arrive; a `steer_outcome_unknown` answer
@@ -816,7 +816,13 @@ export class CodeController {
         if (draft.attachToken !== restore.token) {
             if (draft.restore === restore) {
                 draft.restore = null;
-                draft.operation = { kind: 'idle', error: sending ? 'Restore stopped. Your text was not sent.' : 'Restore stopped.' };
+                // Say what the attach itself reported; a Stop is only "done" when the attach says cancelled.
+                const outcome = result?.attach?.outcome;
+                const restored = outcome === 'cancelled' ? 'Restore stopped.'
+                    : outcome === 'completed' || (result && !result.attach) ? 'The session was restored before Stop took effect.'
+                        : outcome === 'failed' ? 'Restore failed.'
+                            : 'The restore outcome is unknown after Stop; refresh to check the session.';
+                draft.operation = { kind: 'idle', error: sending ? `${restored} Your text was not sent.` : restored };
                 this.notify(); this.scheduleIndex();
             }
             return null;
@@ -1020,22 +1026,25 @@ export class CodeController {
         this.notify(); this.scheduleIndex();
     }
     /**
-     * An early Stop must not depend on a live event to learn its attach's epoch: read the session a
-     * bounded number of times until the owned attach is visible (then cancel exactly it) or settles.
+     * An early Stop must not depend on a live event to learn its attach's epoch: one read with a
+     * deadline. If the owned attach is not visible yet the Stop stays requested (a later event still
+     * cancels it) and the composer is released, so nothing waits on discovery.
      */
     private async reconcileRestore(id: string, draft: CodeDraft, restore: NonNullable<CodeDraft['restore']>): Promise<void> {
         const pending = () => this.active && draft.restore === restore && !restore.settled && restore.cancel === 'none';
-        for (let attempt = 0; attempt < RESTORE_READS && pending(); attempt++) {
-            if (attempt > 0) await new Promise(resolve => setTimeout(resolve, RESTORE_READ_MS));
-            if (!pending()) return;
-            try {
-                const snapshot = await this.client.snapshot(id, this.abort.signal);
-                if (!pending()) return;
-                this.observe(snapshot.session);
-                this.accept(snapshot.session);
-                await this.cancelRestore(id, draft, restore);
-            } catch { /* the next read, or the attach response itself, settles it */ }
-        }
+        if (!pending()) return;
+        const read = new AbortController();
+        const abort = () => read.abort();
+        this.abort.signal.addEventListener('abort', abort, { once: true });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // The deadline holds even for a transport that ignores the abort signal.
+        const deadline = new Promise<null>(resolve => { timer = setTimeout(() => { abort(); resolve(null); }, RESTORE_READ_TIMEOUT_MS); });
+        try {
+            const snapshot = await Promise.race([this.client.snapshot(id, read.signal), deadline]);
+            if (snapshot && pending()) { this.observe(snapshot.session); this.accept(snapshot.session); await this.cancelRestore(id, draft, restore); }
+        } catch { /* a later event or the attach response itself settles it */ }
+        finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', abort); }
+        if (pending() && draft.operation.kind === 'stopping') { draft.operation = { kind: 'idle', error: EARLY_STOP }; this.notify(); }
     }
     stop = async (): Promise<void> => {
         const id = this.book.selectedId, session = this.info(id);

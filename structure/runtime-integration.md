@@ -590,7 +590,9 @@ Stop, including a Stop from another client. Restart recovery is unchanged: a `st
 attach becomes `failed`/`orphaned_turn` with `operationId: null` and no item or prompt.
 The Manager captures its own attach identity before the request; Stop waits for a matching
 starting event if needed and never cancels a successor during post-attach synchronization.
-Without that event it reads the session a bounded number of times to find the owned attach.
+Without that event it makes one read with a deadline; if the attach is not visible yet the
+composer is released and a later matching event still cancels it. The settlement message reports
+the attach outcome (cancelled, completed before Stop, failed or unknown), never an unconfirmed Stop.
 A failed cancel is shown and retried only by another explicit Stop for the same identity.
 An older server rejecting the identity as `unknown_field` is retried once without it; that
 restore cannot issue an identity-fenced cancellation.
