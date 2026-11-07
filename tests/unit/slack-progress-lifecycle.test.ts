@@ -135,8 +135,8 @@ function deferred<T>(fallback: T) {
     releases.push(() => resolve(fallback)); return { promise, resolve };
 }
 function target(): RemoteTarget { return { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: `D_CASE_${seq + 1}`, threadId: '100.1', guildId: 'T_TEST' }; }
-async function run(context: TestContext, destination = target(), signal = new AbortController().signal) {
-    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId } as never,
+async function run(context: TestContext, destination = target(), signal = new AbortController().signal, fields: Record<string, unknown> = {}) {
+    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId, ...fields } as never,
         destination, 'hello', signal);
     await until(context, () => admissions.some(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId));
     return admissions.find(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId)!;
@@ -271,6 +271,33 @@ test('a SILENT marker inside a sentence is ordinary text', async context => {
     collect = async () => ({ text: 'Reply [SILENT] when idle.', data: {} });
     await run(context); await until(context, complete);
     assert.deepEqual(bodyCalls().map(call => call.body['text']), ['Reply [SILENT] when idle.']);
+});
+
+const click = { type: 'block_actions' };
+test('a block action that answers only [SILENT] posts nothing and completes', async context => {
+    collect = async () => ({ text: '[SILENT]', data: {} });
+    await run(context, target(), new AbortController().signal, click); await until(context, complete);
+    assert.deepEqual(bodyCalls(), []);
+    assert.equal(reaction('x').length, 0);
+});
+test('a queued block action that answers only [SILENT] posts nothing and completes', async context => {
+    queued = true;
+    const admission = await run(context, target(), new AbortController().signal, click); await until(context, () => progressMessages().length === 1);
+    broadcast('queued_run_started', event(admission));
+    broadcast('orchestrate_done', event(admission, { text: '[SILENT]', fromQueue: true }));
+    await until(context, complete);
+    assert.deepEqual(bodyCalls(), []);
+});
+test('an orphan block action reply of [SILENT] posts nothing while an ordinary one still gets the placeholder', async context => {
+    const silent = target();
+    broadcast('orchestrate_done', { requestId: `silent-click-${++seq}`, origin: 'slack', scope: `silent-click-${seq}`, target: silent,
+        replyViaTarget: true, text: '[SILENT]', preSendContext: { requester: 'U_TEST', jobKind: 'slack_block_action' } });
+    const ordinary = { ...target(), targetId: `D_ORDINARY_${seq}` };
+    broadcast('orchestrate_done', { requestId: `silent-mention-${++seq}`, origin: 'slack', scope: `silent-mention-${seq}`, target: ordinary,
+        replyViaTarget: true, text: '[SILENT]', preSendContext: { requester: 'U_TEST', jobKind: 'slack_turn' } });
+    await until(context, () => bodyCalls().length === 1);
+    await tick(context, 1000);
+    assert.deepEqual(bodyCalls().map(call => [call.body['channel'], call.body['text']]), [[ordinary.targetId, t('tg.noResponse', {}, 'en')]]);
 });
 
 test('a queued request has one stream and its started run survives the original queue deadline', async context => {

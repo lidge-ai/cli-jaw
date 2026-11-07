@@ -86,7 +86,7 @@ import { createSlackForwarder, relaySlackImages } from './forwarder.js';
 import { nextDeliverySeq, wasSelfDelivered } from '../messaging/turn-delivery.js';
 import { shouldSkipForwarding } from '../messaging/forwarder-origin.js';
 import { requiresNativeBodyDelivery } from '../messaging/native-body.js';
-import { visibleReplyText } from '../messaging/silent-reply.js';
+import { hasSilentLine, visibleReplyText, withoutSilentLines } from '../messaging/silent-reply.js';
 import { createQueueNoticeRecorder } from '../messaging/queue-notice-record.js';
 import { admitTargetReply } from '../messaging/target-reply-guard.js';
 import { handleSlackSlashCommand } from './commands.js';
@@ -406,6 +406,13 @@ function isPreSendBaseContext(value: unknown): value is SlackPreSendBaseContext 
     return Boolean(value && typeof value === 'object'
         && typeof (value as Record<string, unknown>)['requester'] === 'string'
         && typeof (value as Record<string, unknown>)['jobKind'] === 'string');
+}
+
+const SLACK_BLOCK_ACTION_JOB = 'slack_block_action';
+
+function isSilentBlockActionReply(text: string, context: unknown): boolean {
+    return isPreSendBaseContext(context) && context.jobKind === SLACK_BLOCK_ACTION_JOB
+        && hasSilentLine(text) && !withoutSilentLines(text);
 }
 
 function buildSlackPreSendContext(
@@ -729,6 +736,12 @@ function trackSlackReply(options: SlackReplyOptions): void {
                 const rawText = String(data['text'] ?? '');
                 const unconfirmed = data['workflowUnconfirmed'] === true || Boolean(options.workflow && isWorkflowReplyUnconfirmed(rawText, data));
                 if (unconfirmed) outcomeData = { ...data, workflowUnconfirmed: true };
+                if (!unconfirmed && data['error'] !== true
+                    && isSilentBlockActionReply(rawText, data['preSendContext'] ?? options.preSendContext)) {
+                    log.info(`[slack:out:silent] ${target.targetId}: block action ended silently`);
+                    await Promise.allSettled([settleAck('success'), display.finish('complete')]);
+                    return;
+                }
                 const text = unconfirmed ? workflowDiagnosticText(rawText, t('slack.workflow.unconfirmed', {}, locale))
                     : data['error'] === true && !requireBodyDelivery ? t('slack.progress.failure', {}, locale)
                     : requireBodyDelivery && !rawText.trim() ? '' : visibleReplyText(rawText, t('tg.noResponse', {}, locale));
@@ -826,6 +839,7 @@ function installSlackTargetReplyForwarder(): void {
             ? workflowDiagnosticText(String(data['text'] ?? ''), t('slack.workflow.unconfirmed', {}, currentLocale()))
             : data['error'] === true && !requireBodyDelivery
             ? t('slack.progress.failure', {}, currentLocale())
+            : isSilentBlockActionReply(String(data['text'] ?? ''), data['preSendContext']) ? ''
             : visibleReplyText(String(data['text'] ?? ''), t('tg.noResponse', {}, currentLocale()));
         const requestId = admitted.requestId;
         const scope = slackReplyDelivery.scope(requestId, target)
@@ -947,6 +961,7 @@ async function slackOrchestrate(
             let bodyAttempted = false;
             let bodySucceeded = false;
             let bodyConfirmed = false;
+            let silent = false;
             let resultData: Record<string, unknown> = {};
             const current = () => !shutdownSealed && !slackStopping && !signal.aborted && generation === lifecycleGeneration;
             if (!current()) return;
@@ -999,6 +1014,12 @@ async function slackOrchestrate(
                 }
                 const unconfirmed = resultData['workflowUnconfirmed'] === true || Boolean(dedupe.workflow && isWorkflowReplyUnconfirmed(collected.text, resultData));
                 if (unconfirmed) resultData = { ...resultData, workflowUnconfirmed: true };
+                silent = !unconfirmed && !collected.data.collectionFailure && isSilentBlockActionReply(collected.text, dedupe.preSendContext);
+                if (silent) {
+                    log.info(`[slack:out:silent] ${target.targetId}: block action ended silently`);
+                    await settleAck('success');
+                    return;
+                }
                 const text = unconfirmed ? workflowDiagnosticText(collected.text, t('slack.workflow.unconfirmed', {}, locale))
                     : collected.data.collectionFailure === 'error' ? t('slack.progress.failure', {}, locale)
                     : collected.data.collectionFailure === 'timeout' ? t('tg.timeout', {}, locale)
@@ -1036,7 +1057,7 @@ async function slackOrchestrate(
             } finally {
                 signal.removeEventListener('abort', abortInput);
                 await settleAck('failure');
-                await display.finish(bodyProgressOutcome(resultData, bodySucceeded, executionOutcome, !current()),
+                await display.finish(bodyProgressOutcome(resultData, bodySucceeded || silent, executionOutcome, !current()),
                     bodyAttempted ? { bodyDelivered: bodyConfirmed } : {});
             }
         },
@@ -1354,7 +1375,7 @@ async function runSlackMessageEvent(
         // event, so the scope inputs are resolved here rather than re-derived.
         ...(event.ts && event.type !== 'block_actions' ? { ackTs: event.ts } : {}),
         ...(event.user ? { recipientUserId: event.user } : {}),
-        preSendContext: { requester: event.user || 'unknown', jobKind: 'slack_turn' },
+        preSendContext: { requester: event.user || 'unknown', jobKind: event.type === 'block_actions' ? SLACK_BLOCK_ACTION_JOB : 'slack_turn' },
         isDirect: event.channel_type === 'im',
         // A trusted bot trigger is addressed to this instance as surely as a
         // human mention, and `isSlackMention` deliberately stays narrow.
