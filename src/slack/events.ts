@@ -90,6 +90,73 @@ export function isSlackMention(event: SlackMessageEvent, selfUserId: string | nu
     return event.type === 'app_mention' || (event.channel_type === 'mpim' && !!selfUserId && mentionsUser(event.text || '', selfUserId));
 }
 
+/**
+ * The action_id prefix that sends a click on an app's own Block Kit control to
+ * an agent turn. Everything else keeps its handler: `appr:`/`aprd:` approvals,
+ * `jaw_choice_` choices, and unknown callbacks, which are dropped.
+ */
+export const SLACK_AGENT_ACTION_PREFIX = 'agent:';
+const SLACK_TS = /^\d{1,13}\.\d{1,6}$/;
+const objectOf = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+function blockActionValue(action: Record<string, unknown>): string {
+    if (typeof action['value'] === 'string') return action['value'];
+    const option = objectOf(action['selected_option'])?.['value'];
+    if (typeof option === 'string') return option;
+    const options = action['selected_options'];
+    if (Array.isArray(options)) return options.map(o => objectOf(o)?.['value']).filter(v => typeof v === 'string').join(',');
+    for (const key of ['selected_date', 'selected_time', 'selected_date_time', 'selected_user', 'selected_channel', 'selected_conversation']) {
+        const picked = action[key];
+        if (typeof picked === 'string' || typeof picked === 'number') return String(picked);
+    }
+    for (const key of ['selected_users', 'selected_channels', 'selected_conversations']) {
+        const picked = action[key];
+        if (Array.isArray(picked)) return picked.filter(v => typeof v === 'string').join(',');
+    }
+    return '';
+}
+
+/**
+ * A `block_actions` click on a control whose action_id starts with
+ * SLACK_AGENT_ACTION_PREFIX, as the inbound event an agent turn runs on.
+ *
+ * The click's `action_ts` is the event ts, so Slack's redelivery of one click
+ * dedupes and journals under one key exactly like a message, and the turn
+ * answers in the clicked message's thread. Only a click by a person in this
+ * workspace on a non-ephemeral message qualifies. `payload.token`,
+ * `response_url` and `trigger_id` are never read: they are not credentials
+ * here and a turn must not reply through them.
+ */
+export function slackBlockActionEvent(payload: unknown, teamId: string): SlackMessageEvent | null {
+    const p = objectOf(payload);
+    const actions = p?.['actions'];
+    if (!p || p['type'] !== 'block_actions' || !teamId || !Array.isArray(actions) || actions.length !== 1) return null;
+    const action = objectOf(actions[0]);
+    const actionId = action?.['action_id'];
+    if (!action || typeof actionId !== 'string' || !actionId.startsWith(SLACK_AGENT_ACTION_PREFIX) || actionId.length > 255) return null;
+    const container = objectOf(p['container']);
+    const channel = container?.['channel_id'];
+    const messageTs = container?.['message_ts'];
+    const user = objectOf(p['user'])?.['id'];
+    const actionTs = action['action_ts'];
+    if (objectOf(p['team'])?.['id'] !== teamId || container?.['type'] !== 'message' || container['is_ephemeral'] === true
+        || typeof channel !== 'string' || !/^[CDG][A-Z0-9]+$/.test(channel) || typeof messageTs !== 'string' || !SLACK_TS.test(messageTs)
+        || typeof user !== 'string' || !/^[UW][A-Z0-9]+$/.test(user) || typeof actionTs !== 'string' || !SLACK_TS.test(actionTs)) return null;
+    const channelId = objectOf(p['channel'])?.['id'];
+    const messageCopyTs = objectOf(p['message'])?.['ts'];
+    if ((channelId !== undefined && channelId !== channel) || (messageCopyTs !== undefined && messageCopyTs !== messageTs)) return null;
+    const threadTs = typeof container['thread_ts'] === 'string' && SLACK_TS.test(container['thread_ts']) ? container['thread_ts'] : messageTs;
+    const blockId = typeof action['block_id'] === 'string' ? action['block_id'] : '';
+    // JSON quoting keeps a value's newlines and brackets inside one line of the prompt.
+    const field = (name: string, value: string) => `${name}: ${JSON.stringify(value.slice(0, 2000))}`;
+    return {
+        type: 'block_actions', channel, user, ts: actionTs, thread_ts: threadTs,
+        text: ['[Slack block action]', field('action_id', actionId), field('block_id', blockId),
+            field('value', blockActionValue(action)), field('message_ts', messageTs)].join('\n'),
+    };
+}
+
 export function mentionsUser(text: string, userId: string): boolean {
     return new RegExp(`<@${userId}(?:\\|[^>]*)?>`).test(text);
 }
@@ -312,6 +379,9 @@ export function shouldProcessSlackEvent(
     // Computed once: three refusals below ask the same question, and re-deriving
     // it would let the answer drift between them.
     const trustedTrigger = matchesTrustedBotTrigger(event, config);
+    // A click on the app's own control is addressed to it as surely as an
+    // app_mention, so neither needs a mention in its text.
+    const addressed = event.type === 'app_mention' || event.type === 'block_actions';
     if (event.subtype && IGNORED_SUBTYPES.has(event.subtype)
         && !(event.subtype === 'bot_message' && trustedTrigger)) {
         return { process: false, reason: `subtype_${event.subtype}` };
@@ -345,13 +415,13 @@ export function shouldProcessSlackEvent(
     // A trusted trigger keeps its message envelope: the app_mention twin is not
     // guaranteed for a bot post, and the duplicate claim in slack/bot.ts already
     // collapses the pair by (team, channel, ts) when both do arrive.
-    if (!trustedTrigger && !dm && event.channel_type !== 'mpim' && event.type !== 'app_mention' && config.selfUserId
+    if (!trustedTrigger && !dm && event.channel_type !== 'mpim' && !addressed && config.selfUserId
         && mentionsUser(event.text || '', config.selfUserId)) {
         return { process: false, reason: 'mention_via_app_mention' };
     }
     // app_mention envelopes are mentions by definition; message events in a
     // channel need the gate. DMs always bypass it.
-    if (config.mentionOnly && !dm && event.type !== 'app_mention') {
+    if (config.mentionOnly && !dm && !addressed) {
         if (!config.selfUserId || !mentionsUser(event.text || '', config.selfUserId)) {
             // Thread continuation, but only for a thread the bot itself started:
             // there, its reply is the parent and every follow-up is addressed to
