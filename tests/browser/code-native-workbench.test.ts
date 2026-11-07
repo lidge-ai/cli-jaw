@@ -83,8 +83,14 @@ async function send(page: Page, text: string) {
 }
 async function createSession(page: Page, provider: 'Codex' | 'Claude', text: string): Promise<CodeSessionInfo> {
     await page.getByRole('button', { name: 'New Code session', exact: true }).click();
-    await page.getByRole('button', { name: 'Runtime', exact: true }).click();
-    await page.getByRole('option', { name: provider, exact: true }).click();
+    await page.getByRole('button', { name: /^Runtime: / }).click();
+    await page.getByRole('listbox', { name: 'Runtime', exact: true }).getByRole('option', { name: provider, exact: true }).click();
+    const runtime = page.getByRole('button', { name: `Runtime: ${provider}`, exact: true });
+    await runtime.waitFor({ state: 'visible' });
+    await runtime.click();
+    const selected = page.getByRole('listbox', { name: 'Runtime', exact: true }).getByRole('option', { name: provider, exact: true });
+    assert.equal(await selected.getAttribute('aria-selected'), 'true');
+    await runtime.click();
     const [response] = await Promise.all([
         page.waitForResponse(response => new URL(response.url()).pathname === '/api/code/sessions'
             && response.request().method() === 'POST'),
@@ -119,6 +125,14 @@ async function rename(page: Page, oldTitle: string, newTitle: string) {
     await row.getByRole('button', { name: 'Save', exact: true }).click();
     await sessionRow(page, newTitle).waitFor({ state: 'visible' });
 }
+async function setArchivedFilter(page: Page, enabled: boolean) {
+    const search = page.getByRole('button', { name: 'Search sessions', exact: true });
+    if (await search.getAttribute('aria-pressed') !== 'true') await search.click();
+    assert.equal(await search.getAttribute('aria-pressed'), 'true');
+    const archived = page.getByRole('button', { name: 'Archived', exact: true });
+    if (await archived.getAttribute('aria-pressed') !== String(enabled)) await archived.click();
+    assert.equal(await archived.getAttribute('aria-pressed'), String(enabled));
+}
 async function closeVisibleDrawer(page: Page): Promise<boolean> {
     const drawer = page.getByRole('dialog', { name: 'Instance drawer', exact: true });
     const open = await drawer.isVisible();
@@ -140,7 +154,7 @@ async function closeVisibleDrawer(page: Page): Promise<boolean> {
     }, undefined, { timeout: 5_000 });
     return open;
 }
-async function containment(page: Page) {
+async function containment(page: Page, session: CodeSessionInfo) {
     const closedDrawer = await closeVisibleDrawer(page);
     const metrics = await page.evaluate(() => {
         const selectors = ['.code-canvas', '.code-canvas-main', '.code-composer', '.code-permissions'];
@@ -177,8 +191,13 @@ async function containment(page: Page) {
     for (const rect of metrics.controls) {
         assert.ok(rect.width > 0 && rect.left >= -1 && rect.right <= metrics.viewport + 1, JSON.stringify(rect));
     }
-    for (const name of ['Code prompt', 'Runtime', 'Native model ID', 'Permission']) {
-        assert.ok(metrics.hitTests.some(target => target.name === name), `Required control must render: ${name}`);
+    assert.ok(metrics.hitTests.some(target => target.name === 'Code prompt'), 'Required control must render: Code prompt');
+    const runtimeLabels = { 'codex-app': 'Codex', claude: 'Claude', cursor: 'Cursor', grok: 'Grok' };
+    const permissionLabels = { ask: 'Ask first', auto: 'Auto (YOLO)', 'read-only': 'Read only', plan: 'Plan',
+        'accept-edits': 'Accept edits', 'dont-ask': "Don't ask", 'auto-review': 'Auto review' };
+    for (const name of [`Runtime: ${runtimeLabels[session.provider]}`, `Model: ${session.model}`,
+        `Permission: ${permissionLabels[session.permissionMode]}`]) {
+        assert.ok(metrics.hitTests.some(target => target.name === name), `Required selected control must render: ${name}`);
     }
     assert.ok(metrics.hitTests.some(target => target.name === 'Send prompt' || target.name === 'Stop current turn'));
     const obstructed = metrics.hitTests.filter(target => !target.visible || !target.inViewport || (target.hitTestRequired && !target.unobscured));
@@ -234,12 +253,16 @@ function card(page: Page, name: string) {
 async function shutdownOwned(manifest: Manifest) {
     const receipt = join(manifest.evidenceDir, 'provider-events.json');
     const exited = new Promise<void>((resolve, reject) => {
-        const watcher = watch(manifest.evidenceDir, () => {
-            if (!existsSync(receipt)) return;
-            clearTimeout(timer); watcher.close(); resolve();
-        });
-        const timer = setTimeout(() => { watcher.close(); reject(new Error('Owned Manager exit receipt timed out')); }, 20_000);
-        watcher.on('error', error => { clearTimeout(timer); watcher.close(); reject(error); });
+        const finish = (error?: Error) => {
+            clearTimeout(timer); clearInterval(check); watcher.close();
+            if (error) reject(error); else resolve();
+        };
+        const observe = () => { if (existsSync(receipt)) finish(); };
+        const watcher = watch(manifest.evidenceDir, observe);
+        // Some filesystems coalesce the temporary-file and rename notifications.
+        const check = setInterval(observe, 100);
+        const timer = setTimeout(() => finish(new Error('Owned Manager exit receipt timed out')), 20_000);
+        watcher.on('error', finish);
     });
     // Install observation before dispatch, and observe both promises on failure.
     const results = await Promise.allSettled([exited, control(manifest, 'shutdown', 'POST')]);
@@ -343,7 +366,9 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 // which only completes after the fake native resource drains.
                 await p.getByRole('button', { name: 'Stop current turn', exact: true }).click();
                 await waitSession(p, a.sessionId, 'stopping');
-                await p.waitForFunction(() => document.querySelector('[aria-label="Stop current turn"]')?.textContent === 'Stopping…');
+                // CodeComposer.tsx:81-92 puts the stopping announcement beside the icon-only Stop button.
+                await p.locator('.code-composer [role="status"]').getByText('Stopping…', { exact: true }).waitFor({ state: 'visible' });
+                assert.equal(await p.getByRole('button', { name: 'Stop current turn', exact: true }).isDisabled(), true);
                 await closeVisibleDrawer(p);
                 await p.screenshot({ path: join(manifest.evidenceDir, 'stop-pending.png'), fullPage: false });
                 const before = await control(manifest, 'state');
@@ -366,14 +391,14 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 const snapshot = await api<CodeSnapshot>(p, `/api/code/sessions/${b.sessionId}`);
                 assert.equal(snapshot.pendingPermissions.length, 1);
                 assert.equal(snapshot.pendingPermissions[0]?.options[0]?.optionId, 'opaque-allow-17');
-                return containment(p);
+                return containment(p, b);
             }, true);
             await step('approval-mobile-390', async () => {
                 await p.setViewportSize({ width: 390, height: 844 });
                 await closeVisibleDrawer(p);
                 const allow = p.getByRole('button', { name: 'Allow fixture once', exact: true });
                 await allow.scrollIntoViewIfNeeded();
-                const metrics = await containment(p);
+                const metrics = await containment(p, b);
                 await p.screenshot({ path: join(manifest.evidenceDir, 'approval-pending-390.png'), fullPage: false });
                 await allow.click();
                 await waitSession(p, b.sessionId, 'idle');
@@ -390,12 +415,12 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 await row.waitFor({ state: 'detached' });
                 const archived = await api<CodeSnapshot>(p, `/api/code/sessions/${b.sessionId}`);
                 assert.ok(archived.session.archivedAt !== null);
-                await p.getByRole('checkbox', { name: 'Archived', exact: true }).check();
+                await setArchivedFilter(p, true);
                 await selectSession(p, 'Reviewed Claude');
                 assert.equal(await p.getByRole('textbox', { name: 'Code prompt' }).getAttribute('readonly'), '');
                 await (await rowMenu(p, 'Reviewed Claude')).getByRole('menuitem', { name: 'Restore', exact: true }).click();
                 await row.waitFor({ state: 'detached' });
-                await p.getByRole('checkbox', { name: 'Archived', exact: true }).uncheck();
+                await setArchivedFilter(p, false);
                 await selectSession(p, 'Reviewed Claude');
                 await p.reload({ waitUntil: 'domcontentloaded' });
                 await p.getByRole('tab', { name: 'Code', exact: true }).click();
@@ -412,7 +437,7 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 await p.setViewportSize({ width: 1440, height: 1000 });
                 await closeVisibleDrawer(p);
                 await p.getByRole('tab', { name: 'Code', exact: true }).click();
-                await p.getByRole('checkbox', { name: 'Archived', exact: true }).uncheck();
+                await setArchivedFilter(p, false);
                 history = await createSession(p, 'Codex', 'qa:rows virtual history');
                 const stored = await waitSession(p, history.sessionId, 'idle');
                 assert.equal(stored.items.filter(item => item.text?.startsWith('History row ')).length, 240);
@@ -436,7 +461,7 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 assert.ok(rows > 0 && rows < 100, `Virtualized DOM must be bounded: ${rows}/${stored.items.length}`);
                 await log.press('Home'); await waitText(p, 'History row 000 — deterministic retained content.');
                 await log.press('End'); await log.locator('.katex').first().scrollIntoViewIfNeeded();
-                return { rows, persistedItems: stored.items.length, historyPageSizes: [recent.items.length, older.items.length], layout: await containment(p) };
+                return { rows, persistedItems: stored.items.length, historyPageSizes: [recent.items.length, older.items.length], layout: await containment(p, history) };
             }, true);
             await step('markdown-math-mobile-390', async () => {
                 assert.ok(history, 'History session admission is required for the mobile history case');
@@ -446,7 +471,7 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 await log.focus(); await log.press('End');
                 await log.locator('.katex').first().scrollIntoViewIfNeeded();
                 await log.locator('.katex').first().waitFor({ state: 'visible' });
-                return containment(p);
+                return containment(p, history);
             }, true);
             // These steps reuse the history session and Alpha: the fixture's Code
             // runtime admits four resident sessions and the Korean case below
@@ -572,14 +597,15 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
             const koreanTitle = '네이티브 코드 작업 검토 — 긴 한국어 세션 제목과 좁은 화면에서의 승인 및 초안 보존 확인';
             const koreanDraft = '이 초안은 전송하지 않습니다. 좁은 화면에서도 한국어 문장과 긴 작업 설명이 잘리지 않고 읽히는지 확인해 주세요.\n'
                 + '세션을 바꾸거나 테마를 전환해도 작성 중인 내용과 키보드 포커스가 올바르게 유지되어야 합니다.';
+            let koreanSession!: CodeSessionInfo;
             const koreanReady = await step('korean-title-and-unsent-draft', async () => {
                 await p.setViewportSize({ width: 1440, height: 1000 });
                 await closeVisibleDrawer(p);
                 await p.getByRole('tab', { name: 'Code', exact: true }).click();
-                await p.getByRole('checkbox', { name: 'Archived', exact: true }).uncheck();
+                await setArchivedFilter(p, false);
                 // This small independent session keeps geometry reachable even
                 // when history or reload failed. It does not repair those cases.
-                await createSession(p, 'Codex', 'qa:markdown Korean layout');
+                koreanSession = await createSession(p, 'Codex', 'qa:markdown Korean layout');
                 await rename(p, 'qa:markdown Korean layout', koreanTitle);
                 await p.getByRole('textbox', { name: 'Code prompt' }).fill(koreanDraft);
                 await waitDraft(p, koreanDraft);
@@ -625,8 +651,17 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                         }
                         await p.mouse.move(0, 0);
                         const prompt = p.getByRole('textbox', { name: 'Code prompt', exact: true });
+                        const dictation = p.getByRole('button', { name: 'Dictation', exact: true });
+                        const dictationSupported = await p.evaluate(() =>
+                            typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+                        assert.equal(await dictation.isEnabled(), dictationSupported);
                         await prompt.focus();
                         await p.keyboard.press('Tab');
+                        // CodeComposer.tsx:74-85 places Dictation between the prompt and Send when supported.
+                        if (dictationSupported) {
+                            assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
+                            await p.keyboard.press('Tab');
+                        }
                         const focus = await sendButton.evaluate(element => {
                             const style = getComputedStyle(element), rect = element.getBoundingClientRect();
                             const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -640,11 +675,19 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                         assert.equal(focus.outline, 'solid', JSON.stringify(focus));
                         assert.equal(parseFloat(focus.outlineWidth), 2, JSON.stringify(focus));
                         assert.ok(focus.top >= 0 && focus.bottom <= focus.viewportHeight, JSON.stringify(focus));
-                        // Shift+Tab returns to the draft; Tab returns to Send without
-                        // activating it. Leave that keyboard focus ring in the image.
+                        // Reverse and replay the full tab path without activating either button.
                         await p.keyboard.press('Shift+Tab');
+                        if (dictationSupported) {
+                            assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
+                            await p.keyboard.press('Shift+Tab');
+                        }
                         assert.equal(await prompt.evaluate(element => document.activeElement === element), true);
                         await p.keyboard.press('Tab');
+                        if (dictationSupported) {
+                            assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
+                            await p.keyboard.press('Tab');
+                        }
+                        assert.equal(await sendButton.evaluate(element => document.activeElement === element), true);
                         const motion = await p.locator('.code-canvas-main').evaluate(element => ({
                             reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
                             theme: document.documentElement.dataset.theme,
@@ -653,7 +696,7 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                         }));
                         assert.equal(motion.reduced, true); assert.equal(motion.theme, theme);
                         assert.equal(motion.activeAnimations, 0); assert.equal(motion.scrollBehavior, 'auto');
-                        return { sendColors: { normal: normalColors, hover: hoverColors }, focus, motion, layout: await containment(p) };
+                        return { sendColors: { normal: normalColors, hover: hoverColors }, focus, motion, layout: await containment(p, koreanSession) };
                     }, true);
             }
             await step('browser-errors-and-native-evidence', async () => {
