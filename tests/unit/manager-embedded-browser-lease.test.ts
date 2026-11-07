@@ -1,7 +1,7 @@
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Express, RequestHandler } from 'express';
-import { registerEmbeddedBrowserRoutes, __resetEmbeddedBrowserStateForTests as reset } from '../../src/manager/routes/embedded-browser.js';
+import { registerEmbeddedBrowserRoutes, __resetEmbeddedBrowserStateForTests as reset, __setInstanceFetchTimeoutForTests } from '../../src/manager/routes/embedded-browser.js';
 
 type Reply = { code: number; body: any };
 type Handler = (req: any, res: any) => Promise<void>;
@@ -14,6 +14,7 @@ let originalFetch: typeof fetch;
 let remote: Map<number, Array<{ id: string; label: string; text: string }>>;
 let deleteFailures: number;
 let blockNextGet: (() => Promise<void>) | undefined;
+let blockNextDelete: (() => Promise<void>) | undefined;
 
 beforeEach(() => {
     reset();
@@ -21,6 +22,7 @@ beforeEach(() => {
     remote = new Map();
     deleteFailures = 0;
     blockNextGet = undefined;
+    blockNextDelete = undefined;
     const register = (method: string) => (path: string, ...chain: any[]) => {
         routes.set(`${method} ${path}`, async (req, res) => {
             for (const fn of chain) {
@@ -46,6 +48,7 @@ beforeEach(() => {
             return { ok: true, status: 200, json: async () => entries.map(entry => ({ ...entry })) } as Response;
         }
         if (method === 'DELETE') {
+            if (blockNextDelete) { const block = blockNextDelete; blockNextDelete = undefined; await block(); }
             if (deleteFailures > 0) { deleteFailures--; return { ok: false, status: 500 } as Response; }
             const id = decodeURIComponent(url.pathname.split('/').pop()!);
             const index = entries.findIndex(entry => entry.id === id);
@@ -147,14 +150,128 @@ test('relay withdraws previous port and never re-delivers on selected:false', as
     assert.equal(remote.get(7101)?.length, 0); assert.equal(remote.get(7102)?.length, 1);
 });
 
+test('switching ports handles previous-port failure and retries its withdrawal', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+        await publish(); await relay(7101);
+        deleteFailures = 1;
+        assert.equal((await relay(7102)).code, 200);
+        await tick();
+        assert.deepEqual(unhandled, []);
+        assert.equal(remote.get(7102)?.length, 1);
+        assert.equal(remote.get(7101)?.length, 1);
+        await new Promise(resolve => setTimeout(resolve, 1150));
+        assert.equal(remote.get(7101)?.length, 0);
+    } finally {
+        process.off('unhandledRejection', onUnhandled);
+    }
+});
+
 test('revoke during reconcile triggers another pass and leaves port empty', async () => {
     await publish();
     let release!: () => void; let started!: () => void;
     const entered = new Promise<void>(resolve => { started = resolve; });
     blockNextGet = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
     const request = relay(7101); await entered;
-    await revoke(mount()); release(); await request;
+    const revocation = revoke(mount()); release(); await Promise.all([revocation, request]);
     assert.equal(remote.get(7101)?.length, 0);
+});
+
+test('revoke settles commands immediately and responds after worker deletion', async () => {
+    await publish(); await relay(7101);
+    const pending = action('snapshot'); await tick();
+    let release!: () => void; let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextDelete = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
+    let responded = false;
+    const revocation = revoke(mount(), () => { responded = true; });
+    await entered;
+    try {
+        assert.equal((await pending).code, 410);
+        assert.equal(responded, false);
+    } finally { release(); await revocation; }
+    assert.equal(remote.get(7101)?.length, 0);
+    assert.equal(responded, true);
+});
+
+test('revoke responds within its bound when worker does not answer', async () => {
+    await publish(); await relay(7101);
+    let release!: () => void; let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextGet = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
+    const start = Date.now();
+    const revocation = revoke(mount());
+    await entered;
+    try {
+        assert.equal((await revocation).code, 200);
+        const elapsed = Date.now() - start;
+        assert.ok(elapsed >= 1300 && elapsed < 3000, `response took ${elapsed}ms`);
+    } finally { release(); await tick(); }
+});
+
+test('timed-out instance request releases a dirty revoke for retry', async () => {
+    __setInstanceFetchTimeoutForTests(30);
+    await publish(); await relay(7101);
+    const normalFetch = globalThis.fetch;
+    let started!: () => void; let abortHeld!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    let first = true;
+    let aborted = false;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        if (first && (!init?.method || init.method === 'GET')) {
+            first = false;
+            return new Promise<Response>((_resolve, reject) => {
+                const abort = () => { aborted = true; reject(new Error('aborted')); };
+                abortHeld = abort;
+                init?.signal?.addEventListener('abort', abort, { once: true });
+                started();
+            });
+        }
+        return normalFetch(input, init);
+    }) as typeof fetch;
+    const request = relay(7101); await entered;
+    const revocation = revoke(mount());
+    try {
+        await new Promise(resolve => setTimeout(resolve, 1400));
+        assert.equal(aborted, true);
+        assert.equal(remote.get(7101)?.length, 0);
+    } finally {
+        if (!aborted) abortHeld();
+        await Promise.all([request, revocation]);
+    }
+});
+
+test('instance list response body is also bounded and retried', async () => {
+    __setInstanceFetchTimeoutForTests(30);
+    await publish(); await relay(7101);
+    const normalFetch = globalThis.fetch;
+    let started!: () => void; let abortHeld!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    let first = true; let aborted = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (first && (!init?.method || init.method === 'GET')) {
+            first = false;
+            return { ok: true, status: 200, json: () => new Promise((_resolve, reject) => {
+                const abort = () => { aborted = true; reject(new Error('aborted')); };
+                abortHeld = abort;
+                init?.signal?.addEventListener('abort', abort, { once: true });
+                started();
+            }) } as Response;
+        }
+        return normalFetch(input, init);
+    }) as typeof fetch;
+    const request = relay(7101); await entered;
+    const revocation = revoke(mount());
+    try {
+        await new Promise(resolve => setTimeout(resolve, 1400));
+        assert.equal(aborted, true);
+        assert.equal(remote.get(7101)?.length, 0);
+    } finally {
+        if (!aborted) abortHeld();
+        await Promise.all([request, revocation]);
+    }
 });
 
 test('failed DELETE stays dirty and is retried; failed fetch does not block clear', async () => {

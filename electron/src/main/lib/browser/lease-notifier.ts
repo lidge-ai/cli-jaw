@@ -143,7 +143,9 @@ export function createLeaseRevokePoster(opts: { managerUrl: () => string; token:
     try {
       const response = await (opts.fetchImpl ?? fetch)(new URL('api/manager/embedded-browser/lease/revoke', opts.managerUrl()), {
         method: 'POST', headers: { 'content-type': 'application/json', 'X-CLI-Jaw-Electron': typeof opts.token === 'function' ? opts.token() : opts.token },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(opts.timeoutMs ?? 1500),
+        // Longer than the server's bounded wait for instance cleanup (1.5 s), so a
+        // slow worker never turns an applied revoke into a client-side retry.
+        body: JSON.stringify(body), signal: AbortSignal.timeout(opts.timeoutMs ?? 3000),
       });
       return response.status;
     } catch { return 'network-error'; }

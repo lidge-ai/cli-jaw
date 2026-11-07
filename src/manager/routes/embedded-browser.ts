@@ -54,6 +54,8 @@ const MAX_TEXT = 2048;
 const STALE_AFTER_MS = 5 * 60 * 1000;
 const RUNTIME_CONTEXT_LABEL_PREFIX = 'embedded-browser:';
 const SHARE_TTL_MS = 2 * 60 * 60 * 1000;
+const INSTANCE_FETCH_TIMEOUT_MS = 5000;
+let instanceFetchTimeoutMs = INSTANCE_FETCH_TIMEOUT_MS;
 const COMMAND_TIMEOUT_MS = 20_000;
 const COMMAND_POLL_MAX_WAIT_MS = 25_000;
 const SCREENSHOT_DIR = join(tmpdir(), 'cli-jaw-embedded-browser');
@@ -171,15 +173,23 @@ function shareContextText(target: { targetId: string; url: string; title: string
 
 type RuntimeContextEntry = { id: string; label?: string; text?: string; expired?: boolean };
 
+async function instanceFetch<T>(input: string, init: RequestInit, read: (response: globalThis.Response) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), instanceFetchTimeoutMs);
+    try { return await read(await fetch(input, { ...init, signal: controller.signal })); }
+    finally { clearTimeout(timer); }
+}
+
 async function reconcileInstanceShares(
     port: number,
     shared: Array<{ targetId: string; url: string; title: string }>,
     managerPort: number,
 ): Promise<{ added: number; removed: number }> {
     const base = `http://127.0.0.1:${port}/api/runtime-context`;
-    const listResponse = await fetch(base);
-    if (!listResponse.ok) throw new Error(`runtime-context list failed: ${listResponse.status}`);
-    const entries = await listResponse.json() as RuntimeContextEntry[];
+    const entries = await instanceFetch(base, {}, async response => {
+        if (!response.ok) throw new Error(`runtime-context list failed: ${response.status}`);
+        return await response.json() as RuntimeContextEntry[];
+    });
     const existing = (Array.isArray(entries) ? entries : [])
         .filter(entry => typeof entry?.label === 'string' && entry.label.startsWith(RUNTIME_CONTEXT_LABEL_PREFIX) && entry.expired !== true);
     const wanted = new Map(shared.map(target => [`${RUNTIME_CONTEXT_LABEL_PREFIX}${target.targetId}`, target]));
@@ -195,12 +205,12 @@ async function reconcileInstanceShares(
             continue;
         }
         // Unshared, navigated, or permissions changed: drop and re-add below.
-        const response = await fetch(`${base}/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+        const response = await instanceFetch(`${base}/${encodeURIComponent(entry.id)}`, { method: 'DELETE' }, async value => value);
         if (!response.ok) throw new Error(`runtime-context delete failed: ${response.status}`);
         removed += 1;
     }
     for (const [label, target] of wanted) {
-        const response = await fetch(base, {
+        const response = await instanceFetch(base, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -208,7 +218,7 @@ async function reconcileInstanceShares(
                 label,
                 expiresAt: new Date(Date.now() + SHARE_TTL_MS).toISOString(),
             }),
-        });
+        }, async value => value);
         if (!response.ok) throw new Error(`runtime-context post failed: ${response.status}`);
         added += 1;
     }
@@ -221,8 +231,8 @@ function desiredShares(port: number): Array<{ targetId: string; url: string; tit
     if (!current || current.selectedPort !== port || (lastPushAt > 0 && Date.now() - lastPushAt > STALE_AFTER_MS)) return [];
     return current.entries.map(({ target: { targetId, url, title } }) => ({ targetId, url, title }));
 }
-function dirtyAllPorts(): void {
-    for (const [port, state] of portStates) void dirtyPort(port, state.managerPort).catch(() => undefined);
+function dirtyAllPorts(): Promise<unknown>[] {
+    return [...portStates].map(([port, state]) => dirtyPort(port, state.managerPort).catch(() => undefined));
 }
 function dirtyPort(port: number, managerPort: number): Promise<{ added: number; removed: number }> {
     let state = portStates.get(port);
@@ -535,7 +545,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         res.json({ ok: true, count: entries.length });
     });
 
-    app.post('/api/manager/embedded-browser/lease/revoke', requireAuth, rendererGate, smallJson, (req: Request, res: Response) => {
+    app.post('/api/manager/embedded-browser/lease/revoke', requireAuth, rendererGate, smallJson, async (req: Request, res: Response) => {
         const body = req.body as Record<string, unknown> | undefined;
         if (!body || !idValid(body['authorityId']) || !idValid(body['ownerId']) || !positive(body['generation']) ||
             (body['reason'] !== undefined && typeof body['reason'] !== 'string')) {
@@ -551,6 +561,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         if (!state) { res.json({ ok: true, applied: false, cleared: false }); return; }
         let floor: Tuple | null = null;
         let cleared = false;
+        const reconciles: Promise<unknown>[] = [];
         if (guest) {
             state.minGuestEpoch = Math.max(state.minGuestEpoch, body['guestEpoch'] as number);
             const ids = body['webContentsIds'] as number[];
@@ -564,7 +575,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             if (current?.authorityId === body['authorityId']) {
                 current.entries = current.entries.filter(entry => !ids.includes(entry.webContentsId));
                 for (const command of [...pendingCommands]) if (command.authorityId === body['authorityId'] && ids.includes(command.webContentsId)) settleCommand(command.id, unavailable());
-                dirtyAllPorts();
+                reconciles.push(...dirtyAllPorts());
             }
         } else {
             floor = { generation, mountSeq: (body['mountSeq'] as number | undefined) ?? Number.MAX_SAFE_INTEGER, snapshotSeq: Number.MAX_SAFE_INTEGER };
@@ -573,7 +584,15 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         if (state.floor && current?.authorityId === body['authorityId'] && compare(current, state.floor) <= 0) {
             current = null; cleared = true;
             for (const command of [...pendingCommands]) settleCommand(command.id, unavailable());
-            dirtyAllPorts();
+            reconciles.push(...dirtyAllPorts());
+        }
+        if (reconciles.length) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+                Promise.all(reconciles),
+                new Promise<void>(resolve => { timer = setTimeout(resolve, 1500); }),
+            ]);
+            if (timer) clearTimeout(timer);
         }
         res.json({ ok: true, applied: true, cleared });
     });
@@ -597,7 +616,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         if (body.selected && sameMount(current, mount)) {
             const previous = current!.selectedPort;
             current!.selectedPort = portValue;
-            if (previous !== null && previous !== portValue) dirtyPort(previous, managerPort);
+            if (previous !== null && previous !== portValue) void dirtyPort(previous, managerPort).catch(() => undefined);
         }
         try {
             const summary = await dirtyPort(portValue, managerPort);
@@ -739,7 +758,12 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
     });
 }
 
+export function __setInstanceFetchTimeoutForTests(ms: number): void {
+    instanceFetchTimeoutMs = ms;
+}
+
 export function __resetEmbeddedBrowserStateForTests(): void {
+    instanceFetchTimeoutMs = INSTANCE_FETCH_TIMEOUT_MS;
     current = null;
     lastPushAt = 0;
     authorities.clear();
