@@ -10,8 +10,10 @@ import { scopeForChatSession } from '../../orchestrator/scope.js';
 import { settleOnce } from '../../orchestrator/request-registry.js';
 import { readSlackWorkflowMetadata, type SlackWorkflowMetadata } from '../../slack/workflow.js';
 import { runPinFields } from '../../messaging/run-pin.js';
+import type { SlackPreSendBaseContext } from '../../messaging/slack-pre-send-hook.js';
 
 type QueueItem = {
+    preSendContext?: SlackPreSendBaseContext;
     slackWorkflow?: SlackWorkflowMetadata;
     schemaVersion?: 2;
     id: string;
@@ -31,6 +33,7 @@ type QueueItem = {
 };
 
 type QueueMessageMeta = {
+    preSendContext?: SlackPreSendBaseContext;
     slackWorkflow?: SlackWorkflowMetadata;
     target?: RemoteTarget;
     chatId?: string | number;
@@ -443,6 +446,7 @@ export function createQueueController(
             overrides: meta?.overrides,
             replyViaTarget: meta?.replyViaTarget,
             ...(source === 'slack' && meta?.slackWorkflow ? { slackWorkflow: meta.slackWorkflow } : {}),
+            ...(source === 'slack' && meta?.preSendContext ? { preSendContext: meta.preSendContext } : {}),
             ...(multiSessionEnabled && meta?.collect === true ? { collect: true } : {}),
             ...(multiSessionEnabled && meta?.front === true ? { priority: 'head' as const } : {}),
             ts: Date.now(),
@@ -598,6 +602,7 @@ export function createQueueController(
                 requestId, origin, scope: item.scope, target, sessionId: effectiveSessionId,
                 remoteKey: item.remoteKey,
                 slackWorkflow: item.slackWorkflow,
+                preSendContext: item.preSendContext,
             }));
             deps.broadcast('queue_update', queueUpdatePayload(item.scope));
 
@@ -609,6 +614,7 @@ export function createQueueController(
                     ...(item.remoteKey ? { remoteKey: item.remoteKey } : {}),
                     overrides, replyViaTarget, _skipInsert: true,
                     slackWorkflow: item.slackWorkflow,
+                    preSendContext: item.preSendContext,
                     // Marks the completion so a channel can answer a turn whose
                     // original requester is gone — a boot-drained item has no
                     // listener left (#407). Ordinary turns must NOT carry this,

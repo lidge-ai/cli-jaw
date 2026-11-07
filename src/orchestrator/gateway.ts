@@ -26,6 +26,7 @@ import { admitRequest, settleOnce } from './request-registry.js';
 import { beginSteerInput } from '../agent/steer-input-guard.js';
 import type { SlackWorkflowMetadata } from '../slack/workflow.js';
 import { sameRunConversation } from '../messaging/run-pin.js';
+import type { SlackPreSendBaseContext } from '../messaging/slack-pre-send-hook.js';
 
 export type SubmitResult = {
     action: 'started' | 'queued' | 'rejected';
@@ -50,6 +51,7 @@ export function publicSubmitResult(result: SubmitResult): SubmitResult {
 }
 
 type SubmitMeta = {
+    preSendContext?: SlackPreSendBaseContext;
     slackWorkflow?: SlackWorkflowMetadata;
     onAdmitted?: (binding: { requestId: string; scope: string; chatSessionId: string }) => void;
     origin: RuntimeOrigin;
@@ -97,6 +99,7 @@ function applyMidRunPolicy(
             overrides: ctx.meta.overrides,
             replyViaTarget: ctx.meta.replyViaTarget,
             slackWorkflow: ctx.meta.slackWorkflow,
+            preSendContext: ctx.meta.preSendContext,
             ...extra,
         }));
         return { action: 'queued', pending: messageQueue.length, queued: true, requestId: ctx.requestId, queuedId, sessionContext };
@@ -140,7 +143,7 @@ function applyMidRunPolicy(
         // never for missing capability.
         const steerMeta = stripUndefined({ chatSessionId: ctx.chatSessionId, target: ctx.meta.target,
             chatId: ctx.meta.chatId, requestId: ctx.requestId, remoteKey: ctx.remoteKey, replyViaTarget: ctx.meta.replyViaTarget,
-            slackWorkflow: ctx.meta.slackWorkflow });
+            slackWorkflow: ctx.meta.slackWorkflow, preSendContext: ctx.meta.preSendContext });
         const inputGuard = beginSteerInput(ctx.scopeKey);
         runDetached(
             steerAgent(ctx.scopeKey, ctx.text, ctx.meta.origin, steerMeta).then(outcome => {
@@ -360,7 +363,7 @@ export function submitMessage(
                 ...(remoteKey ? { remoteKey } : {}),
             });
         }
-        const queuedId = enqueueMessage(trimmed, meta.origin, stripUndefined({ target: meta.target, chatId: meta.chatId, requestId, scope, chatSessionId, ...(remoteKey ? { remoteKey } : {}), overrides: meta.overrides, replyViaTarget: meta.replyViaTarget }));
+        const queuedId = enqueueMessage(trimmed, meta.origin, stripUndefined({ target: meta.target, chatId: meta.chatId, requestId, scope, chatSessionId, ...(remoteKey ? { remoteKey } : {}), overrides: meta.overrides, replyViaTarget: meta.replyViaTarget, preSendContext: meta.preSendContext }));
         return { action: 'queued', pending: messageQueue.length, queued: true, requestId, queuedId, ...(sessionContext ? { sessionContext } : {}) };
     }
 
@@ -371,8 +374,8 @@ export function submitMessage(
         runDetached(
             sessionLanes.run(scope, () => (
                 multiSessionEnabled
-                    ? withSessionScope(sessionScope, () => orchestrate(trimmed, stripUndefined({ origin: meta.origin, target: meta.target, chatId: meta.chatId, requestId, scope, chatSessionId, ...(remoteKey ? { remoteKey } : {}), _skipInsert: true, overrides: meta.overrides, replyViaTarget: meta.replyViaTarget, _steerContext: meta._steerContext })))
-                    : orchestrate(trimmed, stripUndefined({ origin: meta.origin, target: meta.target, chatId: meta.chatId, requestId, _skipInsert: true, overrides: meta.overrides, replyViaTarget: meta.replyViaTarget, _steerContext: meta._steerContext }))
+                    ? withSessionScope(sessionScope, () => orchestrate(trimmed, stripUndefined({ origin: meta.origin, target: meta.target, chatId: meta.chatId, requestId, scope, chatSessionId, ...(remoteKey ? { remoteKey } : {}), _skipInsert: true, overrides: meta.overrides, replyViaTarget: meta.replyViaTarget, preSendContext: meta.preSendContext, _steerContext: meta._steerContext })))
+                    : orchestrate(trimmed, stripUndefined({ origin: meta.origin, target: meta.target, chatId: meta.chatId, requestId, _skipInsert: true, overrides: meta.overrides, replyViaTarget: meta.replyViaTarget, preSendContext: meta.preSendContext, _steerContext: meta._steerContext }))
             )),
             'orchestrate',
             { ...meta, requestId, ...(eventScope ? { eventScope } : {}) },

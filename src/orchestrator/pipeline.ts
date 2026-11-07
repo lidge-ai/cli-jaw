@@ -316,6 +316,7 @@ function terminalEventIdentity(
     return stripUndefined({
         ...(scoped ? { scope, sessionId } : {}),
         remoteKey: meta["remoteKey"],
+        ...(origin === 'slack' && meta["preSendContext"] ? { preSendContext: meta["preSendContext"] } : {}),
     });
 }
 

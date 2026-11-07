@@ -216,6 +216,7 @@ cli-jaw/
 │   ├── messaging/            ← 통합 메시징 런타임
 │   │   ├── runtime.ts        ← 채널 lifecycle (init/shutdown/restart) + transport registry
 │   │   ├── send.ts           ← 통합 아웃바운드 메시지 라우팅 (ChannelSendRequest, 다중 채널 send 지원, 턴 주소 우선순위)
+│   │   ├── slack-pre-send-hook.ts ← opt-in Slack server-owned pre-send validator (shell-free child, bounded files/I/O, repaired text or fail-closed result)
 │   │   ├── turn-conversation.ts ← 턴이 답하는 대화 주소 encode/decode + 채널 매칭 ✨
 │   │   ├── turn-delivery.ts  ← 에이전트 자가 전송 claim (턴 앵커 + digest, 소비형) → dispatch 중복 게시 억제 ✨
 │   │   ├── dedupe.ts         ← 배달 중복 제거 (TTL seen-set, 미만료 항목 보존) ✨

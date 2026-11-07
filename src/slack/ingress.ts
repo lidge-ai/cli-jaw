@@ -16,6 +16,7 @@ import {
 import { log } from '../core/logger.js';
 import { logErrorText } from '../messaging/redact.js';
 import type { SlackWorkflowMetadata } from './workflow.js';
+import type { SlackPreSendBaseContext } from '../messaging/slack-pre-send-hook.js';
 
 const ingressTails = new Map<string, Promise<void>>();
 const controllers = new Set<AbortController>();
@@ -255,6 +256,7 @@ export function admitSlackRun(params: {
     prompt: string;
     displayText: string;
     chatId: string;
+    preSendContext?: SlackPreSendBaseContext;
     preResolvedScope?: string | null;
     runReply: (ctx: SlackRunContext) => Promise<void>;
 }): SubmitResult & { laneTail?: Promise<void>; sessionContext: NonNullable<SubmitResult['sessionContext']> } {
@@ -284,6 +286,7 @@ export function admitSlackRun(params: {
                 ...(params.workflow.runtimeEffort ? { effort: params.workflow.runtimeEffort } : {}),
             } } : {}),
         target: params.target, chatId: params.chatId,
+        ...(params.preSendContext ? { preSendContext: params.preSendContext } : {}),
         // A tool turn keeps the default steer policy: its grant is reserved at
         // admission (gateway onAdmitted) under the same requestId the kill-steer
         // follow-up continues with, so the follow-up spawn re-activates it.
