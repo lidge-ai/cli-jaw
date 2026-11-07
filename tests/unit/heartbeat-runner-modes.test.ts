@@ -1,5 +1,9 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import process from 'node:process';
 import { settings } from '../../src/core/config.ts';
 import { hasActiveEnforcedSlackDestination } from '../../src/slack/tool-context.ts';
 import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
@@ -165,6 +169,60 @@ test('non-planner main heartbeat runs once', async () => {
     collectCalls = 0; plannerOnly = false;
     await runJob({ id: 'once', name: 'once', enabled: true, schedule: { minutes: 5 }, prompt: 'check' });
     assert.equal(collectCalls, 1);
+});
+
+test('configured Slack pre-send hook repairs a scheduled heartbeat before the sender', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cli-jaw-heartbeat-hook-test-'));
+    const script = join(root, 'hook.mjs');
+    await writeFile(script, `
+      import { writeFileSync } from 'node:fs';
+      const outputFile = process.argv[2];
+      writeFileSync(outputFile, 'repaired heartbeat');
+      process.stdout.write(JSON.stringify({ok: true}) + '\\n');
+    `, { mode: 0o700 });
+    const previous = {
+        command: process.env['JAW_SLACK_PRE_SEND_HOOK'],
+        args: process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'],
+    };
+    process.env['JAW_SLACK_PRE_SEND_HOOK'] = process.execPath;
+    process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'] = JSON.stringify([script, '{output_file}']);
+    sentRequests.length = 0;
+    try {
+        await runJob({ id: 'hooked', name: 'hooked', enabled: true, schedule: { minutes: 5 }, prompt: 'check' });
+    } finally {
+        if (previous.command === undefined) delete process.env['JAW_SLACK_PRE_SEND_HOOK'];
+        else process.env['JAW_SLACK_PRE_SEND_HOOK'] = previous.command;
+        if (previous.args === undefined) delete process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'];
+        else process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'] = previous.args;
+        await rm(root, { recursive: true, force: true });
+    }
+    assert.equal(sentRequests.at(-1)?.['text'], 'repaired heartbeat');
+});
+
+test('blocked Slack pre-send hook prevents a scheduled heartbeat sender call', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cli-jaw-heartbeat-hook-block-test-'));
+    const script = join(root, 'hook.mjs');
+    await writeFile(script, `
+      process.stdout.write(JSON.stringify({ok: false, error: 'voice_blocked', violations: ['over_5_lines']}) + '\\n');
+      process.exitCode = 2;
+    `, { mode: 0o700 });
+    const previous = {
+        command: process.env['JAW_SLACK_PRE_SEND_HOOK'],
+        args: process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'],
+    };
+    process.env['JAW_SLACK_PRE_SEND_HOOK'] = process.execPath;
+    process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'] = JSON.stringify([script]);
+    sentRequests.length = 0;
+    try {
+        await runJob({ id: 'hook-blocked', name: 'hook-blocked', enabled: true, schedule: { minutes: 5 }, prompt: 'check' });
+    } finally {
+        if (previous.command === undefined) delete process.env['JAW_SLACK_PRE_SEND_HOOK'];
+        else process.env['JAW_SLACK_PRE_SEND_HOOK'] = previous.command;
+        if (previous.args === undefined) delete process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'];
+        else process.env['JAW_SLACK_PRE_SEND_HOOK_ARGS'] = previous.args;
+        await rm(root, { recursive: true, force: true });
+    }
+    assert.equal(sentRequests.length, 0);
 });
 
 test('busy employee produces warning delivery without running employee', async () => {

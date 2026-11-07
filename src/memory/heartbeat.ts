@@ -56,6 +56,7 @@ import { ensurePeriodThreadRoot, verifyPeriodThreadParent, listBotRepliesSince, 
 import { PERIOD_THREAD_DEFAULT_MAX_CONSUMERS, PERIOD_THREAD_DEFAULT_SLOT_WAIT_SECONDS, acquirePeriodConsumerSlot, claimPeriodThreadReply, hasPeriodThreadReplyClaim, periodThreadReplyHash, periodThreadRootHash, writePeriodReplyInfo } from './period-thread-state.js';
 import type { HeartbeatDestination } from '../core/config.js';
 import { loadHeartbeatPromptSkills } from './heartbeat-prompt-skills.js';
+import { runSlackPreSendHook } from '../messaging/slack-pre-send-hook.js';
 
 const HEARTBEAT_SCOPE = 'default';
 /** Execution scope prefix for a mention-watch answer.
@@ -566,7 +567,7 @@ async function runEmployee(
 async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMentionWatch, skillBlock = ''): Promise<MentionWatchTickResult | null> {
     // Per-hit delivery anchor, read before the agent turn and consumed by the
     // send. Scoped to this call so nothing survives the tick.
-    const answerAnchors = new Map<string, number>();
+    const answerAnchors = new Map<string, { anchor: number; requestId: string; turnId: string }>();
     const sc = settings["slack"] || {};
     const token = String(sc["botToken"] ?? '').trim();
     if (!sc["enabled"] || !token) {
@@ -670,7 +671,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
                 const quietConfig = loadPolicyHooksConfig()?.flags?.heartbeatQuietOk;
                 const extraQuietMarkers = quietConfig?.enabled ? (quietConfig.markers || []) : [];
                 if (!text.trim() || isHeartbeatQuietOutput(text, extraQuietMarkers)) return null;
-                answerAnchors.set(hit.channelId + '/' + hit.ts, anchor);
+                answerAnchors.set(hit.channelId + '/' + hit.ts, { anchor, requestId, turnId: requestId });
                 return text;
             } finally {
                 release();
@@ -680,7 +681,7 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             // The operator's watch list, not the inbound allowlist, owns this send.
             if (!watch.channelIds.includes(hit.channelId)) return false;
             const key = hit.channelId + '/' + hit.ts;
-            const anchor = answerAnchors.get(key);
+            const answer = answerAnchors.get(key);
             answerAnchors.delete(key);
             const target = slackThreadTarget(hit);
             // The agent was told the server posts, and it can still call
@@ -693,15 +694,26 @@ async function runMentionWatchJob(job: Record<string, any>, watch: HeartbeatMent
             // `wasSelfDelivered` fails open on every uncertain case, so a claim
             // that does not match still results in a post. A duplicate is
             // annoying; a swallowed answer is the user losing what they waited for.
-            if (anchor !== undefined && wasSelfDelivered({ target, text, since: anchor })) {
+            if (answer && wasSelfDelivered({ target, text, since: answer.anchor })) {
                 log.info(`[heartbeat:${job["name"]}] already delivered by the agent, not posting again`);
                 return true;
+            }
+            const checked = await runSlackPreSendHook(text, target, {
+                channel: target.targetId,
+                requester: hit.authorId || watch.userId || 'unknown',
+                jobKind: String(job['name'] || jobId),
+                requestId: answer?.requestId || `${jobId}:${hit.ts}`,
+                turnId: answer?.turnId || `${jobId}:${hit.ts}`,
+            });
+            if (!checked.ok) {
+                log.error(`[heartbeat:${job["name"]}] pre-send hook blocked: ${checked.error}`);
+                return false;
             }
             // Answer IN THE THREAD that carried the mention. `threadTs` is the
             // parent when the message was already a reply, so this never starts a
             // second thread off a reply.
            const sent = await sendChannelOutput({
-               channel: 'slack', type: 'text', text, target,
+               channel: 'slack', type: 'text', text: checked.text, target,
                allowActiveFallback: false,
                fullAccess: true,
                // Deliberately NOT `fromAgentSurface`: a heartbeat is not an agent
@@ -1196,14 +1208,27 @@ export async function runHeartbeatJob(job: Record<string, any>, deps: HeartbeatJ
             }
             writePeriodReplyInfo(ctx.replyHash, 'claimed');
         }
-        const sendResult = !decision.send
-            ? { ok: true as const }
-            : await (deps.sendOutput ?? sendChannelOutput)({ channel: destinationBinding.target.channel, type: 'text', text: formatted,
-                target: destinationBinding.target, allowActiveFallback: false, fullAccess: true })
-                // A transport that THROWS is still a delivery failure, not a failed
-                // job. Without this it lands in the catch below beside a crashed
-                // runner and counts against the execution streak.
-                .catch((error: unknown) => ({ ok: false as const, error: (error as Error).message }));
+        let sendResult: { ok: boolean; error?: string; [key: string]: unknown };
+        if (!decision.send) {
+            sendResult = { ok: true };
+        } else {
+            const deliveryRequestId = `${jobId || 'heartbeat'}:${startedAt}`;
+            const checked = await runSlackPreSendHook(formatted, destinationBinding.target, {
+                channel: destinationBinding.target.targetId,
+                requester: 'scheduled',
+                jobKind: String(job['name'] || jobId || 'heartbeat'),
+                requestId: deliveryRequestId,
+                turnId: deliveryRequestId,
+            });
+            sendResult = !checked.ok
+                ? { ok: false, error: 'slack_pre_send_blocked', retryable: false }
+                : await (deps.sendOutput ?? sendChannelOutput)({ channel: destinationBinding.target.channel, type: 'text', text: checked.text,
+                    target: destinationBinding.target, allowActiveFallback: false, fullAccess: true })
+                    // A transport that THROWS is still a delivery failure, not a failed
+                    // job. Without this it lands in the catch below beside a crashed
+                    // runner and counts against the execution streak.
+                    .catch((error: unknown) => ({ ok: false as const, error: (error as Error).message }));
+        }
         if (!sendResult.ok) {
             log.error(`[heartbeat:${job["name"]}] send failed: ${sendResult.error}`);
         }

@@ -107,6 +107,11 @@ import { resetSlackIdentityCache } from './identity.js';
 import { resetSlackConversationCache } from './conversation.js';
 import { handleApprovalCommand, handleApprovalCallback, registerProductionTransport, type DispatchApprovalTransport } from '../core/dispatch-approval-ingress.js';
 import { parseApprovalCallbackData } from '../messaging/approval-presentation.js';
+import {
+    runSlackPreSendHook,
+    type SlackPreSendBaseContext,
+    type SlackPreSendContext,
+} from '../messaging/slack-pre-send-hook.js';
 
 let socketClient: SlackSocketClient | null = null;
 let forwarderHandler: BroadcastListener | null = null;
@@ -397,6 +402,32 @@ export function getSlackConnectionState(): string {
 
 function currentLocale() { return normalizeLocale(settings["locale"], 'ko'); }
 
+function isPreSendBaseContext(value: unknown): value is SlackPreSendBaseContext {
+    return Boolean(value && typeof value === 'object'
+        && typeof (value as Record<string, unknown>)['requester'] === 'string'
+        && typeof (value as Record<string, unknown>)['jobKind'] === 'string');
+}
+
+function buildSlackPreSendContext(
+    target: RemoteTarget,
+    base: SlackPreSendBaseContext | undefined,
+    requestId: string,
+    data: Record<string, unknown>,
+): SlackPreSendContext {
+    const dataBase = isPreSendBaseContext(data['preSendContext']) ? data['preSendContext'] : undefined;
+    const finalRequestId = typeof data['requestId'] === 'string' && data['requestId'].trim()
+        ? data['requestId'] : requestId;
+    const turnId = ['traceRunId', 'runId', 'turnId'].map(key => data[key])
+        .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    return {
+        channel: target.targetId,
+        requester: dataBase?.requester ?? base?.requester ?? 'unknown',
+        jobKind: dataBase?.jobKind ?? base?.jobKind ?? 'slack_turn',
+        requestId: finalRequestId,
+        turnId: turnId ?? finalRequestId,
+    };
+}
+
 async function notifyInterruptedSlackRequests(generation: number): Promise<void> {
     const journal = getIngressJournal();
     if (!journal) return;
@@ -515,6 +546,7 @@ type SlackReplyOptions = {
     locale: ReturnType<typeof currentLocale>; generation: number; signal: AbortSignal;
     workingDir?: string;
     ack: AckHandle | null; recipientUserId?: string; initialPhase: 'running' | 'queued';
+    preSendContext?: SlackPreSendBaseContext;
 };
 const slackReplyDelivery = createSlackReplyDeliveryLedger();
 const activeSlackReplyTrackers = new Map<string, { options: SlackReplyOptions; start(anchor: number): void }>();
@@ -707,6 +739,7 @@ function trackSlackReply(options: SlackReplyOptions): void {
                 // cancellation domain (#686).
                 await deliverSlackTurnBody({
                     token, target, text, data: outcomeData, signal, display, settleAck, current,
+                    preSendContext: buildSlackPreSendContext(target, options.preSendContext, requestId, outcomeData),
                     executionOutcome: () => executionOutcome,
                     since: anchor ?? observedAnchor,
                     skipSendIfEmpty: true,
@@ -804,10 +837,18 @@ function installSlackTargetReplyForwarder(): void {
                 return;
             }
             if (!text || (requireBodyDelivery && !text.trim())) return;
+            const checked = await runSlackPreSendHook(text, target,
+                buildSlackPreSendContext(target,
+                    isPreSendBaseContext(data['preSendContext']) ? data['preSendContext'] : undefined,
+                    requestId, data));
+            if (!checked.ok) {
+                log.warn(`[slack:pre-send] blocked target-reply ${redactOutboundText(requestId)}: ${redactOutboundText(checked.error)}`);
+                return;
+            }
             const outbound = slackOutboundRegistry.start();
             try {
-                const alreadyDelivered = anchor !== undefined && wasSelfDelivered({ target, text, since: anchor });
-                const result = alreadyDelivered ? { ok: true } : await sendSlackText(token, target, text, { signal: outbound.signal,
+                const alreadyDelivered = anchor !== undefined && wasSelfDelivered({ target, text: checked.text, since: anchor });
+                const result = alreadyDelivered ? { ok: true } : await sendSlackText(token, target, checked.text, { signal: outbound.signal,
                     ...(requireBodyDelivery ? { requireBodyDelivery: true } : {}) });
                 if (outbound.signal.aborted || generation !== lifecycleGeneration || slackStopping) return;
                 if (!result.ok) {
@@ -822,7 +863,7 @@ function installSlackTargetReplyForwarder(): void {
                 if (data["requestId"]) {
                     await closeSlackNoticeAsAnsweredByRequestId(String(data["requestId"]), token, outbound.signal, generation);
                 }
-                await relaySlackImages(token, target, text, { signal: outbound.signal });
+                await relaySlackImages(token, target, checked.text, { signal: outbound.signal });
             } catch (e) {
                 await reportSlackFailure(token, target, requestId, 'delivery');
                 log.error('[slack:target-reply]', logErrorText(e));
@@ -852,6 +893,7 @@ async function slackOrchestrate(
          *  because this function cannot recover it, and the caller has it. */
         ackTs?: string;
         recipientUserId?: string;
+        preSendContext?: SlackPreSendBaseContext;
         /** Ack scope inputs, resolved by the caller that knows the event shape. */
         isDirect?: boolean;
         isMention?: boolean;
@@ -887,6 +929,7 @@ async function slackOrchestrate(
     try {
         result = admitSlackRun({
         target, prompt, displayText: displayMsg, chatId,
+        ...(dedupe.preSendContext ? { preSendContext: dedupe.preSendContext } : {}),
         ...(dedupe.workflow ? { workflow: dedupe.workflow } : {}),
         ...(dedupe.toolSource ? { toolSource: dedupe.toolSource } : {}),
         ...(dedupe.preResolvedScope !== undefined
@@ -963,6 +1006,7 @@ async function slackOrchestrate(
                 display.phase('delivering');
                 await deliverSlackTurnBody({
                     token, target, text, data: resultData, signal, display, settleAck, current,
+                    preSendContext: buildSlackPreSendContext(target, dedupe.preSendContext, ctx.requestId, resultData),
                     executionOutcome: () => executionOutcome,
                     since: turnStartedAt,
                     // The direct path posts even an empty body: sendSlackText owns
@@ -1012,6 +1056,7 @@ async function slackOrchestrate(
             token, target, requestId, session: { ...result.sessionContext }, locale: currentLocale(),
             generation: lifecycleGeneration, signal, ack, ...(workingDir ? { workingDir } : {}), initialPhase: 'queued',
             ...(dedupe.recipientUserId ? { recipientUserId: dedupe.recipientUserId } : {}),
+            ...(dedupe.preSendContext ? { preSendContext: dedupe.preSendContext } : {}),
         };
         if (result.action === 'queued') trackSlackReply(options);
         else rememberPendingSteer(options);
@@ -1058,6 +1103,7 @@ async function deliverSlackTurnBody(options: {
     target: RemoteTarget;
     /** Already derived by the caller: the two paths read different payloads. */
     text: string;
+    preSendContext: SlackPreSendContext;
     data: Record<string, unknown>;
     signal: AbortSignal;
     display: SlackProgressLifecycle;
@@ -1084,7 +1130,7 @@ async function deliverSlackTurnBody(options: {
     onSent?: (alreadyDelivered: boolean) => void;
     onRelayError?: (error: unknown) => void;
 }): Promise<SlackTurnBodyOutcome> {
-    const { token, target, text, data, signal, display, settleAck, current, executionOutcome } = options;
+    const { token, target, text: rawText, data, signal, display, settleAck, current, executionOutcome } = options;
     const blockedRoot = slackRecoveryBlocksRoot(data['requestId'], target);
     if (slackFailureRoutingEnabled() && (isSlackTurnFailure(data) || executionOutcome() === 'error' || blockedRoot)) {
         if (blockedRoot) await reportSlackFailure(token, target, data['requestId'], 'destination');
@@ -1092,6 +1138,13 @@ async function deliverSlackTurnBody(options: {
         return { delivered: false, confirmed: false, outcome: 'error' };
     }
     const requireBodyDelivery = requiresNativeBodyDelivery(data);
+    const checked = await runSlackPreSendHook(rawText, target, options.preSendContext, { signal });
+    if (!checked.ok) {
+        log.warn(`[slack:pre-send] blocked ${redactOutboundText(options.preSendContext.requestId)}: ${redactOutboundText(checked.error)}`);
+        await Promise.allSettled([settleAck('failure'), display.finish('error')]);
+        return { delivered: false, confirmed: false, outcome: 'error' };
+    }
+    const text = checked.text;
     let bodySucceeded = false;
     let bodyConfirmed = false;
     const report = () => options.report?.(bodySucceeded, bodyConfirmed);
@@ -1301,6 +1354,7 @@ async function runSlackMessageEvent(
         // event, so the scope inputs are resolved here rather than re-derived.
         ...(event.ts ? { ackTs: event.ts } : {}),
         ...(event.user ? { recipientUserId: event.user } : {}),
+        preSendContext: { requester: event.user || 'unknown', jobKind: 'slack_turn' },
         isDirect: event.channel_type === 'im',
         // A trusted bot trigger is addressed to this instance as surely as a
         // human mention, and `isSlackMention` deliberately stays narrow.
