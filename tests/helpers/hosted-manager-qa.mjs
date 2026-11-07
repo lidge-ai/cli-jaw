@@ -32,7 +32,9 @@ const phases = [
 const nativeSteps = [
     'built-manager-isolation', 'create-two-providers-and-drafts', 'stream-sse-and-stop', 'approval-wide',
     'approval-mobile-390', 'rename-archive-restore-reload', 'markdown-math-and-virtual-rows-wide',
-    'markdown-math-mobile-390', 'korean-title-and-unsent-draft',
+    'markdown-math-mobile-390', 'file-change-cards', 'reentry-restores-anchor-and-disclosure',
+    'reentry-following-returns-to-latest', 'reentry-delayed-hydration-and-user-scroll-wins',
+    'reentry-session-isolation', 'korean-title-and-unsent-draft',
     ...[1024, 768, 320].flatMap(width => ['light', 'dark'].map(theme => `korean-${width}-${theme}-keyboard-reduced-motion`)),
     'browser-errors-and-native-evidence',
 ];
@@ -325,14 +327,14 @@ function validateBrowserEvidence(phase, manifest, screenshots) {
     }
     if (phase.mode === 'code') {
         const value = readJson(join(evidence, 'browser-evidence.json'));
-        assert.equal(value.result, 'PASS'); exact(value.steps.map(row => row.name), nativeSteps, 'native sixteen steps');
+        assert.equal(value.result, 'PASS'); exact(value.steps.map(row => row.name), nativeSteps, `native ${nativeSteps.length} steps`);
         empty(value.pageErrors, 'native page errors'); empty(value.cleanupErrors, 'native cleanup');
         for (const row of value.steps) {
             assert.equal(row.status, 'PASS'); assert.equal(row.capture.settled, true); artifact(evidence, row.screenshot);
         }
         artifact(evidence, 'trace.zip'); artifact(evidence, 'stop-pending.png'); artifact(evidence, 'approval-pending-390.png');
         artifact(evidence, 'provider-state.json');
-        return { namedTests: 1, nativeSteps: 16 };
+        return { namedTests: 1, nativeSteps: nativeSteps.length };
     }
     if (phase.mode === 'retired-settings') {
         const value = readJson(join(evidence, 'retired-runtime-settings.json'));
@@ -541,7 +543,7 @@ async function main(options) {
         assert.ok(report.phases.length === 3 && report.phases.every(row => row.result === 'PASS'), 'all three phases must pass');
         report.totals = Object.fromEntries(['namedTests', 'nativeSteps', 'retiredWidths', 'retiredCheckpoints', 'layoutCases',
             'shellViewports', 'settingsViewports'].map(key => [key, report.phases.reduce((total, row) => total + (row.counts[key] || 0), 0)]));
-        assert.deepEqual(report.totals, { namedTests: 7, nativeSteps: 16, retiredWidths: 2, retiredCheckpoints: 12,
+        assert.deepEqual(report.totals, { namedTests: 7, nativeSteps: nativeSteps.length, retiredWidths: 2, retiredCheckpoints: 12,
             layoutCases: 5, shellViewports: 5, settingsViewports: 5 });
         report.result = 'PASS';
     } catch (error) { report.failure = message(error); report.result = 'FAIL'; }

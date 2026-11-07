@@ -10,6 +10,7 @@ import {
     CODE_TERMINAL_RESERVE_BYTES, CREATE_CODE_SCHEMA_SQL,
     type CodeSessionCreate, type CodeSessionRecord, type CodeStoreOwner, type CodeStoreOptions,
 } from '../../src/code-mode/store.js';
+import { CodeTurnNormalizer } from '../../src/code-mode/normalize.js';
 import type { CodeItem, CodeSessionInfo, CodeWireEvent } from '../../src/code-mode/wire.js';
 
 const capabilities = {
@@ -1574,4 +1575,149 @@ test('a database with boundaries but no stored rollback start computes it once o
     assert.equal(reopened.read('session-a')!.rollback.sinceSequence, since);
     assert.deepEqual(reopened.read('session-a')!.rollback, store.read('session-a')!.rollback);
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_code_turns_boundary'").get());
+});
+
+test('file change metadata survives store snapshots replay and history with nested allowlist', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store);
+    const item = { ...message(admitted.receipt.turnId), kind: 'file_change' as const, tool: { name: 'edit' },
+        fileChange: { schema: 'known' as const, changes: [{ path: 'a', kind: 'update' as const, patch: 'captured' as const, diff: 'patch', private: 'secret' }] } };
+    const written = store.commitItem(owner(admitted.session), item).events[0]!.item!;
+    assert.deepEqual(written.fileChange, { schema: 'known', changes: [{ path: 'a', kind: 'update', patch: 'captured', diff: 'patch' }] });
+    assert.deepEqual(store.snapshot('session-a').items.at(-1)?.fileChange, written.fileChange);
+    assert.deepEqual(store.readEvents('session-a', 4).events[0]?.item?.fileChange, written.fileChange);
+    assert.deepEqual(store.history('session-a').items.at(-1)?.fileChange, written.fileChange);
+});
+
+for (const ending of ['complete', 'stop'] as const) test(`file change whole-event allowance defers large replacements through ${ending}`, t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session);
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    const committed: CodeWireEvent[] = [], failures: unknown[] = [];
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        const result = store.commitItem(current, item); committed.push(...result.events); return { publish() {} };
+    }, failPersistence(error) { failures.push(error); } });
+    const observer = normalizer.observer(context);
+    const patch = 'd'.repeat(900_000), output = 'é'.repeat(899_999);
+    observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: patch }], output: output + '0' }, {});
+    for (let i = 1; i <= 12; i++) observer.tool('edit', { output: output + String(i % 10), semantic: 'file_change',
+        fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: patch.slice(0, -2) + String(i).padStart(2, '0') }] }, {});
+    const running = committed.slice(1).filter(event => event.event === 'code_item');
+    assert.ok(running.reduce((sum, event) => sum + Buffer.byteLength(JSON.stringify(event)), 0) <= 8 * 1024 * 1024);
+    if (ending === 'complete') observer.tool('edit', { status: 'done' }, {});
+    else {
+        for (const item of normalizer.sealAccepted()) store.commitItem(current, item);
+        store.settleTurn(current, { status: 'cancelled' });
+    }
+    const item = store.snapshot('session-a').items.find(row => row.kind === 'file_change')!;
+    assert.equal(item.status, ending === 'complete' ? 'done' : 'cancelled');
+    assert.equal(item.tool?.output, output + '2');
+    assert.equal(item.fileChange?.changes[0]?.diff, patch.slice(0, -2) + '12');
+    assert.deepEqual(failures, []);
+});
+
+test('file change transcript-limit failure rolls back and latches without retry', t => {
+    const { store } = fixture(t, { limits: { maxTurnEventBytes: 3500 } });
+    const admitted = admit(store), current = owner(admitted.session);
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    let attempts = 0, failures = 0;
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        attempts++; store.commitItem(current, item); return { publish() {} };
+    }, failPersistence(error) { assert.ok(error instanceof CodeStoreError && error.code === 'transcript_limit'); failures++; } });
+    const observer = normalizer.observer(context);
+    observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'add' }, diff: 'x'.repeat(1000) }] }, {});
+    const before = store.snapshot('session-a');
+    assert.throws(() => observer.tool('edit', { output: 'z'.repeat(3000) }, {}), /byte limit/);
+    assert.equal(failures, 1);
+    const attemptsAtFailure = attempts;
+    observer.tool('edit', { status: 'done' }, {});
+    assert.equal(attempts, attemptsAtFailure);
+    assert.deepEqual(store.snapshot('session-a'), before);
+});
+
+test('large multibyte output trims patch to keep the wrapped full event within its byte cap', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session);
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    const events: CodeWireEvent[] = [];
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        const result = store.commitItem(current, item); events.push(...result.events); return { publish() {} };
+    }, failPersistence(error) { throw error; } });
+    normalizer.observer(context).tool('edit', { semantic: 'file_change', status: 'done', output: '한'.repeat(1_048_000),
+        fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'x'.repeat(1_000_000) }] }, {});
+    const event = events[0]!;
+    assert.equal(event.item?.fileChange?.changes[0]?.patch, 'truncated');
+    assert.ok(Buffer.byteLength(JSON.stringify(event)) <= CODE_MAX_EVENT_BYTES);
+});
+
+test('file change metadata emits full events while output prefix emits compact updates', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session);
+    const first: CodeItem = { ...message(admitted.receipt.turnId), kind: 'file_change', tool: { name: 'edit', output: 'a' },
+        fileChange: { schema: 'known', changes: [{ path: 'a', kind: 'update', patch: 'captured', diff: 'one' }] } };
+    store.commitItem(current, first);
+    const changed = store.commitItem(current, { ...first, fileChange: { schema: 'known', changes: [{ path: 'a', kind: 'update', patch: 'captured', diff: 'two' }] } });
+    assert.equal(changed.events[0]?.event, 'code_item');
+    const appended = store.commitItem(current, { ...first, tool: { name: 'edit', output: 'ab' }, fileChange: changed.events[0]!.item!.fileChange });
+    assert.equal(appended.events[0]?.event, 'code_item_update');
+});
+
+test('promotion keeps identity, removes input and commits a full file change event', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session);
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    const events: CodeWireEvent[] = [];
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        const result = store.commitItem(current, item); events.push(...result.events); return { publish() {} };
+    }, failPersistence(error) { throw error; } });
+    const observer = normalizer.observer(context);
+    observer.tool('edit', { name: 'file change', input: 'x'.repeat(300), status: 'running' }, {});
+    const first = events[0]!.item!;
+    observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'patch' }] }, {});
+    assert.equal(events[1]?.event, 'code_item');
+    assert.equal(events[1]?.item?.itemId, first.itemId);
+    assert.equal(events[1]?.item?.kind, 'file_change');
+    assert.equal(events[1]?.item?.tool?.input, undefined);
+});
+
+test('after running allowance exhaustion prefix output remains compact while patch waits for completion', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session);
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    const events: CodeWireEvent[] = [];
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        const result = store.commitItem(current, item); events.push(...result.events); return { publish() {} };
+    }, failPersistence(error) { throw error; } });
+    const observer = normalizer.observer(context), patch = 'p'.repeat(500_000);
+    observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: patch }], output: 'start' }, {});
+    for (let i = 0; i < 22; i++) observer.tool('edit', { semantic: 'file_change',
+        fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: patch + i }] }, {});
+    const prior = events.at(-1)!.item!.fileChange!.changes[0]!.diff;
+    observer.tool('edit', { delta: ' more' }, {});
+    assert.equal(events.at(-1)?.event, 'code_item_update');
+    assert.equal(events.at(-1)?.update?.appendToolOutput, ' more');
+    assert.notEqual(prior, patch + '21');
+    observer.tool('edit', { status: 'done' }, {});
+    const final = store.snapshot('session-a').items.find(item => item.kind === 'file_change')!;
+    assert.equal(final.fileChange?.changes[0]?.diff, patch + '21');
+    assert.equal(final.tool?.output, 'start more');
+});
+
+test('escaped patch bytes are bounded in the full stored event', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store), current = owner(admitted.session), events: CodeWireEvent[] = [];
+    const context = { runId: 'run', sessionId: current.sessionId, turnId: current.turnId!, scope: 'code', audience: 'internal' as const,
+        epoch: current.epoch, isCurrent: () => true };
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) {
+        const result = store.commitItem(current, item); events.push(...result.events); return { publish() {} };
+    }, failPersistence(error) { throw error; } });
+    normalizer.observer(context).tool('edit', { semantic: 'file_change', status: 'done',
+        fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: '\u0001'.repeat(200_000) }] }, {});
+    assert.equal(events[0]?.item?.fileChange?.changes[0]?.patch, 'truncated');
+    assert.ok(Buffer.byteLength(JSON.stringify(events[0])) <= CODE_MAX_EVENT_BYTES);
 });

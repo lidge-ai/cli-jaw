@@ -303,3 +303,46 @@ test('private structured accumulator retires overflowing deltas until a bounded 
     assert.equal(h.state.diagnostics().truncated, true);
     assert.equal(h.state.diagnostics().recordingFailed, false);
 });
+
+test('Codex file change notifications reach transcript observer without changing activity preview', () => {
+    const patches: any[] = [], events: RuntimeEvent[] = [];
+    const context = { runId: 'r', sessionId: 's', scope: 'q', turnId: 't', audience: 'internal' as const };
+    const state = new RuntimeProjection(context, (owner, body) => {
+        const event = { ...owner, version: 1 as const, seq: events.length + 1, ...body }; events.push(event); return event;
+    }, () => {}, { text() {}, close() {}, tool(ref, patch) { patches.push({ ref, ...patch }); } });
+    const projection = new CodexProjection(state);
+    const changes = [{ path: 'a', kind: { type: 'update' }, diff: 'fixture' }];
+    projection.observe('item/started', { item: { id: 'x', type: 'fileChange', changes } }, null, '');
+    projection.observe('item/fileChange/patchUpdated', { itemId: 'x', changes }, null, '');
+    projection.observe('item/completed', { item: { id: 'x', type: 'fileChange', status: 'completed', changes } }, null, '');
+    assert.equal(patches.length, 3);
+    assert.ok(patches.every(p => p.semantic === 'file_change' && p.fileChanges === changes));
+    assert.ok(tools(events).some(event => event.input?.includes('fixture')));
+});
+
+test('Codex file change projection promotes legacy output and preserves exact patch beside ordinary tools', async () => {
+    const { CodeTurnNormalizer } = await import('../../src/code-mode/normalize.ts');
+    const context = { runId: 'r', sessionId: 's', scope: 'q', turnId: 't', epoch: 1, audience: 'internal' as const, isCurrent: () => true };
+    const items = new Map<string, import('../../src/code-mode/wire.ts').CodeItem>(), events: RuntimeEvent[] = [];
+    const normalizer = new CodeTurnNormalizer({ context, commitItem(item) { items.set(item.itemId, structuredClone(item)); return { publish() {} }; },
+        failPersistence(error) { throw error; } });
+    const state = new RuntimeProjection(context, (owner, body) => {
+        const event = { ...owner, version: 1 as const, seq: events.length + 1, ...body }; events.push(event); return event;
+    }, () => {}, normalizer.observer(context));
+    const p = new CodexProjection(state);
+    const patch = '@@ -1 +1 @@\n-old\n+new\n';
+    const changes = [{ path: 'a', kind: { type: 'update' }, diff: patch }];
+    p.observe('item/fileChange/outputDelta', { itemId: 'x', delta: 'progress' }, null, '');
+    p.observe('item/started', { item: { id: 'x', type: 'fileChange', changes } }, null, '');
+    p.observe('item/fileChange/patchUpdated', { itemId: 'x', changes }, null, '');
+    p.observe('item/completed', { item: { id: 'x', type: 'fileChange', status: 'completed', changes } }, null, '');
+    for (const [id, type] of [['cmd', 'commandExecution'], ['web', 'webSearch'], ['mcp', 'mcpToolCall']]) {
+        p.observe('item/started', { item: { id, type, command: 'pwd', query: 'q', arguments: {} } }, null, '');
+    }
+    const rows = [...items.values()], change = rows.find(item => item.kind === 'file_change')!;
+    assert.equal(change.status, 'done');
+    assert.equal(change.fileChange?.changes[0]?.diff, patch);
+    assert.equal(change.tool?.output, 'progress');
+    assert.equal(rows.filter(item => item.kind === 'tool_call').length, 3);
+    assert.ok(tools(events).some(event => event.input?.includes('old')));
+});

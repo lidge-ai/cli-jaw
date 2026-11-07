@@ -483,6 +483,13 @@ an executable was found; catalog reads do not start a native session or login.
 Sessions also persist two sidebar clocks: `last_turn_completed_at` (a completed or failed
 turn; a cancelled one does not move it) and `last_visited_at` (the Manager's read receipt).
 Neither affects runtime ownership or replay.
+
+Native Codex file changes produce `file_change` items with bounded, redacted
+`fileChange` records. Review is available only for an exact captured native
+patch; missing, truncated and withheld patches are not reviewable. Running full
+file-change commits share an 8 MiB turn allowance and defer excess updates until
+a control commit. This mitigates event growth; the store's shared turn budget
+can still fail closed, including during a Stop drain.
 Code Claude maps its permission picker onto the six SDK modes (`ask`→`default`,
 `accept-edits`→`acceptEdits`, `plan`, `auto-review`→`auto`, `dont-ask`→`dontAsk`,
 `auto`→`bypassPermissions`); init must confirm the exact mode. A permission-only change

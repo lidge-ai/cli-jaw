@@ -598,6 +598,7 @@ cli-jaw/
 │   │   ├── native-requests.css ← live decision form, focus and bounded responsive scrolling
 │   │   └── activity.css      ← scoped live Activity disclosure and reversible Legacy visibility
 │   ├── manager/src/components/instance-overview.css ← bounded instance summary and responsive property lists
+│   ├── manager/src/code/transcript-view-memory.ts ← bounded endpoint/session transcript view memory
 │   ├── manager/src/components/process-control.css ← manager-wide process table, feedback and recovery disclosure
 │   ├── manager/src/settings-standalone.tsx ← shared instance settings root
 │   ├── manager/src/manager-desktop-titlebar.css ← Electron titlebar rail and zoom-aware traffic-light spacing

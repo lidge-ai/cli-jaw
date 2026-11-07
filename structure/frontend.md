@@ -666,10 +666,13 @@ settled vocabulary and an unrecognised tool's own name are unchanged. Tool and
 reasoning detail is built only while its disclosure is open, and the transcript
 owns that open state, scoped per session and bounded, because the virtualizer
 unmounts rows. A reader's choice outlives the failure default, so a failed call
-that has been read can be closed. The disclosure is part of the virtualizer's
-item key: a measured size always wins over an estimate, so a row measured while
-collapsed would keep that height once expanded, and re-keying hands it back to
-the estimate until its real height is observed. Overflow inside an open body is
+that has been read can be closed. Rows retain their session and item identity
+when disclosures change; mounted rows are remeasured after layout. File changes
+show bounded per-file details and review only captured patches, including empty
+patches; missing, truncated and withheld patches remain explicit. The renderer
+keeps at most 32 endpoint/session views and 64 disclosure choices per view in
+memory. Re-entry restores the reader's anchor after hydration and measurement,
+unless the reader acts first; following views stay at the bottom. Overflow inside an open body is
 measured on every capped pane, the call's own detail paragraph included, and an
 expansion the body no longer justifies is retracted rather than left holding
 `Show less` and an uncapped pane over content that fits. A running call reads as

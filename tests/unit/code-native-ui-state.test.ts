@@ -18,6 +18,18 @@ const update = (sequence: number, text = 'B'): CodeWireEvent => ({ topic: 'code'
     update: { itemId: 'answer', turnId: 't', firstSequence: 3, updatedAt: sequence, appendText: text } });
 const seeded = () => reduceCodeSession(emptyCodeSession('s'), { type: 'snapshot', snapshot: snapshot() });
 
+test('full file change replaces payload and compact output preserves it', () => {
+    const fileChange = { schema: 'known' as const, changes: [{ path: 'a', kind: 'update' as const, patch: 'captured' as const, diff: '+x' }] };
+    const base = { ...item('answer', '', 3), kind: 'file_change' as const, tool: { name: 'edit', output: 'a' }, fileChange };
+    let state = reduceCodeSession(emptyCodeSession('s'), { type: 'snapshot', snapshot: snapshot([base]) });
+    const replacement = { ...base, fileChange: { ...fileChange, changes: [{ ...fileChange.changes[0]!, diff: '+y' }] } };
+    state = reduceCodeSession(state, { type: 'event', event: { topic: 'code', event: 'code_item', sessionId: 's', sequence: 4, epoch: 1, item: replacement } });
+    state = reduceCodeSession(state, { type: 'event', event: { topic: 'code', event: 'code_item_update', sessionId: 's', sequence: 5, epoch: 1,
+        update: { itemId: 'answer', turnId: 't', firstSequence: 3, updatedAt: 5, appendToolOutput: 'b' } } });
+    assert.deepEqual(state.items[0]?.fileChange, replacement.fileChange);
+    assert.equal(state.items[0]?.tool?.output, 'ab');
+});
+
 test('out-of-order duplicate compact updates cannot double append or advance over a hole', () => {
     let state = seeded();
     state = reduceCodeSession(state, { type: 'event', event: update(5, 'C') });

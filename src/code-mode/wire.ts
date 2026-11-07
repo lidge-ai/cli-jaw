@@ -115,6 +115,38 @@ export type CodeItemKind = 'user_message' | 'assistant_message' | 'reasoning'
     | 'tool_call' | 'file_change' | 'permission_request' | 'turn_started'
     | 'turn_completed' | 'turn_failed' | 'turn_cancelled' | 'session_runtime' | 'notice';
 
+/** Native change kind; `rename` is an update whose native move path names the destination. */
+export type CodeFileChangeKind = 'add' | 'delete' | 'update' | 'rename';
+
+/**
+ * Patch availability for one changed file. Only `captured` carries `diff`, and only
+ * when the native payload held a string patch that survived redaction unchanged and
+ * fit the item budget. Nothing is ever reconstructed from the working tree.
+ */
+export type CodeFilePatchState = 'captured' | 'missing' | 'truncated' | 'withheld';
+
+export interface CodeFileChangeEntry {
+    /** Redacted native path. */
+    path: string;
+    kind: CodeFileChangeKind | 'unknown';
+    /** Redacted rename destination. */
+    movePath?: string;
+    patch: CodeFilePatchState;
+    /** The exact captured native patch; present only when `patch === 'captured'`. */
+    diff?: string;
+}
+
+/** Bounded, redacted per-file payload of a native file change (`kind === 'file_change'`). */
+export interface CodeFileChange {
+    /** `unknown`: the native payload did not match the known schema; entries hold only redacted paths. */
+    schema: 'known' | 'unknown';
+    changes: CodeFileChangeEntry[];
+    /** Native records dropped by the item budget, counted exactly. */
+    omittedChanges?: number;
+    /** Native records dropped because they were not recognisable (not an object or no string path). */
+    unrecognizedChanges?: number;
+}
+
 export interface CodeItem {
     itemId: string;
     /** Store-owned first appearance order, unchanged by later updates. */
@@ -126,6 +158,8 @@ export interface CodeItem {
     text?: string;
     clientTurnKey?: string;
     tool?: { name: string; input?: string; detail?: string; output?: string };
+    /** Present only on `file_change` items whose native payload was captured. */
+    fileChange?: CodeFileChange;
     permission?: CodePermissionRequest;
     truncation?: { storedChars: number; sourceChars: number; reason: string };
     parentItemId?: string;

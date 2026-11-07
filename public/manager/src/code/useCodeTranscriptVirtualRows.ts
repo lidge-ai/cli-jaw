@@ -21,6 +21,9 @@ export type CodeTranscriptVirtualRows = {
     virtualItems: VirtualItem[];
     totalSize: number;
     restoreAnchor: (index: number, offset: number) => void;
+    remeasure: (index: number) => void;
+    isMeasured: (index: number) => boolean;
+    scrollOffset: () => number;
 };
 
 export function useCodeTranscriptVirtualRows(args: {
@@ -36,6 +39,7 @@ export function useCodeTranscriptVirtualRows(args: {
 }): CodeTranscriptVirtualRows {
     const [{ virtualItems, totalSize }, setSnapshot] = useState<Snapshot>({ virtualItems: [], totalSize: 0 });
     const virtualizerRef = useRef<Virtualizer<HTMLElement, HTMLElement> | null>(null);
+    const measuredKeys = useRef(new Set<string | number | bigint>());
 
     if (!virtualizerRef.current) {
         virtualizerRef.current = new Virtualizer<HTMLElement, HTMLElement>({
@@ -49,7 +53,11 @@ export function useCodeTranscriptVirtualRows(args: {
             observeElementRect,
             observeElementOffset,
             scrollToFn: elementScroll,
-            measureElement,
+            measureElement: (element, entry, instance) => {
+                const index = instance.indexFromElement(element);
+                if (index >= 0) measuredKeys.current.add(instance.options.getItemKey(index));
+                return measureElement(element, entry, instance);
+            },
             onChange: instance => {
                 setSnapshot({
                     virtualItems: instance.getVirtualItems(),
@@ -71,6 +79,7 @@ export function useCodeTranscriptVirtualRows(args: {
     // `measure()`); `measurementsCache` is reassigned to a fresh lazy view on
     // every recompute, so clearing it releases nothing.
     useEffect(() => {
+        measuredKeys.current.clear();
         virtualizer.measure();
     }, [virtualizer, args.resetKey]);
 
@@ -91,6 +100,12 @@ export function useCodeTranscriptVirtualRows(args: {
     }, [args.count, args.estimateSize, args.getItemKey, virtualizer]);
 
     return {
+        remeasure: index => {
+            const node = args.scrollElementRef.current?.querySelector<HTMLElement>(`[data-code-transcript-idx="${index}"]`);
+            if (node) virtualizer.measureElement(node);
+        },
+        isMeasured: index => measuredKeys.current.has(virtualizer.options.getItemKey(index)),
+        scrollOffset: () => virtualizer.scrollOffset ?? 0,
         restoreAnchor: (index, offset) => {
             const position = virtualizer.getOffsetForIndex(index, 'start');
             if (position) virtualizer.scrollToOffset(position[0] + offset, { behavior: 'auto' });

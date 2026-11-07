@@ -2464,3 +2464,25 @@ test('a manager disposed while a fork is pending waits for it and deletes the fo
     assert.equal(f.store.readRecord(id)!.nativeCursor, 'private-native-cursor');
     assert.equal(f.store.read(id)!.historyGeneration, 0);
 });
+
+test('Stop drains file change and replay reconstructs its cancelled item', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = await streamingFixture(t);
+    const change = (diff: string) => [{ path: 'a', kind: { type: 'update' }, diff }];
+    f.observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: change('first') }, {});
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: change('latest') }, {});
+    await f.manager.cancel(f.row.sessionId, { turnId: f.receipt.turnId, epoch: 1 });
+    const item = f.store.snapshot(f.row.sessionId).items.find(row => row.kind === 'file_change')!;
+    assert.equal(item.status, 'cancelled');
+    assert.equal(item.fileChange?.changes[0]?.diff, 'latest');
+    let replay: typeof item | undefined;
+    for (const event of f.store.readEvents(f.row.sessionId).events) {
+        if (event.item?.itemId === item.itemId) replay = structuredClone(event.item);
+        if (event.update?.itemId === item.itemId && replay) {
+            if (event.update.status) replay.status = event.update.status;
+            if (event.update.appendToolOutput !== undefined && replay.tool) replay.tool.output = (replay.tool.output ?? '') + event.update.appendToolOutput;
+        }
+    }
+    assert.equal(replay?.status, 'cancelled');
+    assert.deepEqual(replay?.fileChange, item.fileChange);
+});

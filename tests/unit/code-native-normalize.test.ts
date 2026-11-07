@@ -1,6 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodeTurnNormalizer, CODE_ITEM_MAX_CHARS, redactCodeText } from '../../src/code-mode/normalize.ts';
+import { CodeTurnNormalizer, CODE_ITEM_MAX_CHARS, normalizeFileChanges, redactCodeText } from '../../src/code-mode/normalize.ts';
 import type { CodeTurnNormalizerOptions } from '../../src/code-mode/normalize.ts';
 import type { CodeTurnContext } from '../../src/code-mode/provider.ts';
 import type { CodeItem } from '../../src/code-mode/wire.ts';
@@ -973,3 +973,214 @@ for (const reason of ['stale', 'failed', 'denied'] as const) {
         assert.equal(f.failures.length, reason === 'failed' ? 1 : 0);
     });
 }
+
+test('file change promotion retains bounded redacted metadata and terminal authority', () => {
+    const f = fixture();
+    f.observer.tool('edit', { name: 'file change', input: 'x'.repeat(1000), status: 'running' }, {});
+    const id = f.rows('tool_call')[0]!.itemId;
+    const chargedBefore = (f.normalizer as any).chars as number;
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'a', kind: { type: 'add' }, diff: '' },
+        { path: 'b', kind: { type: 'update', move_path: 'c' }, diff: 'sk-secret-token' },
+        { path: 'd', kind: { type: 'bogus' }, diff: 'private' }, 42,
+    ] }, {});
+    const item = f.rows('file_change')[0]!;
+    assert.equal(item.itemId, id);
+    assert.equal(item.tool?.input, undefined);
+    assert.ok((f.normalizer as any).chars < chargedBefore);
+    assert.deepEqual(item.fileChange, { schema: 'unknown', changes: [
+        { path: 'a', kind: 'add', patch: 'captured', diff: '' },
+        { path: 'b', kind: 'rename', movePath: 'c', patch: 'withheld' },
+        { path: 'd', kind: 'unknown', patch: 'missing' },
+    ], unrecognizedChanges: 1 });
+    f.observer.tool('edit', { status: 'done' }, {});
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'late', kind: { type: 'add' }, diff: 'late' }] }, {});
+    assert.deepEqual(f.rows('file_change')[0]?.fileChange, item.fileChange);
+});
+
+test('file change seal drains pending replacement', () => {
+    const f = fixture({ coalesceMs: 100 });
+    f.observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'first' }] }, {});
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'latest' }] }, {});
+    assert.equal(f.normalizer.sealAccepted()[0]?.fileChange?.changes[0]?.diff, 'latest');
+});
+
+test('file change budgets trim large escaped diffs, count omitted paths and preserve close semantics', () => {
+    const f = fixture({ maxFieldChars: 400 });
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'big', kind: { type: 'add' }, diff: '\u0001'.repeat(200) },
+        { path: 'small', kind: { type: 'delete' }, diff: 'ok' },
+        ...Array.from({ length: 30 }, (_, i) => ({ path: 'path-' + i, kind: { type: 'update' }, diff: '' })),
+    ] }, {});
+    const item = f.rows('file_change')[0]!;
+    assert.equal(item.fileChange?.changes[0]?.patch, 'truncated');
+    assert.ok((item.fileChange?.omittedChanges ?? 0) > 0);
+    assert.equal((item.fileChange?.changes.length ?? 0) + (item.fileChange?.omittedChanges ?? 0), 32);
+    assert.match(item.truncation?.reason ?? '', /file_change_limit/);
+    const parent = f.normalizer.resolveParent(f.context, 'edit');
+    assert.ok(parent);
+    f.normalizer.observer({ ...f.context, parentItemId: parent }).text('message', 'child', 'ok', 'replace', 'final');
+    f.observer.close(end);
+    assert.equal(f.rows('file_change')[0]?.status, 'cancelled');
+    assert.equal(f.rows('file_change')[0]?.tool?.detail, 'No native terminal tool result received');
+    assert.equal(f.rows('assistant_message')[0]?.text, 'ok');
+});
+
+test('file change late patchUpdated cannot fill a terminal item but late start can', () => {
+    const f = fixture();
+    f.observer.tool('edit', { semantic: 'file_change', status: 'done' }, {});
+    const changes = [{ path: 'a', kind: { type: 'update' }, diff: 'x' }];
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes }, {});
+    assert.equal(f.rows('file_change')[0]?.fileChange, undefined);
+    f.observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: changes }, {});
+    assert.equal(f.rows('file_change')[0]?.fileChange?.changes[0]?.diff, 'x');
+});
+
+test('file change running replacements obey one whole-event budget and completion keeps latest', () => {
+    const f = fixture({ coalesceMs: 0 });
+    const patch = 'x'.repeat(500_000);
+    for (const ref of ['one', 'two']) {
+        f.observer.tool(ref, { semantic: 'file_change', status: 'running', fileChanges: [{ path: ref, kind: { type: 'update' }, diff: patch }] }, {});
+    }
+    const start = f.writes.length;
+    for (let i = 0; i < 30; i++) for (const ref of ['one', 'two']) {
+        f.observer.tool(ref, { semantic: 'file_change', fileChanges: [{ path: ref, kind: { type: 'update' }, diff: patch + i }] }, {});
+    }
+    const runningBytes = f.writes.slice(start).reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify(item)) + 1024, 0);
+    assert.ok(runningBytes <= 8 * 1024 * 1024);
+    for (const ref of ['one', 'two']) f.observer.tool(ref, { status: 'done' }, {});
+    assert.deepEqual(f.rows('file_change').map(item => item.fileChange?.changes[0]?.diff?.slice(-2)), ['29', '29']);
+});
+
+test('file change redacts paths, withholds secrets and handles an unknown payload', () => {
+    const f = fixture();
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'sk-secret-token', kind: { type: 'delete' }, diff: 'ordinary' },
+        { path: 'safe', kind: { type: 'add' }, diff: 'sk-secret-token' },
+    ] }, {});
+    const value = f.rows('file_change')[0]?.fileChange!;
+    assert.equal(value.changes[0]?.path, '[REDACTED]');
+    assert.deepEqual(value.changes.map(change => change.patch), ['withheld', 'withheld']);
+    assert.ok(!JSON.stringify(value).includes('sk-secret-token'));
+    f.observer.tool('other', { semantic: 'file_change', fileChanges: { private: 'do not expose' } }, {});
+    assert.deepEqual(f.rows('file_change')[1]?.fileChange, { schema: 'unknown', changes: [] });
+});
+
+test('file change diff credentials are withheld on added and removed lines', () => {
+    const diffs = ['+  "password": "new-secret"', '+password: hunter2', '+API_KEY=abc123',
+        '+const clientSecret = "x"', '+Authorization: Basic abc123', '-password: old'];
+    const ordinary = '--- a/file\n+++ b/file\n@@ -1 +1 @@\n+This token is described in prose\n+const count = 42';
+    const changes = [...diffs, ordinary].map((diff, i) => ({ path: `file${i}`, kind: { type: 'update' }, diff }));
+    const result = normalizeFileChanges(changes, { maxBytes: 100_000, maxChars: 100_000 }).value.changes;
+    assert.deepEqual(result.map(change => change.patch), [...diffs.map(() => 'withheld'), 'captured']);
+    assert.ok(result.slice(0, -1).every(change => change.diff === undefined));
+    assert.equal(result.at(-1)?.diff, ordinary);
+});
+
+test('file change diff credentials split across lines or escaped in JSON keys are withheld through the store item', () => {
+    const diffs = [
+        '@@ -1,2 +1,3 @@\n {\n+  "password":\n+    "hunter2"\n }',
+        '@@ -1 +1 @@\n+  "pass\\u0077ord": "hunter2"',
+        '@@ -1 +1,2 @@\n+client_secret =\n+  "abc"',
+    ];
+    const f = fixture();
+    diffs.forEach((diff, i) => f.observer.tool(`edit-${i}`, { semantic: 'file_change',
+        fileChanges: [{ path: `config${i}.json`, kind: { type: 'update' }, diff }], status: 'done' }, {}));
+    const stored = f.rows('file_change');
+    assert.equal(stored.length, diffs.length);
+    for (const item of stored) {
+        assert.equal(item.fileChange?.changes[0]?.patch, 'withheld');
+        assert.equal(item.fileChange?.changes[0]?.diff, undefined);
+        assert.doesNotMatch(JSON.stringify(item), /hunter2|"abc"/);
+    }
+});
+
+test('file change trimming matches naive reference and scales to 5000 patches', () => {
+    const fits = (value: unknown, maxBytes: number, maxChars: number) => {
+        const json = JSON.stringify(value);
+        return json.length <= maxChars && Buffer.byteLength(json) <= maxBytes;
+    };
+    function naive(raw: Array<{ path: string; kind: { type: 'update' }; diff: string }>, maxBytes: number, maxChars: number) {
+        const value = { schema: 'known' as const, changes: raw.map(({ path, diff }) =>
+            ({ path, kind: 'update' as const, patch: 'captured' as 'captured' | 'truncated', diff: diff as string | undefined })),
+            omittedChanges: undefined as number | undefined };
+        // Match property order and absence of optional fields in the real payload.
+        delete value.omittedChanges;
+        if (fits(value, maxBytes, maxChars)) return value;
+        const order = value.changes.map((change, index) => ({ change, index }))
+            .sort((a, b) => Buffer.byteLength(JSON.stringify(b.change.diff)) - Buffer.byteLength(JSON.stringify(a.change.diff)) || a.index - b.index);
+        for (const { change } of order) {
+            delete change.diff; change.patch = 'truncated';
+            if (fits(value, maxBytes, maxChars)) return value;
+        }
+        const all = value.changes, count = all.length;
+        let low = 0, high = count;
+        while (low < high) {
+            const middle = Math.ceil((low + high) / 2);
+            value.changes = all.slice(0, middle); value.omittedChanges = count - middle;
+            if (fits(value, maxBytes, maxChars)) low = middle; else high = middle - 1;
+        }
+        value.changes = all.slice(0, low);
+        if (count - low) value.omittedChanges = count - low;
+        return fits(value, maxBytes, maxChars) ? value : { schema: 'known', changes: [], omittedChanges: count };
+    }
+    let seed = 17;
+    const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0);
+    for (let trial = 0; trial < 80; trial++) {
+        const raw = Array.from({ length: 1 + random() % 25 }, (_, i) => ({ path: `p${i}é`, kind: { type: 'update' as const },
+            diff: ['x', 'é', '\n', '😀', '"'][random() % 5]!.repeat(random() % 80) }));
+        const maxBytes = 20 + random() % 1800, maxChars = 20 + random() % 1800;
+        assert.deepEqual(normalizeFileChanges(raw, { maxBytes, maxChars }).value, naive(raw, maxBytes, maxChars));
+    }
+    const raw = Array.from({ length: 5000 }, (_, i) => ({ path: `file${i}`, kind: { type: 'update' }, diff: 'x'.repeat(1000) }));
+    // Count the characters serialized rather than wall time, which varies with
+    // machine load. Re-serializing the whole payload after each dropped patch
+    // (the quadratic shape this guards against) serializes about 12.5 billion
+    // characters here; linear trimming stays within a few payload sizes.
+    const payloadChars = JSON.stringify(raw).length;
+    const stringify = JSON.stringify;
+    let serialized = 0;
+    // A plain swap: a test mock would keep every returned string alive.
+    // Stop early once the count already proves quadratic work.
+    const limit = 10 * payloadChars;
+    JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+        const out = stringify(...args);
+        serialized += typeof out === 'string' ? out.length : 0;
+        if (serialized > limit) throw new Error(`trimming serialized more than ${limit} chars`);
+        return out;
+    }) as typeof JSON.stringify;
+    let result: ReturnType<typeof normalizeFileChanges>;
+    try { result = normalizeFileChanges(raw, { maxBytes: 10_000, maxChars: 10_000 }); }
+    finally { JSON.stringify = stringify; }
+    assert.ok(serialized < 10 * payloadChars, `trimming serialized ${serialized} chars for a ${payloadChars}-char payload`);
+    assert.ok(result.value.omittedChanges);
+});
+
+test('omitted file change retains source count and clears it after replacement fits', () => {
+    const f = fixture({ maxTotalChars: 200 });
+    f.observer.tool('edit', { semantic: 'file_change' }, {});
+    f.observer.text('message', 'fill', 'x'.repeat(95), 'replace', 'unknown');
+    const path = 'file.txt', diff = 'x'.repeat(73);
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path, kind: { type: 'update' }, diff }] }, {});
+    let item = f.rows('file_change')[0]!;
+    assert.equal(item.fileChange, undefined);
+    assert.equal(item.truncation?.sourceChars, path.length + diff.length);
+    assert.equal(item.truncation?.storedChars, 0);
+    f.observer.text('message', 'fill', '', 'replace', 'unknown');
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'ok' }] }, {});
+    item = f.rows('file_change')[0]!;
+    assert.equal(item.fileChange?.changes[0]?.diff, 'ok');
+    assert.equal(item.truncation, undefined);
+});
+
+test('file change replacement burst coalesces and commits only its latest value', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture({ coalesceMs: 50 });
+    const changes = (diff: string) => [{ path: 'a', kind: { type: 'update' }, diff }];
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes('first') }, {});
+    for (let i = 0; i < 20; i++) f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes(String(i)) }, {});
+    assert.equal(f.writes.length, 1);
+    t.mock.timers.tick(50);
+    assert.equal(f.writes.length, 2);
+    assert.equal(f.rows('file_change')[0]?.fileChange?.changes[0]?.diff, '19');
+});

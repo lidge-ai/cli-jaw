@@ -240,6 +240,16 @@ function mapItem(item: CodeItem, firstSequence: number): CodeItem {
             ...(item.tool.detail !== undefined ? { detail: item.tool.detail } : {}),
             ...(item.tool.output !== undefined ? { output: item.tool.output } : {}),
         } } : {}),
+        ...(item.fileChange ? { fileChange: {
+            schema: item.fileChange.schema,
+            changes: item.fileChange.changes.map(change => ({
+                path: change.path, kind: change.kind,
+                ...(change.movePath !== undefined ? { movePath: change.movePath } : {}),
+                patch: change.patch, ...(change.diff !== undefined ? { diff: change.diff } : {}),
+            })),
+            ...(item.fileChange.omittedChanges !== undefined ? { omittedChanges: item.fileChange.omittedChanges } : {}),
+            ...(item.fileChange.unrecognizedChanges !== undefined ? { unrecognizedChanges: item.fileChange.unrecognizedChanges } : {}),
+        } } : {}),
         ...(item.truncation ? { truncation: {
             storedChars: item.truncation.storedChars, sourceChars: item.truncation.sourceChars,
             reason: item.truncation.reason,

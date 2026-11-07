@@ -6,6 +6,17 @@ import { pendingUserItem, withPendingUserItem, PENDING_USER_ITEM_ID } from '../.
 import { createCodeDraft } from '../../public/manager/src/code/code-controller-drafts.ts';
 
 const CWD = '/work/repo';
+test('file changes summarize captured records without inventing counts', () => {
+    const change = item({ kind: 'file_change', fileChange: { schema: 'known', changes: [{ path: '/work/repo/a', kind: 'add', patch: 'captured', diff: '' }] } });
+    assert.equal(toolSummary(change, CWD), 'Create a');
+    assert.equal(toolSummary({ ...change, status: 'running' }, CWD), 'Creating a');
+    assert.equal(toolSummary({ ...change, fileChange: { schema: 'unknown', changes: change.fileChange!.changes, unrecognizedChanges: 1 } }, CWD), 'File change (unrecognized format)');
+    assert.equal(shortenPath('/work/repo2/x', CWD), '/work/repo2/x');
+    const changes = change.fileChange!.changes;
+    assert.equal(toolSummary({ ...change, fileChange: { schema: 'known', changes, omittedChanges: 2 } }, CWD), 'Edit 3 files');
+    assert.equal(toolSummary({ ...change, fileChange: { schema: 'known', changes: [{ path: '/work/repo/a', kind: 'rename', movePath: '/work/repo/b', patch: 'missing' }] } }, CWD), 'Rename a → b');
+    assert.equal(toolSummary({ ...change, status: 'running', fileChange: { schema: 'known', changes: [{ path: '/work/repo/a', kind: 'delete', patch: 'missing' }] } }, CWD), 'Deleting a');
+});
 function item(patch: Partial<CodeItem> = {}): CodeItem {
     return { itemId: 'i-1', turnId: 't-1', kind: 'tool_call', status: 'done', createdAt: 1, updatedAt: 1, ...patch };
 }
