@@ -36,8 +36,7 @@ const freshInstallSmokeSrc = readSource(join(__dirname, '../../scripts/fresh-ins
 const freshInstallEvidenceSrc = readSource(join(__dirname, '../../scripts/collect-fresh-install-evidence.sh'), 'utf8');
 const freshInstallEvidenceAuditSrc = readSource(join(__dirname, '../../scripts/audit-fresh-install-evidence.mjs'), 'utf8');
 const requireReleaseEvidenceSrc = readSource(join(__dirname, '../../scripts/require-release-evidence.mjs'), 'utf8');
-const releaseScriptSrc = readSource(join(__dirname, '../../scripts/promote-to-main.sh'), 'utf8');
-const releasePreviewScriptSrc = readSource(join(__dirname, '../../scripts/release-preview.sh'), 'utf8');
+const releaseScriptSrc = readSource(join(__dirname, '../../scripts/release.sh'), 'utf8');
 const gitattributesSrc = readSource(join(__dirname, '../../.gitattributes'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(join(__dirname, '../../package.json'), 'utf8'));
 const repoRoot = join(__dirname, '../..');
@@ -536,7 +535,7 @@ test('SAF-004j2: fresh-machine evidence collector documents supported release ev
     assert.equal(packageJson.scripts?.['collect:fresh-install-evidence'], 'bash scripts/collect-fresh-install-evidence.sh');
     assert.equal(packageJson.scripts?.['audit:fresh-install-evidence'], 'node scripts/audit-fresh-install-evidence.mjs');
     assert.equal(packageJson.scripts?.['verify:release-evidence'], 'node scripts/verify-release-evidence.mjs');
-    // Evidence gates still run via promote-to-main.sh/release-preview.sh (asserted in SAF-004j3);
+    // The shared release driver enforces evidence (asserted in SAF-004j3);
     // prepublishOnly only adds the frontend build-output integrity check.
     // The executable lifecycle ordering and fail-closed private-path gate are
     // covered by private-boundary.test.ts, including rejection before build.
@@ -567,7 +566,7 @@ test('SAF-004j2: fresh-machine evidence collector documents supported release ev
     assert.ok(readmeSrc.includes('audit-fresh-install-evidence.mjs'), 'README should show evidence directory auditing');
     assert.ok(readmeSrc.includes('node scripts/audit-fresh-install-evidence.mjs "$EVIDENCE_DIR" --target macos'), 'README should show local checkout auditor usage');
     assert.ok(readmeSrc.includes('node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /path/to/wsl-evidence'), 'README should show local checkout release gate usage');
-    assert.ok(readmeSrc.includes('curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"'), 'README should download the collector to a file before executing it');
+    assert.ok(readmeSrc.includes('curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"'), 'README should download the collector to a file before executing it');
     assert.ok(readmeSrc.includes('33-powershell-to-wsl-probe.log'), 'README should document host-side PowerShell-to-WSL probe evidence when the collector cannot run it from WSL');
     assert.ok(freshInstallEvidenceAuditSrc.includes('--allow-skip-install'), 'auditor should distinguish release evidence from local smoke evidence');
     assert.ok(freshInstallEvidenceAuditSrc.includes("requireArchivedScript('collector', '00-collector-script.sh')"), 'auditor should require archived collector source for release evidence');
@@ -620,37 +619,19 @@ test('SAF-004j3: publish scripts enforce fresh-machine evidence before push or p
     requiresEvidence('scripts/audit-fresh-install-evidence.mjs');
     requiresEvidence('scripts/verify-release-evidence.mjs');
     requiresEvidence('scripts/require-release-evidence.mjs');
-    requiresEvidence('scripts/promote-to-main.sh');
+    requiresEvidence('scripts/release.sh');
+    requiresEvidence('scripts/release-version.mjs');
+    requiresEvidence('scripts/verify-npm-provenance.mjs');
     requiresEvidence('scripts/release-preview.sh');
     assert.ok(readmeSrc.includes('CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence'), 'README should document release-script evidence env');
-    assert.ok(readmeSrc.includes('bash scripts/promote-to-main.sh'), 'README should show stable promotion script with evidence directories');
+    assert.ok(readmeSrc.includes('bash scripts/release.sh'));
+    assert.ok(readmeSrc.includes('CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence'));
+    assert.ok(!readmeSrc.includes('promote-to-main'));
+    const gate = releaseScriptSrc.indexOf('npm run gate:all');
+    const evidence = releaseScriptSrc.indexOf('node scripts/require-release-evidence.mjs');
+    const dispatch = releaseScriptSrc.indexOf('gh workflow run publish.yml --ref "$tag"');
+    assert.ok(gate >= 0 && evidence > gate && dispatch > evidence);
 
-    const freshEvidencePos = releaseScriptSrc.indexOf('node scripts/require-release-evidence.mjs');
-    // ff promotion (#480) pushes refs directly instead of publishing a promotion
-    // branch, so the first ref-moving command is the preview fast-forward.
-    const pushPos = releaseScriptSrc.indexOf('push --force-with-lease="refs/heads/preview:$PREVIEW_SHA"');
-    const publishPos = releaseScriptSrc.indexOf('gh workflow run publish.yml');
-    assert.ok(pushPos >= 0, 'promotion script must still push a ref the evidence gate can precede');
-    assert.ok(freshEvidencePos >= 0 && freshEvidencePos < pushPos, 'fresh evidence gate must run before git push');
-    if (publishPos >= 0) {
-        assert.ok(freshEvidencePos >= 0 && freshEvidencePos < publishPos, 'fresh evidence gate must run before publish dispatch');
-    }
-
-    const previewGatePos = releasePreviewScriptSrc.indexOf('npm run gate:all');
-    const previewFreshEvidencePos = releasePreviewScriptSrc.indexOf('node scripts/require-release-evidence.mjs');
-    const previewPublishPos = releasePreviewScriptSrc.indexOf('npm publish "$TARBALL" --tag preview --access public');
-    const previewPushCandidates = [
-        releasePreviewScriptSrc.indexOf('git push origin preview'),
-        releasePreviewScriptSrc.indexOf('git push origin HEAD:preview'),
-        releasePreviewScriptSrc.indexOf('git push origin "$CURRENT_BRANCH"'),
-    ].filter(position => position >= 0);
-    const previewPushPos = Math.min(...previewPushCandidates);
-    assert.ok(previewGatePos >= 0 && previewFreshEvidencePos > previewGatePos, 'preview fresh evidence gate should run after normal release gates');
-    if (previewPublishPos >= 0) {
-        assert.ok(previewFreshEvidencePos >= 0 && previewFreshEvidencePos < previewPublishPos, 'preview evidence gate must run before npm publish');
-    }
-    assert.ok(previewPushCandidates.length > 0, 'preview release script must push the preview branch');
-    assert.ok(previewFreshEvidencePos >= 0 && previewFreshEvidencePos < previewPushPos, 'preview evidence gate must run before git push');
 });
 
 test('SAF-004k: postinstall platform workflow runs installer risk gate on macOS and WSL', () => {

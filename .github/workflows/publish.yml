@@ -1,8 +1,13 @@
 name: npm Publish
+run-name: "npm publish ${{ inputs.version }} (${{ inputs.tag }}) ${{ inputs.request-id }}"
 
 on:
   workflow_dispatch:
     inputs:
+      request-id:
+        description: "Unique request identifier"
+        required: false
+        type: string
       version:
         description: "Version to publish; must equal package.json"
         required: true
@@ -39,7 +44,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: npm-publish-${{ github.ref }}-${{ inputs.tag }}-${{ inputs.version }}
+  group: npm-publish
   cancel-in-progress: false
 
 jobs:
@@ -51,6 +56,21 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Verify release ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs['dry-run'] }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT_NAME" = workflow_dispatch ] || { echo '::error::workflow_dispatch required'; exit 1; }
+          # dev can move after certification; a tag keeps provenance on the built commit.
+          if [ "$GITHUB_REF" != "refs/tags/v$INPUT_VERSION" ]; then
+            [ "$GITHUB_REF" = refs/heads/dev ] && [ "$INPUT_DRY_RUN" = true ] || { echo '::error::real publishes require the matching version tag'; exit 1; }
+          fi
+          git fetch --no-tags --quiet origin +refs/heads/dev:refs/remotes/origin/dev
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/dev || { echo '::error::release SHA is not on dev'; exit 1; }
 
       - name: Check private repository boundary
         run: node scripts/check-private-boundary.mjs
@@ -76,72 +96,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Promotion fast-forwards main onto the exact commit preview certified
-          # (#480), so the push run recorded on preview is a run for THIS SHA.
-          # Look the run up by commit, but accept ONLY a release-branch run.
-          #
-          # test.yml also runs on `dev` pushes (#521), and every release cycle
-          # fast-forwards `dev` onto the preview head (AGENTS.md ★ step,
-          # promote-to-main.sh), so the SAME SHA carries runs from both branches.
-          # Without this filter a `dev` run could certify a release.
-          #
-          # The list scan is load-bearing: with `--limit 1` the newest run for a
-          # SHA can be the `dev` one, which `select` would then discard, turning
-          # a properly certified release into a false "no successful run found".
-          branch="${GITHUB_REF#refs/heads/}"
-          run_id="$(gh run list --workflow test.yml --commit "$GITHUB_SHA" --event push --status success --limit 20 --json databaseId,headSha,headBranch --jq '[.[] | select(.headSha == "'"$GITHUB_SHA"'") | select(.headBranch == "preview" or .headBranch == "main")] | .[0].databaseId // empty')"
-          if [ -z "$run_id" ]; then
-            echo "::error::No successful push run of test.yml found for $branch @ $GITHUB_SHA"
-            exit 1
-          fi
+          # Scan the list: the newest run for this SHA may be a non-dev run,
+          # and limiting the lookup to it would discard valid dev push proof.
+          run_id="$(gh run list --workflow test.yml --commit "$GITHUB_SHA" --event push --status success --limit 100 --json databaseId,headSha,headBranch --jq '[.[] | select(.headSha == "'"$GITHUB_SHA"'") | select(.headBranch == "dev")] | .[0].databaseId // empty')"
+          [ -n "$run_id" ] || { echo "::error::No successful dev push Tests run for $GITHUB_SHA"; exit 1; }
           echo "Found successful test run: $run_id"
 
-      - name: Require platform checks when installer surface changed
+      - name: Require successful Postinstall Platform Checks
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          previous_tag="$(git tag --merged "$GITHUB_SHA" --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
-          if [ -z "$previous_tag" ]; then
-            echo "::notice::No previous stable v* tag found; treating as first release, no platform diff required."
-            exit 0
-          fi
-
-          changed_file="$(mktemp)"
-          trap 'rm -f "$changed_file"' EXIT
-          git diff --name-only "$previous_tag..$GITHUB_SHA" > "$changed_file"
-
-          detector_status=0
-          node scripts/require-release-evidence.mjs --changed-files-stdin < "$changed_file" || detector_status=$?
-          case "$detector_status" in
-            0)
-              echo "No installer-sensitive changes since $previous_tag"
-              ;;
-            1)
-              # main is fast-forwarded onto the commit preview certified (#480),
-              # so the preview push run is a run for this exact SHA. Match on the
-              # commit and accept either branch. No --event filter, matching
-              # bc7c19ba.
-              branch="${GITHUB_REF#refs/heads/}"
-              platform_url="$(gh run list \
-                --workflow postinstall-platform.yml \
-                --commit "$GITHUB_SHA" \
-                --status success \
-                --limit 1 --json url,headSha --jq '.[0] | select(.headSha == "'"$GITHUB_SHA"'") | .url // empty')"
-              if [ -z "$platform_url" ]; then
-                echo "::error::No successful Postinstall Platform Checks run found for $GITHUB_SHA on $branch"
-                exit 1
-              fi
-              echo "platform certified by: $platform_url"
-              ;;
-            3)
-              echo "::notice::Installer-sensitive changes are release-driver extras only (no platform CI trigger). Platform checks not required."
-              ;;
-            *)
-              echo "::error::installer-sensitive path detector failed with status $detector_status"
-              exit "$detector_status"
-              ;;
-          esac
+          # Any successful platform run for this exact SHA supplies the same proof.
+          platform_url="$(gh run list --workflow postinstall-platform.yml --commit "$GITHUB_SHA" --status success --limit 100 --json url,headSha --jq '[.[] | select(.headSha == "'"$GITHUB_SHA"'")] | .[0].url // empty')"
+          [ -n "$platform_url" ] || { echo "::error::No successful platform run for $GITHUB_SHA"; exit 1; }
+          echo "platform certified by: $platform_url"
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -160,118 +129,31 @@ jobs:
         id: release
         env:
           EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_DRY_RUN: ${{ inputs['dry-run'] }}
           INPUT_CREATE_RELEASE: ${{ inputs['create-github-release'] }}
         run: |
           set -euo pipefail
+          [ "$EVENT_NAME" = workflow_dispatch ] || { echo '::error::workflow_dispatch required'; exit 1; }
+          version="$INPUT_VERSION"
+          tag="$INPUT_TAG"
+          dry_run="${INPUT_DRY_RUN:-true}"
+          create_release="${INPUT_CREATE_RELEASE:-false}"
           pkg_version="$(node -p "require('./package.json').version")"
-          tag=""
-          version="$pkg_version"
-          dry_run="false"
-          create_release="true"
-          skip_publish="false"
-          skip_reason=""
-
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            version="$INPUT_VERSION"
-            tag="$INPUT_TAG"
-            dry_run="${INPUT_DRY_RUN:-true}"
-            create_release="${INPUT_CREATE_RELEASE:-false}"
-          else
-            case "$GITHUB_REF_NAME" in
-              preview)
-                tag="preview"
-                ;;
-              main)
-                tag="latest"
-                ;;
-              *)
-                echo "::error::Unsupported publish branch: $GITHUB_REF_NAME"
-                exit 1
-                ;;
-            esac
-          fi
-
-          echo "package.json=${pkg_version}"
-          echo "release.version=${version}"
-          echo "release.tag=${tag}"
-          echo "release.dry_run=${dry_run}"
-
-          test "$pkg_version" = "$version" || {
-            echo "::error::package.json version must equal release version";
-            exit 1;
-          }
-
-          if [ "$dry_run" != "true" ]; then
-            case "$tag:$GITHUB_REF_NAME" in
-              preview:preview) ;;
-              latest:main) ;;
-              *)
-                echo "::error::Real $tag publishes must run from the matching branch; got $GITHUB_REF_NAME";
-                exit 1;
-                ;;
-            esac
-          fi
-
-          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" = "preview" ]; then
-            case "$version" in
-              *-preview.*) ;;
-              *)
-                skip_publish="true"
-                skip_reason="preview branch stable sync"
-                dry_run="true"
-                create_release="false"
-                echo "::notice::Skipping npm publish for preview branch stable sync: $version"
-                ;;
-            esac
-          fi
-
-          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" = "main" ]; then
-            case "$version" in
-              *-*)
-                skip_publish="true"
-                skip_reason="main branch prerelease sync"
-                dry_run="true"
-                create_release="false"
-                echo "::notice::Skipping npm publish for main branch prerelease sync: $version"
-                ;;
-            esac
-          fi
-
-          if [ "$tag" = "preview" ] && [ "$skip_publish" != "true" ]; then
-            case "$version" in
-              *-preview.*) ;;
-              *)
-                echo "::error::preview publishes require a preview prerelease version; got $version";
-                exit 1;
-                ;;
-            esac
-          fi
-
-          if [ "$tag" = "latest" ] && [ "$skip_publish" != "true" ]; then
-            case "$version" in
-              *-*)
-                echo "::error::latest publishes cannot use a prerelease version; got $version";
-                exit 1;
-                ;;
-            esac
-          fi
-
+          [ "$pkg_version" = "$version" ] || { echo '::error::package.json version mismatch'; exit 1; }
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$ ]] || { echo '::error::invalid release version'; exit 1; }
+          case "$tag:$version" in
+            preview:*-preview.*|latest:[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo '::error::invalid channel or version'; exit 1;;
+          esac
+          if [ "$tag" = latest ] && [[ "$version" = *-* ]]; then echo '::error::latest requires a stable version'; exit 1; fi
           {
             echo "version=$version"
             echo "tag=$tag"
             echo "dry-run=$dry_run"
             echo "create-release=$create_release"
-            echo "skip-publish=$skip_publish"
-            echo "skip-reason=$skip_reason"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Report skipped publish
-        if: ${{ steps.release.outputs.skip-publish == 'true' }}
-        run: echo "::notice::${{ steps.release.outputs.skip-reason }}"
 
       - name: Guard npm package metadata
         run: |
@@ -330,134 +212,177 @@ jobs:
 
       - name: Check registry package version
         id: registry
-        if: ${{ steps.release.outputs.skip-publish != 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          if npm view "cli-jaw@${{ steps.release.outputs.version }}" version >/tmp/npm-version.txt 2>/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} already exists on npm; publish will be skipped."
-            cat /tmp/npm-version.txt
+          err="$(mktemp)"; trap 'rm -f "$err"' EXIT
+          status=0
+          value="$(npm view "cli-jaw@$RELEASE_VERSION" version 2>"$err")" || status=$?
+          if [ "$status" -eq 0 ] && [ -n "$value" ]; then
+            [ "$value" = "$RELEASE_VERSION" ] || { echo '::error::registry version mismatch'; exit 1; }
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          elif [ "$status" -ne 0 ] && grep -Eq 'E404|npm (error|ERR!) 404' "$err"; then
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} is not on npm yet; publish will run."
+            cat "$err" >&2; echo '::error::registry lookup failed'; exit 1
           fi
 
-      - name: Publish or dry-run
-        if: ${{ steps.release.outputs.skip-publish != 'true' }}
+      - name: Assert dist-tag monotonic
+        if: ${{ steps.registry.outputs.exists == 'false' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.release.outputs.dry-run }}" = "true" ]; then
-            echo "::notice::DRY RUN - npm publish will not write to registry"
-            npm publish --dry-run --tag "${{ steps.release.outputs.tag }}" --access public --provenance
-          elif [ "${{ steps.registry.outputs.exists }}" = "true" ]; then
-            echo "::notice::SKIP - cli-jaw@${{ steps.release.outputs.version }} is already published"
+          tags="$(npm view cli-jaw dist-tags --json)" || { echo '::error::dist-tag lookup failed'; exit 1; }
+          latest="$(printf '%s' "$tags" | jq -er '.latest | select(type == "string" and length > 0)')"
+          preview="$(printf '%s' "$tags" | jq -r '.preview // ""')"
+          if [ "$RELEASE_TAG" = preview ]; then channel=preview; else channel=stable; fi
+          node scripts/release-version.mjs assert-publishable --channel "$channel" --candidate "$RELEASE_VERSION" --latest "$latest" --preview "$preview"
+
+      - name: Verify existing package provenance
+        if: ${{ steps.registry.outputs.exists == 'true' && steps.release.outputs.dry-run != 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git_head="$(npm view "cli-jaw@$RELEASE_VERSION" gitHead)"
+          [ -n "$git_head" ] && [ "$git_head" = "$GITHUB_SHA" ] || { echo '::error::npm gitHead does not match release SHA'; exit 1; }
+          NPM_INTEGRITY="$(npm view "cli-jaw@$RELEASE_VERSION" dist.integrity)"
+          [ -n "$NPM_INTEGRITY" ] || { echo '::error::missing npm integrity'; exit 1; }
+          export NPM_INTEGRITY
+          node scripts/verify-npm-provenance.mjs
+
+      - name: Publish or dry-run
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          DRY_RUN: ${{ steps.release.outputs.dry-run }}
+          EXISTS: ${{ steps.registry.outputs.exists }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = true ]; then
+            npm publish --dry-run --tag "$RELEASE_TAG" --access public --provenance
+          elif [ "$EXISTS" = true ]; then
+            echo '::notice::package already published; recovery continues'
           else
-            npm publish --tag "${{ steps.release.outputs.tag }}" --access public --provenance
+            # npm publish cannot be undone. The tag was verified when the run
+            # started, but it can be moved or deleted while the build runs, so
+            # re-read it here: the version must still name the commit we built.
+            remote_sha="$(git ls-remote origin "refs/tags/v$RELEASE_VERSION" | cut -f1)"
+            [ "$remote_sha" = "$GITHUB_SHA" ] || { echo "::error::release tag v$RELEASE_VERSION no longer points at $GITHUB_SHA; refusing to publish"; exit 1; }
+            npm publish --tag "$RELEASE_TAG" --access public --provenance
           fi
 
       - name: Create GitHub release
-        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' }}
+        if: ${{ steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          EXISTS: ${{ steps.registry.outputs.exists }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="v${{ steps.release.outputs.version }}"
-          notes_file="$(mktemp)"
-          previous_tag="$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -v -F "$tag" | head -1 || true)"
+          tag="v$RELEASE_VERSION"
+          remote_sha="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
+          [ "$remote_sha" = "$GITHUB_SHA" ] || { echo '::error::release tag moved or disappeared'; exit 1; }
+          notes_file="$(mktemp)"; trap 'rm -f "$notes_file"' EXIT
+          previous_tag="$(git tag --merged "$GITHUB_SHA" --no-contains "$GITHUB_SHA" --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
           if [ -n "$previous_tag" ]; then
-            previous_label="$previous_tag"
-            commit_count="$(git rev-list "$previous_tag"..HEAD --count)"
-            changelog="$(git log "$previous_tag"..HEAD -n 80 --pretty=format:'- %s' --no-merges)"
+            commit_count="$(git rev-list "$previous_tag..$GITHUB_SHA" --count)"
           else
-            previous_label="(first release)"
-            commit_count="$(git rev-list HEAD --count)"
-            changelog="$(git log HEAD -n 80 --pretty=format:'- %s' --no-merges)"
+            commit_count="$(git rev-list "$GITHUB_SHA" --count)"
           fi
-
           {
-            echo "## Release v${{ steps.release.outputs.version }}"
+            echo "## Release $tag"
             echo
-            echo "**Previous**: $previous_label"
+            echo "**Previous**: ${previous_tag:-(first release)}"
             echo "**Commits**: $commit_count"
             echo
-            echo "### Changes"
-            if [ -n "$changelog" ]; then
-              printf '%s\n' "$changelog"
-            else
-              echo "- No commit changes found."
-            fi
+            echo '### Changes'
+            if [ -n "$previous_tag" ]; then git log "$previous_tag..$GITHUB_SHA" -n 80 --pretty=format:'- %s' --no-merges; else git log "$GITHUB_SHA" -n 80 --pretty=format:'- %s' --no-merges; fi
             echo
-            echo "### Install"
+            echo
+            echo '### Install'
             echo '```sh'
-            echo "npm install -g cli-jaw@${{ steps.release.outputs.tag }}"
-            echo "npm install -g cli-jaw@${{ steps.release.outputs.version }}"
+            echo "npm install -g cli-jaw@$RELEASE_TAG"
+            echo "npm install -g cli-jaw@$RELEASE_VERSION"
             echo '```'
             echo
-            echo "### Verification"
-            echo "- Published from \`${{ github.ref_name }}\` with npm dist-tag \`${{ steps.release.outputs.tag }}\`."
-            echo "- npm package gates passed in this workflow."
-            echo "- npm registry visibility is verified later in this workflow run."
-            echo "- npm provenance was requested through GitHub OIDC Trusted Publishing."
-          } > "$notes_file"
+            echo '### Verification'
+            echo "- Published from \`$REF_NAME\` with npm dist-tag \`$RELEASE_TAG\`."
+            echo '- npm package gates passed in this workflow.'
+            echo '- npm registry visibility is verified later in this workflow run.'
+            echo '- npm provenance was requested through GitHub OIDC Trusted Publishing.'
+            echo
+            # Quoted heredoc: the backticks below are literal Markdown, not shell.
+            cat <<'DESKTOP_NOTES'
+          ### Desktop / Electron
+          - Electron shell validated with `npm --prefix electron run typecheck` and `npm --prefix electron run build`.
+          - npm package boundary validated with `npm run check:electron-no-native`; Electron app artifacts remain outside the npm package.
+          - Desktop app distribution remains separate from `npm install -g cli-jaw`.
+          - macOS, Windows, and Linux desktop assets are built by GitHub Actions after this release is published, then attached to this GitHub Release.
 
-          create_args=()
-          edit_args=()
-          if [ "${{ steps.release.outputs.tag }}" = "preview" ]; then
-            create_args+=(--prerelease)
-            edit_args+=(--prerelease)
-            title="v${{ steps.release.outputs.version }} (preview)"
+          #### Desktop signing and updates
+          - macOS: Developer ID signed, Apple-notarized and stapled. The workflow verifies Team `U9ATA49N28`, Gatekeeper acceptance, update metadata and the ZIP SHA-512 before upload.
+          - Updates: preview builds follow preview releases and stable builds follow stable releases. Download and restart/install require explicit confirmation. Existing unsigned installs must install this first signed DMG manually once.
+          - Windows: artifacts remain unsigned. SmartScreen may warn on first run; click "More info" → "Run anyway".
+          - Linux: AppImage downloads may need execute permission before launch.
+          - CLI-only users can continue to install via `npm install -g cli-jaw`.
+          DESKTOP_NOTES
+          } > "$notes_file"
+          args=()
+          title="$tag"
+          if [ "$RELEASE_TAG" = preview ]; then
+            args+=(--prerelease)
+            title="$tag (preview)"
+          elif [ "$EXISTS" = false ]; then
+            args+=(--latest)
           else
-            create_args+=(--latest)
-            edit_args+=(--latest)
-            title="v${{ steps.release.outputs.version }}"
+            latest="$(npm view cli-jaw dist-tags.latest)"
+            [ -n "$latest" ] || { echo '::error::missing latest dist-tag'; exit 1; }
+            if [ "$latest" = "$RELEASE_VERSION" ]; then args+=(--latest); else args+=(--latest=false); fi
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file "$notes_file" "${edit_args[@]}"
+            gh release edit "$tag" --title "$title" --notes-file "$notes_file" "${args[@]}"
           else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file "$notes_file" "${create_args[@]}"
+            gh release create "$tag" --verify-tag --target "$GITHUB_SHA" --title "$title" --notes-file "$notes_file" "${args[@]}"
           fi
 
-      # A release created with the default GITHUB_TOKEN does not emit a
-      # `release: published` event -- GitHub suppresses it so a workflow cannot
-      # trigger itself. desktop-release.yml therefore never starts on its own for
-      # a stable release, and v2.17.57 and v2.17.58 both shipped with an empty
-      # release until someone dispatched it by hand. workflow_dispatch is one of
-      # the documented exceptions to that suppression, so the same token can
-      # start it explicitly here.
-      #
-      # Preview is deliberately not dispatched: release-preview.sh creates the
-      # prerelease with the operator's own credentials, so the event fires and
-      # the build already runs. Dispatching here as well would build every
-      # preview twice and burn a second macOS notarization round trip.
+      # GITHUB_TOKEN-created releases do not emit release events, leaving
+      # v2.17.57 and v2.17.58 without desktop assets. Dispatch both channels
+      # explicitly so each release gets one pinned desktop build.
       - name: Dispatch Desktop Release
-        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' && steps.release.outputs.tag == 'latest' }}
+        if: ${{ steps.release.outputs.dry-run != 'true' && steps.release.outputs.create-release == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          gh workflow run desktop-release.yml \
-            --ref "${{ github.ref_name }}" \
-            -f release-tag="v${{ steps.release.outputs.version }}" \
-            -f upload-release-assets=true
+          gh workflow run desktop-release.yml --ref "v$RELEASE_VERSION" -f "release-tag=v$RELEASE_VERSION" -f upload-release-assets=true -f "expected-sha=$GITHUB_SHA"
 
-      # Runs last on purpose. npm publish above is irreversible and registry
-      # visibility lags it by an unpredictable amount -- 100s, 9min and >15min
-      # across three consecutive releases. While this step sat before the release
-      # steps, a slow registry skipped GitHub release creation entirely and left
-      # a published npm version with nowhere to download from. Verification must
-      # fail the run loudly without taking the release down with it.
+      # Runs last on purpose: npm publish is irreversible and registry visibility
+      # has lagged by 100s, 9min and >15min. Never let that lag prevent GitHub
+      # release creation or desktop dispatch after a successful publish.
       - name: Registry smoke
-        if: ${{ steps.release.outputs.skip-publish != 'true' && steps.release.outputs.dry-run != 'true' }}
+        if: ${{ steps.release.outputs.dry-run != 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
+          err="$(mktemp)"; trap 'rm -f "$err"' EXIT
           for attempt in $(seq 1 90); do
-            if version="$(npm view "cli-jaw@${{ steps.release.outputs.version }}" version 2>/dev/null)"; then
-              test "$version" = "${{ steps.release.outputs.version }}"
+            status=0
+            version="$(npm view "cli-jaw@$RELEASE_VERSION" version 2>"$err")" || status=$?
+            if [ "$status" -eq 0 ] && [ -n "$version" ]; then
+              [ "$version" = "$RELEASE_VERSION" ] || { echo '::error::registry version mismatch'; exit 1; }
               npm dist-tag ls cli-jaw
               exit 0
             fi
-            echo "::notice::cli-jaw@${{ steps.release.outputs.version }} not visible yet (${attempt}/90)"
+            if [ "$status" -eq 0 ] || ! grep -Eq 'E404|npm (error|ERR!) 404' "$err"; then cat "$err" >&2; echo '::error::registry lookup failed'; exit 1; fi
+            echo "::notice::package not visible yet ($attempt/90)"
             sleep 10
           done
-          echo "::error::registry smoke failed"
-          exit 1
+          echo '::error::registry smoke failed'; exit 1

@@ -95,13 +95,13 @@ jaw init                              # 준비되면 대화형 설정
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 -->
 
 **Windows 지원.** 안정적으로 쓰려면 WSL 경로를 권장합니다. 네이티브 PowerShell 설치 스크립트도 있지만 아직 beta 단계입니다:
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 ```
 
 Node.js 22.4+ 가 필요합니다.
@@ -165,7 +165,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS 원클릭</b> — Node.js가 없다면 이걸로</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -184,7 +184,7 @@ wsl --install
 
 ```bash
 # 2. CLI-JAW + 전체 의존성 설치
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -286,7 +286,7 @@ foreach ($path in @($outLog, $errLog)) {
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -297,7 +297,7 @@ bash "$COLLECTOR" --target wsl
 Windows PowerShell에서는 지원되는 WSL 경로로 들어가세요:
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 collector가 WSL 안에서 `powershell.exe`를 쓸 수 없다고 하면, 감사 전에 Windows PowerShell에서 이것을 실행하세요:
@@ -338,17 +338,17 @@ node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /
 
 matrix gate는 오래된 collector, installer, verifier 스크립트로 수집한 증거를 거부합니다. 보관된 증거 스크립트는 gate를 실행하는 현재 패키지나 체크아웃과 일치해야 합니다.
 
-`scripts/promote-to-main.sh`, `scripts/release-preview.sh`, `npm publish`가 이전 태그 이후 installer-sensitive 변경을 감지하면, git push나 npm publish 전에 같은 matrix gate를 실행합니다. 릴리스를 시작하기 전에 증거 디렉터리를 지정하세요:
+`bash scripts/release.sh`는 `dev`에서 stable 릴리스를 시작합니다. 빌드와 릴리스 게이트를 확인하고 버전 커밋을 푸시한 뒤 정확히 그 SHA의 Tests와 Postinstall Platform Checks 성공을 기다리고, 게시 전 필요한 설치 증거를 검사합니다. 시작 전에 증거 디렉터리를 지정하세요:
 
 ```bash
 CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence \
 CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence \
-bash scripts/promote-to-main.sh
+bash scripts/release.sh
 ```
 
-`scripts/promote-to-main.sh`는 **이미 인증된 `preview` head만** 승격합니다. 정확히 그 `preview` SHA에 성공한 `test.yml` push 런이 없으면 시작을 거부합니다. 인자 없이 실행하면 살아 있는 `origin/preview` head를 승격하고, 선택적 SHA 인자는 그 head와 같아야 하므로 오래된 커밋을 승격하는 통로가 아니라 확인용 단언으로 동작합니다.
+프리뷰는 `bash scripts/release.sh --preview`를 사용하고, 프리뷰에서도 증거 게이트를 필수로 적용하려면 `--require-evidence`를 추가하세요. 두 채널 모두 불변 `v<version>` 태그로 `publish.yml`을 dispatch하고 해당 게시 런을 기다립니다. CI 실패 후에는 실패한 런을 재실행하고 미게시 릴리스 커밋에 `bash scripts/release.sh --resume <sha>`를 사용하거나, fix-forward 후 새 버전을 만드세요.
 
-이 스크립트는 npm publish를 dispatch한 뒤 publish 성공 여부를 확인하지 않고 종료하며, 나중에 다시 실행할 수 없습니다. 일부만 끝난 릴리스의 복구 방법 — npm publish 누락, GitHub release 누락, `latest`의 잘못된 버전, `main`의 빨간 커밋 — 은 [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구-preview--main--npm)에 정리되어 있습니다.
+게시 실패 또는 GitHub release나 desktop 자산 누락 시 출력된 명령을 같은 태그로 다시 dispatch하세요. 복구와 롤백은 [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구)를 참고하세요.
 
 </details>
 

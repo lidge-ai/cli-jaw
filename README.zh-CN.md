@@ -95,13 +95,13 @@ jaw init                              # interactive setup later when you're read
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 -->
 
 **Windows 支持。** 推荐使用 WSL 路径，它是稳定的。原生 PowerShell 安装脚本也可以用，但仍处于 beta 阶段：
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 ```
 
 需要 Node.js 22.4+。
@@ -175,7 +175,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS 一键安装</b> — 没有 Node.js？用这个</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -194,7 +194,7 @@ wsl --install
 
 ```bash
 # 2. Install CLI-JAW + all dependencies
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -310,7 +310,7 @@ cli-jaw 实例和 AI runtime 进程。
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -321,7 +321,7 @@ bash "$COLLECTOR" --target wsl
 从 Windows PowerShell 进入受支持的 WSL 路径：
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 如果 collector 报告 WSL 内没有 `powershell.exe`，请在审计前从 Windows PowerShell 运行：
@@ -362,17 +362,17 @@ node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /
 
 matrix gate 会拒绝用过期 collector、installer 或 verifier 脚本收集到的证据；归档的证据脚本必须与运行该 gate 的当前包或检出匹配。
 
-当 `scripts/promote-to-main.sh`、`scripts/release-preview.sh` 或 `npm publish` 检测到自上一个 tag 以来有安装器敏感变更时，它会在任何 git push 或 npm publish 之前运行同一个 matrix gate。请在开始发布前设置证据目录：
+`bash scripts/release.sh` 从 `dev` 开始 stable 发布。它检查构建和发布门禁，推送版本提交，等待该精确 SHA 的 Tests 和 Postinstall Platform Checks 成功，并在发布前检查所需的安装证据。开始前请设置证据目录：
 
 ```bash
 CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence \
 CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence \
-bash scripts/promote-to-main.sh
+bash scripts/release.sh
 ```
 
-`scripts/promote-to-main.sh` 只提升**已经通过认证的 `preview` head**。除非存在针对该精确 `preview` SHA 的成功 `test.yml` push run，否则它拒绝启动。不带参数时，它提升当前的 `origin/preview` head；可选的 SHA 参数必须等于同一个 head，因此它起断言作用，而不是用来提升更旧的提交。
+预览发布使用 `bash scripts/release.sh --preview`；添加 `--require-evidence` 可对预览也强制执行证据门禁。两个渠道都在不可变的 `v<version>` 标签上派发 `publish.yml`，并等待对应的发布运行。CI 失败后，重新运行失败的任务并对尚未发布的提交使用 `bash scripts/release.sh --resume <sha>`，或向前修复并发布新版本。
 
-脚本会派发 npm publish，然后不检查发布是否成功就退出，之后也无法再次运行。对于部分完成的发布——npm publish 缺失、GitHub release 缺失、`latest` 上的版本不对，或 `main` 上的红色提交——的恢复方法记录在 [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구-preview--main--npm)。
+发布失败或缺少 GitHub release、desktop 资源时，使用相同标签重新派发输出的命令。恢复和回滚方法见 [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구)。
 
 </details>
 

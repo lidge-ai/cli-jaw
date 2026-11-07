@@ -3,7 +3,7 @@ name: PR screenshot gate
 on:
   # pull_request_target executes this workflow file from the repository's
   # default branch — since GitHub's 2025-12-08 change, regardless of the
-  # PR's base — so the gate only activates once this file reaches `main`,
+  # PR's base — so the gate only activates once this file reaches the default branch (`dev`),
   # and the job sees trusted code even for fork PRs. The job never checks
   # out PR head code: the gate script is fetched raw from the trusted
   # integration branch at run time.
@@ -47,13 +47,8 @@ jobs:
             const path = require("node:path");
             const { owner, repo } = context.repo;
 
-            // Source the gate script from the trusted integration branch,
-            // never from the PR head or the PR's base. A stacked PR's base can
-            // be another open PR's head, so non-main bases resolve to `dev` —
-            // the same rule opencodex's enforce-pr-target applies. The repo is
-            // public, so a raw fetch needs no `contents` permission.
-            const baseRef = context.payload.pull_request?.base?.ref;
-            const refsToTry = [...new Set([baseRef === "main" ? "main" : "dev", "dev"])];
+            // Fetch trusted code only from the default integration branch.
+            const refsToTry = ["dev"];
             const scriptPath = path.join(
               process.env.RUNNER_TEMP || os.tmpdir(),
               "pr-screenshot.cjs"
@@ -72,7 +67,7 @@ jobs:
             }
             if (!fetched) {
               core.setFailed(
-                "Could not fetch the trusted gate script (.github/scripts/pr-screenshot.cjs) from dev/main."
+                "Could not fetch the trusted gate script (.github/scripts/pr-screenshot.cjs) from dev."
               );
               return;
             }

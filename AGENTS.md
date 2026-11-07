@@ -27,29 +27,7 @@ git remote -v                                                    # 확인
 git remote set-url origin https://github.com/lidge-ai/cli-jaw.git
 ```
 
-**작업은 전부 `dev` 에서 한다. `main` 과 `preview` 는 머지만 받는 브랜치다.**
-거기에 직접 커밋하지 않는다.
-
-**`dev` 는 항상 `main` 위에 fast-forward 가능한 상태로 유지한다.** merge 커밋으로
-main 을 끌어와 히스토리를 갈래지게 만들지 말고, rebase 로 main 바로 위에 올린다:
-
-```bash
-git fetch origin
-git branch -f backup/dev-pre-rebase-$(date +%y%m%d) HEAD   # 되돌릴 지점
-git rebase origin/main
-git merge-base --is-ancestor origin/main HEAD && echo ff-able
-git push --force-with-lease origin dev
-```
-
-스택 PR 은 아래부터 squash 병합하고, 부모가 들어갈 때마다 `scripts/restack-pr.sh` 로 자식을 옮긴다 (CONTRIBUTING.md §Stacked pull requests).
-
-rebase 중 만나는 충돌은 대개 두 종류이고 해소법이 정해져 있다.
-
-- **버전 파일**(`package.json`, `package-lock.json`, `electron/*`): main 쪽을 취한다
-  (`--theirs`). 이건 릴리스 장부이지 작업 산출물이 아니다. 오래된 preview 승격
-  커밋이 replay 되려 하면 `git rebase --skip` — 버전을 되돌리는 것 말고 하는 일이 없다.
-- **`structure/str_func.md`**: 파일 트리 항목만 있으므로 양쪽 항목을 합친다.
-  그다음 `bash structure/verify-counts.sh` 로 모든 항목이 실제 파일을 가리키는지 확인한다.
+`dev`는 유일한 장기 브랜치이자 기본 및 릴리스 브랜치다. 피처 브랜치에서 작업하고 PR을 `dev`로 병합한다. 스택 PR은 아래부터 squash 병합하고 부모가 들어갈 때마다 `scripts/restack-pr.sh`로 자식을 옮긴다 (CONTRIBUTING.md §Stacked pull requests).
 
 **PR 은 최소 계약만, 크로스플랫폼 CI 는 `dev` push(post-merge)가 담당한다** (opencodex
 모델). `pull_request` 에서 `test.yml` 은 `changes` → { `test 1..4/4`
@@ -59,15 +37,9 @@ rebase 중 만나는 충돌은 대개 두 종류이고 해소법이 정해져 �
 `windows-unit` 과 `macos-unit` 은 PR 을 스케줄하지 않고, 집계는 그 이벤트에서 두 레인의
 skip 을 정상으로 읽는다. 피처 브랜치는 여전히 PR 을 열어야 이 최소 계약이 돈다.
 
-`dev`/`preview`/`main` push 와 `workflow_dispatch` 에서는 전체 그래프가 돈다 — 위 리눅스 잡에
-`windows-unit`(매니페스트 `scripts/ci/windows-unit-manifest.txt`, windows-latest)과
-`macos-unit`(`scripts/ci/macos-unit-manifest.txt`, macos-latest)이 붙는다. **`dev` push CI 가
-빨갛게 깨지면 되돌리지 말고 fix-forward 한다**: dev push 가 병합 뒤 크로스플랫폼 증거를
-만드는 자리라서, 릴리스 인증(preview)까지 도달하기 전에 여기서 잡아야 한다.
+`dev` push와 `workflow_dispatch`에서는 전체 그래프가 돈다. 위 리눅스 잡에 `windows-unit`(매니페스트 `scripts/ci/windows-unit-manifest.txt`, windows-latest)과 `macos-unit`(`scripts/ci/macos-unit-manifest.txt`, macos-latest)이 붙는다. `dev` push CI가 빨갛게 깨지면 fix-forward 한다.
 
-`postinstall-platform.yml` 도 같은 정책이다: `pull_request` 트리거는 빠졌고 `preview` + `dev`
-push(`paths:` 필터는 그대로)와 `workflow_dispatch` 에서 돈다. preview 런이 여전히 릴리스를
-인증하고(publish.yml 은 런을 SHA 로 찾는다), dev 런이 병합 뒤 설치 표면 증거를 만든다.
+`postinstall-platform.yml`은 `dev` push(`paths:` 필터 적용)와 `workflow_dispatch`에서 돈다. 릴리스에는 정확한 SHA의 성공한 플랫폼 런이 항상 필요하다.
 
 두 매니페스트는 각각 `scripts/ci/{windows,macos}-unit-manifest.mjs` 가 Linux(gates 잡 + 단위
 테스트)와 본 레인 양쪽에서 검증한다 — 이름이 바뀐 테스트는 레인에서 조용히 빠지지 않고 CI 를
@@ -76,73 +48,18 @@ push(`paths:` 필터는 그대로)와 `workflow_dispatch` 에서 돈다. preview
 (code=false) 와 pull_request 의 크로스플랫폼 레인 뿐이고, 그 외 skip/failure/cancelled 는 실패다.
 자문용 `coverage` 는 `coverage-advisory.yml`(주간 스케줄 + dispatch)로 빠져 있어 집계에 들어가지 않는다.
 
-`dev` 가 릴리스 브랜치가 된 것은 아니다. `publish.yml` 은 인증 런을 SHA 로 찾되
-**`preview`/`main` 런만** 받아들이고(`:76` 의 `headBranch` 필터, #521 에서 좁힘),
-승격은 `--branch preview` 로 찾는다(`scripts/promote-to-main.sh:28-34`). 이 필터가
-필요한 이유는 위 ★ 단계가 매 사이클 `dev` 를 preview head 로 맞추기 때문이다 —
-같은 SHA 에 양쪽 런이 생기므로, 필터가 없으면 `dev` 런이 릴리스를 인증할 수 있었다.
-확인은 어느 경우든 SHA 대조로 한다:
+### 릴리스 절차 (dev → tag → npm)
 
-```bash
-git rev-parse HEAD
-gh pr checks <n>
-gh run view <run-id> --json headSha,conclusion
-```
+`bash scripts/release.sh`로 stable, `bash scripts/release.sh --preview`로 preview를 릴리스한다. `--major`, `--minor`, `--patch` 또는 명시적 `X.Y.Z` base를 선택할 수 있다. 스크립트는 깨끗한 최신 dev와 미게시 버전, 빌드·게이트를 확인하고 버전 커밋을 dev에 푸시한다. 정확한 SHA의 CI를 기다린 뒤 stable에는 설치 증거를 필수로 검사한다 (preview는 `--require-evidence`로 필수화). 이후 불변 `v<version>` 태그를 그 SHA에 만들고 `publish.yml`을 태그로 dispatch해 request-id로 해당 런을 찾아 완료까지 기다린다.
 
-
-### 릴리스 절차 (dev → preview → main → npm)
-
-개발은 `dev` 에서만 한다. `preview` 와 `main` 은 이 절차를 통해서만 움직인다.
-
-```bash
-git checkout dev && git fetch origin
-git rebase origin/main                      # ff-able 유지
-bash scripts/release-preview.sh             # 버전 범프 + gate:all + preview 푸시 + preview publish
-git push origin dev                         # dev 를 preview head 와 같게 맞춘다  ★
-bash scripts/promote-to-main.sh             # preview CI 인증 확인 → main 승격 → stable publish
-```
-
-**★ 를 빼먹으면 다음 사이클이 어긋난다.** `release-preview.sh` 는 버전 범프를
-현재 브랜치에 커밋하고 `HEAD:preview` 로 푸시한다. 그 커밋을 `dev` 에도 올리지
-않으면 origin/dev 만 뒤처진 채 남는다.
-
-#### 승격은 fast-forward 다 (#480)
-
-`promote-to-main.sh` 는 stable 버전 범프를 **preview 위에** 커밋하고, preview 를
-거기까지 ff 한 뒤, CI 인증이 끝나면 `main` 을 **같은 커밋으로** ff 한다. PR 도
-squash 도 없다. 그래서:
-
-- `main` 은 preview 에 없는 커밋을 절대 갖지 않는다. 조상 관계가 정의상 유지되므로
-  재정렬이라는 단계 자체가 없다.
-- npm 에 발행되는 SHA 가 CI 가 인증한 SHA 와 **문자 그대로 같다.** 같은 트리의 복사본이
-  아니다. `publish.yml` 의 `certified-sha` 우회 장치가 필요 없어진 이유다.
-- 스크립트 말미가 `dev` 도 같은 커밋으로 ff 한다. dev 가 이미 앞서 있으면 건드리지
-  않고 `NOTE:` 를 남기므로, 그때는 `git merge origin/main` 으로 dev 에 릴리스 선을
-  들여놓는다.
-
-`main` 푸시는 `--force` 를 쓰지 않는다. non-ff 를 git 이 스스로 거부하는 것이 이
-구조의 실제 보증이므로, 실패하면 강제로 밀지 말고 왜 갈라졌는지부터 볼 것.
-
-예전에는 squash 승격이 매 사이클 조상 관계를 끊었고, 그 복구가 수동이라 #418 의
-durable queue-notice store 가 통째로 사라진 채 `cli-jaw@2.17.13` 이 발행됐다.
-#468 이 자동 재정렬로 그 증상을 막았지만 dev 와 preview 에 각각 다른 커밋을 만들어
-두 브랜치를 영구히 갈라놓았다(쌍둥이 8개 누적). ff 승격은 그 원인을 없앤다.
+`publish.yml`은 실제 게시에서 태그만 받으며 dev ref는 dry-run에만 허용한다. 인증에는 정확한 SHA의 성공한 `dev` push Tests와 성공한 Postinstall Platform Checks가 항상 필요하다. 게시를 직렬화하고 새 버전의 dist-tag 순서를 검사하며, 두 채널의 GitHub release와 SHA를 지정한 desktop 빌드를 만든다.
 
 #### 게이트가 막을 때
 
-- **`origin/main is not an ancestor of the certified preview SHA`** — preview 를
-  force-push 해서 main 이 조상에서 빠졌거나, **승격이 이미 끝난 뒤 스크립트를 다시
-  돌린** 경우다. `git log --oneline origin/preview..origin/main` 으로 main 이 이미
-  그 버전을 갖고 있는지부터 볼 것. 갖고 있으면 승격은 성공한 것이고 재실행할 일이
-  아니다 — `promote-to-main.sh` 는 승격 후 재실행을 지원하지 않는다.
-- **`No successful Postinstall Platform Checks run found for <sha>`** — 승격이
-  preview 의 CI 를 기다린 뒤 main 을 ff 하므로 보통은 나지 않는다. 그래도 났다면
-  해당 SHA 의 preview push 런이 실패했거나 아직 안 끝난 것이다. 런이 끝나기를
-  기다렸다가 publish 만 다시 dispatch 하면 된다. 승격을 되돌릴 필요는 없다.
-- **`! [rejected] ... (non-fast-forward)`** — main 이 preview 에 없는 커밋을 갖고
-  있다는 뜻이다. **강제로 밀지 말 것.** 무엇이 main 에만 들어갔는지
-  (`git log --oneline origin/preview..origin/main`) 부터 확인하고, 그것을 preview 로
-  가져와 다시 ff 가 되게 만든다.
+- 푸시 후 CI 실패: 실패한 런을 재실행한 뒤 미게시 커밋에서 `bash scripts/release.sh --resume <sha>`를 실행한다. 또는 fix-forward 후 새 버전을 만든다. 버전은 재사용하지 않는다.
+- publish 실패·취소: 스크립트가 출력한 명령을 같은 태그로 다시 dispatch한다.
+- 게시 후 GitHub release 또는 desktop 누락: 같은 태그로 다시 dispatch한다. 이 복구는 npm provenance로 게시된 패키지와 SHA의 일치를 검증한다.
+- 자세한 절차는 `structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구를 따른다.
 
 #### 배포 확인은 npm 버전만으로 부족하다
 
@@ -205,7 +122,7 @@ The same boundary check also rejects a `pr-assets` directory at any depth: PR sc
 
 ### Pull request screenshots
 
-A PR that changes rendered UI — `public/` (the manager dashboard / web frontend the Electron shell loads) or the Electron rendered surface (`electron/src/preload/`, markup/style/component files under `electron/`; pure test files excluded — exact rules in `.github/scripts/pr-screenshot.cjs`) — must embed a screenshot in its description. `pull_request_target` workflow `pr-screenshot-gate.yml` runs check `screenshot-gate` and fails otherwise — the workflow file executes from the repository's default branch, so the check activates once it reaches `main`. It reads the body for a rendered image (`![alt](url)`, `<img src>`, or a defined reference image — comments and code spans/fences do not count) and never checks out PR head code.
+A PR that changes rendered UI — `public/` (the manager dashboard / web frontend the Electron shell loads) or the Electron rendered surface (`electron/src/preload/`, markup/style/component files under `electron/`; pure test files excluded — exact rules in `.github/scripts/pr-screenshot.cjs`) — must embed a screenshot in its description. `pull_request_target` workflow `pr-screenshot-gate.yml` runs check `screenshot-gate` and fails otherwise — the workflow file executes from the repository's default branch, so the check activates once it reaches the default branch (`dev`). It reads the body for a rendered image (`![alt](url)`, `<img src>`, or a defined reference image — comments and code spans/fences do not count) and never checks out PR head code.
 
 **Never commit screenshot evidence to the PR branch.** Agents and CLI uploads with push access push images to the orphan `pr-assets` branch and link by commit SHA:
 
@@ -334,7 +251,7 @@ npm run build:frontend  # public/js·public/manager 변경 시 (→ public/dist)
 - 프론트엔드(`public/js/*.ts`, `public/manager/src/**`)는 `build:frontend`만으로 충분하며 서버 재시작 없이 브라우저 새로고침으로 반영된다 (`public/dist` 정적 서빙).
 - 반영 여부 검증: `grep <new-symbol> dist/...` 또는 해당 엔드포인트 curl로 확인 후 안내.
 
-이건 로컬 빌드/재시작 계약이고, 배포(release)는 별개다. 릴리스 경로는 `feature → preview → main` 뒤 `workflow_dispatch` npm publish이며 `dev`는 릴리스 경로가 아니다. `scripts/promote-to-main.sh`는 publish를 dispatch한 뒤 결과를 확인하지 않고 종료하며, 승격 성공 후에는 다시 실행할 수 없다. 부분 실패·롤백 복구 절차는 `structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구를 따를 것.
+이건 로컬 빌드/재시작 계약이고, 배포(release)는 별개다. 릴리스 경로는 `dev → v<version> tag → publish.yml`이며 스크립트는 게시 런의 완료를 기다린다. 부분 실패·롤백 복구 절차는 `structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구를 따를 것.
 
 ### Test Scope (`npm test`는 전체가 아니다)
 

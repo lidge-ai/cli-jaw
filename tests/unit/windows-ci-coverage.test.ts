@@ -142,18 +142,17 @@ test('WCI-004: both PowerShell lanes run the installer contract as live gates', 
     }
 });
 
-test('WCI-005: the push trigger carries the Windows-critical set on dev and preview', () => {
+test('WCI-005: the push trigger carries the Windows-critical set on dev', () => {
     // Cross-platform evidence moved off pull_request: PRs keep the minimal
     // test.yml contract and this workflow produces its matrix on push to dev
-    // (post-merge) and preview (release certification). Pin both ends of that
-    // policy: the push list covers the set, pull_request is gone entirely.
+    // after merge; pull_request is gone entirely.
     const on = workflow.on ?? workflow[true];
     const push = positivePaths(on.push?.paths as string[]);
     for (const file of [...WINDOWS_CRITICAL_SOURCES, ...WINDOWS_CRITICAL_SUITES]) {
         assert.ok(push.has(file), `${file} missing from push triggers`);
     }
     assert.ok(on.push?.branches?.includes('dev'), 'the dev push must carry the post-merge platform evidence');
-    assert.ok(on.push?.branches?.includes('preview'), 'preview stays the release-certifying run');
+    assert.deepEqual(on.push?.branches, ['dev']);
     assert.equal(on.pull_request, undefined, 'pull_request must not trigger the cross-platform matrix');
     // Manual dispatch is the escape hatch when a release needs the lane on demand.
     assert.ok(on.workflow_dispatch !== undefined, 'workflow_dispatch must remain available');

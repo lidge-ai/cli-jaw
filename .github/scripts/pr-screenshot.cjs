@@ -7,7 +7,7 @@
  * screenshot gate only. `.github/workflows/pr-screenshot-gate.yml` runs on
  * `pull_request_target` — so the workflow file itself executes from the
  * repo's default branch — and fetches this file from the trusted
- * integration branch (`dev`, or `main` for main-targeting PRs) at run time
+ * integration branch (`dev`) at run time
  * before calling `run()`. The workflow never checks out PR head code and
  * needs only `pull-requests: read` + `issues: read`.
  *

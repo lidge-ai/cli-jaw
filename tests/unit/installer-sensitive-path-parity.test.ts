@@ -136,8 +136,10 @@ test('G1-parity: the detector does not keep a second hand-written path list', ()
         'README.ko.md',
         'README.md',
         'README.zh-CN.md',
-        'scripts/promote-to-main.sh',
         'scripts/release-preview.sh',
+        'scripts/release-version.mjs',
+        'scripts/release.sh',
+        'scripts/verify-npm-provenance.mjs',
     ], 'extras beyond the platform workflow must stay deliberate and reviewed');
     assert.ok(extras![1]!.includes('//'), 'each extras entry group must carry a comment explaining why it is here');
 });

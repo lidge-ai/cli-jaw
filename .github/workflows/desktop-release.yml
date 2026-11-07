@@ -5,6 +5,10 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
+      expected-sha:
+        description: "Expected release commit SHA"
+        required: false
+        type: string
       release-tag:
         description: "GitHub release tag to build from and upload assets to"
         required: false
@@ -71,6 +75,18 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release-tag || github.event.release.tag_name || github.ref }}
+
+      - name: Verify release commit
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected-sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPECTED_SHA" ]; then
+            [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ] || { echo '::error::release commit mismatch'; exit 1; }
+          else
+            echo '::notice::manual release event has no expected SHA binding'
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -268,9 +284,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ inputs.release-tag || github.event.release.tag_name }}
+          EXPECTED_SHA: ${{ inputs.expected-sha }}
           ARTIFACT_GLOBS: ${{ matrix.artifact_globs }}
         run: |
           set -euo pipefail
+          if [ -n "$EXPECTED_SHA" ]; then
+            remote_sha="$(git ls-remote origin "refs/tags/$TAG_NAME" | cut -f1)"
+            [ "$remote_sha" = "$EXPECTED_SHA" ] || { echo '::error::release tag moved before upload'; exit 1; }
+          fi
           shopt -s nullglob
 
           files=()

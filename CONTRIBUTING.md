@@ -70,7 +70,7 @@ git fetch origin dev
 node scripts/check-private-boundary.mjs --range origin/dev HEAD
 ```
 
-Use the destination branch's current remote tip as the range base. The default check scans indexed paths; `--range` checks every outgoing commit, including private files added and later deleted. `.githooks/pre-push` passes Git's ref updates to `--pre-push` on stdin, and in that mode commits any ref of the same destination already advertises are not re-scanned: a fast-forward of `preview`/`main` onto commits `dev` has already published introduces no new disclosure. Do not bypass this check with `--no-verify`.
+Use the destination branch's current remote tip as the range base. The default check scans indexed paths; `--range` checks every outgoing commit, including private files added and later deleted. `.githooks/pre-push` passes Git's ref updates to `--pre-push` on stdin, and in that mode commits any ref of the same destination already advertises are not re-scanned: re-pushing commits the destination already advertises introduces no new disclosure. Do not bypass this check with `--no-verify`.
 
 These checks reject private path names, not private content hidden under otherwise public names. Review the diff for private record links and content too. CI is a backstop after upload; it cannot prevent or retract disclosure from a push. Package exclusions also do not protect Git pushes: npm's `files` allowlist can override root `.npmignore`, so private paths need explicit exclusions there as well.
 
