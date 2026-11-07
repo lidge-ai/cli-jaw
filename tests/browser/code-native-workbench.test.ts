@@ -208,12 +208,16 @@ async function containment(page: Page, session: CodeSessionInfo) {
 async function shutdownOwned(manifest: Manifest) {
     const receipt = join(manifest.evidenceDir, 'provider-events.json');
     const exited = new Promise<void>((resolve, reject) => {
-        const watcher = watch(manifest.evidenceDir, () => {
-            if (!existsSync(receipt)) return;
-            clearTimeout(timer); watcher.close(); resolve();
-        });
-        const timer = setTimeout(() => { watcher.close(); reject(new Error('Owned Manager exit receipt timed out')); }, 20_000);
-        watcher.on('error', error => { clearTimeout(timer); watcher.close(); reject(error); });
+        const finish = (error?: Error) => {
+            clearTimeout(timer); clearInterval(check); watcher.close();
+            if (error) reject(error); else resolve();
+        };
+        const observe = () => { if (existsSync(receipt)) finish(); };
+        const watcher = watch(manifest.evidenceDir, observe);
+        // Some filesystems coalesce the temporary-file and rename notifications.
+        const check = setInterval(observe, 100);
+        const timer = setTimeout(() => finish(new Error('Owned Manager exit receipt timed out')), 20_000);
+        watcher.on('error', finish);
     });
     // Install observation before dispatch, and observe both promises on failure.
     const results = await Promise.allSettled([exited, control(manifest, 'shutdown', 'POST')]);
