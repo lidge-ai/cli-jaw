@@ -10,7 +10,7 @@ type Tool = Extract<RuntimeEventBody, { kind: 'tool' }>;
 type Preview = Extract<RuntimeEventBody, { kind: 'tool' | 'message' | 'reasoning' }>;
 type Notice = 'capacity' | 'truncated' | 'persistence' | 'malformed' | 'missing-id';
 type Recorder = (context: RuntimeEventContext, body: RuntimeEventBody) => RuntimeEvent | null;
-export type RuntimeToolPatch = { name?: string; status?: Tool['status']; input?: string;
+export type RuntimeToolPatch = { semantic?: 'file_change'; fileChanges?: unknown; name?: string; status?: Tool['status']; input?: string;
     output?: string; delta?: string; detail?: string; inputStructured?: boolean; outputStructured?: boolean };
 /** Trusted raw patches. The owner must latch write failures before returning or throwing. */
 export interface RuntimeTranscriptObserver {

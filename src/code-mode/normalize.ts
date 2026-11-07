@@ -5,9 +5,12 @@ import type { RuntimeToolPatch, RuntimeTranscriptObserver } from '../agent/runti
 import type { RuntimeEvent, RuntimeEventBody, RuntimePhase, RuntimeTurnOutcome } from '../shared/runtime-contract.js';
 import { encodeRuntimeBody, redactRuntimeContent } from '../trace/runtime-body-codec.js';
 import type { CodeTurnContext } from './provider.js';
-import type { CodeItem } from './wire.js';
+import type { CodeItem, CodeFileChange, CodeFileChangeEntry } from './wire.js';
+import { CODE_MAX_EVENT_BYTES } from './store.js';
 
 export const CODE_ITEM_MAX_CHARS = 1_048_576;
+export const CODE_FILE_CHANGE_MAX_BYTES = 1024 * 1024;
+export const FILE_CHANGE_RUNNING_COMMIT_BYTES = 8 * 1024 * 1024;
 const CODE_TURN_MAX_ITEMS = 2048;
 const CODE_TURN_MAX_CHARS = 8 * CODE_ITEM_MAX_CHARS;
 const WITHHELD = '[structured content withheld]';
@@ -16,7 +19,9 @@ type Field = 'text' | 'name' | 'input' | 'output' | 'detail';
 type Source = { raw: string; safe: string; sourceChars: number; structured: boolean;
     explicitStructured: boolean; retired: boolean; reason: string; dirty: boolean };
 type Entry = { item: CodeItem; context: RuntimeEventContext; fields: Map<Field, Source>; committed: boolean;
-    persisted: CodeItem | null; pending: boolean; metadataOnly: boolean };
+    persisted: CodeItem | null; pending: boolean; metadataOnly: boolean;
+    fileChange: FileChangeSource | null; fileChangeLimited: boolean };
+type FileChangeSource = { value: CodeFileChange; chars: number; sourceChars: number; truncated: boolean };
 
 export interface CodeTurnNormalizerOptions {
     context: CodeTurnContext;
@@ -105,6 +110,89 @@ export function redactCodeText(value: string, isStructured = false): string {
     return safe.replace(/\b(?:sk-|gh[pousr]_|xox[baprs]-|AIza|AKIA)[A-Za-z0-9_-]*$/g, '[REDACTED]');
 }
 
+
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), 'utf8');
+
+// Trimming is deterministic and keeps exact patches only when they fit whole.
+function trimFileChange(value: CodeFileChange, maxBytes: number, maxChars: number): CodeFileChange | null {
+    const result: CodeFileChange = structuredClone(value);
+    const fits = () => {
+        const json = JSON.stringify(result);
+        return json.length <= maxChars && Buffer.byteLength(json, 'utf8') <= maxBytes;
+    };
+    if (fits()) return result;
+    const diffs = result.changes.map((change, index) => ({ change, index }))
+        .filter(({ change }) => change.diff !== undefined)
+        .sort((a, b) => Buffer.byteLength(JSON.stringify(b.change.diff), 'utf8')
+            - Buffer.byteLength(JSON.stringify(a.change.diff), 'utf8') || a.index - b.index);
+    for (const { change } of diffs) {
+        delete change.diff; change.patch = 'truncated';
+        if (fits()) return result;
+    }
+    const count = result.changes.length;
+    let low = 0, high = count;
+    const all = result.changes;
+    while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        result.changes = all.slice(0, middle);
+        result.omittedChanges = (value.omittedChanges ?? 0) + count - middle;
+        if (fits()) low = middle; else high = middle - 1;
+    }
+    result.changes = all.slice(0, low);
+    if (count - low) result.omittedChanges = (value.omittedChanges ?? 0) + count - low;
+    return fits() ? result : null;
+}
+
+export function normalizeFileChanges(raw: unknown, budget: { maxBytes: number; maxChars: number }):
+    { value: CodeFileChange; chars: number; sourceChars: number; truncated: boolean } {
+    const value: CodeFileChange = { schema: Array.isArray(raw) ? 'known' : 'unknown', changes: [] };
+    let sourceChars = 0, unrecognized = 0;
+    if (Array.isArray(raw)) for (const record of raw) {
+        if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.path !== 'string') {
+            value.schema = 'unknown'; unrecognized++; continue;
+        }
+        const path = redactCodeText(record.path);
+        sourceChars += record.path.length;
+        const nativeKind = record.kind;
+        const valid = nativeKind && typeof nativeKind === 'object' && !Array.isArray(nativeKind)
+            && ['add', 'delete', 'update'].includes(nativeKind.type)
+            && (nativeKind.type !== 'update' || nativeKind.move_path == null || typeof nativeKind.move_path === 'string');
+        if (!valid) {
+            value.schema = 'unknown'; value.changes.push({ path, kind: 'unknown', patch: 'missing' }); continue;
+        }
+        const move = nativeKind.type === 'update' && typeof nativeKind.move_path === 'string' && nativeKind.move_path
+            ? nativeKind.move_path : undefined;
+        if (move) sourceChars += move.length;
+        if (typeof record.diff === 'string') sourceChars += record.diff.length;
+        const safeMove = move === undefined ? undefined : redactCodeText(move);
+        const withheld = path !== record.path || safeMove !== move
+            || (typeof record.diff === 'string' && redactCodeText(record.diff) !== record.diff);
+        const change: CodeFileChangeEntry = { path, kind: move ? 'rename' : nativeKind.type,
+            ...(safeMove === undefined ? {} : { movePath: safeMove }),
+            patch: withheld ? 'withheld' : typeof record.diff === 'string' ? 'captured' : 'missing',
+            ...(!withheld && typeof record.diff === 'string' ? { diff: record.diff } : {}) };
+        value.changes.push(change);
+    }
+    if (unrecognized) value.unrecognizedChanges = unrecognized;
+    const trimmed = trimFileChange(value, budget.maxBytes, budget.maxChars);
+    const result = trimmed ?? { ...value, changes: [], omittedChanges: value.changes.length };
+    return { value: result, chars: JSON.stringify(result).length, sourceChars,
+        truncated: trimmed === null || !!result.omittedChanges || result.changes.some(change => change.patch === 'truncated') };
+}
+
+// Keep this predicate aligned with compactUpdate in store.ts:260.
+function compactable(before: CodeItem, after: CodeItem): boolean {
+    const { text: oldText, tool: oldTool, status: _oldStatus, phase: oldPhase, updatedAt: _oldTime, ...oldMetadata } = before;
+    const { text, tool, status: _status, phase, updatedAt: _time, ...metadata } = after;
+    if (!isDeepStrictEqual(oldMetadata, metadata) || (oldPhase !== undefined && phase === undefined)) return false;
+    if ((oldTool === undefined) !== (tool === undefined)) return false;
+    const { output: oldOutput, ...oldToolMetadata } = oldTool ?? { name: '' };
+    const { output, ...toolMetadata } = tool ?? { name: '' };
+    return isDeepStrictEqual(oldToolMetadata, toolMetadata)
+        && (oldText === text || (text !== undefined && text.startsWith(oldText ?? '')))
+        && (oldOutput === output || (output !== undefined && output.startsWith(oldOutput ?? '')));
+}
+
 function sameItem(left: CodeItem, right: CodeItem, ignoreSourceChars = false): boolean {
     const { updatedAt: _leftTime, ...a } = left;
     const { updatedAt: _rightTime, ...b } = right;
@@ -126,6 +214,7 @@ export class CodeTurnNormalizer {
     private readonly items = new Map<string, Entry>();
     private readonly closedContexts = new Set<string>();
     private chars = 0;
+    private runningFileChangeBytes = 0;
     private sequence = 0;
     private failed = false;
     private stale = false;
@@ -153,7 +242,7 @@ export class CodeTurnNormalizer {
             || context.turnId !== this.context.turnId || context.scope !== this.context.scope) return false;
         if (context.parentItemId !== this.context.parentItemId) {
             const parent = context.parentItemId ? this.items.get(context.parentItemId) : undefined;
-            if (!parent?.committed || parent.item.kind !== 'tool_call') return false;
+            if (!parent?.committed || !['tool_call', 'file_change'].includes(parent.item.kind)) return false;
         }
         let current = false;
         try { current = this.context.isCurrent() === true; } catch { /* A failed ownership predicate is stale. */ }
@@ -221,7 +310,7 @@ export class CodeTurnNormalizer {
         }
         const at = this.now();
         const entry: Entry = { context: { ...context }, fields: new Map(), committed: false,
-            persisted: null, pending: false, metadataOnly: false, item: {
+            persisted: null, pending: false, metadataOnly: false, fileChange: null, fileChangeLimited: false, item: {
             itemId, kind, turnId: this.context.turnId, status: 'running', createdAt: at, updatedAt: at,
             ...(context.parentItemId === undefined ? {} : { parentItemId: context.parentItemId }),
         } };
@@ -277,17 +366,27 @@ export class CodeTurnNormalizer {
         const next: CodeItem = { ...entry.item };
         const read = (field: Field) => entry.fields.get(field)?.safe;
         if (read('text') !== undefined) next.text = read('text')!;
-        if (next.kind === 'tool_call') next.tool = {
+        if (next.kind === 'tool_call' || next.kind === 'file_change') next.tool = {
             name: read('name') || 'tool',
-            ...(read('input') === undefined ? {} : { input: read('input')! }),
+            ...(next.kind === 'file_change' || read('input') === undefined ? {} : { input: read('input')! }),
             ...(read('output') === undefined ? {} : { output: read('output')! }),
             ...(read('detail') === undefined ? {} : { detail: read('detail')! }),
         };
+        delete next.fileChange;
+        if (entry.fileChange) {
+            const available = Math.min(CODE_FILE_CHANGE_MAX_BYTES, CODE_MAX_EVENT_BYTES - 64 * 1024 - jsonBytes(next));
+            const trimmed = trimFileChange(entry.fileChange.value, available, entry.fileChange.chars);
+            if (trimmed) next.fileChange = trimmed;
+        }
         const sources = [...entry.fields.values()];
         const reasons = [...new Set(sources.map(source => source.reason).filter(Boolean))];
+        const fc = entry.fileChange;
+        if (entry.fileChangeLimited || (fc && (!next.fileChange || fc.truncated
+            || next.fileChange.omittedChanges || next.fileChange.changes.some(change => change.patch === 'truncated')))) reasons.push('file_change_limit');
         if (reasons.length) next.truncation = {
-            storedChars: sources.reduce((sum, source) => sum + source.safe.length, 0),
-            sourceChars: sources.reduce((sum, source) => Math.min(Number.MAX_SAFE_INTEGER, sum + source.sourceChars), 0),
+            storedChars: sources.reduce((sum, source) => sum + source.safe.length, 0)
+                + (next.fileChange?.changes.reduce((sum, c) => sum + c.path.length + (c.movePath?.length ?? 0) + (c.diff?.length ?? 0), 0) ?? 0),
+            sourceChars: sources.reduce((sum, source) => Math.min(Number.MAX_SAFE_INTEGER, sum + source.sourceChars), 0) + (fc?.sourceChars ?? 0),
             reason: reasons.join(','),
         };
         else delete next.truncation;
@@ -303,7 +402,7 @@ export class CodeTurnNormalizer {
             if ([...entry.fields.values()].some(source => source.retired)) this.capacity();
             this.schedule(); return;
         }
-        const next = this.materialize(entry);
+        let next = this.materialize(entry);
         const sources = [...entry.fields.values()];
         if (entry.persisted && sameItem(entry.persisted, next)) {
             entry.pending = false; this.clearIdleTimer(); return;
@@ -317,13 +416,29 @@ export class CodeTurnNormalizer {
             if (sources.some(source => source.retired)) this.capacity();
             this.schedule(); return;
         }
+        if (!control && entry.item.kind === 'file_change' && entry.persisted && !compactable(entry.persisted, next)) {
+            const cost = jsonBytes(next) + 1024;
+            if (this.runningFileChangeBytes + cost > FILE_CHANGE_RUNNING_COMMIT_BYTES) {
+                const fallback = { ...next };
+                if (entry.persisted.fileChange) fallback.fileChange = entry.persisted.fileChange;
+                else delete fallback.fileChange;
+                if (compactable(entry.persisted, fallback)) {
+                    if (sameItem(entry.persisted, fallback)) {
+                        entry.pending = true; entry.metadataOnly = true; this.clearIdleTimer(); return;
+                    }
+                    next = fallback;
+                }
+                else { entry.pending = true; entry.metadataOnly = true; this.clearIdleTimer(); return; }
+            } else this.runningFileChangeBytes += cost;
+        }
         next.updatedAt = this.now();
         const receipt = this.options.commitItem(structuredClone(next));
         if (!receipt) { this.stale = true; this.release(); return; }
         entry.item = next;
         entry.persisted = { ...next };
         entry.committed = true;
-        entry.pending = false;
+        entry.pending = entry.item.kind === 'file_change' && !isDeepStrictEqual(next.fileChange, this.materialize(entry).fileChange);
+        entry.metadataOnly = entry.pending;
         this.clearIdleTimer();
         // A synchronous subscriber may seal this turn; acknowledge the durable
         // write first so that its item cannot enter the pending drain twice.
@@ -391,6 +506,11 @@ export class CodeTurnNormalizer {
         }
         const entry = this.entry(context, 'tool_call', ref);
         if (!entry) return;
+        if (patch.semantic === 'file_change' && entry.item.kind === 'tool_call') {
+            entry.item.kind = 'file_change';
+            const input = entry.fields.get('input');
+            if (input) { this.chars -= input.raw.length + input.safe.length; entry.fields.delete('input'); }
+        }
         const terminal = entry.item.status !== 'running';
         const replaceTerminal = options.allowTerminalUpdates === true && patch.status !== undefined && patch.status !== 'running';
         const nameSource = entry.fields.get('name');
@@ -398,8 +518,17 @@ export class CodeTurnNormalizer {
         if (patch.name && (!name || name === 'tool')) {
             this.source(entry, 'name', patch.name);
         }
-        if (patch.input !== undefined && (!terminal || replaceTerminal || !entry.fields.has('input'))) {
+        if (entry.item.kind !== 'file_change' && patch.input !== undefined && (!terminal || replaceTerminal || !entry.fields.has('input'))) {
             this.source(entry, 'input', patch.input, false, patch.inputStructured);
+        }
+        if (entry.item.kind === 'file_change' && patch.fileChanges !== undefined
+            && (!terminal || replaceTerminal || (patch.status === 'running' && entry.fileChange === null))) {
+            if (entry.fileChange) this.chars -= entry.fileChange.chars;
+            const budget = { maxBytes: CODE_FILE_CHANGE_MAX_BYTES, maxChars: Math.min(this.maxFieldChars, this.maxTotalChars - this.chars) };
+            const value = normalizeFileChanges(patch.fileChanges, budget);
+            if (value.chars <= budget.maxChars && jsonBytes(value.value) <= budget.maxBytes) {
+                entry.fileChange = value; this.chars += value.chars; entry.fileChangeLimited = false;
+            } else { entry.fileChange = null; entry.fileChangeLimited = true; this.capacity(); }
         }
         if (!terminal || replaceTerminal) {
             if (patch.status !== undefined) entry.item.status = patch.status === 'stopped' ? 'cancelled' : patch.status;
@@ -469,11 +598,11 @@ export class CodeTurnNormalizer {
         for (const entry of this.items.values()) {
             if (context && this.contextKey(entry.context) !== this.contextKey(context)) continue;
             if (entry.item.status !== 'running' && entry.item.status !== 'pending') continue;
-            const unfinished = entry.item.kind === 'tool_call' || entry.item.kind === 'permission_request';
+            const unfinished = entry.item.kind === 'tool_call' || entry.item.kind === 'file_change' || entry.item.kind === 'permission_request';
             entry.item.status = status === 'error' ? 'error' : status === 'stopped' || unfinished ? 'cancelled' : 'done';
             const detailSource = entry.fields.get('detail');
             const detail = detailSource?.dirty ? detailSource.raw : detailSource?.safe;
-            if (entry.item.kind === 'tool_call' && !detail) this.source(entry, 'detail', UNFINISHED);
+            if ((entry.item.kind === 'tool_call' || entry.item.kind === 'file_change') && !detail) this.source(entry, 'detail', UNFINISHED);
             this.save(entry, true);
             for (const source of entry.fields.values()) { this.chars -= source.raw.length; source.raw = ''; }
         }
@@ -491,7 +620,7 @@ export class CodeTurnNormalizer {
             return this.guarded(() => {
                 const batch: CodeItem[] = [];
                 for (const entry of this.items.values()) {
-                    if (!entry.committed || !['assistant_message', 'reasoning', 'tool_call'].includes(entry.item.kind)
+                    if (!entry.committed || !['assistant_message', 'reasoning', 'tool_call', 'file_change'].includes(entry.item.kind)
                         || (!entry.pending && ![...entry.fields.values()].some(source => source.dirty))) continue;
                     const item = this.materialize(entry);
                     if (entry.persisted && sameItem(entry.persisted, item)) continue;
@@ -528,7 +657,7 @@ export class CodeTurnNormalizer {
     private release(): void {
         if (this.timer !== undefined) clearTimeout(this.timer);
         this.timer = undefined;
-        for (const entry of this.items.values()) { entry.fields.clear(); entry.pending = false; }
+        for (const entry of this.items.values()) { entry.fields.clear(); entry.fileChange = null; entry.pending = false; }
         this.chars = 0;
     }
 }

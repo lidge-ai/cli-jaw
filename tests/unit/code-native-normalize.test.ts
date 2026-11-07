@@ -973,3 +973,107 @@ for (const reason of ['stale', 'failed', 'denied'] as const) {
         assert.equal(f.failures.length, reason === 'failed' ? 1 : 0);
     });
 }
+
+test('file change promotion retains bounded redacted metadata and terminal authority', () => {
+    const f = fixture();
+    f.observer.tool('edit', { name: 'file change', input: 'x'.repeat(1000), status: 'running' }, {});
+    const id = f.rows('tool_call')[0]!.itemId;
+    const chargedBefore = (f.normalizer as any).chars as number;
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'a', kind: { type: 'add' }, diff: '' },
+        { path: 'b', kind: { type: 'update', move_path: 'c' }, diff: 'sk-secret-token' },
+        { path: 'd', kind: { type: 'bogus' }, diff: 'private' }, 42,
+    ] }, {});
+    const item = f.rows('file_change')[0]!;
+    assert.equal(item.itemId, id);
+    assert.equal(item.tool?.input, undefined);
+    assert.ok((f.normalizer as any).chars < chargedBefore);
+    assert.deepEqual(item.fileChange, { schema: 'unknown', changes: [
+        { path: 'a', kind: 'add', patch: 'captured', diff: '' },
+        { path: 'b', kind: 'rename', movePath: 'c', patch: 'withheld' },
+        { path: 'd', kind: 'unknown', patch: 'missing' },
+    ], unrecognizedChanges: 1 });
+    f.observer.tool('edit', { status: 'done' }, {});
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'late', kind: { type: 'add' }, diff: 'late' }] }, {});
+    assert.deepEqual(f.rows('file_change')[0]?.fileChange, item.fileChange);
+});
+
+test('file change seal drains pending replacement', () => {
+    const f = fixture({ coalesceMs: 100 });
+    f.observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'first' }] }, {});
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: 'latest' }] }, {});
+    assert.equal(f.normalizer.sealAccepted()[0]?.fileChange?.changes[0]?.diff, 'latest');
+});
+
+test('file change budgets trim large escaped diffs, count omitted paths and preserve close semantics', () => {
+    const f = fixture({ maxFieldChars: 400 });
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'big', kind: { type: 'add' }, diff: '\u0001'.repeat(200) },
+        { path: 'small', kind: { type: 'delete' }, diff: 'ok' },
+        ...Array.from({ length: 30 }, (_, i) => ({ path: 'path-' + i, kind: { type: 'update' }, diff: '' })),
+    ] }, {});
+    const item = f.rows('file_change')[0]!;
+    assert.equal(item.fileChange?.changes[0]?.patch, 'truncated');
+    assert.ok((item.fileChange?.omittedChanges ?? 0) > 0);
+    assert.equal((item.fileChange?.changes.length ?? 0) + (item.fileChange?.omittedChanges ?? 0), 32);
+    assert.match(item.truncation?.reason ?? '', /file_change_limit/);
+    const parent = f.normalizer.resolveParent(f.context, 'edit');
+    assert.ok(parent);
+    f.normalizer.observer({ ...f.context, parentItemId: parent }).text('message', 'child', 'ok', 'replace', 'final');
+    f.observer.close(end);
+    assert.equal(f.rows('file_change')[0]?.status, 'cancelled');
+    assert.equal(f.rows('file_change')[0]?.tool?.detail, 'No native terminal tool result received');
+    assert.equal(f.rows('assistant_message')[0]?.text, 'ok');
+});
+
+test('file change late patchUpdated cannot fill a terminal item but late start can', () => {
+    const f = fixture();
+    f.observer.tool('edit', { semantic: 'file_change', status: 'done' }, {});
+    const changes = [{ path: 'a', kind: { type: 'update' }, diff: 'x' }];
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes }, {});
+    assert.equal(f.rows('file_change')[0]?.fileChange, undefined);
+    f.observer.tool('edit', { semantic: 'file_change', status: 'running', fileChanges: changes }, {});
+    assert.equal(f.rows('file_change')[0]?.fileChange?.changes[0]?.diff, 'x');
+});
+
+test('file change running replacements obey one whole-event budget and completion keeps latest', () => {
+    const f = fixture({ coalesceMs: 0 });
+    const patch = 'x'.repeat(500_000);
+    for (const ref of ['one', 'two']) {
+        f.observer.tool(ref, { semantic: 'file_change', status: 'running', fileChanges: [{ path: ref, kind: { type: 'update' }, diff: patch }] }, {});
+    }
+    const start = f.writes.length;
+    for (let i = 0; i < 30; i++) for (const ref of ['one', 'two']) {
+        f.observer.tool(ref, { semantic: 'file_change', fileChanges: [{ path: ref, kind: { type: 'update' }, diff: patch + i }] }, {});
+    }
+    const runningBytes = f.writes.slice(start).reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify(item)) + 1024, 0);
+    assert.ok(runningBytes <= 8 * 1024 * 1024);
+    for (const ref of ['one', 'two']) f.observer.tool(ref, { status: 'done' }, {});
+    assert.deepEqual(f.rows('file_change').map(item => item.fileChange?.changes[0]?.diff?.slice(-2)), ['29', '29']);
+});
+
+test('file change redacts paths, withholds secrets and handles an unknown payload', () => {
+    const f = fixture();
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: [
+        { path: 'sk-secret-token', kind: { type: 'delete' }, diff: 'ordinary' },
+        { path: 'safe', kind: { type: 'add' }, diff: 'sk-secret-token' },
+    ] }, {});
+    const value = f.rows('file_change')[0]?.fileChange!;
+    assert.equal(value.changes[0]?.path, '[REDACTED]');
+    assert.deepEqual(value.changes.map(change => change.patch), ['withheld', 'withheld']);
+    assert.ok(!JSON.stringify(value).includes('sk-secret-token'));
+    f.observer.tool('other', { semantic: 'file_change', fileChanges: { private: 'do not expose' } }, {});
+    assert.deepEqual(f.rows('file_change')[1]?.fileChange, { schema: 'unknown', changes: [] });
+});
+
+test('file change replacement burst coalesces and commits only its latest value', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture({ coalesceMs: 50 });
+    const changes = (diff: string) => [{ path: 'a', kind: { type: 'update' }, diff }];
+    f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes('first') }, {});
+    for (let i = 0; i < 20; i++) f.observer.tool('edit', { semantic: 'file_change', fileChanges: changes(String(i)) }, {});
+    assert.equal(f.writes.length, 1);
+    t.mock.timers.tick(50);
+    assert.equal(f.writes.length, 2);
+    assert.equal(f.rows('file_change')[0]?.fileChange?.changes[0]?.diff, '19');
+});

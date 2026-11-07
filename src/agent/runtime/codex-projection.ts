@@ -46,7 +46,10 @@ export class CodexProjection {
             this.projection.text('message', id, params['delta'], 'append', phaseOf(effectivePhase));
         } else if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') {
             if (!id) { this.projection.report('missing-id'); return; }
-            if (typeof params['delta'] === 'string') this.projection.tool(id, { delta: params['delta'] });
+            if (typeof params['delta'] === 'string') this.projection.tool(id, { ...(method === 'item/fileChange/outputDelta' ? { semantic: 'file_change' as const } : {}), delta: params['delta'] });
+        } else if (method === 'item/fileChange/patchUpdated') {
+            if (!id) { this.projection.report('missing-id'); return; }
+            this.projection.tool(id, { semantic: 'file_change', fileChanges: params['changes'] });
         } else if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
             if (!id) { this.projection.report('missing-id'); return; }
             const channel = method === 'item/reasoning/textDelta' ? 'text' : 'summary';
@@ -88,6 +91,7 @@ export class CodexProjection {
         const outputValue = item['aggregatedOutput'] ?? item['output'] ?? item['result'];
         this.projection.tool(id, {
             name,
+            ...(type === 'fileChange' ? { semantic: 'file_change' as const, fileChanges: item['changes'] } : {}),
             ...(inputValue !== undefined ? { input: preview(inputValue),
                 inputStructured: type === 'fileChange' || type === 'mcpToolCall' } : {}),
             ...(outputValue !== undefined ? { output: preview(outputValue),
