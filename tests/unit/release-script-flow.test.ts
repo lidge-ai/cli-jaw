@@ -88,6 +88,8 @@ if [ "$1 $2" = 'run list' ]; then
     fi
   elif [ "$workflow" = test.yml ] && [ "$test_successes" -le "\${TESTS_PENDING_CALLS:-0}" ]; then
     if [ "$status" = success ]; then data='[]'; else data='[{"status":"in_progress","conclusion":""}]'; fi
+  elif [ "$workflow" = test.yml ] && [ "\${TESTS_ABSENT:-}" = 1 ]; then
+    data='[]'
   elif [ "\${TESTS_FAIL:-}" = 1 ] && [ "$workflow" = test.yml ]; then
     if [ "$status" = success ]; then data='[]'; else data='[{"status":"completed","conclusion":"failure"}]'; fi
   else data='[{"url":"https://example.invalid/run","status":"completed","conclusion":"success"}]'; fi
@@ -103,13 +105,19 @@ exit 1
     writeFileSync(sleepLog, '');
     writeFileSync(join(bin, 'sleep'), `#!/bin/bash
 printf '%s\\n' "$1" >> "$TEST_SLEEP_LOG"
+# Opt-in real wait, only for the deadline-expiry scenario.
+[ "\${TEST_REAL_SLEEP:-}" != 1 ] || /bin/sleep "$1"
 `, { mode: 0o755 });
     return {
         cwd, origin, log, sleepLog,
         env: {
             ...gitEnv(), PATH: `${bin}:${process.env.PATH}`, TEST_LOG: log, TEST_REQUEST: join(dir, 'request'),
             TEST_HOOK_DONE: join(dir, 'hook-done'), TEST_SLEEP_LOG: sleepLog, STAMP: '20261107000000',
+            // Pin every wait setting: the gate runs inside a real release whose
+            // environment may carry its own values, and they must not leak in.
             JAW_RELEASE_POLL_SECONDS: '0',
+            JAW_RELEASE_CI_DISCOVERY_SECONDS: '1200',
+            JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS: '120',
         } as NodeJS.ProcessEnv,
     };
 }
@@ -277,6 +285,38 @@ test('invalid wait settings stop before any mutation', () => {
             assert.match(result.stderr, new RegExp(name));
             assert.equal(git(f.cwd, ['rev-parse', 'HEAD']), head);
             assert.ok(!existsSync(f.log), `${name}=${value} must stop before calling gh`);
+        }
+    }
+});
+
+test('a CI run that never appears fails once the injected discovery deadline passes', () => {
+    // Real one-second polls, so bash's SECONDS actually advances past the deadline.
+    const f = fixture();
+    const started = Date.now();
+    const result = release(f, [], {
+        TESTS_ABSENT: '1', TEST_REAL_SLEEP: '1', JAW_RELEASE_POLL_SECONDS: '1', JAW_RELEASE_CI_DISCOVERY_SECONDS: '2',
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Tests failed or was not found/);
+    assert.match(result.stderr, /--resume/);
+    assert.ok(sleeps(f).length >= 1 && sleeps(f).every(value => value === '1'));
+    assert.ok(Date.now() - started < 60_000, 'expiry must follow the injected deadline, not the 1200s default');
+    assert.doesNotMatch(readFileSync(f.log, 'utf8'), /workflow run publish.yml/);
+});
+test('wait settings in the caller environment do not leak into the harness', () => {
+    // gate:all runs inside release.sh; a release started with zero deadlines
+    // must not change what these scenarios observe.
+    const saved = { ...process.env };
+    process.env.JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS = '0';
+    process.env.JAW_RELEASE_CI_DISCOVERY_SECONDS = '0';
+    try {
+        const f = fixture();
+        const result = release(f, [], { PUBLISH_APPEARS_AFTER: '2' });
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(publishListings(f), 2);
+    } finally {
+        for (const key of ['JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS', 'JAW_RELEASE_CI_DISCOVERY_SECONDS']) {
+            if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
         }
     }
 });
