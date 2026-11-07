@@ -32,9 +32,11 @@ ordinary grant supplies context for the protected `search.quote` workflow, which
 retains its existing turn, token, expiry, membership and privacy checks. A
 `serverOwnedDelivery` grant also applies the write refusal below. The same
 context supplies the owner of an `interaction.choice`: the choice binds to that
-grant's requester instead of the operator, and is refused with
-`slack_turn_grant_expired` when the grant is revoked, expired or tied to another
-credential or workspace. Without that context, Auto cannot create a choice.
+grant's requester instead of the operator. A grant that is already invalid when the
+request arrives is dropped, which leaves no context; without that context, Auto
+cannot create a choice (`slack_interaction_turn_required`). A grant that is revoked
+or expires during the request, or is tied to another credential or workspace, is
+refused with `slack_turn_grant_expired`.
 Capabilities report `authorization.mode` and keep authorization separate from
 provider availability and verified results.
 
