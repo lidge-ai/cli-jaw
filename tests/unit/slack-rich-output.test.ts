@@ -141,6 +141,18 @@ test('linked and formatted headings retain clickable/code semantics in both inpu
     }
 });
 
+test('one table with blocks after it posts as one message; a further table takes the blocks before it', async () => {
+    const table = { type: 'table', rows: [[{ type: 'raw_text', text: 'cell' }]] };
+    const after = { type: 'section', text: { type: 'mrkdwn', text: 'after' } };
+    const { posts, fetchImpl } = vendor([table, after]);
+    const result = await sendSlackText('xoxb-fixture', target, 'card', { fetchImpl, blocks: [table, after] });
+    assert.equal(result.ok, true);
+    assert.equal(posts.length, 1);
+    assert.deepEqual(posts[0]?.['blocks'], [table, after]);
+    const split = buildSlackBlockPayloads('card', [table, after, table, after]);
+    assert.deepEqual(split.map(part => part.blocks), [[table], [after, table, after]]);
+});
+
 test('the same renderer and readback work across recipients, channel kinds and concurrent sends', async () => {
     const targets: RemoteTarget[] = [
         { channel: 'slack', targetKind: 'user', peerKind: 'direct', targetId: 'D_USER_A' },

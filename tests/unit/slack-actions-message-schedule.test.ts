@@ -167,6 +167,18 @@ test('message update exact content readback detects changed text', async () => {
         }
     } finally { configureRtsOutputStore(undefined); db.close(); }
 });
+test('message update keeps one table with the blocks after it in one payload; a second table is refused', async () => {
+    const db = new Database(':memory:'); configureRtsOutputStore(new RtsOutputStore(db));
+    try {
+        const table = { type: 'table', rows: [[{ type: 'raw_text', text: 'cell' }]] };
+        const after = { type: 'section', text: { type: 'mrkdwn', text: 'after' } };
+        const f = fixture('message.update', method => method === 'chat.update' ? ok({}) : ok({ messages: [{ ts: '1.1', user: 'UBOT', text: 'old', blocks: [] }], has_more: false }));
+        assert.equal((await f.run({ ts: '1.1', text: 'card', blocks: [table, after] })).error, undefined);
+        assert.deepEqual(f.calls.find(c => c.method === 'chat.update')?.body['blocks'], [table, after]);
+        const twice = fixture('message.update', () => { throw new Error('must not call'); });
+        await assert.rejects(async () => twice.run({ ts: '1.1', text: 'card', blocks: [table, after, table] }), /message_update_requires_single_payload/);
+    } finally { configureRtsOutputStore(undefined); db.close(); }
+});
 test('runtime-masked RTS message cannot be updated without surviving markers', async () => {
     const f = fixture('message.update', () => ok({ messages: [{ ts: '1.1', user: 'UBOT', contentExcluded: true, text: '[검색 응답 내용 제외]', blocks: [] }], has_more: false }));
     assert.equal((await f.run({ ts: '1.1', text: 'replacement' })).error, 'rts_update_denied');
