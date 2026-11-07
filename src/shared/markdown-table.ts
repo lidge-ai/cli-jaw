@@ -61,8 +61,29 @@ export function isTableModel(v: unknown): v is TableModel {
         && Array.isArray(m['rows']) && m['rows'].every(row => Array.isArray(row) && row.every(cell));
 }
 
+export function findLinkLabelEnd(raw: string, start: number): number {
+    let depth = 0;
+    let slashes = 0;
+    for (let i = start; i < raw.length; i += 1) {
+        const char = raw[i];
+        if (char === '\\') {
+            slashes += 1;
+            continue;
+        }
+        if (slashes % 2 === 0) {
+            if (char === '[') depth += 1;
+            else if (char === ']') {
+                if (depth === 0) return i;
+                depth -= 1;
+            }
+        }
+        slashes = 0;
+    }
+    return raw.length;
+}
+
 export function inlineLinkMarkdown(label: string, url: string, title?: string | null): string {
-    const destination = !url || /[\s()<>]/.test(url) ? `<${url.replace(/[\\<>]/g, '\\$&')}>` : url;
+    const destination = !url || /[\s()<>\\]/.test(url) ? `<${url.replace(/[\\<>]/g, '\\$&')}>` : url;
     return `[${label}](${destination}${title == null ? '' : ` "${title.replace(/[\\"]/g, '\\$&')}"`})`;
 }
 

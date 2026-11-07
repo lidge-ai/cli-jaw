@@ -1,5 +1,5 @@
 import type { Token, Tokens } from 'marked';
-import { CSV_BOM, TABLE_CSV_FILENAME, escapeMarkdownTableCell, inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv, tableToMarkdown, type TableModel } from '../../../src/shared/markdown-table.js';
+import { CSV_BOM, TABLE_CSV_FILENAME, escapeMarkdownTableCell, findLinkLabelEnd, inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv, tableToMarkdown, type TableModel } from '../../../src/shared/markdown-table.js';
 import { copyText } from '../features/copy-text.js';
 import { t } from '../features/i18n.js';
 import { escapeHtml } from './html.js';
@@ -26,12 +26,8 @@ function serializeTokens(tokens: Token[]): string {
         if ((token.type === 'link' || token.type === 'image') && /^!?\[/.test(token.raw)) {
             let label = token.type === 'link' ? serializeTokens(token.tokens ?? []) : token.text;
             if (token.type === 'image') {
-                let slashes = 0;
-                for (let i = 2; i < token.raw.length; i += 1) {
-                    const char = token.raw[i];
-                    if (char === ']' && slashes % 2 === 0) { label = token.raw.slice(2, i); break; }
-                    slashes = char === '\\' ? slashes + 1 : 0;
-                }
+                const end = findLinkLabelEnd(token.raw, 2);
+                if (end < token.raw.length) label = token.raw.slice(2, end);
             }
             return (token.type === 'image' ? '!' : '') + inlineLinkMarkdown(label, token.href, token.title);
         }

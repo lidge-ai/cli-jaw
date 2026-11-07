@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { marked } from 'marked';
 import {
     CSV_BOM, TABLE_CSV_FILENAME, escapeMarkdownTableCell, guardSpreadsheetFormula,
-    inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv,
+    findLinkLabelEnd, inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv,
     tableToMarkdown, type TableModel,
 } from '../../src/shared/markdown-table.js';
 import {
@@ -69,6 +69,7 @@ test('inline destinations and titles round-trip through marked', () => {
         { url: 'https://example.com/path', title: 'a "quoted" title' },
         { url: 'https://example.com/a>(b)', title: 'angle and parens' },
         { url: 'https://example.com/a b', title: 'space' },
+        { url: 'https://e.com/a\\*b', title: 'backslash punctuation' },
         { url: '', title: 'empty destination' },
         { url: 'https://example.com/<a\\b>', title: 'slash \\ and "quote"' },
     ];
@@ -83,6 +84,18 @@ test('inline destinations and titles round-trip through marked', () => {
         assert.equal(link.href, url, markdown);
         assert.equal(link.title, title, markdown);
     }
+});
+
+test('finds label ends with nested and escaped brackets', () => {
+    const nested = '![A [nested] B][id]';
+    const escaped = String.raw`![A \] B][id]`;
+    const escapedOpen = String.raw`![A \[ B][id]`;
+    const evenSlashes = String.raw`![A \\[nested] B][id]`;
+    const unclosed = '![A [nested] B';
+    for (const raw of [nested, escaped, escapedOpen, evenSlashes]) {
+        assert.equal(findLinkLabelEnd(raw, 2), raw.indexOf('][id]'));
+    }
+    assert.equal(findLinkLabelEnd(unclosed, 2), unclosed.length);
 });
 
 test('fingerprints are stable and change with the rendered table', () => {
