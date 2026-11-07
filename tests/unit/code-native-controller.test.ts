@@ -1672,6 +1672,51 @@ test('Stop while post-attach synchronization is held prevents prompt admission',
 });
 
 
+test('Stop after attach settled retires the queued send locally, without a successor operation', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(), started = deferred<void>(); let held = false;
+    const idle = session('a', { status: 'idle', operationId: null, epoch: 2, sequence: 6 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return response({ ok: true, session: idle, attach: { operationId: 'op', outcome: 'completed' } });
+        if (call.path === '/sessions/a' && call.method === 'GET' && !held) { held = true; started.resolve(); return gate.promise; }
+        return undefined;
+    });
+    f.controller.setInput('queued text'); const sending = f.controller.send(); await started.promise;
+    assert.equal(f.controller.getModel().restoring, true);
+    await f.controller.stop();
+    assert.equal(f.controller.getModel().restoring, false);
+    assert.match(f.controller.getModel().operation.error!, /not sent/);
+    f.snapshots.set('a', snap(idle));
+    gate.resolve(response({ ok: true, ...snap(idle) }));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().input, 'queued text');
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+});
+
+test('a late create response never overwrites a draft the user started in the listed session', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    const pending = deferred<Response>(), posted = deferred<void>();
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { posted.resolve(); return pending.promise; }
+        return undefined;
+    });
+    f.controller.setInput('captured prompt'); const sending = f.controller.send(); await posted.promise;
+    const created = session('created'); f.snapshots.set('created', snap(created));
+    await f.controller.selectSession('created'); f.controller.setInput('typed in the listed session');
+    f.controller.newSession();
+    pending.resolve(response({ ok: true, session: created }, 201));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().selectedId, null);
+    assert.equal(f.controller.getModel().input, 'captured prompt');
+    assert.match(f.controller.getModel().error!, /already has its own draft/);
+    await f.controller.selectSession('created');
+    assert.equal(f.controller.getModel().input, 'typed in the listed session');
+});
+
 test('text edited while create is pending survives a lost response and reconnect', async t => {
     const f = fixture(t); await f.controller.refresh(); const pending = deferred<Response>();
     let key = '', posted: Record<string, unknown> = {};

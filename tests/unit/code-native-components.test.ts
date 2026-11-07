@@ -1589,3 +1589,12 @@ test('workbench enables Stop during a starting attach', bounded, async t => {
     const stop = button(h.container, 'Stop current turn'); assert.equal(stop.disabled, false);
     await click(stop); assert.equal(stops, 1);
 });
+
+test('workbench keeps Stop for a restore whose attach settled while its send is queued', bounded, async t => {
+    const h = await surface(t); let stops = 0;
+    const c = model({ session: session({ status: 'idle', operationId: null, turnId: null }), busy: false, restoring: true,
+        operation: { kind: 'resuming', error: null }, async stop() { stops++; } });
+    await h.render(createElement(CodeWorkbench, { controller: c, endpointKey: 'local' }));
+    const stop = button(h.container, 'Stop current turn'); assert.equal(stop.disabled, false);
+    await click(stop); assert.equal(stops, 1);
+});

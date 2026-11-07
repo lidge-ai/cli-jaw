@@ -27,7 +27,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const dismiss = useCallback((id: string) => setToasts(current => dismissCodeToast(current, id)), []);
     const archived = c.session?.archivedAt != null;
     const stopping = c.session?.status === 'stopping' || c.operation.kind === 'stopping';
-    const busy = c.busy || c.working || stopping || c.session?.status === 'starting' || c.session?.status === 'streaming';
+    const busy = c.busy || c.working || stopping || !!c.restoring || c.session?.status === 'starting' || c.session?.status === 'streaming';
     const provider = c.catalog?.providers.find(p => p.id === c.selection.provider);
     const unknownSend = c.operation.kind === 'unknown-send';
     // A streaming Claude turn takes one follow-up beside Stop; any other busy session offers Stop only.
@@ -36,7 +36,8 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
         && !!c.selection.cwd.trim() && !!c.selection.model.trim()
         // A suspended or recoverably failed session can be sent to: send attaches it first.
         && (c.selectedId === null || (c.synced && (c.session?.status === 'idle' || (!!c.session && codeCanResume(c.session))))));
-    const canStop = codeCanStop(c.session) && busy && !stopping;
+    // A restore whose attach already settled still owns its queued send; Stop retires it locally.
+    const canStop = (codeCanStop(c.session) || !!c.restoring) && busy && !stopping;
     const canResume = !!c.session && codeCanResume(c.session) && c.synced && !c.pending && !unknownSend;
     const error = c.operation.error || c.error || (actionError?.key === sessionKey ? actionError.message : null);
     const rollbackRows = codeCanRollback(c.session, c.synced, c.operation.kind === 'idle' && !c.steering)

@@ -46,6 +46,10 @@ const newer = (incoming: CodeSessionInfo, current?: CodeSessionInfo | null) => !
  */
 const spent = (status: CodePromptReceipt['status']): boolean => status === 'failed' || status === 'cancelled';
 
+/** A session draft the user is working on, whitespace included; recovery and late creates never overwrite it. */
+const meaningfulDraft = (draft: CodeDraft | undefined): boolean => !!draft && (draft.input.length > 0 || !!draft.retry
+    || !!draft.stopTarget || !!draft.steer || draft.operation.kind !== 'idle');
+
 /**
  * Did the transcript already settle the turn this send belongs to?
  *
@@ -407,7 +411,8 @@ export class CodeController {
             resendRequired: !!draft.retry?.resend, resendReason: draft.retry?.resend ? draft.retry.resendReason ?? null : null,
             permissionOperations: { ...draft.permissionOperations }, hasMoreSessions: this.moreSessions,
             hasOlderHistory: detail?.hasOlder ?? false, filter: this.filter,
-            creationUnknown: id === null && draft.createUnknown, startAnotherSession: this.startAnotherSession,
+            creationUnknown: id === null && draft.createUnknown, restoring: id !== null && operation.kind === 'resuming' && !operation.error,
+            startAnotherSession: this.startAnotherSession,
             newSession: this.newSession, selectSession: this.selectSession, setInput: this.setInput,
             setSelection: this.setSelection, pickWorkspace: this.pickWorkspace, send: this.send,
             retrySameSend: this.retrySameSend, stop: this.stop, resume: this.resume, rollbackSession: this.rollbackSession, rename: this.rename,
@@ -593,9 +598,8 @@ export class CodeController {
             if (!current()) return;
             this.accept(found);
             const existing = this.book.sessions.get(found.sessionId);
-            const meaningful = existing && (existing.input.length > 0 || existing.retry || existing.stopTarget || existing.steer || existing.operation.kind !== 'idle');
             draft.creationKey = null; draft.createUnknown = false;
-            if (meaningful) {
+            if (meaningfulDraft(existing)) {
                 draft.operation = { kind: 'idle', error: 'The original session was found and already has its own draft. This text stays here as a new draft; sending it creates another session.' };
             } else {
                 draft.operation = { kind: 'idle', error: null };
@@ -852,6 +856,13 @@ export class CodeController {
                 const created = await this.client.createSession({ ...selection, clientCreationKey: draft.creationKey });
                 draft.creationKey = null;
                 id = created.sessionId;
+                // The session was listed before this response arrived; a draft the user already
+                // started there stays, and ownership of the captured text is no longer clear.
+                if (meaningfulDraft(this.book.sessions.get(id)) && this.book.sessions.get(id) !== draft) {
+                    this.accept(created);
+                    draft.operation = { kind: 'idle', error: 'The new session already has its own draft, so this text stayed here and was not sent. Sending it creates another session.' };
+                    this.notify(); this.scheduleIndex(); return;
+                }
                 this.book.sessions.set(id, draft);
                 if (this.book.fresh === draft) this.book.fresh = createCodeDraft(selection);
                 if (this.book.navigation === navigation && this.book.selectedId === null) {
@@ -959,8 +970,18 @@ export class CodeController {
     }
     stop = async (): Promise<void> => {
         const id = this.book.selectedId, session = this.info(id);
-        if (!id || !session || !codeCanStop(session)) return;
+        if (!id) return;
         const draft = this.draft(id);
+        if (!session || !codeCanStop(session)) {
+            // The attach already settled (or has not published its operation yet): only the queued
+            // send is still pending, and it is local. Retiring its token keeps it from being sent.
+            if (draft.operation.kind === 'resuming' && !draft.operation.error) {
+                draft.attachToken++;
+                draft.operation = { kind: 'idle', error: 'Stopped before sending. Your text was not sent.' };
+                this.notify();
+            }
+            return;
+        }
         const previous = draft.stopTarget;
         if (previous && (previous.outcome !== 'retryable' || !this.model.synced
             || (previous.operationId ? previous.operationId !== codeOperationId(session) : previous.turnId !== session.turnId) || previous.epoch !== session.epoch)) return;
