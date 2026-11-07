@@ -16,6 +16,19 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+# Every wall-clock wait is injectable: the release gate runs this script under
+# arbitrary host load, and its test harness must not depend on real time.
+# Values are plain decimal (no leading zero, at most 999999) because bash
+# arithmetic reads 08 as invalid octal and silently wraps oversized numbers.
+# They are validated here, before any read of git state or remote mutation.
+poll_seconds="${JAW_RELEASE_POLL_SECONDS:-10}"
+ci_discovery_seconds="${JAW_RELEASE_CI_DISCOVERY_SECONDS:-1200}"
+publish_discovery_seconds="${JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS:-120}"
+for setting in "JAW_RELEASE_POLL_SECONDS=$poll_seconds" "JAW_RELEASE_CI_DISCOVERY_SECONDS=$ci_discovery_seconds" "JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS=$publish_discovery_seconds"; do
+  [[ "${setting#*=}" =~ ^(0|[1-9][0-9]{0,5})$ ]] || { echo "ERROR: ${setting%%=*} must be a decimal number of seconds between 0 and 999999" >&2; exit 2; }
+done
+# Publish discovery keeps its historical 5s cadence unless polling is faster.
+discovery_poll_seconds=$(( poll_seconds < 5 ? poll_seconds : 5 ))
 for tool in git gh node npm jq; do command -v "$tool" >/dev/null || { echo "ERROR: $tool required" >&2; exit 1; }; done
 # A clean, current dev checkout keeps unrelated work and stale bases out of releases.
 [ -z "$(git status --porcelain)" ] || { echo 'ERROR: dirty worktree' >&2; exit 1; }
@@ -109,7 +122,7 @@ hint() {
 }
 # Bound discovery, not job duration; cancelled runs can coexist with live replacements.
 wait_for_run() {
-  local workflow="$1" label="$2" url states live failed deadline=$((SECONDS + 1200))
+  local workflow="$1" label="$2" url states live failed deadline=$((SECONDS + ci_discovery_seconds))
   local -a filters=()
   [ "$workflow" != test.yml ] || filters=(--branch dev --event push)
   while :; do
@@ -119,7 +132,7 @@ wait_for_run() {
     live="$(printf '%s\n' "$states" | grep -cE '^(queued|in_progress|waiting|requested|pending)' || true)"
     failed="$(printf '%s\n' "$states" | grep -m 1 -E '^completed (failure|cancelled|timed_out|startup_failure|action_required)$' || true)"
     if [ "$live" -eq 0 ] && { [ -n "$failed" ] || [ "$SECONDS" -ge "$deadline" ]; }; then echo "ERROR: $label failed or was not found: $failed" >&2; return 1; fi
-    sleep 10
+    sleep "$poll_seconds"
   done
 }
 wait_for_run test.yml Tests || { hint; exit 1; }
@@ -145,11 +158,14 @@ remote_tag="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
 request_id="$(node -e 'console.log(require("node:crypto").randomUUID())')"
 gh workflow run publish.yml --ref "$tag" -f "version=$version" -f "tag=$npm_tag" -f "expected-sha=$release_sha" -f dry-run=false -f create-github-release=true -f "request-id=$request_id" || { hint; exit 1; }
 # A unique request id distinguishes this run from another dispatch of the same SHA.
-deadline=$((SECONDS + 120))
+# Query at least once even with a zero deadline, then poll until it passes.
+deadline=$((SECONDS + publish_discovery_seconds))
 run_id=''
-while [ -z "$run_id" ] && [ "$SECONDS" -lt "$deadline" ]; do
+while :; do
   run_id="$(gh run list --workflow publish.yml --event workflow_dispatch --limit 100 --json databaseId,displayTitle,url --jq ".[] | select(.displayTitle | contains(\"$request_id\")) | .databaseId" | head -1)"
-  [ -n "$run_id" ] || sleep 5
+  [ -z "$run_id" ] || break
+  [ "$SECONDS" -lt "$deadline" ] || break
+  sleep "$discovery_poll_seconds"
 done
 [ -n "$run_id" ] || { echo 'ERROR: publish run not found' >&2; hint; exit 1; }
 # A pending publish may be replaced, so wait for this run and report its outcome.
@@ -161,6 +177,6 @@ while :; do
     [ "$conclusion" = success ] || { echo "ERROR: publish run $run_id concluded $conclusion" >&2; hint; exit 1; }
     break
   fi
-  sleep 10
+  sleep "$poll_seconds"
 done
 echo "Published cli-jaw@$version; npm install -g cli-jaw@$npm_tag"

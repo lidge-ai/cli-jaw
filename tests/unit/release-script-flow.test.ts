@@ -76,8 +76,18 @@ if [ "$1 $2" = 'run list' ]; then
   if [ -n "\${TEST_GH_HOOK:-}" ] && [ ! -f "$TEST_HOOK_DONE" ]; then touch "$TEST_HOOK_DONE"; bash "$TEST_GH_HOOK"; fi
   query=''; workflow=''; status=''
   while [ "$#" -gt 0 ]; do case "$1" in --workflow) workflow="$2"; shift;; --jq) query="$2"; shift;; --status) status="$2"; shift;; esac; shift; done
+  # Counters come from the call log, which already holds this call.
+  publish_listings="$(grep -c '^run list --workflow publish.yml' "$TEST_LOG" || true)"
+  test_successes="$(grep -c '^run list --workflow test.yml .*--status success' "$TEST_LOG" || true)"
   if [ "$workflow" = publish.yml ]; then
-    id="$(cat "$TEST_REQUEST")"; data="$(jq -nc --arg id "$id" '[{databaseId:1,displayTitle:"other"},{databaseId:42,displayTitle:$id}]')"
+    id="$(cat "$TEST_REQUEST")"
+    if [ "$publish_listings" -lt "\${PUBLISH_APPEARS_AFTER:-1}" ]; then
+      data='[{"databaseId":1,"displayTitle":"other"}]'
+    else
+      data="$(jq -nc --arg id "$id" '[{databaseId:1,displayTitle:"other"},{databaseId:42,displayTitle:$id}]')"
+    fi
+  elif [ "$workflow" = test.yml ] && [ "$test_successes" -le "\${TESTS_PENDING_CALLS:-0}" ]; then
+    if [ "$status" = success ]; then data='[]'; else data='[{"status":"in_progress","conclusion":""}]'; fi
   elif [ "\${TESTS_FAIL:-}" = 1 ] && [ "$workflow" = test.yml ]; then
     if [ "$status" = success ]; then data='[]'; else data='[{"status":"completed","conclusion":"failure"}]'; fi
   else data='[{"url":"https://example.invalid/run","status":"completed","conclusion":"success"}]'; fi
@@ -86,12 +96,39 @@ if [ "$1 $2" = 'run list' ]; then
 fi
 exit 1
 `, { mode: 0o755 });
-    return { cwd, origin, log, env: { ...gitEnv(), PATH: `${bin}:${process.env.PATH}`, TEST_LOG: log, TEST_REQUEST: join(dir, 'request'), TEST_HOOK_DONE: join(dir, 'hook-done'), STAMP: '20261107000000' } };
+    // release.sh waits with the external sleep command. The stub records each
+    // requested interval and returns at once, so no scenario waits on the wall
+    // clock and the interval itself is observable.
+    const sleepLog = join(dir, 'sleeps');
+    writeFileSync(sleepLog, '');
+    writeFileSync(join(bin, 'sleep'), `#!/bin/bash
+printf '%s\\n' "$1" >> "$TEST_SLEEP_LOG"
+`, { mode: 0o755 });
+    return {
+        cwd, origin, log, sleepLog,
+        env: {
+            ...gitEnv(), PATH: `${bin}:${process.env.PATH}`, TEST_LOG: log, TEST_REQUEST: join(dir, 'request'),
+            TEST_HOOK_DONE: join(dir, 'hook-done'), TEST_SLEEP_LOG: sleepLog, STAMP: '20261107000000',
+            JAW_RELEASE_POLL_SECONDS: '0',
+        } as NodeJS.ProcessEnv,
+    };
 }
 function release(f: ReturnType<typeof fixture>, args: string[] = [], extra: NodeJS.ProcessEnv = {}) {
+    const env: NodeJS.ProcessEnv = { ...f.env, ...extra };
+    for (const [key, value] of Object.entries(extra)) {
+        if (value === undefined) delete env[key];
+    }
+    // Generous because a loaded release host runs dozens of git/node children
+    // per scenario; no scenario waits on real time (sleep is stubbed).
     return spawnSync('bash', ['scripts/release.sh', ...args], {
-        cwd: f.cwd, env: { ...f.env, ...extra }, encoding: 'utf8', timeout: 20000,
+        cwd: f.cwd, env, encoding: 'utf8', timeout: 120_000,
     });
+}
+function sleeps(f: ReturnType<typeof fixture>) {
+    return readFileSync(f.sleepLog, 'utf8').split('\n').filter(Boolean);
+}
+function publishListings(f: ReturnType<typeof fixture>) {
+    return readFileSync(f.log, 'utf8').split('\n').filter(line => line.startsWith('run list --workflow publish.yml')).length;
 }
 const identityRepo = tempRepo();
 const originalUserName = localName(identityRepo);
@@ -198,4 +235,48 @@ test('a branch other than dev is refused', () => {
     const f = fixture();
     git(f.cwd, ['checkout', '-b', 'feature']);
     assert.notEqual(release(f).status, 0);
+});
+
+test('CI polling uses the injected interval, defaulting to ten seconds', () => {
+    const injected = fixture();
+    const fast = release(injected, [], { TESTS_PENDING_CALLS: '2', JAW_RELEASE_POLL_SECONDS: '7' });
+    assert.equal(fast.status, 0, fast.stderr);
+    assert.deepEqual(sleeps(injected), ['7', '7'], 'two pending CI lookups must wait the injected interval');
+
+    const defaulted = fixture();
+    const slow = release(defaulted, [], { TESTS_PENDING_CALLS: '2', JAW_RELEASE_POLL_SECONDS: undefined });
+    assert.equal(slow.status, 0, slow.stderr);
+    assert.deepEqual(sleeps(defaulted), ['10', '10']);
+});
+test('publish discovery queries once and stops at the injected deadline', () => {
+    // The publish run appears on the second listing. A zero deadline must stop
+    // after the first, without sleeping; the old loop slept and found it.
+    const f = fixture();
+    const result = release(f, [], { PUBLISH_APPEARS_AFTER: '2', JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS: '0' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /publish run not found/);
+    assert.match(result.stderr, /gh workflow run publish.yml --ref v1\.2\.4/);
+    assert.equal(publishListings(f), 1);
+    assert.deepEqual(sleeps(f), []);
+});
+test('publish discovery polls at most every five seconds until the run appears', () => {
+    const f = fixture();
+    const result = release(f, [], { PUBLISH_APPEARS_AFTER: '2', JAW_RELEASE_POLL_SECONDS: '10' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(publishListings(f), 2);
+    assert.deepEqual(sleeps(f), ['5']);
+});
+test('invalid wait settings stop before any mutation', () => {
+    for (const name of ['JAW_RELEASE_POLL_SECONDS', 'JAW_RELEASE_CI_DISCOVERY_SECONDS', 'JAW_RELEASE_PUBLISH_DISCOVERY_SECONDS']) {
+        // 08 is invalid octal in bash arithmetic; the oversized value would wrap.
+        for (const value of ['abc', '08', '1e3', '-1', '9999999999999999999']) {
+            const f = fixture();
+            const head = git(f.cwd, ['rev-parse', 'HEAD']);
+            const result = release(f, [], { [name]: value });
+            assert.equal(result.status, 2, `${name}=${value}: ${result.stderr}`);
+            assert.match(result.stderr, new RegExp(name));
+            assert.equal(git(f.cwd, ['rev-parse', 'HEAD']), head);
+            assert.ok(!existsSync(f.log), `${name}=${value} must stop before calling gh`);
+        }
+    }
 });

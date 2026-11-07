@@ -186,6 +186,7 @@ const GATES = {
                 'tests/unit/release-script-flow.test.ts',
                 'tests/unit/verify-npm-provenance.test.ts',
                 'tests/unit/release-gates.test.ts',
+                'tests/unit/pty-spawn-helper-mode.test.ts',
                 'tests/unit/release-scripts-contract.test.ts',
                 // Guards the release/build scripts themselves, so it belongs in
                 // the suite gate:all actually runs rather than npm test only.
