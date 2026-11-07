@@ -79,8 +79,44 @@ const ALLOWED_KEY_VALUES = new Set([
     'PageDown',
 ]);
 
-let targets: EmbeddedBrowserTarget[] = [];
+// #773 lease: Electron main issues {authorityId, ownerId, generation, mountSeq};
+// the renderer adds snapshotSeq. Per authority the server keeps the highest
+// accepted tuple and a revoked floor, so late publishes and late cleanups from
+// an older document or mount can never overwrite or clear a newer one.
+type Mount = { authorityId: string; ownerId: string; generation: number; mountSeq: number };
+type Tuple = { generation: number; mountSeq: number; snapshotSeq: number };
+type Authority = { highest: Tuple | null; floor: Tuple | null; minGuestEpoch: number; tombstones: Map<number, number> };
+type Entry = { target: EmbeddedBrowserTarget; webContentsId: number };
+type Current = Mount & Tuple & { entries: Entry[]; selectedPort: number | null };
+const authorities = new Map<string, Authority>();
+let current: Current | null = null;
 let lastPushAt = 0;
+const positive = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
+const nonnegative = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const idValid = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
+function readMount(value: unknown, query = false): Mount | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const v = value as Record<string, unknown>;
+    const generation = query ? Number(v['generation']) : v['generation'];
+    const mountSeq = query ? Number(v['mountSeq']) : v['mountSeq'];
+    if (!idValid(v['authorityId']) || !idValid(v['ownerId']) || !positive(generation) || !positive(mountSeq)) return null;
+    return { authorityId: v['authorityId'], ownerId: v['ownerId'], generation, mountSeq };
+}
+function sameMount(a: Mount | null, b: Mount | null): boolean {
+    return !!a && !!b && a.authorityId === b.authorityId && a.ownerId === b.ownerId && a.generation === b.generation && a.mountSeq === b.mountSeq;
+}
+function compare(a: Tuple, b: Tuple): number {
+    return Math.sign(a.generation - b.generation) || Math.sign(a.mountSeq - b.mountSeq) || Math.sign(a.snapshotSeq - b.snapshotSeq);
+}
+function authorityFor(id: string): Authority | null {
+    let state = authorities.get(id);
+    if (!state && authorities.size < 16) {
+        state = { highest: null, floor: null, minGuestEpoch: 0, tombstones: new Map() };
+        authorities.set(id, state);
+    }
+    return state ?? null;
+}
+const unavailable = (): CommandResult => ({ ok: false, code: 'target_unavailable', error: 'target is no longer available in Manager Browser' });
 
 function sanitizeText(value: unknown): string {
     if (typeof value !== 'string') return '';
@@ -110,7 +146,7 @@ function normalizeTarget(raw: unknown, now: string): EmbeddedBrowserTarget | nul
 
 function registryTarget(targetId: string): EmbeddedBrowserTarget | null {
     if (lastPushAt > 0 && Date.now() - lastPushAt > STALE_AFTER_MS) return null;
-    return targets.find(t => t.targetId === targetId) ?? null;
+    return current?.entries.find(entry => entry.target.targetId === targetId)?.target ?? null;
 }
 
 // --- v2.1: reconcile shares into an instance's runtime-context ---
@@ -159,7 +195,8 @@ async function reconcileInstanceShares(
             continue;
         }
         // Unshared, navigated, or permissions changed: drop and re-add below.
-        await fetch(`${base}/${encodeURIComponent(entry.id)}`, { method: 'DELETE' }).catch(() => undefined);
+        const response = await fetch(`${base}/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(`runtime-context delete failed: ${response.status}`);
         removed += 1;
     }
     for (const [label, target] of wanted) {
@@ -172,9 +209,52 @@ async function reconcileInstanceShares(
                 expiresAt: new Date(Date.now() + SHARE_TTL_MS).toISOString(),
             }),
         });
-        if (response.ok) added += 1;
+        if (!response.ok) throw new Error(`runtime-context post failed: ${response.status}`);
+        added += 1;
     }
     return { added, removed };
+}
+
+type PortState = { running: Promise<{ added: number; removed: number }> | null; dirty: boolean; retryCount: number; timer?: NodeJS.Timeout; managerPort: number };
+const portStates = new Map<number, PortState>();
+function desiredShares(port: number): Array<{ targetId: string; url: string; title: string }> {
+    if (!current || current.selectedPort !== port || (lastPushAt > 0 && Date.now() - lastPushAt > STALE_AFTER_MS)) return [];
+    return current.entries.map(({ target: { targetId, url, title } }) => ({ targetId, url, title }));
+}
+function dirtyAllPorts(): void {
+    for (const [port, state] of portStates) void dirtyPort(port, state.managerPort).catch(() => undefined);
+}
+function dirtyPort(port: number, managerPort: number): Promise<{ added: number; removed: number }> {
+    let state = portStates.get(port);
+    if (!state) { state = { running: null, dirty: false, retryCount: 0, managerPort }; portStates.set(port, state); }
+    state.dirty = true;
+    if (state.timer) { clearTimeout(state.timer); delete state.timer; }
+    if (state.running) return state.running;
+    const owned = state;
+    const run = async (): Promise<{ added: number; removed: number }> => {
+        let total = { added: 0, removed: 0 };
+        try {
+            while (owned.dirty && portStates.get(port) === owned) {
+                owned.dirty = false;
+                const desired = desiredShares(port);
+                const result = await reconcileInstanceShares(port, desired, owned.managerPort);
+                total = { added: total.added + result.added, removed: total.removed + result.removed };
+                owned.retryCount = 0;
+                if (!owned.dirty && desired.length === 0 && portStates.get(port) === owned) portStates.delete(port);
+            }
+            return total;
+        } catch (error) {
+            owned.dirty = true;
+            if (portStates.get(port) === owned && owned.retryCount < 3) {
+                const delay = 1000 * (2 ** owned.retryCount++);
+                owned.timer = setTimeout(() => { delete owned.timer; void dirtyPort(port, owned.managerPort).catch(() => undefined); }, delay);
+                owned.timer.unref?.();
+            }
+            throw error;
+        } finally { owned.running = null; }
+    };
+    owned.running = run();
+    return owned.running;
 }
 
 // --- v3/v4/v5: renderer-relayed command queue ---
@@ -187,7 +267,8 @@ type ActPayload =
     | { kind: 'scroll'; x: number; y: number; deltaY: number }
     | { kind: 'key'; key: string };
 
-type PendingCommand = {
+type PendingCommand = Mount & {
+    webContentsId: number;
     id: string;
     targetId: string;
     kind: CommandKind;
@@ -207,7 +288,7 @@ type CommandResult =
     | { ok: true; screenshot: { path: string; width: number; height: number; url: string; title: string; capturedAt: string } }
     | { ok: true; snapshot: SnapshotResultNode[] }
     | { ok: true; action: { kind: ActPayload['kind']; targetId: string } }
-    | { ok: false; error: string };
+    | { ok: false; error: string; code?: 'target_unavailable' };
 
 type SnapshotResultNode = {
     tag: string;
@@ -244,18 +325,18 @@ function waitForCommandSignal(waitMs: number): Promise<void> {
     });
 }
 
-function takeLeasableCommands(): Array<{ id: string; targetId: string; kind: CommandKind; act?: ActPayload; settleToken: string }> {
+function takeLeasableCommands(mount: Mount) {
     const now = Date.now();
     // Requeue leases whose renderer disappeared before posting a result.
     for (const command of pendingCommands) {
         if (command.leased && now - command.leasedAt > LEASE_EXPIRY_MS) command.leased = false;
     }
-    const available = pendingCommands.filter(command => !command.leased);
+    const available = pendingCommands.filter(command => !command.leased && sameMount(command, mount));
     for (const command of available) {
         command.leased = true;
         command.leasedAt = now;
     }
-    return available.map(({ id, targetId, kind, act, settleToken }) => ({ id, targetId, kind, ...(act ? { act } : {}), settleToken }));
+    return available.map(({ id, targetId, webContentsId, kind, act, settleToken, authorityId, ownerId, generation, mountSeq }) => ({ id, targetId, webContentsId, kind, ...(act ? { act } : {}), settleToken, lease: { authorityId, ownerId, generation, mountSeq } }));
 }
 
 function ownKeys(input: Record<string, unknown>): string[] {
@@ -410,65 +491,127 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         return Number.isInteger(value) && value >= scanFrom && value < scanFrom + scanCount;
     }
 
-    // ---- v2: read-only shared-target registry ----
+    const rendererGate = (req: Request, res: Response, next: NextFunction): void => {
+        if (!requireDesktopRenderer(req, res)) return;
+        next();
+    };
+    const smallJson = express.json({ limit: '64kb' });
 
     app.post('/api/manager/embedded-browser/targets', requireAuth, (req: Request, res: Response) => {
         if (!requireDesktopRenderer(req, res)) return;
-        const body = req.body as { targets?: unknown } | undefined;
-        const rawTargets = Array.isArray(body?.targets) ? body.targets : [];
-        const now = new Date().toISOString();
-        targets = rawTargets
-            .map(raw => normalizeTarget(raw, now))
-            .filter((t): t is EmbeddedBrowserTarget => t !== null)
-            .slice(0, MAX_TARGETS);
-        lastPushAt = Date.now();
-        // A push is the authoritative visibility snapshot: fail queued commands
-        // whose target is no longer visible to the selected instance.
-        for (const command of [...pendingCommands]) {
-            const target = targets.find(t => t.targetId === command.targetId);
-            if (!target) {
-                settleCommand(command.id, { ok: false, error: 'target is no longer available in Manager Browser' });
-            }
+        const body = req.body as { lease?: unknown; guestEpoch?: unknown; targets?: unknown } | undefined;
+        const mount = readMount(body?.lease);
+        const snapshotSeq = (body?.lease as Record<string, unknown> | undefined)?.['snapshotSeq'];
+        if (!mount || !positive(snapshotSeq) || !nonnegative(body?.guestEpoch)) {
+            res.status(400).json({ ok: false, error: 'lease required' }); return;
         }
-        res.json({ ok: true, count: targets.length });
+        const state = authorityFor(mount.authorityId);
+        if (!state) { res.status(409).json({ ok: false, stale: true, reason: 'authority-capacity' }); return; }
+        const tuple = { generation: mount.generation, mountSeq: mount.mountSeq, snapshotSeq };
+        const reason = state.floor && compare(tuple, state.floor) <= 0 ? 'revoked'
+            : state.highest && compare(tuple, state.highest) <= 0 ? 'superseded'
+            : body.guestEpoch < state.minGuestEpoch ? 'guest-epoch' : null;
+        if (reason) { res.status(409).json({ ok: false, stale: true, reason }); return; }
+        if (tuple.generation > (state.highest?.generation ?? 0)) {
+            for (const [id, generation] of state.tombstones) if (generation < tuple.generation) state.tombstones.delete(id);
+        }
+        state.highest = tuple;
+        const rawTargets = Array.isArray(body.targets) ? body.targets : [];
+        const now = new Date().toISOString();
+        const entries: Entry[] = [];
+        for (const raw of rawTargets) {
+            const webContentsId = (raw as { webContentsId?: unknown } | null)?.webContentsId;
+            const target = normalizeTarget(raw, now);
+            if (target && positive(webContentsId) && !state.tombstones.has(webContentsId)) entries.push({ target, webContentsId });
+            if (entries.length === MAX_TARGETS) break;
+        }
+        const selectedPort = sameMount(current, mount) ? current!.selectedPort : null;
+        current = { ...mount, snapshotSeq, entries, selectedPort };
+        lastPushAt = Date.now();
+        for (const command of [...pendingCommands]) {
+            if (!sameMount(command, current) || !entries.some(entry => entry.target.targetId === command.targetId && entry.webContentsId === command.webContentsId)) settleCommand(command.id, unavailable());
+        }
+        dirtyAllPorts();
+        res.json({ ok: true, count: entries.length });
+    });
+
+    app.post('/api/manager/embedded-browser/lease/revoke', requireAuth, rendererGate, smallJson, (req: Request, res: Response) => {
+        const body = req.body as Record<string, unknown> | undefined;
+        if (!body || !idValid(body['authorityId']) || !idValid(body['ownerId']) || !positive(body['generation']) ||
+            (body['reason'] !== undefined && typeof body['reason'] !== 'string')) {
+            res.status(400).json({ ok: false, error: 'invalid revoke' }); return;
+        }
+        const generation = body['generation'];
+        const guest = body['guestEpoch'] !== undefined || body['webContentsIds'] !== undefined;
+        if (guest ? (!nonnegative(body['guestEpoch']) || !Array.isArray(body['webContentsIds']) || body['webContentsIds'].length < 1 || body['webContentsIds'].length > 64 || !body['webContentsIds'].every(positive) || body['mountSeq'] !== undefined)
+            : (body['mountSeq'] !== undefined && !positive(body['mountSeq']))) {
+            res.status(400).json({ ok: false, error: 'invalid revoke' }); return;
+        }
+        const state = authorityFor(body['authorityId']);
+        if (!state) { res.json({ ok: true, applied: false, cleared: false }); return; }
+        let floor: Tuple | null = null;
+        let cleared = false;
+        if (guest) {
+            state.minGuestEpoch = Math.max(state.minGuestEpoch, body['guestEpoch'] as number);
+            const ids = body['webContentsIds'] as number[];
+            if (!state.highest || generation >= state.highest.generation) {
+                for (const id of ids) state.tombstones.set(id, generation);
+                if (state.tombstones.size > 256) {
+                    floor = state.highest ? { ...state.highest, snapshotSeq: Number.MAX_SAFE_INTEGER } : { generation, mountSeq: Number.MAX_SAFE_INTEGER, snapshotSeq: Number.MAX_SAFE_INTEGER };
+                    state.tombstones.clear();
+                }
+            }
+            if (current?.authorityId === body['authorityId']) {
+                current.entries = current.entries.filter(entry => !ids.includes(entry.webContentsId));
+                for (const command of [...pendingCommands]) if (command.authorityId === body['authorityId'] && ids.includes(command.webContentsId)) settleCommand(command.id, unavailable());
+                dirtyAllPorts();
+            }
+        } else {
+            floor = { generation, mountSeq: (body['mountSeq'] as number | undefined) ?? Number.MAX_SAFE_INTEGER, snapshotSeq: Number.MAX_SAFE_INTEGER };
+        }
+        if (floor && (!state.floor || compare(floor, state.floor) > 0)) state.floor = floor;
+        if (state.floor && current?.authorityId === body['authorityId'] && compare(current, state.floor) <= 0) {
+            current = null; cleared = true;
+            for (const command of [...pendingCommands]) settleCommand(command.id, unavailable());
+            dirtyAllPorts();
+        }
+        res.json({ ok: true, applied: true, cleared });
     });
 
     app.get('/api/manager/embedded-browser/targets', requireAuth, (_req: Request, res: Response) => {
         const stale = lastPushAt > 0 && Date.now() - lastPushAt > STALE_AFTER_MS;
-        res.json({
-            ok: true,
-            targets: stale ? [] : targets,
-            stale,
-            lastPushAt: lastPushAt > 0 ? new Date(lastPushAt).toISOString() : null,
-        });
+        res.json({ ok: true, targets: stale ? [] : (current?.entries.map(entry => entry.target) ?? []), stale, lastPushAt: lastPushAt > 0 ? new Date(lastPushAt).toISOString() : null });
     });
-
-    // ---- v2.1: deliver shares to the selected instance's runtime-context ----
 
     app.post('/api/dashboard/instances/:port/embedded-browser/targets', requireAuth, async (req: Request, res: Response) => {
         if (!requireDesktopRenderer(req, res)) return;
         const portValue = Number(req.params['port']);
-        if (!isValidInstancePort(portValue)) {
-            res.status(400).json({ ok: false, error: 'port out of configured scan range' });
-            return;
+        if (!isValidInstancePort(portValue)) { res.status(400).json({ ok: false, error: 'port out of configured scan range' }); return; }
+        // The relay is a TRIGGER only: what a port receives is derived from the
+        // server's own registry and the current mount's selected port, never
+        // from this body, so a stale or spoofed body cannot inject targets and
+        // a withdraw (selected:false) always reconciles that port to empty.
+        const body = req.body as { lease?: unknown; selected?: unknown } | undefined;
+        const mount = readMount(body?.lease);
+        if (!mount || typeof body?.selected !== 'boolean') { res.status(400).json({ ok: false, error: 'lease required' }); return; }
+        if (body.selected && sameMount(current, mount)) {
+            const previous = current!.selectedPort;
+            current!.selectedPort = portValue;
+            if (previous !== null && previous !== portValue) dirtyPort(previous, managerPort);
         }
-        // The relay is a TRIGGER only: the delivered list is derived from the
-        // server's own registry (last renderer push), never from this request
-        // body — a stale or spoofed body cannot inject unshared targets.
-        const stale = lastPushAt > 0 && Date.now() - lastPushAt > STALE_AFTER_MS;
-        const shared = stale ? [] : targets.map(({ targetId, url, title }) => ({ targetId, url, title }));
         try {
-            const summary = await reconcileInstanceShares(portValue, shared, managerPort);
+            const summary = await dirtyPort(portValue, managerPort);
             res.json({ ok: true, ...summary });
-        } catch (error) {
-            res.status(502).json({ ok: false, error: (error as Error).message });
-        }
+        } catch (error) { res.status(502).json({ ok: false, error: (error as Error).message }); }
     });
 
     // ---- v3: screenshot command queue ----
 
     function enqueueCommand(kind: CommandKind, targetId: string, act?: ActPayload): Promise<CommandResult> {
+        const entry = current!.entries.find(item => item.target.targetId === targetId)!;
+        const { authorityId, ownerId, generation, mountSeq } = current!;
         const command: PendingCommand = {
+            authorityId, ownerId, generation, mountSeq, webContentsId: entry.webContentsId,
             id: `cmd-${Date.now()}-${++commandCounter}`,
             targetId,
             kind,
@@ -496,7 +639,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             return;
         }
         const result = await enqueueCommand('screenshot', targetId);
-        res.status(result.ok ? 200 : 504).json(result);
+        res.status(result.ok ? 200 : result.code === 'target_unavailable' ? 410 : 504).json(result);
     });
 
     // v5: bounded accessibility/DOM snapshot of a shared target (read-only).
@@ -507,7 +650,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             return;
         }
         const result = await enqueueCommand('snapshot', targetId);
-        res.status(result.ok ? 200 : 504).json(result);
+        res.status(result.ok ? 200 : result.code === 'target_unavailable' ? 410 : 504).json(result);
     });
 
     // v4: interactive action on an agent-visible target. Payload parsing remains
@@ -526,16 +669,18 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             return;
         }
         const result = await enqueueCommand('act', targetId, parsed.act);
-        res.status(result.ok ? 200 : 504).json(result);
+        res.status(result.ok ? 200 : result.code === 'target_unavailable' ? 410 : 504).json(result);
     });
 
     app.get('/api/manager/embedded-browser/commands', requireAuth, async (req: Request, res: Response) => {
         if (!requireDesktopRenderer(req, res)) return;
+        const mount = readMount(req.query, true);
+        if (!mount) { res.json({ ok: true, commands: [] }); return; }
         const waitMs = Math.min(Number(req.query['wait']) || 0, COMMAND_POLL_MAX_WAIT_MS);
-        let commands = takeLeasableCommands();
+        let commands = takeLeasableCommands(mount);
         if (commands.length === 0 && waitMs > 0) {
             await waitForCommandSignal(waitMs);
-            commands = takeLeasableCommands();
+            commands = takeLeasableCommands(mount);
         }
         res.json({ ok: true, commands });
     });
@@ -546,10 +691,6 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
     // Gate BEFORE the 24mb parser so non-renderer requests never buffer a
     // large body; then verify the command + settle token BEFORE decoding or
     // writing anything to disk.
-    const rendererGate = (req: Request, res: Response, next: NextFunction): void => {
-        if (!requireDesktopRenderer(req, res)) return;
-        next();
-    };
     app.post('/api/manager/embedded-browser/commands/:id/result', requireAuth, rendererGate, resultJsonParser, (req: Request, res: Response) => {
         const id = String(req.params['id'] ?? '');
         const body = req.body as {
@@ -563,6 +704,10 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         if (!pending || pending.settleToken !== body?.settleToken) {
             res.status(404).json({ ok: false, error: 'unknown command or bad settle token' });
             return;
+        }
+        if (!sameMount(pending, current)) {
+            settleCommand(id, unavailable());
+            res.json({ ok: false, error: 'stale lease' }); return;
         }
         let result: CommandResult;
         if (pending.kind === 'screenshot' && body?.ok === true && typeof body.screenshot?.dataUrl === 'string') {
@@ -592,4 +737,15 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         const settled = settleCommand(id, result);
         res.json({ ok: settled });
     });
+}
+
+export function __resetEmbeddedBrowserStateForTests(): void {
+    current = null;
+    lastPushAt = 0;
+    authorities.clear();
+    for (const command of [...pendingCommands]) settleCommand(command.id, unavailable());
+    notifyPollWaiters();
+    for (const state of portStates.values()) if (state.timer) clearTimeout(state.timer);
+    portStates.clear();
+    commandCounter = 0;
 }

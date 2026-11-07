@@ -51,6 +51,7 @@ import { registerTerminalIpc, cleanupTerminals } from './lib/terminal/index.js';
 import { registerDiffIpc } from './lib/git/ipc.js';
 import { registerFolderIpc, cleanupFolderWatchers } from './lib/folder/ipc.js';
 import { registerBrowserIpc, markOwnedEmbeddedBrowserWebContents } from './lib/browser/ipc.js';
+import { TargetLeaseAuthority, createLeaseRevokePoster, attachManagerWindowLease } from './lib/browser/lease-notifier.js';
 import { registerClipboardIpc } from './lib/clipboard/ipc.js';
 import { registerPermissionDiagnosticsIpc } from './lib/permission-diagnostics/ipc.js';
 import { broadcastFullscreenChanged, registerWindowIpc } from './lib/window/ipc.js';
@@ -236,6 +237,7 @@ type DesktopKeyboardInput = {
 };
 
 const ringBuffer = new RingBuffer(1024 * 1024);
+const targetLeaseAuthority = new TargetLeaseAuthority({ post: createLeaseRevokePoster({ managerUrl: () => MANAGER_URL, token: ELECTRON_RENDERER_TOKEN }), log: line => ringBuffer.append(line) });
 let managerProcess: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let rendererCrashReloads: number[] = [];
@@ -459,6 +461,7 @@ async function prepareApplicationShutdown(reason: string): Promise<boolean> {
     } catch {
       // best-effort — quit must not block on cookie flush
     }
+    try { await targetLeaseAuthority.flush(1000); } catch { /* best effort during shutdown */ }
     const child = managerProcess;
     if (!QA_POLICY) managerProcess = null;
     try {
@@ -716,6 +719,7 @@ async function bootstrap(): Promise<void> {
     registerDiffIpc();
     registerFolderIpc(() => mainWindow);
     registerBrowserIpc({
+      leaseAuthority: targetLeaseAuthority,
       getManagerWindow: () => mainWindow,
       normalizeEmbeddedBrowserUrl: normalizeAllowedEmbeddedBrowserUrl,
       isAllowedEmbeddedBrowserUrl,
@@ -1473,6 +1477,7 @@ async function createWindow(): Promise<void> {
       devTools: DEV_TOOLS_ENABLED,
     },
   });
+  attachManagerWindowLease(targetLeaseAuthority, mainWindow.webContents.id, mainWindow.webContents, mainWindow);
   const owningWindow = mainWindow;
   const userAgent = mainWindow.webContents.getUserAgent();
   if (!userAgent.includes(DESKTOP_USER_AGENT_TOKEN)) {

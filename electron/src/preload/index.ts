@@ -1,6 +1,25 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { getLatestMetrics, setupMetricsBridge } from './metrics.js';
 
+// #773: Electron main issues the Manager Browser target lease identity. This
+// document asks exactly once, at preload start; the channel is never exposed
+// to the page, so a dead document cannot mint a newer generation. Main
+// answers null for non-Manager windows and subframes.
+function getTargetLeaseDocument(): Promise<{ authorityId: string; ownerId: string; generation: number } | null> {
+  try {
+    return ipcRenderer.invoke('browser:target-lease-document').then((value: unknown) => {
+      if (!value || typeof value !== 'object') return null;
+      const doc = value as Record<string, unknown>;
+      if (typeof doc.authorityId !== 'string' || typeof doc.ownerId !== 'string') return null;
+      if (typeof doc.generation !== 'number' || !Number.isSafeInteger(doc.generation) || doc.generation <= 0) return null;
+      return { authorityId: doc.authorityId, ownerId: doc.ownerId, generation: doc.generation };
+    }).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+const targetLeaseDocument = getTargetLeaseDocument();
+
 const DESKTOP_IDENTITY = {
   name: 'cli-jaw-desktop',
   electron: true,
@@ -172,6 +191,11 @@ contextBridge.exposeInMainWorld('cliJawDesktop', {
     openDashboard: () => ipcRenderer.send('tray:open-dashboard'),
   },
   browser: {
+    acquireTargetLease: async () => {
+      const doc = await targetLeaseDocument;
+      return doc ? ipcRenderer.invoke('browser:target-lease-mount', doc) : { ok: false, error: 'lease unavailable' };
+    },
+    releaseTargetLease: (mount: unknown) => ipcRenderer.invoke('browser:target-lease-release', mount),
     onOpenUrl: (cb: (payload: { url: string; disposition: 'current-tab' | 'new-tab' }) => void) => {
       const handler = (_e: unknown, payload: { url: string; disposition: 'current-tab' | 'new-tab' }) => cb(payload);
       ipcRenderer.on('browser:open-url', handler);
