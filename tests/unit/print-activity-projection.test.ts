@@ -148,7 +148,8 @@ test('preview budget exhaustion still terminalizes a running tool beside exactly
     assert.equal(24000 - projection.diagnostics().previewChars, 10);
     projection.close({ kind: 'turn-end', status: 'done', finalText: 'final' });
     const events = allEvents(runId); const tools = events.filter(e => e.kind === 'tool');
-    assert.equal(tools.at(-1)?.status, 'stopped');
+    assert.equal(tools.at(-1)?.status, 'stopped'); assert.equal(tools.at(-1)?.name, 'cmd');
+    assert.equal(tools.at(-1)?.detail, undefined, 'status-only fallback, not a trimmed synthetic detail');
     assert.equal(events.filter(e => e.kind === 'turn-end').length, 1);
     const end = events.at(-1); assert.ok(end?.kind === 'turn-end'); assert.equal(end.finalText, 'final');
 });
