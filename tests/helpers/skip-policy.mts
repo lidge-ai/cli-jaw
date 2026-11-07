@@ -42,6 +42,11 @@ export const SKIP_POLICY: SkipEntry[] = [
         policy: 'platform',
         why: 'The FIFO case needs mkfifo, which Windows does not have. It proves a named pipe at SKILL.md is refused before a blocking open; it runs on the Linux and macOS lanes and skips only on win32.',
     },
+    {
+        file: 'tests/unit/pty-spawn-helper-mode.test.ts',
+        policy: 'platform',
+        why: 'The mode cases assert POSIX execute bits and run the electron postinstall through bash; Windows has neither, and the script is a no-op there (covered by the platform argument case, which always runs). Runs on the Linux and macOS lanes and skips only on win32.',
+    },
     // ── integration ──────────────────────────────────────────────────────────
     {
         file: 'tests/integration/api-smoke.test.ts',
