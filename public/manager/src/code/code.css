@@ -803,7 +803,7 @@
 }
 /* A file change lists its files like the sections of a tool call: same inset,
    mono paths, and a Review that shows the captured patch in the output pane style. */
-.code-file-list { display: grid; gap: 6px; margin: 8px 10px 0; }
+.code-file-list { display: grid; gap: 6px; margin: 8px 10px; }
 .code-file-entry { min-width: 0; }
 .code-file-path { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .code-file-kind { display: inline-block; min-width: 3.5em; margin-right: 6px; color: var(--text-dim); font-family: var(--font-sans, inherit);
