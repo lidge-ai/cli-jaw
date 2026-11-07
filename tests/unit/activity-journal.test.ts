@@ -68,6 +68,26 @@ test('real journal loss supersedes preview loss and cannot resume recording', ()
     assert.equal(text(c, 'cannot resume'), null);
 });
 
+test('real byte cap seals after preview degradation and refuses a smaller record that would fit', t => {
+    t.mock.method(console, 'warn', () => {});
+    const scratch = started();
+    const before = readActivityControl(scratch.runId)!.state.bytes;
+    assert.ok(text(scratch, 's'));
+    const afterSmall = readActivityControl(scratch.runId)!.state.bytes;
+    assert.ok(text(scratch, 'L'.repeat(1000)));
+    const afterLarge = readActivityControl(scratch.runId)!.state.bytes;
+    const S = afterSmall - before, L = afterLarge - afterSmall;
+    const c = started(); const projection = new RuntimeProjection(c);
+    projection.report('truncated'); assert.equal(page(c)?.loss, 'projection_degraded');
+    const control = readActivityControl(c.runId)!;
+    const remaining = Math.floor((S + L) / 2);
+    assert.ok(S < remaining && remaining < L);
+    writeActivityControl(c.runId, control.seq, { ...control.state, bytes: ACTIVITY_RUN_BYTES - remaining });
+    const n = count(c.runId);
+    assert.equal(text(c, 'L'.repeat(1000)), null); assert.equal(page(c)?.loss, 'run_limit');
+    assert.equal(text(c, 's'), null); assert.equal(count(c.runId), n);
+});
+
 test('an injected in-memory recorder cannot mutate a real journal sharing its identity', t => {
     t.mock.method(console, 'warn', () => {});
     const c = started(); const before = readActivityControl(c.runId);

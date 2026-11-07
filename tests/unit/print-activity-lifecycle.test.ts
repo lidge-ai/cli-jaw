@@ -51,7 +51,7 @@ function fixture() {
         rows: () => db.prepare("SELECT content,trace_run_id FROM messages WHERE session_id=? AND role='assistant'").all(sessionId) as { content: string; trace_run_id: string }[] };
 }
 
-for (const fault of ['none', 'append', 'terminal', 'link', 'finalize'] as const) {
+for (const fault of ['none', 'append', 'terminal', 'link', 'finalize', 'preview'] as const) {
     test(`accepted print parser → real lifecycle → journal; ${fault} failure never changes one final send`, async t => {
         let sends = 0;
         t.mock.method(globalThis, 'fetch', async () => {
@@ -77,7 +77,7 @@ for (const fault of ['none', 'append', 'terminal', 'link', 'finalize'] as const)
                     BEGIN SELECT RAISE(ABORT,'print fixture fault'); END`);
                 trigger = true;
             }
-            extractFromEvent('codex', { type: 'item.completed', item: { type: 'agent_message', text: 'prelude', channel: 'commentary' } }, f.ctx, 'fixture');
+            extractFromEvent('codex', { type: 'item.completed', item: { type: 'agent_message', text: fault === 'preview' ? 'p'.repeat(4000) : 'prelude', channel: 'commentary' } }, f.ctx, 'fixture');
             extractFromEvent('codex', { type: 'item.completed', item: { type: 'agent_message', text: 'selected answer' } }, f.ctx, 'fixture');
             await assert.doesNotReject(handleAgentExit(f.params));
             await Promise.all(pending);
@@ -91,10 +91,16 @@ for (const fault of ['none', 'append', 'terminal', 'link', 'finalize'] as const)
             const p = readActivityPage({ runId: f.runId, sessionId: f.sessionId, after: 0, limit: 40 })!;
             if (fault === 'append' || fault === 'terminal') {
                 assert.equal(p.incomplete, true); assert.equal(p.events.some(e => e.kind === 'turn-end'), false);
-                assert.equal(events.filter(e => e.event === 'agent_runtime_gap').length, 1);
+                assert.equal(events.filter(e => e.event === 'agent_runtime_gap' && e.data['runId'] === f.runId).length, 1);
             } else {
                 const end = p.events.at(-1); assert.ok(end?.kind === 'turn-end'); assert.equal(end.finalText, 'selected answer');
-                assert.ok(p.events.some(e => e.kind === 'message' && e.phase === 'commentary' && e.text === 'prelude'));
+                assert.ok(p.events.some(e => e.kind === 'message' && e.phase === 'commentary' && e.text === (fault === 'preview' ? 'p'.repeat(3000) : 'prelude')));
+                if (fault === 'preview') {
+                    assert.ok(p.events.some(e => e.kind === 'message' && e.text === 'selected answer'));
+                    assert.equal(p.events.filter(e => e.kind === 'turn-end').length, 1);
+                    assert.equal(p.loss, 'projection_degraded'); assert.equal(p.incomplete, true);
+                    assert.equal(events.filter(e => e.event === 'agent_runtime_gap' && e.data['runId'] === f.runId).length, 1);
+                }
                 const compat = events.findIndex(e => e.event === 'agent_done');
                 const canonical = events.findIndex(e => e.event === 'agent_runtime' && e.data['kind'] === 'turn-end');
                 assert.ok(compat >= 0 && canonical > compat, 'existing compatibility-first ordering preserved');

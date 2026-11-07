@@ -252,16 +252,18 @@ export class RuntimeProjection {
 
     close(end: RuntimeEnd): void {
         if (this.ended || this.closingTranscript) return;
+        this.closingTranscript = true;
         if (this.observer && !this.recordingFailed) {
-            this.closingTranscript = true;
             try { this.observer.close(end); }
             catch { this.report('persistence'); }
         }
         for (const [key, item] of this.items) {
-            if (item.kind === 'tool' && item.status === 'running') this.save(key, {
-                ...item, status: end.status === 'error' ? 'error' : 'stopped',
-                detail: item.detail || 'No native terminal tool result received',
-            });
+            if (item.kind !== 'tool' || item.status !== 'running') continue;
+            const status = end.status === 'error' ? 'error' : 'stopped';
+            this.save(key, { ...item, status, detail: item.detail || 'No native terminal tool result received' });
+            // The synthetic detail may not fit; retain existing fields while closing the tool.
+            const current = this.items.get(key);
+            if (current?.kind === 'tool' && current.status === 'running') this.save(key, { ...item, status }, true);
         }
         this.ended = true;
         this.emit(end);
