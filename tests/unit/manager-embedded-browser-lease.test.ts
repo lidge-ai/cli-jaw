@@ -230,6 +230,49 @@ test('app-quit also waits for dirty ports left by an earlier revoke', async () =
     assert.equal(remote.get(7101)?.length, 0);
 });
 
+test('app-quit retries an exhausted dirty port after the same document was closed', async () => {
+    await publish(); await relay(7101);
+    deleteFailures = 4;
+    const normalFetch = globalThis.fetch;
+    let failedDeletes = 0;
+    let exhausted!: () => void;
+    const retriesExhausted = new Promise<void>(resolve => { exhausted = resolve; });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await normalFetch(input, init);
+        if (init?.method === 'DELETE' && !response.ok && ++failedDeletes === 4) exhausted();
+        return response;
+    }) as typeof fetch;
+    const doc = { authorityId: 'authority', ownerId: 'owner', generation: 1 };
+    const closed = await revoke({ ...doc, reason: 'window-closed' });
+    assert.equal(closed.body.cleared, true);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            retriesExhausted,
+            new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('retries did not exhaust')), 15000); }),
+        ]);
+    } finally { if (timeout) clearTimeout(timeout); }
+    await tick();
+    assert.equal(deleteFailures, 0);
+    assert.equal(remote.get(7101)?.length, 1);
+    assert.deepEqual((await list()).body.targets, []);
+
+    let release!: () => void; let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextDelete = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
+    let responded = false;
+    const quit = revoke({ ...doc, reason: 'app-quit' }, () => { responded = true; });
+    await entered;
+    try {
+        assert.equal(responded, false);
+        assert.equal(remote.get(7101)?.length, 1);
+    } finally { release(); }
+    const result = await quit;
+    assert.equal(result.code, 200);
+    assert.equal(result.body.cleared, false);
+    assert.equal(remote.get(7101)?.length, 0);
+});
+
 test('app-quit retries a failed port while another port remains blocked', async () => {
     await publish(); await relay(7101);
     let release!: () => void; let started!: () => void;

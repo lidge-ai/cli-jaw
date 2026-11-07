@@ -68,6 +68,33 @@ test('window and guest revokes carry only current identity; closed window refuse
   assert.equal((await a.acquireMount(1, doc)).ok, false);
 });
 
+test('quit revokes the last document of every open and closed window once', async () => {
+  const calls: LeaseRevokeBody[] = [];
+  const a = new TargetLeaseAuthority({ post: async body => { calls.push(body); return 200; } });
+  a.beginDocument(1);
+  const closed = a.beginDocument(1);
+  a.beginDocument(2);
+  const open = a.beginDocument(2);
+  a.closeWindow(1, 'window-closed');
+  await a.flush(100);
+  calls.length = 0;
+
+  a.revokeForQuit();
+  await a.flush(100);
+  assert.deepEqual(calls, [
+    { ...closed, reason: 'app-quit' },
+    { ...open, reason: 'app-quit' },
+  ]);
+});
+
+test('quit with no document posts no revokes', async () => {
+  const calls: LeaseRevokeBody[] = [];
+  const a = new TargetLeaseAuthority({ post: async body => { calls.push(body); return 200; } });
+  a.revokeForQuit();
+  await a.flush(100);
+  assert.deepEqual(calls, []);
+});
+
 test('only latest unreleased mount is active', async () => {
   const a = new TargetLeaseAuthority({ post: async () => 200 });
   const doc = a.beginDocument(1);

@@ -91,6 +91,11 @@ export class TargetLeaseAuthority {
     if (!state || state.closed) return;
     this.enqueue({ authorityId: this.authorityId, ownerId: state.ownerId, generation: state.generation, reason });
   }
+  revokeForQuit(): void {
+    for (const state of this.windows.values()) {
+      if (state.generation > 0) this.enqueue({ authorityId: this.authorityId, ownerId: state.ownerId, generation: state.generation, reason: 'app-quit' });
+    }
+  }
   closeWindow(windowKey: number, reason: string): void {
     const state = this.windows.get(windowKey);
     if (!state || state.closed) return;
