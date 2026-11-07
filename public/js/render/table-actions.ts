@@ -1,4 +1,4 @@
-import type { Token, Tokens } from 'marked';
+import { Lexer, type Token, type Tokens } from 'marked';
 import { CSV_BOM, TABLE_CSV_FILENAME, escapeMarkdownTableCell, findLinkLabelEnd, inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv, tableToMarkdown, type TableModel } from '../../../src/shared/markdown-table.js';
 import { copyText } from '../features/copy-text.js';
 import { t } from '../features/i18n.js';
@@ -13,18 +13,12 @@ function decodeEntities(value: string): string {
         return entityDecoder!.value;
     });
 }
-// marked keeps an image label's raw text as alt; mdast gives plain text. Match
-// mdast: a code span keeps its content literally (one wrapping space pair
-// trimmed), and character references outside code spans decode once.
-function imageAltText(raw: string): string {
-    let out = '';
-    let last = 0;
-    for (const match of raw.matchAll(/(`+)([\s\S]*?[^`])\1(?!`)/g)) {
-        const index = match.index ?? 0;
-        out += decodeEntities(raw.slice(last, index)) + match[2]!.replace(/^ ([\s\S]*) $/, '$1');
-        last = index + match[0].length;
-    }
-    return out + decodeEntities(raw.slice(last));
+// marked keeps an image label as raw text, while mdast gives the label's plain
+// text. Lex the source label as inline Markdown and walk it like any other cell,
+// so escapes, code spans and character references resolve exactly once.
+function imageAltText(token: Tokens.Image): string {
+    const end = findLinkLabelEnd(token.raw, 2);
+    return end < token.raw.length ? textTokens(Lexer.lexInline(token.raw.slice(2, end))) : decodeEntities(token.text);
 }
 function restoreMath(value: string, blocks: MathBlock[]): string {
     return value.replace(/\x00MATH-(\d+)\x00/g, (raw, index: string) => {
@@ -59,7 +53,7 @@ function textTokens(tokens: Token[]): string {
             if (tokens[index + 1]?.type === 'strong' || tokens[index + 1]?.type === 'em') value = value.replace(/\u200b$/, '');
             return value;
         }
-        if (token.type === 'image') return imageAltText(token.text);
+        if (token.type === 'image') return imageAltText(token as Tokens.Image);
         if (token.type === 'escape' || token.type === 'codespan') return token.text;
         if (token.type === 'strong' || token.type === 'em' || token.type === 'del' || token.type === 'link') {
             const value = textTokens(token.tokens ?? []);
