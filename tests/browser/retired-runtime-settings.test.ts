@@ -193,6 +193,8 @@ test('retired saved runtime stays explicit in real Manager settings until user e
                     await page.getByRole('button', { name: 'Instance settings', exact: true }).click();
                     await page.getByRole('status').filter({ hasText: 'Preview is off. Turn it on from the header to mount the iframe.' }).waitFor({ state: 'visible' });
                     assert.equal(await page.locator('.workbench-settings-page').count(), 0);
+                    assert.equal(await page.locator('.settings-full-page').count(), 0);
+                    assert.equal(await page.getByRole('button', { name: 'Dashboard settings', exact: true }).getAttribute('aria-pressed'), 'false');
                     assert.equal(await page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Agent', exact: true }).count(), 0);
                     assertReadOnly(await control(manifest, 'state'), browserWrites);
                     await page.goto(`${manifest.managerUrl}i/${manifest.workerPort}/dist/settings/index.html`, { waitUntil: 'domcontentloaded' });

@@ -345,12 +345,30 @@ layoutTest('manager preview iframe survives Workbench tab changes', async (t) =>
 
     await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     await page.locator('.settings-full-page').waitFor({ state: 'detached' });
+    const afterBack = await page.evaluate(() => {
+        const host = document.querySelector('[data-preview-host="persistent"]');
+        const frame = document.querySelector('iframe.preview-frame');
+        return {
+            selected: document.querySelector('#workbench-tab-preview')?.getAttribute('aria-selected'),
+            hostHidden: host?.hasAttribute('hidden') ?? null,
+            surfaceHidden: host?.closest('.workspace-surface')?.hasAttribute('hidden') ?? null,
+            sameFrame: frame === (window as Window & { __jawPreviewFrame?: Element | null }).__jawPreviewFrame,
+            src: frame?.getAttribute('src') || null,
+        };
+    });
+    assert.equal(afterBack.selected, 'true', 'Back returns to the Preview tab');
+    assert.equal(afterBack.hostHidden, false, 'Back shows the retained Preview host');
+    assert.equal(afterBack.surfaceHidden, false, 'Back shows the WorkspaceSurface containing Preview');
+    assert.equal(afterBack.sameFrame, true, 'Back retains the same preview iframe');
+    assert.equal(afterBack.src, before.src, 'Back retains the preview source');
+    const afterBackDocument = await workerDocument(page);
+    assert.deepEqual(afterBackDocument, beforeDocument, 'Back retains the worker document');
+
     await page.getByRole('tab', { name: 'Overview', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#workbench-tab-overview')?.getAttribute('aria-selected') === 'true');
     assert.equal(await page.locator('[data-preview-host]').evaluate(el => el.hasAttribute('hidden')), true,
-        'Back returns to Overview with Preview still hidden');
-    const afterBackDocument = await workerDocument(page);
-    assert.deepEqual(afterBackDocument, beforeDocument, 'Overview after Back retains the worker document');
+        'Overview hides the retained Preview');
+    assert.deepEqual(await workerDocument(page), beforeDocument, 'Overview retains the worker document');
     await page.getByRole('tab', { name: 'Preview', exact: true }).click();
 
     const after = await page.evaluate(() => {
