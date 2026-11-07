@@ -59,7 +59,9 @@ esac
             cwd: directory,
             env: { ...process.env, PATH: `${directory}${delimiter}${process.env['PATH'] || '/usr/bin:/bin'}`,
                 STATE_FILE: state, CALL_FILE: calls, SMOKE_MODE: mode,
-                READY_AFTER: String(readyAfter), EXPECTED_VERSION: version },
+                READY_AFTER: String(readyAfter), EXPECTED_VERSION: version,
+                // The step reads the version from its env: block, as in the workflow.
+                RELEASE_VERSION: version },
             encoding: 'utf8', timeout: 15000,
         });
         assert.equal(result.error, undefined, 'the workflow shell must execute and terminate');

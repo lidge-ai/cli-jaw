@@ -195,3 +195,45 @@ test('fresh publish fails when the registry is unavailable', () => {
     const { cwd, env } = monotonicFixture();
     assert.notEqual(run('Assert dist-tag monotonic', cwd, { ...env, REGISTRY_FAIL: '1' }).status, 0);
 });
+
+test('real publish re-reads the release tag immediately before npm publish', () => {
+    // npm publish is irreversible; a tag moved after dispatch must stop it.
+    const cwd = tempRepo();
+    writeFileSync(join(cwd, 'file'), 'a');
+    git(cwd, ['add', 'file']);
+    git(cwd, ['commit', '-m', 'release']);
+    const releaseSha = git(cwd, ['rev-parse', 'HEAD']);
+    writeFileSync(join(cwd, 'file'), 'b');
+    git(cwd, ['add', 'file']);
+    git(cwd, ['commit', '-m', 'other']);
+    const otherSha = git(cwd, ['rev-parse', 'HEAD']);
+    const origin = join(cwd, 'origin.git');
+    git(cwd, ['init', '--bare', origin]);
+    git(cwd, ['remote', 'add', 'origin', origin]);
+    const bin = join(cwd, 'bin');
+    mkdirSync(bin);
+    const log = join(cwd, 'npm-calls');
+    writeFileSync(join(bin, 'npm'), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$LOG"\n`, { mode: 0o755 });
+    const env = {
+        GITHUB_SHA: releaseSha, RELEASE_VERSION: '1.2.3', RELEASE_TAG: 'latest',
+        DRY_RUN: 'false', EXISTS: 'false', LOG: log, PATH: `${bin}:${process.env.PATH}`,
+    };
+
+    git(cwd, ['push', 'origin', `${otherSha}:refs/tags/v1.2.3`]);
+    writeFileSync(log, '');
+    const moved = run('Publish or dry-run', cwd, env);
+    assert.notEqual(moved.status, 0, 'a moved tag must stop the publish');
+    assert.match(moved.stdout + moved.stderr, /no longer points at/);
+    assert.equal(readFileSync(log, 'utf8'), '', 'npm publish must not run for a moved tag');
+
+    git(cwd, ['push', 'origin', ':refs/tags/v1.2.3']);
+    const deleted = run('Publish or dry-run', cwd, env);
+    assert.notEqual(deleted.status, 0, 'a deleted tag must stop the publish');
+    assert.equal(readFileSync(log, 'utf8'), '');
+
+    git(cwd, ['push', 'origin', `${releaseSha}:refs/tags/v1.2.3`]);
+    const ok = run('Publish or dry-run', cwd, env);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(readFileSync(log, 'utf8'), /^publish --tag latest --access public --provenance$/m);
+});
+

@@ -222,7 +222,7 @@ jobs:
           if [ "$status" -eq 0 ] && [ -n "$value" ]; then
             [ "$value" = "$RELEASE_VERSION" ] || { echo '::error::registry version mismatch'; exit 1; }
             echo 'exists=true' >> "$GITHUB_OUTPUT"
-          elif [ "$status" -ne 0 ] && grep -q E404 "$err"; then
+          elif [ "$status" -ne 0 ] && grep -Eq 'E404|npm (error|ERR!) 404' "$err"; then
             echo 'exists=false' >> "$GITHUB_OUTPUT"
           else
             cat "$err" >&2; echo '::error::registry lookup failed'; exit 1
@@ -256,6 +256,7 @@ jobs:
 
       - name: Publish or dry-run
         env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           DRY_RUN: ${{ steps.release.outputs.dry-run }}
           EXISTS: ${{ steps.registry.outputs.exists }}
@@ -266,6 +267,11 @@ jobs:
           elif [ "$EXISTS" = true ]; then
             echo '::notice::package already published; recovery continues'
           else
+            # npm publish cannot be undone. The tag was verified when the run
+            # started, but it can be moved or deleted while the build runs, so
+            # re-read it here: the version must still name the commit we built.
+            remote_sha="$(git ls-remote origin "refs/tags/v$RELEASE_VERSION" | cut -f1)"
+            [ "$remote_sha" = "$GITHUB_SHA" ] || { echo "::error::release tag v$RELEASE_VERSION no longer points at $GITHUB_SHA; refusing to publish"; exit 1; }
             npm publish --tag "$RELEASE_TAG" --access public --provenance
           fi
 
@@ -375,7 +381,7 @@ jobs:
               npm dist-tag ls cli-jaw
               exit 0
             fi
-            if [ "$status" -eq 0 ] || ! grep -q E404 "$err"; then cat "$err" >&2; echo '::error::registry lookup failed'; exit 1; fi
+            if [ "$status" -eq 0 ] || ! grep -Eq 'E404|npm (error|ERR!) 404' "$err"; then cat "$err" >&2; echo '::error::registry lookup failed'; exit 1; fi
             echo "::notice::package not visible yet ($attempt/90)"
             sleep 10
           done

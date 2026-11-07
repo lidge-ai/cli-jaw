@@ -5,12 +5,11 @@ import { spawnSync } from 'node:child_process';
 
 export function gitEnv(): NodeJS.ProcessEnv {
     const env = { ...process.env };
-    const cleared = [
-        'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR',
-        'GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT',
-    ];
+    // Drop every inherited GIT_* variable (repository pointers, config
+    // parameters such as GIT_CONFIG_PARAMETERS, templates, hooks); the
+    // fixture sets only what it needs below.
     for (const key of Object.keys(env)) {
-        if (cleared.includes(key) || /^GIT_CONFIG_(KEY|VALUE)_/.test(key)) {
+        if (key.startsWith('GIT_')) {
             delete env[key];
         }
     }

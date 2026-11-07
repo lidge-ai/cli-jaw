@@ -38,7 +38,7 @@ npm_view() {
   status=0
   value="$(npm view "$@" 2>"$err")" || status=$?
   if [ "$status" -eq 0 ] && [ -n "$value" ]; then rm -f "$err"; printf '%s' "$value"; return 0; fi
-  if [ "$status" -ne 0 ] && grep -q 'E404' "$err"; then rm -f "$err"; return 4; fi
+  if [ "$status" -ne 0 ] && grep -Eq 'E404|npm (error|ERR!) 404' "$err"; then rm -f "$err"; return 4; fi
   cat "$err" >&2; rm -f "$err"; echo 'ERROR: npm registry lookup failed' >&2; return 1
 }
 load_tags() {
