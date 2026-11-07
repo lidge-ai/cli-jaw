@@ -81,7 +81,6 @@ export function useCodeTranscriptVirtualRows(args: {
     useEffect(() => {
         measuredKeys.current.clear();
         virtualizer.measure();
-        args.scrollElementRef.current?.querySelectorAll<HTMLElement>('[data-code-transcript-idx]').forEach(node => virtualizer.measureElement(node));
     }, [virtualizer, args.resetKey]);
 
     useEffect(() => () => { virtualizerRef.current = null; }, []);
