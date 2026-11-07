@@ -92,7 +92,7 @@ export class TargetLeaseAuthority {
     this.enqueue({ authorityId: this.authorityId, ownerId: state.ownerId, generation: state.generation, reason });
   }
   revokeForQuit(): void {
-    for (const state of this.windows.values()) {
+    for (const state of [...this.windows.values()].sort((a, b) => b.generation - a.generation)) {
       if (state.generation > 0) this.enqueue({ authorityId: this.authorityId, ownerId: state.ownerId, generation: state.generation, reason: 'app-quit' });
     }
   }

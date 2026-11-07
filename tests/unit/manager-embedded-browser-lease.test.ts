@@ -142,6 +142,41 @@ test('mount replacement settles pending command; polling requires and filters le
     assert.equal(result.code, 404);
 });
 
+test('renderer unavailable result settles a pending screenshot as 410 before guest revoke', async () => {
+    await publish();
+    const pending = action('screenshot'); await tick();
+    const command = (await poll(mount())).body.commands[0];
+    const bad = await call('POST', '/api/manager/embedded-browser/commands/:id/result', { params: { id: command.id }, body: { ok: false, code: 'target_unavailable', settleToken: 'wrong' } });
+    assert.equal(bad.code, 404);
+    const result = await call('POST', '/api/manager/embedded-browser/commands/:id/result', { params: { id: command.id }, body: { ok: false, code: 'target_unavailable', settleToken: command.settleToken } });
+    assert.equal(result.body.ok, true);
+    const answer = await pending;
+    assert.equal(answer.code, 410);
+    assert.equal(answer.body.code, 'target_unavailable');
+    assert.equal((await list()).body.targets.length, 1);
+});
+
+test('dirty port recovers after five failures without another state change', async () => {
+    await publish(); await relay(7101);
+    deleteFailures = 5;
+    const originalSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    globalThis.setTimeout = ((callback: (...args: any[]) => void, ms?: number, ...args: any[]) => {
+        if (ms !== undefined && [1000, 2000, 4000, 8000, 16000, 30000].includes(ms)) {
+            delays.push(ms);
+            return originalSetTimeout(callback, 10, ...args);
+        }
+        return originalSetTimeout(callback, ms, ...args);
+    }) as typeof setTimeout;
+    try {
+        await revoke(mount());
+        await new Promise(resolve => originalSetTimeout(resolve, 200));
+        assert.equal(deleteFailures, 0, 'all five failures must be retried');
+        assert.equal(remote.get(7101)?.length, 0);
+        assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
+    } finally { globalThis.setTimeout = originalSetTimeout; }
+});
+
 test('relay withdraws previous port and never re-delivers on selected:false', async () => {
     await publish();
     assert.equal((await relay(7101)).body.added, 1);

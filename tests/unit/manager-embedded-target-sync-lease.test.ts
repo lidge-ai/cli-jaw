@@ -129,9 +129,33 @@ test('stale command is rejected and matching command carries lease and webConten
         { id: 'wrong-guest', targetId: 'tab', webContentsId: 43, kind: 'screenshot', lease: mount1, settleToken: 'w' },
         { id: 'good', targetId: 'tab', webContentsId: 42, kind: 'screenshot', lease: mount1, settleToken: 'g' },
     ] })); await tick();
-    assert.deepEqual(posts(f.requests, '/commands/stale/result')[0].body, { ok: false, error: 'stale lease', settleToken: 's' });
-    assert.deepEqual(posts(f.requests, '/commands/wrong-guest/result')[0].body, { ok: false, error: 'target is no longer available in Manager Browser', settleToken: 'w' });
+    assert.deepEqual(posts(f.requests, '/commands/stale/result')[0].body, { ok: false, code: 'target_unavailable', error: 'stale lease', settleToken: 's' });
+    assert.deepEqual(posts(f.requests, '/commands/wrong-guest/result')[0].body, { ok: false, code: 'target_unavailable', error: 'target is no longer available in Manager Browser', settleToken: 'w' });
     assert.deepEqual(f.actions, [{ kind: 'captureScreenshot', tabId: 'tab', webContentsId: 42, agentLease: mount1 }]);
+});
+
+test('vanished target result reports target_unavailable', async t => {
+    const f = await setup(t); await tick();
+    f.poll.resolve(ok({ commands: [{ id: 'gone', targetId: 'tab', webContentsId: 43, kind: 'screenshot', lease: mount1, settleToken: 'g' }] }));
+    await tick();
+    assert.deepEqual(posts(f.requests, '/commands/gone/result')[0].body, { ok: false, code: 'target_unavailable', error: 'target is no longer available in Manager Browser', settleToken: 'g' });
+    assert.deepEqual(f.actions, []);
+});
+
+test('guest vanishing between check and native action reports target_unavailable', async t => {
+    const f = await setup(t, { performWebviewAction: async () => ({ ok: false, error: 'unknown or stale browser tab' }) }); await tick();
+    f.poll.resolve(ok({ commands: [
+        { id: 'raced', targetId: 'tab', webContentsId: 42, kind: 'screenshot', lease: mount1, settleToken: 'r' },
+    ] }));
+    await tick();
+    assert.deepEqual(posts(f.requests, '/commands/raced/result')[0].body, { ok: false, code: 'target_unavailable', error: 'unknown or stale browser tab', settleToken: 'r' });
+});
+
+test('native capture failure stays a generic failure', async t => {
+    const f = await setup(t, { performWebviewAction: async () => ({ ok: false, error: 'capture exploded' }) }); await tick();
+    f.poll.resolve(ok({ commands: [{ id: 'boom', targetId: 'tab', webContentsId: 42, kind: 'snapshot', lease: mount1, settleToken: 'b' }] }));
+    await tick();
+    assert.deepEqual(posts(f.requests, '/commands/boom/result')[0].body, { ok: false, error: 'capture exploded', settleToken: 'b' });
 });
 
 test('command delayed until after dispose is rejected without bridge action', async t => {
@@ -140,7 +164,7 @@ test('command delayed until after dispose is rejected without bridge action', as
     f.poll.resolve(ok({ commands: [{ id: 'late', targetId: 'tab', webContentsId: 42, kind: 'screenshot', lease: mount1 }] })); await tick();
     await f.unmount(); tabs.resolve({ ok: true, tabs: [tab] }); await tick();
     assert.deepEqual(f.actions, []);
-    assert.deepEqual(posts(f.requests, '/commands/late/result')[0].body, { ok: false, error: 'stale lease' });
+    assert.deepEqual(posts(f.requests, '/commands/late/result')[0].body, { ok: false, code: 'target_unavailable', error: 'stale lease' });
 });
 
 test('switching selected port withdraws previous and selects new', async t => {

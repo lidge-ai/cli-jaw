@@ -25,6 +25,14 @@ function validMount(value: Partial<TargetLeaseMount>): value is TargetLeaseMount
 function sameMount(a: TargetLeaseMount | null | undefined, b: TargetLeaseMount | null | undefined): boolean {
     return !!a && !!b && a.authorityId === b.authorityId && a.ownerId === b.ownerId && a.generation === b.generation && a.mountSeq === b.mountSeq;
 }
+// Electron main answers these when the guest or the agent lease disappeared
+// between the target check and the native action: same outcome as a vanished
+// target, so the agent gets the stable 410 instead of a generic failure.
+const NATIVE_UNAVAILABLE_ERRORS = new Set(['unknown or stale browser tab', 'stale agent lease']);
+function nativeFailure(error: string | undefined, fallback: string): Record<string, unknown> {
+    const message = error ?? fallback;
+    return NATIVE_UNAVAILABLE_ERRORS.has(message) ? { ok: false, code: 'target_unavailable', error: message } : { ok: false, error: message };
+}
 async function collectSharedTargets(bridge: BrowserBridgeApi): Promise<{ targets: SharedTargetPayload[]; guestEpoch: number } | null> {
     const result = await bridge.getWebviewTabs!();
     if (!result?.ok) return null;
@@ -151,27 +159,27 @@ export function useEmbeddedBrowserTargetSync(active: boolean, selectedPort: numb
         }
         async function executeCommand(command: Command): Promise<Record<string, unknown>> {
             const mount = lease;
-            if (disposed || !sameMount(command.lease, mount)) return { ok: false, error: 'stale lease' };
+            if (disposed || !sameMount(command.lease, mount)) return { ok: false, code: 'target_unavailable', error: 'stale lease' };
             if (!browser.performWebviewAction) return { ok: false, error: 'bridge unavailable' };
             const shared = await collectSharedTargets(browser).catch(() => null);
-            if (disposed || !sameMount(command.lease, lease)) return { ok: false, error: 'stale lease' };
+            if (disposed || !sameMount(command.lease, lease)) return { ok: false, code: 'target_unavailable', error: 'stale lease' };
             const target = shared?.targets.find(t => t.targetId === command.targetId && t.webContentsId === command.webContentsId);
-            if (!target) return { ok: false, error: 'target is no longer available in Manager Browser' };
+            if (!target) return { ok: false, code: 'target_unavailable', error: 'target is no longer available in Manager Browser' };
             const identity = { tabId: command.targetId, webContentsId: command.webContentsId, agentLease: mount! };
             if (command.kind === 'screenshot') {
                 const result = await browser.performWebviewAction({ kind: 'captureScreenshot', ...identity });
-                return result?.ok && result.screenshot ? { ok: true, screenshot: result.screenshot } : { ok: false, error: result?.error ?? 'capture failed' };
+                return result?.ok && result.screenshot ? { ok: true, screenshot: result.screenshot } : nativeFailure(result?.error, 'capture failed');
             }
             if (command.kind === 'snapshot') {
                 const result = await browser.performWebviewAction({ kind: 'getDomSnapshot', ...identity });
-                return result?.ok && result.snapshot ? { ok: true, snapshot: result.snapshot } : { ok: false, error: result?.error ?? 'snapshot failed' };
+                return result?.ok && result.snapshot ? { ok: true, snapshot: result.snapshot } : nativeFailure(result?.error, 'snapshot failed');
             }
             if (command.kind === 'act') {
                 const act = command.act;
                 if (!act) return { ok: false, error: 'act payload missing' };
                 const targetId = command.targetId;
                 const result = await browser.performWebviewAction({ kind: 'act', tabId: targetId, act: act as never, webContentsId: identity.webContentsId, agentLease: identity.agentLease });
-                return result?.ok ? { ok: true, acted: true } : { ok: false, error: result?.error ?? 'act failed' };
+                return result?.ok ? { ok: true, acted: true } : nativeFailure(result?.error, 'act failed');
             }
             return { ok: false, error: `unknown command kind: ${command.kind}` };
         }

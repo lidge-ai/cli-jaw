@@ -257,8 +257,9 @@ function dirtyPort(port: number, managerPort: number): Promise<{ added: number; 
             return total;
         } catch (error) {
             owned.dirty = true;
-            if (portStates.get(port) === owned && owned.retryCount < 3) {
-                const delay = 1000 * (2 ** owned.retryCount++);
+            if (portStates.get(port) === owned) {
+                const delay = Math.min(30_000, 1000 * (2 ** owned.retryCount));
+                owned.retryCount = Math.min(owned.retryCount + 1, 5);
                 owned.timer = setTimeout(() => { delete owned.timer; void dirtyPort(port, owned.managerPort).catch(() => undefined); }, delay);
                 owned.timer.unref?.();
             }
@@ -744,6 +745,7 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         const id = String(req.params['id'] ?? '');
         const body = req.body as {
             ok?: unknown;
+            code?: unknown;
             error?: unknown;
             settleToken?: unknown;
             screenshot?: { dataUrl?: unknown; width?: unknown; height?: unknown; url?: unknown; title?: unknown; capturedAt?: unknown };
@@ -759,7 +761,9 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             res.json({ ok: false, error: 'stale lease' }); return;
         }
         let result: CommandResult;
-        if (pending.kind === 'screenshot' && body?.ok === true && typeof body.screenshot?.dataUrl === 'string') {
+        if (body?.code === 'target_unavailable') {
+            result = unavailable();
+        } else if (pending.kind === 'screenshot' && body?.ok === true && typeof body.screenshot?.dataUrl === 'string') {
             try {
                 const path = writeScreenshotFile(body.screenshot.dataUrl);
                 result = {

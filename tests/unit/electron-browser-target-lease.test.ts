@@ -82,9 +82,23 @@ test('quit revokes the last document of every open and closed window once', asyn
   a.revokeForQuit();
   await a.flush(100);
   assert.deepEqual(calls, [
-    { ...closed, reason: 'app-quit' },
     { ...open, reason: 'app-quit' },
+    { ...closed, reason: 'app-quit' },
   ]);
+});
+
+test('quit posts the current generation before an old closed window', async () => {
+  const calls: LeaseRevokeBody[] = [];
+  const a = new TargetLeaseAuthority({ post: async body => { calls.push(body); return 200; } });
+  a.beginDocument(1);
+  a.closeWindow(1, 'window-closed');
+  const current = a.beginDocument(2);
+  await a.flush(100);
+  calls.length = 0;
+  a.revokeForQuit();
+  await a.flush(100);
+  assert.equal(calls[0]?.generation, current.generation);
+  assert.equal(calls[0]?.reason, 'app-quit');
 });
 
 test('quit with no document posts no revokes', async () => {
