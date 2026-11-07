@@ -85,8 +85,8 @@ export class SlackActionRuntime {
         if (!identity?.userId) throw slackToolDenied('slack_bot_identity_unverified', 409);
         if (definition.scopes.length && identity.scopes === null) throw slackToolDenied('slack_action_scopes_unverified', 403);
         if (definition.scopes.some(scope => !identity.scopes?.includes(scope))) throw slackToolDenied('slack_action_scopes_missing', 403);
-            const workspace = identity.teamId;
-            const actor = interactiveGrant?.actorId ?? (principal.kind === 'turn' ? principal.grant.actorId : 'operator');
+        const workspace = identity.teamId;
+        const actor = interactiveGrant?.actorId ?? (principal.kind === 'turn' ? principal.grant.actorId : 'operator');
         const credentialKey = slackCredentialKey(token); const store = this.options.store;
         const hash = createHash('sha256').update(JSON.stringify({ credentialKey, operation: definition.operation, args: prepared.canonical })).digest('hex');
         const existing = definition.mutates ? store.invocation(workspace, actor, args.invocationId!) : undefined;
