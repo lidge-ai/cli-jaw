@@ -639,8 +639,9 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
         if (!isValidInstancePort(portValue)) { res.status(400).json({ ok: false, error: 'port out of configured scan range' }); return; }
         // The relay is a TRIGGER only: what a port receives is derived from the
         // server's own registry and the current mount's selected port, never
-        // from this body, so a stale or spoofed body cannot inject targets and
-        // a withdraw (selected:false) always reconciles that port to empty.
+        // from this body, so a stale or spoofed body cannot inject targets. A
+        // withdraw (selected:false) only triggers reconciliation: the port ends
+        // up empty unless it is still the current mount's selected port.
         const body = req.body as { lease?: unknown; selected?: unknown } | undefined;
         const mount = readMount(body?.lease);
         if (!mount || typeof body?.selected !== 'boolean') { res.status(400).json({ ok: false, error: 'lease required' }); return; }
