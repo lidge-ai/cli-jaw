@@ -24,7 +24,15 @@ function restoreMath(value: string, blocks: MathBlock[]): string {
 function serializeTokens(tokens: Token[]): string {
     return tokens.map(token => {
         if ((token.type === 'link' || token.type === 'image') && /^!?\[/.test(token.raw)) {
-            const label = token.type === 'link' ? serializeTokens(token.tokens ?? []) : token.text;
+            let label = token.type === 'link' ? serializeTokens(token.tokens ?? []) : token.text;
+            if (token.type === 'image') {
+                let slashes = 0;
+                for (let i = 2; i < token.raw.length; i += 1) {
+                    const char = token.raw[i];
+                    if (char === ']' && slashes % 2 === 0) { label = token.raw.slice(2, i); break; }
+                    slashes = char === '\\' ? slashes + 1 : 0;
+                }
+            }
             return (token.type === 'image' ? '!' : '') + inlineLinkMarkdown(label, token.href, token.title);
         }
         if ((token.type === 'strong' || token.type === 'em' || token.type === 'del') && token.tokens) {
@@ -42,7 +50,8 @@ function textTokens(tokens: Token[]): string {
             if (tokens[index + 1]?.type === 'strong' || tokens[index + 1]?.type === 'em') value = value.replace(/\u200b$/, '');
             return value;
         }
-        if (token.type === 'escape' || token.type === 'codespan' || token.type === 'image') return token.text;
+        if (token.type === 'image') return decodeEntities(token.text);
+        if (token.type === 'escape' || token.type === 'codespan') return token.text;
         if (token.type === 'strong' || token.type === 'em' || token.type === 'del' || token.type === 'link') {
             const value = textTokens(token.tokens ?? []);
             return (token.type === 'strong' || token.type === 'em') && /\u200b\*+$/u.test(token.raw) ? value.replace(/\u200b$/, '') : value;

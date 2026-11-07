@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { marked } from 'marked';
 import {
     CSV_BOM, TABLE_CSV_FILENAME, escapeMarkdownTableCell, guardSpreadsheetFormula,
     inlineLinkMarkdown, isTableModel, normalizeTableModel, tableFingerprint, tableToCsv,
@@ -57,6 +58,31 @@ test('inlines reference links with destinations and titles', () => {
     assert.equal(inlineLinkMarkdown('Kim', 'https://example.com/kim', 'Kim page'), '[Kim](https://example.com/kim "Kim page")');
     assert.equal(inlineLinkMarkdown('x', 'https://example.com/a(b)'), '[x](<https://example.com/a(b)>)');
     assert.equal(inlineLinkMarkdown('x', 'https://example.com/a b', 'a "title"'), '[x](<https://example.com/a b> "a \\"title\\"")');
+});
+
+test('inline destinations and titles round-trip through marked', () => {
+    assert.equal(inlineLinkMarkdown('x', 'https://example.com/path', 'trailing\\'), String.raw`[x](https://example.com/path "trailing\\")`);
+    assert.equal(inlineLinkMarkdown('x', 'https://example.com/a>(b)'), String.raw`[x](<https://example.com/a\>(b)>)`);
+    assert.equal(inlineLinkMarkdown('x', ''), '[x](<>)');
+    const cases = [
+        { url: 'https://example.com/path', title: 'trailing\\' },
+        { url: 'https://example.com/path', title: 'a "quoted" title' },
+        { url: 'https://example.com/a>(b)', title: 'angle and parens' },
+        { url: 'https://example.com/a b', title: 'space' },
+        { url: '', title: 'empty destination' },
+        { url: 'https://example.com/<a\\b>', title: 'slash \\ and "quote"' },
+    ];
+    for (const { url, title } of cases) {
+        const markdown = inlineLinkMarkdown('x', url, title);
+        const paragraph = marked.lexer(markdown)[0];
+        assert.equal(paragraph?.type, 'paragraph', markdown);
+        if (paragraph?.type !== 'paragraph') continue;
+        const link = paragraph.tokens[0];
+        assert.equal(link?.type, 'link', markdown);
+        if (link?.type !== 'link') continue;
+        assert.equal(link.href, url, markdown);
+        assert.equal(link.title, title, markdown);
+    }
 });
 
 test('fingerprints are stable and change with the rendered table', () => {

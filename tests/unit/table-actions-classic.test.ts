@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EDGE_FIXTURE_MARKDOWN, EXPECTED_EDGE_MODEL } from '../fixtures/markdown-table-fixture.ts';
 import { readFileSync } from 'node:fs';
 import { setupWebUiDom, resetWebUiDom } from './web-ui-test-dom.ts';
 import { CSV_BOM, tableToMarkdown, tableToCsv } from '../../src/shared/markdown-table.ts';
@@ -156,6 +157,11 @@ test('T2m preview trap includes links in the cloned table', () => {
 test('T2n reference variants and nested emphasis match shared fixture', () => {
     const msg = message(references); const m = model(msg.querySelector('.table-block')!);
     assert.deepEqual(m, EXPECTED_REFERENCE_MODEL); assert.equal(tableToMarkdown(m), EXPECTED_REFERENCE_MARKDOWN);
+});
+
+test('edge image references and entity text match shared fixture', () => {
+    const msg = message(EDGE_FIXTURE_MARKDOWN);
+    assert.deepEqual(model(msg.querySelector('.table-block')!), EXPECTED_EDGE_MODEL);
 });
 
 test('T2o incomplete structured fence does not hide completed final table actions', () => {

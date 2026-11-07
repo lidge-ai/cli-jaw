@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EDGE_FIXTURE_MARKDOWN, EXPECTED_EDGE_MODEL } from '../fixtures/markdown-table-fixture';
 import { after, test, type TestContext } from 'node:test';
 import { JSDOM } from 'jsdom';
 import type { ReactNode } from 'react';
@@ -102,6 +103,10 @@ test('T3l: reference variants use outermost source offsets', async t => {
     const [model] = await models(REFERENCE_FIXTURE_MARKDOWN); assert.deepEqual(model, EXPECTED_REFERENCE_MODEL); assert.equal(tableToMarkdown(model!), EXPECTED_REFERENCE_MARKDOWN);
     const h = await surface(t); let copied = ''; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (s: string) => { copied = s; } } });
     await h.render(view(REFERENCE_FIXTURE_MARKDOWN, true)); await click(buttons(h.container, 'copy-markdown')[0]!); assert.equal(copied, EXPECTED_REFERENCE_MARKDOWN);
+});
+test('edge image references and entity text match shared fixture', async () => {
+    const [model] = await models(EDGE_FIXTURE_MARKDOWN);
+    assert.deepEqual(model, EXPECTED_EDGE_MODEL);
 });
 test('T3m: static locale works without either MutationObserver', async t => {
     const h = await surface(t); const observer = dom.window.MutationObserver; const globalObserver = globals.MutationObserver;

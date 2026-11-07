@@ -62,8 +62,8 @@ export function isTableModel(v: unknown): v is TableModel {
 }
 
 export function inlineLinkMarkdown(label: string, url: string, title?: string | null): string {
-    const destination = /[\s()]/.test(url) ? `<${url}>` : url;
-    return `[${label}](${destination}${title == null ? '' : ` "${title.replace(/"/g, '\\"')}"`})`;
+    const destination = !url || /[\s()<>]/.test(url) ? `<${url.replace(/[\\<>]/g, '\\$&')}>` : url;
+    return `[${label}](${destination}${title == null ? '' : ` "${title.replace(/[\\"]/g, '\\$&')}"`})`;
 }
 
 /** FNV-1a over UTF-16 code units; an in-page identity, not a portable checksum. */
