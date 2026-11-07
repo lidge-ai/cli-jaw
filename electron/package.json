@@ -6,6 +6,7 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
+    "postinstall": "node ../scripts/ensure-pty-spawn-helper.cjs node_modules/node-pty",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",

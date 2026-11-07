@@ -231,11 +231,9 @@ jobs:
       # the only place the probe can run for real: node-tests and publish
       # install root dependencies only.
       #
-      # It has to come AFTER packaging. `npm ci --prefix electron` runs with
-      # --ignore-scripts, so node-pty is unpacked without build/Release/pty.node;
-      # electron-builder is what rebuilds the addon against the Electron ABI.
-      # Running the gate before that step failed all three platforms on a
-      # missing binary that nothing had built yet.
+      # Run after packaging: `npm ci --prefix electron` runs install scripts,
+      # and electron-builder rebuilds node-pty against the Electron ABI. The
+      # gate verifies the resulting addon and spawn helper after that rebuild.
       #
       # Scoped to macOS and Windows for now. The Linux run reported both
       # `prebuilds present` and `pty spawn round-trip ok` and still failed,
