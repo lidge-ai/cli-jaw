@@ -21,8 +21,9 @@ export interface StoredCodeDraft {
     selection: DraftSelection;
     selectionEdit: number;
     creating: boolean;
+    creationKey?: string;
     retry: { text: string; key: string; edit: number; resend?: boolean; resendReason?: CodeResendReason } | null;
-    stop: { turnId: string; epoch: number } | null;
+    stop: { turnId: string | null; operationId?: string; epoch: number } | null;
 }
 export interface StoredCodeEndpoint {
     endpoint: string;
@@ -44,11 +45,14 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
         || !(selection['effort'] === null || text(selection['effort'], 80))
         || !['ask', 'auto', 'read-only', 'plan', 'accept-edits', 'dont-ask', 'auto-review'].includes(String(selection['permissionMode']))
         || !(selection['thinking'] === undefined || typeof selection['thinking'] === 'boolean')) return null;
+    const creationKey = value['creationKey'];
+    if (creationKey !== undefined && (typeof creationKey !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(creationKey) || !value['creating'])) return null;
     const retry = value['retry'], stop = value['stop'];
     if (retry !== null && (!object(retry) || !text(retry['text'], MAX_TEXT_CHARS)
         || !text(retry['key'], 240) || !retry['key'] || !count(retry['edit']) || retry['edit'] > value['edit'])) return null;
-    if (stop !== null && (!object(stop) || !text(stop['turnId'], 240) || !stop['turnId'] || !count(stop['epoch']))) return null;
+    if (stop !== null && (!object(stop) || !count(stop['epoch']) || !((text(stop['turnId'], 240) && !!stop['turnId'] && stop['operationId'] === undefined) || (stop['turnId'] === null && text(stop['operationId'], 240) && !!stop['operationId'])))) return null;
     return {
+        ...(typeof creationKey === 'string' ? { creationKey } : {}),
         input: value['input'], edit: value['edit'], selectionEdit: value['selectionEdit'], creating: value['creating'],
         selection: { provider: selection['provider'] as DraftSelection['provider'], cwd: selection['cwd'], model: selection['model'], effort: selection['effort'], permissionMode: selection['permissionMode'] as DraftSelection['permissionMode'],
             // Optional: drafts stored before the Thinking switch carry none.
@@ -59,7 +63,7 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
             ...(retry['resend'] === true ? { resend: true } : {}),
             // An unknown reason downgrades to the generic spent-key copy instead of wiping recovery.
             ...(retry['resend'] === true && retry['resendReason'] === 'rolled-back' ? { resendReason: 'rolled-back' as const } : {}) },
-        stop: stop === null ? null : { turnId: stop['turnId'] as string, epoch: stop['epoch'] as number },
+        stop: stop === null ? null : { turnId: stop['turnId'] as string | null, ...(typeof stop['operationId'] === 'string' ? { operationId: stop['operationId'] } : {}), epoch: stop['epoch'] as number },
     };
 }
 function parseEnvelope(raw: string | null): StoredEnvelope | null {
@@ -126,10 +130,11 @@ function pack(draft: CodeDraft): StoredCodeDraft | null {
     return parseDraft({ input: draft.input, edit: draft.edit, selection: { provider, cwd, model, effort, permissionMode,
         ...(thinking === undefined ? {} : { thinking }) }, selectionEdit: draft.selectionEdit,
         creating: draft.createUnknown || draft.operation.kind === 'creating',
+        ...(draft.creationKey ? { creationKey: draft.creationKey } : {}),
         retry: draft.retry ? { text: draft.retry.text, key: draft.retry.key, edit: draft.retry.edit,
             ...(draft.retry.resend ? { resend: true } : {}),
             ...(draft.retry.resend && draft.retry.resendReason ? { resendReason: draft.retry.resendReason } : {}) } : null,
-        stop: draft.stopTarget ? { turnId: draft.stopTarget.turnId, epoch: draft.stopTarget.epoch } : null });
+        stop: draft.stopTarget ? { turnId: draft.stopTarget.turnId, ...(draft.stopTarget.operationId ? { operationId: draft.stopTarget.operationId } : {}), epoch: draft.stopTarget.epoch } : null });
 }
 export function saveCodeDraftStorage(storage: Storage, endpoint: string, book: CodeDraftBook): string | null {
     try {

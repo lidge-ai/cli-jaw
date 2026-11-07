@@ -1,9 +1,9 @@
 import { CodeSession, CodeServiceError } from './session.js';
-import { CodeStore, CodeStoreError, isBusy, type CodeSessionListOptions, type CodeSessionRecord } from './store.js';
+import { CodeStore, CodeStoreError, isBusy, creationRequest, creationMatches, type CodeSessionListOptions, type CodeSessionRecord } from './store.js';
 import type { CodeProviders } from './provider.js';
 import { DEFAULT_CODE_SETTINGS } from './types.js';
 import type {
-    CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
+    CodeAttachResult, CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
     CodeModelCatalog, CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt,
     CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeRollbackRequest, CodeSessionInfo, CodeSnapshot, CodeSteerRequest,
     CodeWireEvent,
@@ -137,12 +137,44 @@ export class CodeSessionManager {
         return catalog;
     }
 
-    create(input: CodeCreateSessionRequest): CodeSessionInfo {
+    create(input: CodeCreateSessionRequest, options: { resolveCwd?: (cwd: string) => string } = {}): { session: CodeSessionInfo; created: boolean } {
         this.ready();
-        const catalog = this.validate(input);
-        const result = this.storage(() => this.options.store.create({ ...input, capabilities: catalog.capabilities }));
-        this.publish(result.events);
-        return result.session;
+        const resolveCwd = options.resolveCwd ?? ((cwd: string) => cwd);
+        const replay = (): { session: CodeSessionInfo; created: false } | null => {
+            if (!input.clientCreationKey) return null;
+            const existing = this.storage(() => this.options.store.readCreation(input.clientCreationKey!));
+            if (!existing) return null;
+            let canonical: string | null = null;
+            if (input.cwd !== existing.request.submittedCwd && input.cwd !== existing.request.cwd) {
+                try { canonical = resolveCwd(input.cwd); } catch { /* Different unavailable spelling cannot match. */ }
+            }
+            if (!creationMatches(existing.request, creationRequest(input), canonical)) {
+                throw new CodeStoreError('creation_key_conflict', 'Client creation key was used for different settings', 409);
+            }
+            return { session: existing.session, created: false };
+        };
+        const existing = replay();
+        if (existing) return existing;
+        let directory: string;
+        let catalog: CodeProviderCatalog;
+        try {
+            directory = resolveCwd(input.cwd);
+            catalog = this.validate(input);
+        } catch (error) {
+            const winner = replay();
+            if (winner) return winner;
+            throw error;
+        }
+        const result = this.storage(() => this.options.store.create({ ...input, cwd: directory, submittedCwd: input.cwd, capabilities: catalog.capabilities }));
+        if (result.created) this.publish(result.events);
+        return { session: result.session, created: result.created };
+    }
+
+    creation(key: string): CodeSessionInfo {
+        this.ready();
+        const existing = this.storage(() => this.options.store.readCreation(key));
+        if (!existing) throw new CodeStoreError('creation_not_found', 'Creation not found', 404);
+        return existing.session;
     }
 
     list(options?: CodeSessionListOptions): CodeSessionInfo[] {
@@ -307,12 +339,22 @@ export class CodeSessionManager {
         const record = this.record(id);
         const session = this.sessions.get(id);
         session?.assertHealthy();
-        if (record.epoch !== input.epoch || (record.turnId !== null && record.turnId !== input.turnId)) {
-            throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
-        }
-        if (record.turnId !== null) {
-            if (!session) throw new CodeServiceError('orphaned_turn', 'Code turn has no live owner; recovery is required');
-            await session.cancel(input);
+        if ('operationId' in input) {
+            if (record.epoch !== input.epoch || record.turnId !== null || (record.operationId !== null && record.operationId !== input.operationId)) {
+                throw new CodeStoreError('stale_owner', 'Code operation ownership has changed', 409);
+            }
+            if (record.operationId !== null) {
+                if (!session) throw new CodeServiceError('orphaned_turn', 'Code operation has no live owner; recovery is required');
+                await session.cancel(input);
+            }
+        } else {
+            if (record.epoch !== input.epoch || (record.turnId !== null && record.turnId !== input.turnId)) {
+                throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
+            }
+            if (record.turnId !== null) {
+                if (!session) throw new CodeServiceError('orphaned_turn', 'Code turn has no live owner; recovery is required');
+                await session.cancel(input);
+            }
         }
         // The turn view may already read `idle` while a retired runtime is
         // still draining; the residency readout is what separates the two.
@@ -328,21 +370,25 @@ export class CodeSessionManager {
         return result.session;
     }
 
-    async attach(id: string): Promise<CodeSessionInfo> {
+    async attach(id: string): Promise<CodeAttachResult> {
         this.ready();
         const record = this.record(id);
         this.fenced(id);
         this.validate(record, record.capabilities, record);
         const session = this.reserve(record);
+        let settled: ReturnType<CodeSession['start']>;
+        let operationId: string;
         try {
             const result = this.storage(() => this.options.store.beginAttach(id, record.revision));
             this.admitted = true;
-            session.start({ ...record, ...result.session }, null);
+            operationId = result.session.operationId!;
+            settled = session.start({ ...record, ...result.session }, null);
             this.publish(result.events);
         } catch (error) { this.changed(id, session); throw error; }
-        await session.wait();
-        return { ...this.storage(() => this.options.store.snapshot(id)).session,
-            cleanupPending: this.cleanupReadout(id, session) };
+        const outcome = await settled;
+        session.assertHealthy();
+        return { session: { ...this.storage(() => this.options.store.snapshot(id)).session,
+            cleanupPending: this.cleanupReadout(id, session) }, operationId, outcome };
     }
 
     async patch(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo> {

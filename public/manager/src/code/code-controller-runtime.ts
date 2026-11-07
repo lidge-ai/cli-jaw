@@ -9,8 +9,9 @@ import {
     acknowledgeCodeSend, acknowledgeCodeSteer, catalogSelection, codeDraftBook, createCodeDraft, persistCodeDraftBook, sessionSelection,
     type CodeDraft, type CodeDraftBook,
 } from './code-controller-drafts';
+import { loadCodeDraftStorage } from './code-controller-draft-storage';
 import { withPendingUserItem } from './pending-user-item';
-import { codeCanResume, codeCanRollback, codeResendCopy, type CodeResendReason } from './code-types';
+import { codeCanResume, codeCanRollback, codeCanStop, codeOperationId, codeResendCopy, type CodeResendReason } from './code-types';
 
 const MAX_DETAILS = 6;
 const MAX_INDEX = 1000;
@@ -254,7 +255,7 @@ export class CodeController {
         const draft = this.book.sessions.get(session.sessionId);
         // Once the server reports the turn, its own status carries the working state.
         if (draft?.awaitingTurn && codeSessionBusy(session)) draft.awaitingTurn = null;
-        if (draft?.stopTarget && (session.turnId !== draft.stopTarget.turnId || session.epoch !== draft.stopTarget.epoch
+        if (draft?.stopTarget && ((draft.stopTarget.operationId ? codeOperationId(session) !== draft.stopTarget.operationId : session.turnId !== draft.stopTarget.turnId) || session.epoch !== draft.stopTarget.epoch
             || !codeSessionBusy(session))) {
             draft.stopTarget = null;
             if (draft.operation.kind === 'stopping') draft.operation = draft.retry
@@ -581,8 +582,36 @@ export class CodeController {
     };
     refresh = async (): Promise<void> => {
         const id = this.book.selectedId;
-        await Promise.all([this.readCatalog(), this.readIndex(), id ? this.sync(id, true) : Promise.resolve(), this.readGit()]);
+        await Promise.all([this.readCatalog(), this.readIndex(), id ? this.sync(id, true) : Promise.resolve(), this.readGit(), this.reconnectCreation()]);
     };
+    private async reconnectCreation(): Promise<void> {
+        const draft = this.book.fresh, key = draft.creationKey, life = this.lifetime, navigation = this.book.navigation;
+        if (!draft.createUnknown || !key) return;
+        const current = () => this.active && life === this.lifetime && this.book.fresh === draft && draft.creationKey === key && draft.createUnknown;
+        try {
+            const found = await this.client.findCreation(key, this.abort.signal);
+            if (!current()) return;
+            this.accept(found);
+            const existing = this.book.sessions.get(found.sessionId);
+            const meaningful = existing && (existing.input.length > 0 || existing.retry || existing.stopTarget || existing.steer || existing.operation.kind !== 'idle');
+            draft.creationKey = null; draft.createUnknown = false;
+            if (meaningful) {
+                draft.operation = { kind: 'idle', error: 'The original session was found and already has its own draft. This text stays here as a new draft; sending it creates another session.' };
+            } else {
+                draft.operation = { kind: 'idle', error: null };
+                this.book.sessions.set(found.sessionId, draft);
+                this.book.fresh = createCodeDraft(draft.selection);
+                if (this.book.selectedId === null && this.book.navigation === navigation) {
+                    this.book.selectedId = found.sessionId; this.book.navigation++;
+                    this.state(found.sessionId);
+                    void this.sync(found.sessionId, true);
+                }
+            }
+            this.scheduleIndex(); this.notify();
+        } catch (error) {
+            if (current()) { draft.operation = { kind: 'creating', error: message(error) }; this.notify(); }
+        }
+    }
     loadMoreSessions = async (): Promise<void> => { if (this.moreSessions && !this.indexLoading) await this.readIndex(true); };
     setFilter = (filter: CodeSessionFilter): void => { this.filter = { ...filter }; this.cursor = null; this.fetched = 0; this.rows = []; this.pinnedOverlay = []; this.moreSessions = false; this.notify(); void this.readIndex(); };
     // Explicitly abandon only the local uncertain attempt. The server session may exist.
@@ -767,6 +796,8 @@ export class CodeController {
         let draft = this.draft(id);
         if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim() || draft.steer?.state === 'sending') return;
         let session = this.info(id);
+        const captured = { text: draft.input, edit: draft.edit, key: crypto.randomUUID() };
+        let attachToken: number | null = null;
         // A running Claude turn takes the text as its follow-up; an idle session starts a new turn.
         if (id && session && this.model.followUp) {
             if (!this.model.followUpSent) await this.steer(id, draft, session);
@@ -776,17 +807,29 @@ export class CodeController {
         // t3code continues a session on the next send; a suspended (or recoverably
         // failed) session attaches first instead of asking for a separate Resume.
         if (id && session && codeCanResume(session) && this.model.synced) {
+            const token = ++draft.attachToken; attachToken = token;
             draft.operation = { kind: 'resuming', error: null }; this.notify();
-            try { this.accept(await this.client.attachSession(id)); draft.operation = { kind: 'idle', error: null }; }
-            catch (error) { draft.operation = { kind: 'idle', error: message(error) }; this.notify(); this.scheduleIndex(); return; }
-            this.notify(); this.scheduleIndex();
-            if (this.active) await this.sync(id, true);
-            session = this.info(id);
+            try {
+                const result = await this.client.attachSession(id);
+                if (draft.attachToken !== token) return;
+                this.accept(result.session);
+                if (result.attach && result.attach.outcome !== 'completed') {
+                    draft.operation = { kind: 'idle', error: result.attach.outcome === 'cancelled' ? 'Resume was stopped. Your text was not sent.' : 'Resume failed. Your text was not sent.' };
+                    this.notify(); this.scheduleIndex(); return;
+                }
+                this.notify(); this.scheduleIndex();
+                if (this.active) await this.sync(id, true);
+                if (draft.attachToken !== token) return;
+                session = this.info(id);
+            } catch (error) {
+                if (draft.attachToken === token) { draft.operation = { kind: 'idle', error: message(error) }; this.notify(); this.scheduleIndex(); }
+                return;
+            }
         }
         if (id && (!session || session.status !== 'idle' || session.archivedAt !== null || !this.model.synced)) {
-            draft.operation.error = 'Wait for the session to be idle and synchronized before sending.'; this.notify(); return;
+            if (attachToken !== null && draft.attachToken !== attachToken) return;
+            draft.operation = { kind: 'idle', error: 'Wait for the session to be idle and synchronized before sending.' }; this.notify(); return;
         }
-        const captured = { text: draft.input, edit: draft.edit, key: crypto.randomUUID() };
         const navigation = this.book.navigation;
         if (!id) {
             const selection = { ...draft.selection };
@@ -797,9 +840,17 @@ export class CodeController {
                 draft.operation.error = 'Choose an available runtime, workspace, model and supported settings before sending.';
                 this.notify(); return;
             }
+            draft.creationKey = crypto.randomUUID();
             draft.operation = { kind: 'creating', error: null }; this.notify();
+            // Only a readback of this freshly minted key proves the recovery record reached storage.
+            const stored = this.book.storage && loadCodeDraftStorage(this.book.storage, this.book.endpoint).data?.fresh;
+            if (!this.book.storage || !stored?.creating || stored.creationKey !== draft.creationKey) {
+                draft.creationKey = null; draft.operation = { kind: 'idle', error: 'Draft recovery cannot save this request in this tab, so the session was not created. Reload the Manager or free browser storage, then try again.' };
+                this.notify(); return;
+            }
             try {
-                const created = await this.client.createSession(selection);
+                const created = await this.client.createSession({ ...selection, clientCreationKey: draft.creationKey });
+                draft.creationKey = null;
                 id = created.sessionId;
                 this.book.sessions.set(id, draft);
                 if (this.book.fresh === draft) this.book.fresh = createCodeDraft(selection);
@@ -812,12 +863,14 @@ export class CodeController {
                 this.scheduleIndex();
             } catch (error) {
                 draft.createUnknown = !rejected(error);
+                if (!draft.createUnknown) draft.creationKey = null;
                 draft.operation = { kind: draft.createUnknown ? 'creating' : 'idle', error: draft.createUnknown
                     ? 'Session creation could not be confirmed. The original session may exist. Refresh the list, or choose Start another session to keep this text in a new draft.' : message(error) };
                 this.notify(); this.scheduleIndex(); return;
             }
         }
         draft = this.draft(id);
+        if (attachToken !== null && draft.attachToken !== attachToken) return;
         draft.retry = captured;
         await this.submit(id, draft);
     };
@@ -894,7 +947,7 @@ export class CodeController {
     private reconcileStop(id: string, target: CodeDraft['stopTarget']): void {
         const draft = this.book.sessions.get(id), state = this.details.get(id), session = this.info(id);
         if (!target || target.outcome !== 'unknown' || draft?.stopTarget !== target || !state?.synced || !session
-            || session.sequence > state.cursor || session.turnId !== target.turnId || session.epoch !== target.epoch) return;
+            || session.sequence > state.cursor || (target.operationId ? codeOperationId(session) !== target.operationId : session.turnId !== target.turnId) || session.epoch !== target.epoch) return;
         if (session.status === 'starting' || session.status === 'streaming') {
             target.outcome = 'retryable';
             draft.operation = { kind: draft.retry ? 'unknown-send' : 'idle', error: 'Stop could not be confirmed. The same turn is still running. Press Stop to retry for this turn.' };
@@ -906,17 +959,20 @@ export class CodeController {
     }
     stop = async (): Promise<void> => {
         const id = this.book.selectedId, session = this.info(id);
-        if (!id || !session?.turnId || !codeSessionBusy(session) || !session.capabilities.interrupt || session.status === 'stopping') return;
+        if (!id || !session || !codeCanStop(session)) return;
         const draft = this.draft(id);
         const previous = draft.stopTarget;
         if (previous && (previous.outcome !== 'retryable' || !this.model.synced
-            || previous.turnId !== session.turnId || previous.epoch !== session.epoch)) return;
-        const target: NonNullable<CodeDraft['stopTarget']> = previous ?? { turnId: session.turnId, epoch: session.epoch, outcome: 'pending' };
+            || (previous.operationId ? previous.operationId !== codeOperationId(session) : previous.turnId !== session.turnId) || previous.epoch !== session.epoch)) return;
+        const target: NonNullable<CodeDraft['stopTarget']> = previous ?? (session.turnId
+            ? { turnId: session.turnId, epoch: session.epoch, outcome: 'pending' }
+            : { turnId: null, operationId: codeOperationId(session)!, epoch: session.epoch, outcome: 'pending' });
+        draft.attachToken++;
         target.outcome = 'pending';
         draft.stopTarget = target;
         draft.operation = { kind: 'stopping', error: null }; this.notify();
         try {
-            const result = await this.client.cancelPrompt(id, { turnId: target.turnId, epoch: target.epoch });
+            const result = await this.client.cancelPrompt(id, target.operationId ? { operationId: target.operationId, epoch: target.epoch } : { turnId: target.turnId!, epoch: target.epoch });
             if (draft.stopTarget === target) target.outcome = 'accepted';
             this.accept(result);
         } catch (error) {
@@ -938,9 +994,17 @@ export class CodeController {
         if (!id || !session || !this.model.synced || draft.operation.kind !== 'idle' || session.archivedAt !== null
             || !['suspended', 'failed'].includes(session.status) || !session.capabilities.resume || !session.resume.available
             || (session.status === 'failed' && !session.error?.recoverable)) return;
+        const token = ++draft.attachToken;
         draft.operation = { kind: 'resuming', error: null }; this.notify();
-        try { this.accept(await this.client.attachSession(id)); draft.operation = { kind: 'idle', error: null }; }
-        catch (error) { draft.operation = { kind: 'idle', error: message(error) }; }
+        try {
+            const result = await this.client.attachSession(id);
+            if (draft.attachToken !== token) return;
+            this.accept(result.session);
+            draft.operation = { kind: 'idle', error: result.attach && result.attach.outcome !== 'completed' ? 'Resume did not complete.' : null };
+        } catch (error) {
+            if (draft.attachToken !== token) return;
+            draft.operation = { kind: 'idle', error: message(error) };
+        }
         this.notify(); this.scheduleIndex();
         if (this.active) await this.sync(id, true);
     };

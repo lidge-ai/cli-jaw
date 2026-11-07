@@ -45,7 +45,7 @@ async function surface(t: TestContext) {
 }
 function session(patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return { sessionId: 's-a', provider: 'codex-app', cwd: '/work/alpha', title: 'Alpha', model: 'native-model', effort: null,
-        permissionMode: 'ask', status: 'idle', turnId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
+        permissionMode: 'ask', status: 'idle', turnId: null, operationId: null, archivedAt: null, error: null, resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false, efforts: ['low', 'high'], permissionModes: ['ask', 'auto'] },
         epoch: 2, sequence: 10, revision: 4, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
         pinnedAt: null, markedUnread: false, ...patch };
@@ -1579,4 +1579,13 @@ test('the rollback action is absent while archived, busy, pending, following up,
     assert.equal(await count({}, { provider: 'codex-app', rollback: { available: false, reason: 'unsupported', sinceSequence: null } }), 0);
     const { rollback: _absent, ...older } = claude;
     assert.equal(await count({ session: older as CodeSessionInfo, sessions: [older as CodeSessionInfo] }), 0, 'an older server without the field reads as unavailable');
+});
+
+
+test('workbench enables Stop during a starting attach', bounded, async t => {
+    const h = await surface(t); let stops = 0;
+    const c = model({ session: session({ status: 'starting', operationId: 'op', turnId: null }), busy: true, async stop() { stops++; } });
+    await h.render(createElement(CodeWorkbench, { controller: c, endpointKey: 'local' }));
+    const stop = button(h.container, 'Stop current turn'); assert.equal(stop.disabled, false);
+    await click(stop); assert.equal(stops, 1);
 });

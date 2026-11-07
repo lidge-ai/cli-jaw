@@ -16,8 +16,10 @@ export interface CodeDraft {
      */
     retry: { text: string; key: string; edit: number; resend?: boolean; resendReason?: CodeResendReason } | null;
     createUnknown: boolean;
+    creationKey: string | null;
+    attachToken: number;
     requiredSequence: number;
-    stopTarget: { turnId: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
+    stopTarget: { turnId: string | null; operationId?: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
     permissionOperations: CodeControllerModel['permissionOperations'];
     /**
      * The clientTurnKey of a send whose turn has not visibly started or ended yet.
@@ -54,13 +56,14 @@ const memoryBooks = new Map<string, CodeDraftBook>();
 const tabBooks = new WeakMap<Storage, Map<string, CodeDraftBook>>();
 export function createCodeDraft(selection: CodeCreateSessionRequest): CodeDraft {
     return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0,
-        operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, requiredSequence: 0,
+        operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, creationKey: null, attachToken: 0, requiredSequence: 0,
         stopTarget: null, permissionOperations: {}, awaitingTurn: null, steer: null };
 }
 function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     const draft = createCodeDraft(saved.selection);
     draft.input = saved.input; draft.edit = saved.edit; draft.selectionEdit = saved.selectionEdit;
     draft.createUnknown = saved.creating;
+    draft.creationKey = saved.creationKey ?? null;
     draft.retry = saved.retry;
     if (saved.creating) draft.operation = { kind: 'creating', error: 'Creation was interrupted by reload. The original session may exist; no request has been retried.' };
     if (saved.retry) draft.operation = { kind: 'unknown-send', error: saved.retry.resend

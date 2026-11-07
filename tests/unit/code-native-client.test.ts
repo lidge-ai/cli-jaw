@@ -148,3 +148,24 @@ test('rollback posts only the opaque row, revision and epoch, and a refusal carr
             (error: unknown) => error instanceof CodeClientError && error.session?.revision === 3);
     } finally { globalThis.fetch = original; }
 });
+
+
+test('creation lookup and attach retain their operation outcome', async () => {
+    const original = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = async url => { calls.push(String(url)); return reply({ ok: true, session, attach: { operationId: 'op', outcome: 'cancelled' } }); };
+    try {
+        const client = createCodeSessionClient(4567);
+        assert.equal((await client.findCreation('key/a')).sessionId, session.sessionId);
+        assert.deepEqual((await client.attachSession('s')).attach, { operationId: 'op', outcome: 'cancelled' });
+        assert.match(calls[0]!, /creations\/key%2Fa$/);
+    } finally { globalThis.fetch = original; }
+});
+
+
+test('old attach responses have no attach outcome', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => reply({ ok: true, session });
+    try { assert.equal((await createCodeSessionClient(4567).attachSession('s')).attach, null); }
+    finally { globalThis.fetch = original; }
+});

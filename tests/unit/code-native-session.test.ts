@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setImmediate as yieldEventLoop } from 'node:timers/promises';
 import Database from 'better-sqlite3';
 import { CodeSessionManager, CodeServiceError } from '../../src/code-mode/manager.js';
@@ -133,7 +136,7 @@ function fixture(t: TestContext, config: { capacity?: number; idleReapMs?: numbe
         return existing ? Promise.resolve(existing) : new Promise(resolve => { waiters.push({ predicate, resolve }); });
     };
     const create = (provider: CodeProviderId = 'codex-app', overrides: Partial<CodeCreateSessionRequest> = {}) =>
-        manager.create({ provider, cwd: '/workspace/a', model: 'model-a', effort: 'low', permissionMode: 'ask', ...overrides });
+        manager.create({ provider, cwd: '/workspace/a', model: 'model-a', effort: 'low', permissionMode: 'ask', ...overrides }).session;
     const terminal = (id: string, epoch: number) => waitEvent(event => event.sessionId === id && event.epoch === epoch
         && event.event === 'code_session' && event.session?.turnId === null && event.session.status !== 'starting');
     return { db, store, providers, manager, events, waitEvent, create, terminal };
@@ -799,13 +802,13 @@ test('policy patch closes idle runtime and resumes the same cursor with the comp
     const attaching = f.manager.attach(row.sessionId);
     const options = await f.providers['codex-app'].opened(1);
     const attached = await attaching;
-    assert.equal(attached.status, 'idle');
+    assert.equal(attached.session.status, 'idle');
     assert.equal(options.nativeCursor, 'private-native-cursor');
     assert.equal(options.model, 'model-b');
     assert.equal(options.effort, 'high');
     assert.equal(options.permissionMode, 'auto');
     assert.equal(f.providers['codex-app'].handles[1]?.sends.length, 0);
-    assert.equal(attached.revision, patched.revision);
+    assert.equal(attached.session.revision, patched.revision);
     assert.equal(f.providers['codex-app'].calls.length, 2);
     f.manager.prompt(row.sessionId, { text: 'after policy change', clientTurnKey: 'new-policy' });
     const resumed = f.providers['codex-app'].handles[1]!;
@@ -1181,7 +1184,7 @@ test('attach reserves capacity before await and rejected resume keeps history wi
     assert.equal(options.nativeCursor, 'private-native-cursor');
     gate.reject(new Error('resume rejected'));
     const failed = await attaching;
-    assert.equal(failed.status, 'failed');
+    assert.equal(failed.session.status, 'failed');
     assert.deepEqual(f.manager.snapshot(row.sessionId).items, before);
     assert.equal(f.providers['codex-app'].calls.length, 2);
     assert.equal(f.providers['codex-app'].handles[1]?.sends.length, 0);
@@ -2485,4 +2488,69 @@ test('Stop drains file change and replay reconstructs its cancelled item', async
     }
     assert.equal(replay?.status, 'cancelled');
     assert.deepEqual(replay?.fileChange, item.fileChange);
+});
+
+test('creation replay survives provider unavailability and bypasses workspace resolution', async t => {
+    const f = fixture(t);
+    const input = { provider: 'claude' as const, cwd: '/workspace/a', model: 'model-a', effort: 'low', permissionMode: 'ask' as const, clientCreationKey: 'key-replay' };
+    const first = f.manager.create(input);
+    f.providers.claude.catalog.available = false;
+    const replay = f.manager.create(input, { resolveCwd: () => { throw new Error('missing workspace'); } });
+    assert.equal(first.created, true);
+    assert.equal(replay.created, false);
+    assert.equal(replay.session.sessionId, first.session.sessionId);
+    assert.throws(() => f.manager.create({ ...input, model: 'model-b' }), errorCode('creation_key_conflict', 409));
+});
+
+test('stopping a slow attach aborts open, settles idle, and closes a late handle', async t => {
+    const f = fixture(t, { idleReapMs: 0 });
+    const row = f.create();
+    f.db.prepare('UPDATE code_sessions SET native_cursor = ?, native_started = 1 WHERE session_id = ?').run('durable', row.sessionId);
+    const gate = deferred<void>();
+    f.providers['codex-app'].gate = gate.promise;
+    f.providers['codex-app'].registerBeforeOpen = false;
+    const attaching = f.manager.attach(row.sessionId);
+    const opened = await f.providers['codex-app'].opened();
+    const starting = f.manager.snapshot(row.sessionId).session;
+    assert.equal(starting.status, 'starting');
+    assert.ok(starting.operationId);
+    await yieldEventLoop();
+    assert.equal(opened.signal.aborted, false, 'idle reap must not interrupt attach');
+    const target = { operationId: starting.operationId!, epoch: starting.epoch };
+    const cancelled = await f.manager.cancel(row.sessionId, target);
+    assert.equal(opened.signal.aborted, true);
+    assert.equal(cancelled.status, 'idle');
+    assert.equal(cancelled.operationId, null);
+    const result = await attaching;
+    assert.equal(result.operationId, target.operationId);
+    assert.equal(result.outcome, 'cancelled');
+    assert.deepEqual(f.manager.snapshot(row.sessionId).items, []);
+    await f.manager.cancel(row.sessionId, target);
+    gate.resolve();
+    await f.providers['codex-app'].handles[0]!.closeCalled.promise;
+    assert.equal(f.providers['codex-app'].handles[0]!.closes, 1);
+    await yieldEventLoop();
+    assert.equal(f.manager.snapshot(row.sessionId).session.cleanupPending, false);
+});
+
+test('creation races on separate SQLite connections replay or conflict in both success and failure paths', async t => {
+    const f = fixture(t);
+    const dir = mkdtempSync(join(tmpdir(), 'code-creation-race-'));
+    const db1 = new Database(join(dir, 'code.db'));
+    const db2 = new Database(join(dir, 'code.db'));
+    const store1 = new CodeStore(db1);
+    const store2 = new CodeStore(db2);
+    const manager = new CodeSessionManager({ store: store1, providers: f.providers, publish() {} });
+    t.after(async () => { await manager.dispose(); db1.close(); db2.close(); rmSync(dir, { recursive: true, force: true }); });
+    for (const throws of [false, true]) for (const differs of [false, true]) {
+        const input = { provider: 'claude' as const, cwd: '/requested', model: 'model-a', effort: 'low', permissionMode: 'ask' as const, clientCreationKey: `race-${throws}-${differs}` };
+        let winner = '';
+        const create = () => manager.create(input, { resolveCwd: () => {
+            winner = store2.create({ ...input, cwd: '/canonical', submittedCwd: '/requested', model: differs ? 'model-b' : 'model-a', capabilities: f.providers.claude.catalog.capabilities }).session.sessionId;
+            if (throws) throw new CodeStoreError('workspace_missing', 'missing', 400);
+            return '/canonical';
+        } });
+        if (differs) assert.throws(create, errorCode('creation_key_conflict', 409));
+        else { const result = create(); assert.equal(result.created, false); assert.equal(result.session.sessionId, winner); }
+    }
 });

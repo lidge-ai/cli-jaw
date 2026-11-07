@@ -5,7 +5,7 @@ import { emptyCodeSession, reduceCodeSession } from '../../public/manager/src/co
 
 const session: CodeSessionInfo = {
     sessionId: 's', provider: 'codex-app', cwd: '/workspace', title: null, model: 'native', effort: null,
-    permissionMode: 'ask', status: 'streaming', turnId: 't', epoch: 1, sequence: 3, revision: 1,
+    permissionMode: 'ask', status: 'streaming', turnId: 't', operationId: null, epoch: 1, sequence: 3, revision: 1,
     archivedAt: null, error: null, resume: { available: true, reason: null },
     capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: true, efforts: [], permissionModes: ['ask', 'auto'] },
     createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null,
@@ -147,7 +147,7 @@ test('a session event does not blank context usage it was never able to carry', 
 test('a session event with a higher history generation discards held items through a new snapshot', () => {
     let state = seeded();
     const rolled: CodeWireEvent = { topic: 'code', event: 'code_session', sessionId: 's', sequence: 4, epoch: 2,
-        session: { ...session, status: 'idle', turnId: null, epoch: 2, sequence: 4, historyGeneration: 1 } };
+        session: { ...session, status: 'idle', turnId: null, operationId: null, epoch: 2, sequence: 4, historyGeneration: 1 } };
     state = reduceCodeSession(state, { type: 'event', event: rolled });
     assert.deepEqual({ needsSnapshot: state.needsSnapshot, synced: state.synced, cursor: state.cursor }, { needsSnapshot: true, synced: false, cursor: 3 });
     assert.equal(state.items.length, 1, 'nothing is applied from a stale history');

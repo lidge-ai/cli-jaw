@@ -13,12 +13,15 @@ import { httpStatus } from '../../src/routes/_http-error.ts';
 import { registerNativeCodeRoutes, type CodeRouteService } from '../../src/routes/code-native.ts';
 import { CodeStore, CodeStoreError } from '../../src/code-mode/store.ts';
 import { CodeServiceError } from '../../src/code-mode/session.ts';
+import { CodeSessionManager } from '../../src/code-mode/manager.ts';
+import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeProviders } from '../../src/code-mode/provider.ts';
+import type { CodeProviderId } from '../../src/code-mode/wire.ts';
 import type { CodeSessionInfo } from '../../src/code-mode/wire.ts';
 
 function fixture() {
     const session: CodeSessionInfo = {
         sessionId: 'session-one', provider: 'codex-app', cwd: tmpdir(), title: 'Fixture',
-        model: 'fixture', effort: 'high', permissionMode: 'ask', status: 'idle', turnId: null,
+        model: 'fixture', effort: 'high', permissionMode: 'ask', status: 'idle', turnId: null, operationId: null,
         archivedAt: null, error: null, resume: { available: true, reason: null },
         capabilities: { resume: true, interrupt: true, permissions: true, setModelMidSession: false,
             efforts: ['high'], permissionModes: ['ask', 'auto', 'read-only'] },
@@ -28,7 +31,8 @@ function fixture() {
     let duplicate = false;
     const capture = (method: string, ...args: unknown[]) => calls.push({ method, args });
     const service: CodeRouteService = {
-        create(input) { capture('create', input); return { ...session, ...input }; },
+        create(input, options) { const normalized = { ...input, cwd: options?.resolveCwd?.(input.cwd) ?? input.cwd }; capture('create', normalized); return { session: { ...session, ...normalized }, created: true }; },
+        creation(key) { capture('creation', key); return session; },
         list(input) { capture('list', input); return [session]; },
         snapshot(id) { capture('snapshot', id); return { session, items: [], sequence: 7, pendingPermissions: [], truncated: false }; },
         readEvents(...args) { capture('events', ...args); return { events: [], nextSequence: 7, throughSequence: 7, hasMore: false }; },
@@ -42,7 +46,7 @@ function fixture() {
             return { duplicate, receipt: { turnId: input.turnId, clientTurnKey: input.clientTurnKey, sequence: 9, status: 'running' } };
         },
         async cancel(...args) { capture('cancel', ...args); return session; },
-        async attach(id) { capture('attach', id); return session; },
+        async attach(id) { capture('attach', id); return { session, operationId: 'attach-one', outcome: 'completed' }; },
         visit(id) { capture('visit', id); return { ...session, lastVisitedAt: 99 }; },
         async patch(id, input) { capture('patch', id, input); return { ...session, title: input.title ?? session.title }; },
         async rollback(id, input) { capture('rollback', id, input); return { ...session, historyGeneration: 1 }; },
@@ -179,7 +183,7 @@ test('create and list share actual directory identity through aliases and traili
     const store = new CodeStore(database);
     try {
         await server(async (url, f) => {
-            f.service.create = input => store.create({ ...input, capabilities: f.session.capabilities }).session;
+            f.service.create = (input, options) => store.create({ ...input, cwd: options?.resolveCwd?.(input.cwd) ?? input.cwd, capabilities: f.session.capabilities });
             f.service.list = options => store.list(options);
             const created = await request(`${url}/sessions`, 'POST', {
                 provider: 'claude', cwd: alias, model: 'default', effort: null, permissionMode: 'ask',
@@ -585,4 +589,114 @@ test('rollback accepts only an opaque user-row target with the client revision a
         const retired = await request(`${url}/sessions/session-one/fork`, 'POST', {});
         assert.equal(retired.status, 410);
     });
+});
+
+test('creation key validation and cancel identity validation reject malformed requests', async () => {
+    await server(async url => {
+        const create = await request(`${url}/sessions`, 'POST', { provider: 'claude', cwd: tmpdir(), model: 'default', permissionMode: 'ask', clientCreationKey: 'bad key' });
+        assert.equal(create.status, 400);
+        assert.equal((await create.json()).error, 'invalid_client_creation_key');
+        for (const input of [{ epoch: 1 }, { epoch: 1, turnId: 't', operationId: 'o' }]) {
+            const response = await request(`${url}/sessions/session-one/cancel`, 'POST', input);
+            assert.equal(response.status, 400);
+            assert.equal((await response.json()).error, 'invalid_cancel_target');
+        }
+    });
+});
+
+test('real HTTP creation replay enforces every immutable field and workspace identity', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'code-create-http-'));
+    const target = join(dir, 'target'); const other = join(dir, 'other'); const alias = join(dir, 'alias');
+    mkdirSync(target); mkdirSync(other); symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const db = new Database(':memory:');
+    const store = new CodeStore(db);
+    await server(async (url, f) => {
+        const providers = Object.fromEntries((['codex-app', 'claude', 'cursor', 'grok'] as CodeProviderId[]).map(id => [id, {
+            id, describe: () => ({ id, label: id, available: true, reason: null, models: ['model-a', 'model-b'], defaultModel: 'model-a', defaultEffort: 'low', modelSource: 'registry', capabilities: { ...f.session.capabilities, efforts: ['low', 'high'] } }),
+            open: async () => { throw new Error('unexpected open'); },
+        }])) as CodeProviders;
+        const manager = new CodeSessionManager({ store, providers, publish() {} });
+        f.service.create = manager.create.bind(manager); f.service.creation = manager.creation.bind(manager);
+        try {
+            const input = { provider: 'claude', cwd: alias, model: 'model-a', effort: 'low', permissionMode: 'ask', thinking: true, clientCreationKey: 'same-key' };
+            const first = await request(`${url}/sessions`, 'POST', input); assert.equal(first.status, 201);
+            const session = (await first.json()).session;
+            for (const patch of [{ provider: 'cursor' }, { cwd: other }, { model: 'model-b' }, { effort: 'high' }, { permissionMode: 'auto' }, { thinking: false }]) {
+                const conflict = await request(`${url}/sessions`, 'POST', { ...input, ...patch });
+                assert.equal(conflict.status, 409, JSON.stringify(patch)); assert.equal((await conflict.json()).error, 'creation_key_conflict');
+            }
+            const aliasReplay = await request(`${url}/sessions`, 'POST', { ...input, cwd: target });
+            assert.equal(aliasReplay.status, 200); assert.equal((await aliasReplay.json()).session.sessionId, session.sessionId);
+            rmSync(alias); symlinkSync(other, alias, process.platform === 'win32' ? 'junction' : 'dir');
+            assert.equal((await request(`${url}/sessions`, 'POST', input)).status, 200);
+            rmSync(alias);
+            assert.equal((await request(`${url}/sessions`, 'POST', input)).status, 200);
+            assert.equal((await (await request(`${url}/creations/same-key`)).json()).session.sessionId, session.sessionId);
+            assert.equal((await request(`${url}/creations/absent`)).status, 404);
+            assert.equal((await request(`${url}/creations/bad%20key`)).status, 400);
+        } finally { await manager.dispose(); }
+    });
+    db.close(); rmSync(dir, { recursive: true, force: true });
+});
+
+test('HTTP attach Stop aborts provider open and rejects stale attach identities', async () => {
+    const db = new Database(':memory:'); const store = new CodeStore(db);
+    let reportOpen!: (options: CodeOpenOptions) => void;
+    let opened = new Promise<CodeOpenOptions>(resolve => { reportOpen = resolve; });
+    let release!: (handle: CodeProviderSession) => void;
+    let gate = new Promise<CodeProviderSession>(resolve => { release = resolve; });
+    const opens: CodeOpenOptions[] = [];
+    const makeHandle = () => ({ nativeSessionId: 'durable', alive: true, closed: false,
+        async close() { this.closed = true; }, async cancel() {},
+        async send() { return { status: 'done' as const, finalText: '', partialText: '' }; } });
+    await server(async (url, f) => {
+        const providers = Object.fromEntries((['codex-app', 'claude', 'cursor', 'grok'] as CodeProviderId[]).map(id => [id, {
+            id, describe: () => ({ id, label: id, available: true, reason: null, models: ['model-a'], defaultModel: 'model-a', defaultEffort: 'high', modelSource: 'registry', capabilities: f.session.capabilities }),
+            open: (options: CodeOpenOptions) => { opens.push(options); reportOpen(options); return gate; },
+        }])) as CodeProviders;
+        const manager = new CodeSessionManager({ store, providers, publish() {} });
+        f.service.create = manager.create.bind(manager); f.service.snapshot = manager.snapshot.bind(manager);
+        f.service.attach = manager.attach.bind(manager); f.service.cancel = manager.cancel.bind(manager); f.service.prompt = manager.prompt.bind(manager);
+        try {
+            const input = { provider: 'codex-app', cwd: tmpdir(), model: 'model-a', effort: 'high', permissionMode: 'ask' };
+            const created = await (await request(`${url}/sessions`, 'POST', input)).json();
+            const id = created.session.sessionId;
+            db.prepare('UPDATE code_sessions SET native_cursor = ?, native_started = 1 WHERE session_id = ?').run('durable', id);
+            const attach = request(`${url}/sessions/${id}/attach`, 'POST', {});
+            const firstOpen = await opened;
+            const starting = (await (await request(`${url}/sessions/${id}`)).json()).session;
+            assert.equal(starting.status, 'starting'); assert.ok(starting.operationId);
+            const target = { operationId: starting.operationId, epoch: starting.epoch };
+            const stopped = await request(`${url}/sessions/${id}/cancel`, 'POST', target);
+            assert.equal(stopped.status, 200); assert.equal(firstOpen.signal.aborted, true);
+            const result = await (await attach).json();
+            assert.deepEqual(result.attach, { operationId: target.operationId, outcome: 'cancelled' });
+            assert.equal(result.session.status, 'idle'); assert.equal(result.session.operationId, null);
+            assert.deepEqual((await (await request(`${url}/sessions/${id}`)).json()).items, []);
+            assert.equal((await request(`${url}/sessions/${id}/cancel`, 'POST', target)).status, 200);
+            const late = makeHandle(); release(late);
+            while (!late.closed) await new Promise(resolve => setImmediate(resolve));
+            opened = new Promise(resolve => { reportOpen = resolve; }); gate = new Promise(resolve => { release = resolve; });
+            const second = request(`${url}/sessions/${id}/attach`, 'POST', {});
+            const secondOpen = await opened;
+            const newer = (await (await request(`${url}/sessions/${id}`)).json()).session;
+            const stale = await request(`${url}/sessions/${id}/cancel`, 'POST', target);
+            assert.equal(stale.status, 409); assert.equal((await stale.json()).error, 'stale_owner'); assert.equal(secondOpen.signal.aborted, false);
+            await request(`${url}/sessions/${id}/cancel`, 'POST', { operationId: newer.operationId, epoch: newer.epoch });
+            await second; const lateSecond = makeHandle(); release(lateSecond);
+            while (!lateSecond.closed) await new Promise(resolve => setImmediate(resolve));
+            opened = new Promise(resolve => { reportOpen = resolve; }); gate = new Promise(resolve => { release = resolve; });
+            const prompt = await request(`${url}/sessions/${id}/prompt`, 'POST', { text: 'hello', clientTurnKey: 'prompt-key' });
+            assert.equal(prompt.status, 202); const receipt = await prompt.json();
+            const thirdOpen = await opened;
+            const stalePrompt = await request(`${url}/sessions/${id}/cancel`, 'POST', target);
+            assert.equal(stalePrompt.status, 409); assert.equal((await stalePrompt.json()).error, 'stale_owner'); assert.equal(thirdOpen.signal.aborted, false);
+            const current = (await (await request(`${url}/sessions/${id}`)).json()).session;
+            await request(`${url}/sessions/${id}/cancel`, 'POST', { turnId: receipt.turnId, epoch: current.epoch });
+            const lateThird = makeHandle(); release(lateThird);
+            while (!lateThird.closed) await new Promise(resolve => setImmediate(resolve));
+            assert.equal(opens.length, 3);
+        } finally { await manager.dispose(); }
+    });
+    db.close();
 });

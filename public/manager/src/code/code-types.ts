@@ -74,3 +74,10 @@ export function codeItemStatus(item: CodeItem): string {
     if (item.kind === 'turn_completed') return 'Completed';
     return { pending: 'Pending', running: 'Running', done: 'Done', error: 'Failed', cancelled: 'Stopped' }[item.status];
 }
+
+/** Older servers and retained events omit the attach owner. */
+export function codeOperationId(session: CodeSessionInfo): string | null { return session.operationId ?? null; }
+export function codeCanStop(session: CodeSessionInfo | null): boolean {
+    return !!session && (session.status === 'starting' || session.status === 'streaming')
+        && (session.turnId ? session.capabilities.interrupt : session.status === 'starting' && !!codeOperationId(session));
+}

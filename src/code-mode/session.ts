@@ -6,7 +6,7 @@ import { CodeTurnNormalizer, redactCodeText } from './normalize.js';
 import type { CodeLiveSettings, CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource, CodeTurnContext } from './provider.js';
 import { CodeStore, CodeStoreError, type CodeSessionRecord, type CodeStoreOwner } from './store.js';
 import type {
-    CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionMode, CodePermissionRequest,
+    CodeAttachOutcome, CodeCancelRequest, CodeContextUsage, CodeItem, CodePermissionAnswer, CodePermissionMode, CodePermissionRequest,
     CodePromptReceipt, CodeSessionError, CodeSteerRequest, CodeWireEvent,
 } from './wire.js';
 
@@ -24,6 +24,8 @@ export class CodeServiceError extends Error {
 
 interface Operation {
     owner: CodeStoreOwner;
+    operationId: string | null;
+    outcome: CodeAttachOutcome | null;
     context: CodeTurnContext;
     binding: HandleBinding;
     registry: RuntimeRequests;
@@ -265,7 +267,7 @@ export class CodeSession {
     }
 
     /** Install ownership synchronously, before admission events can call subscribers. */
-    start(record: CodeSessionRecord, text: string | null, promptUuid: string | null = null): void {
+    start(record: CodeSessionRecord, text: string | null, promptUuid: string | null = null): Promise<CodeAttachOutcome> {
         if (this.operation) this.registry.cancelRun(this.operation.context.runId);
         const previous = this.binding;
         const reuse = previous !== null && previous.handle?.alive === true && previous.handle.closed !== true && !previous.retiring
@@ -293,7 +295,7 @@ export class CodeSession {
             epoch: record.epoch, audience: 'internal', isCurrent: () => this.current(op),
         });
         const op: Operation = {
-            owner, context, binding, registry: this.registry,
+            owner, operationId: record.operationId, outcome: null, context, binding, registry: this.registry,
             normalizer: null, permissions: new Map(), syncingPermissions: false,
             stopped: false, dispatched: false, callbacksClosed: false, settled: false, failure: null, persistenceFailure: false,
             interrupted, wake, work: Promise.resolve(),
@@ -312,6 +314,7 @@ export class CodeSession {
             this.failPersistence(op, error);
             await this.finish(op, null);
         });
+        return op.work.then(() => op.outcome ?? 'failed', () => 'failed');
     }
 
     private async bounded<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
@@ -589,6 +592,7 @@ export class CodeSession {
         try {
             const status = op.failure || op.persistenceFailure || outcome?.status === 'error' ? 'failed'
                 : op.stopped || outcome?.status === 'stopped' ? 'cancelled' : 'completed';
+            op.outcome = status;
             const error = op.failure ?? (status === 'failed'
                 ? this.diagnostic('native_failed', 'Code provider turn failed') : null);
             const result = op.owner.turnId === null
@@ -740,7 +744,8 @@ export class CodeSession {
     async cancel(input: CodeCancelRequest): Promise<void> {
         this.assertHealthy();
         const op = this.operation;
-        if (!op || op.owner.turnId !== input.turnId || op.owner.epoch !== input.epoch) {
+        if (!op || op.owner.epoch !== input.epoch || ('operationId' in input
+            ? op.owner.turnId !== null || op.operationId !== input.operationId : op.owner.turnId !== input.turnId)) {
             throw new CodeStoreError('stale_owner', 'Code turn ownership has changed', 409);
         }
         if (op.settled) return;
@@ -748,8 +753,10 @@ export class CodeSession {
             op.stopped = true;
             try {
                 this.sealAndDrainAccepted(op);
-                const result = this.write(op, () => this.options.store.setRuntimeState(op.owner, 'stopping'));
-                this.publish(result.events);
+                if (op.owner.turnId !== null) {
+                    const result = this.write(op, () => this.options.store.setRuntimeState(op.owner, 'stopping'));
+                    this.publish(result.events);
+                }
             } finally { this.interrupt(op); }
         }
         await op.work;

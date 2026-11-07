@@ -43,7 +43,8 @@ export interface CodeSessionClient {
     /** A Claude follow-up for the captured running turn; never retried. */
     steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
     cancelPrompt(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo>;
-    attachSession(id: string): Promise<CodeSessionInfo>;
+    findCreation(key: string, signal?: AbortSignal): Promise<CodeSessionInfo>;
+    attachSession(id: string): Promise<{ session: CodeSessionInfo; attach: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } | null }>;
     rollbackSession(id: string, input: CodeRollbackRequest): Promise<CodeSessionInfo>;
     visitSession(id: string): Promise<CodeSessionInfo>;
     answerPermission(id: string, input: CodePermissionAnswer): Promise<void>;
@@ -52,6 +53,9 @@ export interface CodeSessionClient {
 }
 
 const ERROR_COPY: Record<string, string> = {
+    creation_key_conflict: 'This creation key belongs to different settings. Start another session to continue.',
+    creation_not_found: 'The original session was not found yet. Refresh to check again or start another session.',
+    unknown_field: 'This instance runs an older Code server that cannot recover a lost create. Restart that instance to update it, then send again.',
     session_busy: 'This session is busy. Wait for it to finish or stop the current turn.',
     request_not_current: 'This approval is no longer current. Refreshing its status.',
     invalid_option: 'This approval option is no longer available. Refreshing its status.',
@@ -123,7 +127,11 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         sendPrompt: (id, input) => request('POST', `${sessionPath(id)}/prompt`, input),
         steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),
-        attachSession: id => sessionRequest('POST', `${sessionPath(id)}/attach`, {}),
+        findCreation: async (key, signal) => (await request<{ session: CodeSessionInfo }>('GET', `/creations/${encodeURIComponent(key)}`, undefined, signal)).session,
+        attachSession: async id => {
+            const result = await request<{ session: CodeSessionInfo; attach?: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } }>('POST', `${sessionPath(id)}/attach`, {});
+            return { session: result.session, attach: result.attach ?? null };
+        },
         rollbackSession: (id, input) => sessionRequest('POST', `${sessionPath(id)}/rollback`, input),
         visitSession: id => sessionRequest('POST', `${sessionPath(id)}/visit`, {}),
         async answerPermission(id, input) { await request('POST', `/permissions/${encodeURIComponent(id)}`, input); },
