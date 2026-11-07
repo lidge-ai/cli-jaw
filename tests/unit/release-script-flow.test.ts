@@ -292,7 +292,6 @@ test('invalid wait settings stop before any mutation', () => {
 test('a CI run that never appears fails once the injected discovery deadline passes', () => {
     // Real one-second polls, so bash's SECONDS actually advances past the deadline.
     const f = fixture();
-    const started = Date.now();
     const result = release(f, [], {
         TESTS_ABSENT: '1', TEST_REAL_SLEEP: '1', JAW_RELEASE_POLL_SECONDS: '1', JAW_RELEASE_CI_DISCOVERY_SECONDS: '2',
     });
@@ -302,7 +301,8 @@ test('a CI run that never appears fails once the injected discovery deadline pas
     // Under heavy load the deadline may pass before the first sleep, so only
     // the interval of any recorded sleep is asserted, never the count.
     assert.ok(sleeps(f).every(value => value === '1'));
-    assert.ok(Date.now() - started < 60_000, 'expiry must follow the injected deadline, not the 1200s default');
+    // No wall-clock assertion: status 1 already proves the injected deadline was
+    // honored, because the 1200s default would end at the spawn timeout (null).
     assert.doesNotMatch(readFileSync(f.log, 'utf8'), /workflow run publish.yml/);
 });
 test('wait settings in the caller environment do not leak into the harness', () => {
