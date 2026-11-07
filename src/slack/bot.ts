@@ -1130,7 +1130,7 @@ async function deliverSlackTurnBody(options: {
     onSent?: (alreadyDelivered: boolean) => void;
     onRelayError?: (error: unknown) => void;
 }): Promise<SlackTurnBodyOutcome> {
-    const { token, target, text, data, signal, display, settleAck, current, executionOutcome } = options;
+    const { token, target, text: rawText, data, signal, display, settleAck, current, executionOutcome } = options;
     const blockedRoot = slackRecoveryBlocksRoot(data['requestId'], target);
     if (slackFailureRoutingEnabled() && (isSlackTurnFailure(data) || executionOutcome() === 'error' || blockedRoot)) {
         if (blockedRoot) await reportSlackFailure(token, target, data['requestId'], 'destination');
@@ -1138,13 +1138,13 @@ async function deliverSlackTurnBody(options: {
         return { delivered: false, confirmed: false, outcome: 'error' };
     }
     const requireBodyDelivery = requiresNativeBodyDelivery(data);
-    const checked = await runSlackPreSendHook(text, target, options.preSendContext, { signal });
+    const checked = await runSlackPreSendHook(rawText, target, options.preSendContext, { signal });
     if (!checked.ok) {
         log.warn(`[slack:pre-send] blocked ${redactOutboundText(options.preSendContext.requestId)}: ${redactOutboundText(checked.error)}`);
         await Promise.allSettled([settleAck('failure'), display.finish('error')]);
         return { delivered: false, confirmed: false, outcome: 'error' };
     }
-    const preparedText = checked.text;
+    const text = checked.text;
     let bodySucceeded = false;
     let bodyConfirmed = false;
     const report = () => options.report?.(bodySucceeded, bodyConfirmed);
@@ -1153,13 +1153,13 @@ async function deliverSlackTurnBody(options: {
     const closeOutbound = () => { if (!outboundClosed) { outboundClosed = true; outbound.done(); } };
     options.onAttempt?.();
     try {
-        const skipped = options.skipSendIfEmpty && !preparedText;
+        const skipped = options.skipSendIfEmpty && !text;
         const since = options.since;
         const alreadyDelivered = !skipped && since !== undefined
-            && wasSelfDelivered({ target, text: preparedText, since });
+            && wasSelfDelivered({ target, text, since });
         const sent: { ok: boolean; ts?: string } = skipped ? { ok: false }
             : alreadyDelivered ? { ok: true }
-            : await sendSlackText(token, target, preparedText, {
+            : await sendSlackText(token, target, text, {
                 signal: outbound.signal, ...(requireBodyDelivery ? { requireBodyDelivery: true } : {}),
                 onPosted: async () => {
                     // Every chunk is posted, so the answer is visible. Settle the
@@ -1182,14 +1182,14 @@ async function deliverSlackTurnBody(options: {
         await settleAck(bodySucceeded && outcome === 'complete' ? 'success' : 'failure');
         await display.finish(outcome, { bodyDelivered: bodyConfirmed,
             routeFailure: isSlackTurnFailure(data) || executionOutcome() === 'error' || !bodySucceeded });
-        if (current() && (options.relayWhenTextEmpty || Boolean(preparedText))) {
+        if (current() && (options.relayWhenTextEmpty || Boolean(text))) {
             if (options.relayMode === 'isolated') {
                 const relay = slackOutboundRegistry.start(signal);
-                try { await relaySlackImages(token, target, preparedText, { signal: relay.signal }); }
+                try { await relaySlackImages(token, target, text, { signal: relay.signal }); }
                 catch (error) { options.onRelayError?.(error); }
                 finally { relay.done(); }
             } else {
-                await relaySlackImages(token, target, preparedText, { signal: outbound.signal });
+                await relaySlackImages(token, target, text, { signal: outbound.signal });
             }
         }
         if (!skipped) options.onSent?.(alreadyDelivered);

@@ -81,9 +81,11 @@ test('policy wiring: heartbeat redacts before quiet gate and anchor persistence'
     const quiet = src.indexOf('isHeartbeatQuietOutput(result, extraQuietMarkers)', policy);
     const anchor = src.indexOf('insertHeartbeatAnchor.run(', quiet);
     assert.ok(policy >= 0 && quiet > policy && anchor > quiet);
-    // wp4 report gate delivers `formatted` (policy-redacted `result` -> report summary/prefix).
+    // The server-owned pre-send validator may replace `formatted` with repaired
+    // text immediately before the transport call.
     const between = src.slice(quiet, anchor);
     assert.ok(between.includes('sendChannelOutput'));
-    assert.ok(between.includes('text: formatted'));
+    assert.ok(between.includes('text: checked.text') || between.includes('text: formatted'));
+    assert.ok(between.includes('runSlackPreSendHook'));
     assert.ok(between.indexOf('parseHeartbeatReport(result)') < between.indexOf('sendChannelOutput'));
 });
