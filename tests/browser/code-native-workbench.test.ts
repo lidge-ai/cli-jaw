@@ -482,11 +482,13 @@ test('native Code workbench on isolated real Manager', { timeout: 240_000 }, asy
                         await p.mouse.move(0, 0);
                         const prompt = p.getByRole('textbox', { name: 'Code prompt', exact: true });
                         const dictation = p.getByRole('button', { name: 'Dictation', exact: true });
-                        const dictationEnabled = await dictation.isEnabled();
+                        const dictationSupported = await p.evaluate(() =>
+                            typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+                        assert.equal(await dictation.isEnabled(), dictationSupported);
                         await prompt.focus();
                         await p.keyboard.press('Tab');
                         // CodeComposer.tsx:74-85 places Dictation between the prompt and Send when supported.
-                        if (dictationEnabled) {
+                        if (dictationSupported) {
                             assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
                             await p.keyboard.press('Tab');
                         }
@@ -505,13 +507,13 @@ test('native Code workbench on isolated real Manager', { timeout: 240_000 }, asy
                         assert.ok(focus.top >= 0 && focus.bottom <= focus.viewportHeight, JSON.stringify(focus));
                         // Reverse and replay the full tab path without activating either button.
                         await p.keyboard.press('Shift+Tab');
-                        if (dictationEnabled) {
+                        if (dictationSupported) {
                             assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
                             await p.keyboard.press('Shift+Tab');
                         }
                         assert.equal(await prompt.evaluate(element => document.activeElement === element), true);
                         await p.keyboard.press('Tab');
-                        if (dictationEnabled) {
+                        if (dictationSupported) {
                             assert.equal(await dictation.evaluate(element => document.activeElement === element), true);
                             await p.keyboard.press('Tab');
                         }

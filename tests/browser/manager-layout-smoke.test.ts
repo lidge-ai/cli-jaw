@@ -694,8 +694,15 @@ layoutTest('manager settings page has bounded layout and guarded keyboard close'
         assert.equal(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
         await page.emulateMedia({ reducedMotion: 'reduce' });
         // manager-layout.css:293 reduces transitions to at most 0.01ms.
-        assert.ok(await panel.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration) <= 0.00001));
-        assert.ok(await page.locator('.workbench').evaluate(el => parseFloat(getComputedStyle(el).transitionDuration) <= 0.00001));
+        for (const element of [panel, page.locator('.workbench')]) {
+            const durations = await element.evaluate(el => getComputedStyle(el).transitionDuration.split(','));
+            for (const duration of durations) {
+                const value = duration.trim();
+                assert.match(value, /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:ms|s)$/i);
+                const seconds = parseFloat(value) * (value.endsWith('ms') ? 0.001 : 1);
+                assert.ok(seconds <= 0.00001, `reduced-motion transition duration: ${value}`);
+            }
+        }
         await page.emulateMedia({ reducedMotion: 'no-preference' });
     }
     const meta = panel.getByRole('button', { name: 'Dashboard meta', exact: true });
@@ -709,10 +716,19 @@ layoutTest('manager settings page has bounded layout and guarded keyboard close'
     await field.waitFor({ state: 'visible' });
     const draft = `${await field.inputValue()} QA draft`; await field.fill(draft);
     await panel.getByRole('button', { name: 'Back to workspace', exact: true }).focus();
-    page.once('dialog', dialog => dialog.dismiss()); await page.keyboard.press('ControlOrMeta+,');
+    let escapeDialogs = 0;
+    const onEscapeDialog = (dialog: import('playwright-core').Dialog) => {
+        escapeDialogs++;
+        return escapeDialogs === 1 ? dialog.dismiss() : dialog.accept();
+    };
+    page.on('dialog', onEscapeDialog);
+    await page.keyboard.press('Escape');
+    assert.equal(escapeDialogs, 1, 'first Escape must show exactly one dirty-draft confirmation');
     assert.equal(await panel.count(), 1); assert.equal(await field.inputValue(), draft);
     scenario(t).observations['dirtyDismissed'] = true;
-    page.once('dialog', dialog => dialog.accept()); await page.keyboard.press('ControlOrMeta+,');
+    await page.keyboard.press('Escape');
+    page.off('dialog', onEscapeDialog);
+    assert.equal(escapeDialogs, 2, 'second Escape must show exactly one dirty-draft confirmation');
     await panel.waitFor({ state: 'detached' });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
     await page.waitForFunction(() => document.querySelector('#workbench-tab-overview')?.getAttribute('aria-selected') === 'true');
@@ -723,4 +739,22 @@ layoutTest('manager settings page has bounded layout and guarded keyboard close'
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('ControlOrMeta+,'); await panel.waitFor({ state: 'detached' });
     scenario(t).observations['shortcutClosed'] = true;
+    await page.keyboard.press('ControlOrMeta+,'); await panel.waitFor({ state: 'visible' });
+    await meta.click();
+    await field.waitFor({ state: 'visible' });
+    const shortcutDraft = `${await field.inputValue()} shortcut draft`;
+    await field.fill(shortcutDraft);
+    let shortcutDialogs = 0;
+    const onShortcutDialog = (dialog: import('playwright-core').Dialog) => {
+        shortcutDialogs++;
+        return shortcutDialogs === 1 ? dialog.dismiss() : dialog.accept();
+    };
+    page.on('dialog', onShortcutDialog);
+    await page.keyboard.press('ControlOrMeta+,');
+    assert.equal(shortcutDialogs, 1, 'first shortcut must show exactly one dirty-draft confirmation');
+    assert.equal(await panel.count(), 1); assert.equal(await field.inputValue(), shortcutDraft);
+    await page.keyboard.press('ControlOrMeta+,');
+    page.off('dialog', onShortcutDialog);
+    assert.equal(shortcutDialogs, 2, 'second shortcut must show exactly one dirty-draft confirmation');
+    await panel.waitFor({ state: 'detached' });
 });
