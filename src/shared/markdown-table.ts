@@ -71,7 +71,16 @@ export function findLinkLabelEnd(raw: string, start: number): number {
             continue;
         }
         if (slashes % 2 === 0) {
-            if (char === '[') depth += 1;
+            if (char === '`') {
+                // A code span binds tighter than link brackets: skip to the
+                // closing run of the same length, or treat the run as literal.
+                let run = 1;
+                while (raw[i + run] === '`') run += 1;
+                const fence = '`'.repeat(run);
+                let close = raw.indexOf(fence, i + run);
+                while (close >= 0 && raw[close + run] === '`') close = raw.indexOf(fence, close + run + 1);
+                i = close >= 0 ? close + run - 1 : i + run - 1;
+            } else if (char === '[') depth += 1;
             else if (char === ']') {
                 if (depth === 0) return i;
                 depth -= 1;

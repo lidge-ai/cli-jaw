@@ -4,6 +4,7 @@ export const EDGE_FIXTURE_MARKDOWN = String.raw`| Edge |
 | --- |
 | ![A \] B][id] |
 | ![A [nested] B][id] |
+| ![A ${'`'}[${'`'} B][id] |
 | ![A &amp; B](https://example.com/i.png) |
 | ${'`'}A &amp; B${'`'} |
 
@@ -14,6 +15,7 @@ export const EXPECTED_EDGE_MODEL: TableModel = {
     rows: [
         [{ text: 'A ] B', markdown: String.raw`![A \] B](https://example.com/img)` }],
         [{ text: 'A [nested] B', markdown: '![A [nested] B](https://example.com/img)' }],
+        [{ text: 'A [ B', markdown: '![A `[` B](https://example.com/img)' }],
         [{ text: 'A & B', markdown: '![A &amp; B](https://example.com/i.png)' }],
         [{ text: 'A &amp; B', markdown: '`A &amp; B`' }],
     ],

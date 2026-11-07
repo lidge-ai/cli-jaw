@@ -13,6 +13,19 @@ function decodeEntities(value: string): string {
         return entityDecoder!.value;
     });
 }
+// marked keeps an image label's raw text as alt; mdast gives plain text. Match
+// mdast: a code span keeps its content literally (one wrapping space pair
+// trimmed), and character references outside code spans decode once.
+function imageAltText(raw: string): string {
+    let out = '';
+    let last = 0;
+    for (const match of raw.matchAll(/(`+)([\s\S]*?[^`])\1(?!`)/g)) {
+        const index = match.index ?? 0;
+        out += decodeEntities(raw.slice(last, index)) + match[2]!.replace(/^ ([\s\S]*) $/, '$1');
+        last = index + match[0].length;
+    }
+    return out + decodeEntities(raw.slice(last));
+}
 function restoreMath(value: string, blocks: MathBlock[]): string {
     return value.replace(/\x00MATH-(\d+)\x00/g, (raw, index: string) => {
         const block = blocks[Number(index)];
@@ -46,7 +59,7 @@ function textTokens(tokens: Token[]): string {
             if (tokens[index + 1]?.type === 'strong' || tokens[index + 1]?.type === 'em') value = value.replace(/\u200b$/, '');
             return value;
         }
-        if (token.type === 'image') return decodeEntities(token.text);
+        if (token.type === 'image') return imageAltText(token.text);
         if (token.type === 'escape' || token.type === 'codespan') return token.text;
         if (token.type === 'strong' || token.type === 'em' || token.type === 'del' || token.type === 'link') {
             const value = textTokens(token.tokens ?? []);

@@ -92,9 +92,14 @@ test('finds label ends with nested and escaped brackets', () => {
     const escapedOpen = String.raw`![A \[ B][id]`;
     const evenSlashes = String.raw`![A \\[nested] B][id]`;
     const unclosed = '![A [nested] B';
-    for (const raw of [nested, escaped, escapedOpen, evenSlashes]) {
+    // A code span binds tighter than link brackets, so brackets inside it never count.
+    const codeOpen = '![A `[` B][id]';
+    const codeClose = '![x ``a]`` y][id]';
+    for (const raw of [nested, escaped, escapedOpen, evenSlashes, codeOpen, codeClose]) {
         assert.equal(findLinkLabelEnd(raw, 2), raw.indexOf('][id]'));
     }
+    // An unmatched backtick run is literal, so the scan continues past it.
+    assert.equal(findLinkLabelEnd('![a ` b][id]', 2), '![a ` b][id]'.indexOf('][id]'));
     assert.equal(findLinkLabelEnd(unclosed, 2), unclosed.length);
 });
 
