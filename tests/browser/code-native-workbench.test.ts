@@ -186,6 +186,51 @@ async function containment(page: Page) {
     return { ...metrics, closedDrawer };
 }
 
+const fixtureDiff = '@@ -1 +1 @@\n-old\n+new\n';
+function transcript(page: Page) { return page.getByRole('log', { name: 'Code transcript' }); }
+async function reenter(page: Page) {
+    await page.getByRole('tab', { name: 'Jaw', exact: true }).click();
+    await transcript(page).waitFor({ state: 'detached' });
+    await page.getByRole('tab', { name: 'Code', exact: true }).click();
+    await transcript(page).waitFor({ state: 'visible' });
+}
+async function firstVisible(page: Page): Promise<number> {
+    return transcript(page).evaluate(node => {
+        const top = node.getBoundingClientRect().top;
+        const rows = [...node.querySelectorAll<HTMLElement>('[data-code-transcript-idx]')];
+        const row = rows.find(element => element.getBoundingClientRect().bottom > top + 1);
+        if (!row) throw new Error('No visible transcript row');
+        return Number(row.dataset.codeTranscriptIdx);
+    });
+}
+async function scrollToMiddle(page: Page) {
+    const log = transcript(page);
+    await log.evaluate(node => { node.scrollTop = node.scrollHeight * 0.6; });
+    await page.waitForTimeout(300);
+    const index = await firstVisible(page);
+    const metrics = await log.evaluate(node => ({ top: node.scrollTop, max: node.scrollHeight - node.clientHeight }));
+    assert.ok(metrics.top > 100 && metrics.top < metrics.max - 100, JSON.stringify(metrics));
+    return index;
+}
+async function assertAnchor(page: Page, index: number) {
+    await page.waitForFunction(expected => {
+        const node = document.querySelector('.code-transcript');
+        if (!node) return false;
+        const row = [...node.querySelectorAll<HTMLElement>('[data-code-transcript-idx]')]
+            .find(element => element.getBoundingClientRect().bottom > node.getBoundingClientRect().top + 1);
+        return row && Math.abs(Number(row.dataset.codeTranscriptIdx) - expected) <= 1;
+    }, index, { timeout: 15_000 });
+}
+async function assertBottom(page: Page) {
+    await page.waitForFunction(() => {
+        const node = document.querySelector('.code-transcript');
+        return node && node.scrollHeight - node.scrollTop - node.clientHeight <= 64;
+    });
+}
+function card(page: Page, name: string) {
+    return transcript(page).locator('details.code-tool-card').filter({ has: page.getByText(name, { exact: true }) });
+}
+
 async function shutdownOwned(manifest: Manifest) {
     const receipt = join(manifest.evidenceDir, 'provider-events.json');
     const exited = new Promise<void>((resolve, reject) => {
@@ -204,7 +249,7 @@ async function shutdownOwned(manifest: Manifest) {
     assert.ok(proof.handles.every(handle => handle.closed), 'Every owned native resource must report closed on exit');
 }
 
-test('native Code workbench on isolated real Manager', { timeout: 240_000 }, async () => {
+test('native Code workbench on isolated real Manager', { timeout: 320_000 }, async () => {
     const manifest = readManifest();
     const cdp = process.env.MANAGER_BROWSER_CDP_URL;
     const results: EvidenceStep[] = [];
@@ -402,6 +447,113 @@ test('native Code workbench on isolated real Manager', { timeout: 240_000 }, asy
                 await log.locator('.katex').first().scrollIntoViewIfNeeded();
                 await log.locator('.katex').first().waitFor({ state: 'visible' });
                 return containment(p);
+            }, true);
+            let fileSession!: CodeSessionInfo;
+            let reentrySession!: CodeSessionInfo;
+            let anchor = -1;
+            await step('file-change-cards', async () => {
+                await p.setViewportSize({ width: 1440, height: 1000 });
+                fileSession = await createSession(p, 'Codex', 'qa:file-change cards');
+                async function checkCards() {
+                    const log = transcript(p);
+                    await log.getByText('Edit src/app.ts', { exact: true }).waitFor();
+                    assert.equal(await log.locator('.code-tool-name').filter({ hasText: /^file change(?:\s|$)/ }).count(), 1);
+                    const single = card(p, 'Edit src/app.ts');
+                    await single.locator('summary').first().click();
+                    await single.getByText('Review patch', { exact: true }).click();
+                    assert.equal(await single.locator('pre.code-file-diff').textContent(), fixtureDiff);
+                    const multi = card(p, 'Edit 2 files');
+                    await multi.locator('summary').first().click();
+                    const missing = multi.locator('.code-file-entry').filter({ hasText: 'src/other.ts' });
+                    assert.equal(await missing.getByText('Patch unavailable', { exact: true }).count(), 1);
+                    assert.equal(await missing.getByText('Review patch', { exact: true }).count(), 0);
+                }
+                await checkCards();
+                const live = await waitSession(p, fileSession.sessionId, 'idle');
+                const changed = live.items.filter(item => item.kind === 'file_change');
+                assert.equal(changed.length, 2);
+                assert.ok(live.items.some(item => item.kind === 'tool_call' && item.tool?.name === 'file change'));
+                await p.reload({ waitUntil: 'domcontentloaded' });
+                await p.getByRole('tab', { name: 'Code', exact: true }).click();
+                await selectSession(p, 'qa:file-change cards');
+                await checkCards();
+                const replay = await waitSession(p, fileSession.sessionId, 'idle');
+                assert.deepEqual(replay.items.filter(item => item.kind === 'file_change'), changed);
+                return { session: fileSession.sessionId, diff: fixtureDiff };
+            }, true);
+            await step('reentry-restores-anchor-and-disclosure', async () => {
+                reentrySession = await createSession(p, 'Codex', 'qa:rows reentry');
+                await send(p, 'qa:file-change disclosures');
+                await waitSession(p, reentrySession.sessionId, 'idle');
+                const single = card(p, 'Edit src/app.ts');
+                await single.locator('summary').first().click();
+                await single.getByText('Review patch', { exact: true }).click();
+                anchor = await scrollToMiddle(p);
+                await reenter(p);
+                await assertAnchor(p, anchor);
+                // Return to the disclosure to check its state after the remount,
+                // then restore the saved anchor for the screenshot and next case.
+                const log = transcript(p); await log.focus(); await log.press('End');
+                await single.waitFor();
+                assert.equal(await single.getAttribute('open'), '');
+                assert.equal(await single.locator('details.code-file-review').getAttribute('open'), '');
+                await p.screenshot({ path: join(manifest.evidenceDir, 'reentry-disclosure-open.png') });
+                await log.evaluate(node => { node.scrollTop = node.scrollHeight * 0.6; });
+                await p.waitForTimeout(300); anchor = await firstVisible(p);
+                return { session: reentrySession.sessionId, firstVisibleRow: anchor };
+            }, true);
+            await step('reentry-following-returns-to-latest', async () => {
+                assert.ok(reentrySession);
+                await transcript(p).focus(); await transcript(p).press('End');
+                await assertBottom(p); await reenter(p); await assertBottom(p);
+                return { session: reentrySession.sessionId };
+            }, true);
+            await step('reentry-delayed-hydration-and-user-scroll-wins', async () => {
+                assert.ok(reentrySession);
+                anchor = await scrollToMiddle(p);
+                const sessionPath = `/api/code/sessions/${encodeURIComponent(reentrySession.sessionId)}`;
+                let delayed = 0;
+                const handler = async (route: import('playwright-core').Route) => {
+                    const request = route.request(); const path = new URL(request.url()).pathname;
+                    if (request.method() === 'GET' && (path === sessionPath || path === `${sessionPath}/items`)) {
+                        delayed++; await new Promise(resolve => setTimeout(resolve, 1500));
+                    }
+                    await route.continue().catch(() => undefined);
+                };
+                await p.route('**/api/code/sessions/**', handler);
+                try {
+                    await reenter(p);
+                    assert.equal(await transcript(p).locator('[data-code-item-id]').count(), 0, 'Hydration must begin empty');
+                    await assertAnchor(p, anchor);
+                    assert.ok(delayed > 0, 'Snapshot or history was actually delayed');
+                    await p.getByRole('tab', { name: 'Jaw', exact: true }).click();
+                    await p.getByRole('tab', { name: 'Code', exact: true }).click();
+                    const log = transcript(p); await log.waitFor();
+                    // Wheel while the snapshot is withheld, then again as rows
+                    // appear so the wheel has real geometry to scroll.
+                    await log.hover(); await p.mouse.wheel(0, 450);
+                    await log.locator('[data-code-transcript-idx]').first().waitFor();
+                    await p.mouse.wheel(0, 450);
+                    await p.waitForTimeout(500);
+                    const wheeled = await firstVisible(p);
+                    assert.ok(Math.abs(wheeled - anchor) > 1, `Wheel must change the saved anchor: ${anchor} -> ${wheeled}`);
+                    await p.unroute('**/api/code/sessions/**', handler);
+                    await reenter(p); await assertAnchor(p, wheeled);
+                    return { delayedRequests: delayed, original: anchor, wheeled };
+                } finally { await p.unroute('**/api/code/sessions/**', handler); }
+            }, true);
+            await step('reentry-session-isolation', async () => {
+                const second = await createSession(p, 'Codex', 'qa:file-change isolation');
+                await assertBottom(p);
+                const single = card(p, 'Edit src/app.ts'); await single.waitFor();
+                assert.equal(await single.getAttribute('open'), null);
+                await reenter(p); await assertBottom(p);
+                assert.equal(await card(p, 'Edit src/app.ts').getAttribute('open'), null);
+                // Endpoint isolation cannot be activated by routing the instance
+                // list: AppChrome passes the Manager page's port to CodeCanvas,
+                // independently of the selected instance. A second Manager origin
+                // needs supervision outside this scope; component coverage owns it.
+                return { second: second.sessionId, first: reentrySession.sessionId, endpointIsolation: 'blocked by single-worker supervision' };
             }, true);
             const koreanTitle = '네이티브 코드 작업 검토 — 긴 한국어 세션 제목과 좁은 화면에서의 승인 및 초안 보존 확인';
             const koreanDraft = '이 초안은 전송하지 않습니다. 좁은 화면에서도 한국어 문장과 긴 작업 설명이 잘리지 않고 읽히는지 확인해 주세요.\n'

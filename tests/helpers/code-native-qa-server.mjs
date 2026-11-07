@@ -130,7 +130,7 @@ function provider(id) {
                     options.onNativeCursor(state.nativeSessionId, context);
                     options.record(context, { kind: 'turn-start', provider: id });
                     const kind = text.startsWith('qa:hold') ? 'hold' : text.startsWith('qa:approval') ? 'approval'
-                        : text.startsWith('qa:rows') ? 'rows' : 'markdown';
+                        : text.startsWith('qa:rows') ? 'rows' : text.startsWith('qa:file-change') ? 'file-change' : 'markdown';
                     current = { kind, context, observer, done: deferred(), partial: '' };
                     record('send', { sessionId: state.sessionId, nativeSessionId: state.nativeSessionId, scenarioKind: kind, turnId: context.turnId });
                     if (kind === 'hold') {
@@ -155,6 +155,16 @@ function provider(id) {
                         const finalText = answer === 'opaque-allow-17' ? 'Fixture approved through RuntimeRequests.' : 'Fixture denied.';
                         observer.text('message', 'answer', finalText, 'replace', 'final');
                         return { status: 'done', finalText, partialText: '' };
+                    }
+                    if (kind === 'file-change') {
+                        const changes = [{ path: join(workspace, 'src/app.ts'), kind: { type: 'update', move_path: null },
+                            diff: '@@ -1 +1 @@\n-old\n+new\n' }];
+                        observer.tool('legacy-fc', { name: 'file change', input: JSON.stringify(changes), inputStructured: true, status: 'done' }, {});
+                        observer.tool('fc-one', { name: 'file change', semantic: 'file_change', fileChanges: changes, status: 'running' }, {});
+                        observer.tool('fc-one', { status: 'done' }, {});
+                        observer.tool('fc-multi', { name: 'file change', semantic: 'file_change', fileChanges: [
+                            changes[0], { path: join(workspace, 'src/other.ts'), kind: { type: 'update', move_path: null } },
+                        ], status: 'done' }, {});
                     }
                     if (kind === 'rows') {
                         // Real normalizer + CodeStore create every item. No API/history fixture.
