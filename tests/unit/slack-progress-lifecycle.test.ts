@@ -274,19 +274,38 @@ test('a SILENT marker inside a sentence is ordinary text', async context => {
 });
 
 const click = { type: 'block_actions' };
-test('a block action that answers only [SILENT] posts nothing and completes', async context => {
+const writes = (channel: string) => calls.filter(call => call.body['channel'] === channel && call.method !== 'conversations.replies')
+    .map(call => [call.method, call.body['text'] ?? null]);
+test('a block action that answers only [SILENT] leaves nothing in the card thread', async context => {
     collect = async () => ({ text: '[SILENT]', data: {} });
-    await run(context, target(), new AbortController().signal, click); await until(context, complete);
-    assert.deepEqual(bodyCalls(), []);
-    assert.equal(reaction('x').length, 0);
+    const destination = target();
+    const admission = await run(context, destination, new AbortController().signal, click);
+    await Promise.allSettled([...tails]); await tick(context, 1000);
+    assert.deepEqual(writes(destination.targetId), []);
+    assert.equal(getQueueNoticeStore()!.findByRequestId(String(admission['requestId'])), null);
 });
-test('a queued block action that answers only [SILENT] posts nothing and completes', async context => {
+test('a block action with a real answer posts only that answer, without a progress card', async context => {
+    collect = async () => ({ text: 'Approved.', data: {} });
+    const destination = target();
+    await run(context, destination, new AbortController().signal, click);
+    await Promise.allSettled([...tails]); await tick(context, 1000);
+    assert.deepEqual(writes(destination.targetId), [['chat.postMessage', 'Approved.']]);
+});
+test('a queued block action that answers only [SILENT] leaves nothing while a queued real answer posts alone', async context => {
     queued = true;
-    const admission = await run(context, target(), new AbortController().signal, click); await until(context, () => progressMessages().length === 1);
-    broadcast('queued_run_started', event(admission));
-    broadcast('orchestrate_done', event(admission, { text: '[SILENT]', fromQueue: true }));
-    await until(context, complete);
-    assert.deepEqual(bodyCalls(), []);
+    const silent = target();
+    const quiet = await run(context, silent, new AbortController().signal, click);
+    const answered = target();
+    const loud = await run(context, answered, new AbortController().signal, click);
+    await tick(context, 1000);
+    for (const admission of [quiet, loud]) assert.equal(getQueueNoticeStore()!.findByRequestId(String(admission['requestId'])), null, 'no record a restart could restore');
+    for (const admission of [quiet, loud]) broadcast('queued_run_started', event(admission));
+    broadcast('orchestrate_done', event(quiet, { text: '[SILENT]', fromQueue: true }));
+    broadcast('orchestrate_done', event(loud, { text: 'Approved.', fromQueue: true }));
+    await until(context, () => writes(answered.targetId).length === 1);
+    await tick(context, 1000);
+    assert.deepEqual(writes(silent.targetId), []);
+    assert.deepEqual(writes(answered.targetId), [['chat.postMessage', 'Approved.']]);
 });
 test('an orphan block action reply of [SILENT] posts nothing while an ordinary one still gets the placeholder', async context => {
     const silent = target();
@@ -297,6 +316,7 @@ test('an orphan block action reply of [SILENT] posts nothing while an ordinary o
         replyViaTarget: true, text: '[SILENT]', preSendContext: { requester: 'U_TEST', jobKind: 'slack_turn' } });
     await until(context, () => bodyCalls().length === 1);
     await tick(context, 1000);
+    assert.deepEqual(writes(silent.targetId), []);
     assert.deepEqual(bodyCalls().map(call => [call.body['channel'], call.body['text']]), [[ordinary.targetId, t('tg.noResponse', {}, 'en')]]);
 });
 

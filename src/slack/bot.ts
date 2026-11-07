@@ -410,9 +410,12 @@ function isPreSendBaseContext(value: unknown): value is SlackPreSendBaseContext 
 
 const SLACK_BLOCK_ACTION_JOB = 'slack_block_action';
 
+function isSlackBlockActionContext(context: unknown): boolean {
+    return isPreSendBaseContext(context) && context.jobKind === SLACK_BLOCK_ACTION_JOB;
+}
+
 function isSilentBlockActionReply(text: string, context: unknown): boolean {
-    return isPreSendBaseContext(context) && context.jobKind === SLACK_BLOCK_ACTION_JOB
-        && hasSilentLine(text) && !withoutSilentLines(text);
+    return isSlackBlockActionContext(context) && hasSilentLine(text) && !withoutSilentLines(text);
 }
 
 function buildSlackPreSendContext(
@@ -776,7 +779,8 @@ function trackSlackReply(options: SlackReplyOptions): void {
             });
         }, true);
     }
-    slackNoticeRecord.reserve(requestId, target);
+    const showProgress = !isSlackBlockActionContext(options.preSendContext);
+    if (showProgress) slackNoticeRecord.reserve(requestId, target);
     display = createSlackProgressLifecycle({
         token, target, requestId, scope: session.scope, sessionId: session.chatSessionId, locale,
         workflowResponse: Boolean(options.workflow),
@@ -799,7 +803,7 @@ function trackSlackReply(options: SlackReplyOptions): void {
     pendingQueueRequestIds.add(requestId);
     signal.addEventListener('abort', abortInput, { once: true });
     resetTimer();
-    display.start({ initialPhase });
+    if (showProgress) display.start({ initialPhase });
     void ack?.to('running', { wasQueued: initialPhase === 'queued' });
 
 }
@@ -965,7 +969,8 @@ async function slackOrchestrate(
             let resultData: Record<string, unknown> = {};
             const current = () => !shutdownSealed && !slackStopping && !signal.aborted && generation === lifecycleGeneration;
             if (!current()) return;
-            if (ctx.requestId) slackNoticeRecord.reserve(ctx.requestId, target);
+            const showProgress = !isSlackBlockActionContext(dedupe.preSendContext);
+            if (ctx.requestId && showProgress) slackNoticeRecord.reserve(ctx.requestId, target);
             const display = createSlackProgressLifecycle({
                 token, target, requestId: ctx.requestId, scope: ctx.scope, sessionId: ctx.chatSessionId, locale,
                 workflowResponse: Boolean(dedupe.workflow),
@@ -982,7 +987,7 @@ async function slackOrchestrate(
                 void display.finish(executionOutcome ?? 'expired');
             };
             signal.addEventListener('abort', abortInput, { once: true });
-            display.start({ initialPhase: 'running' });
+            if (showProgress) display.start({ initialPhase: 'running' });
             void ack?.to('running');
             const turnStartedAt = nextDeliverySeq();
             try {
