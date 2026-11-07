@@ -108,6 +108,19 @@ test('poster uses manager revoke URL, token, and handles transport errors', asyn
   assert.equal(await failing(body), 'network-error');
 });
 
+test('poster gives app-quit the longer request timeout', async () => {
+  const durations: number[] = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms: number) => { durations.push(ms); return originalTimeout(ms); };
+  try {
+    const post = createLeaseRevokePoster({ managerUrl: () => 'http://localhost/', token: 'secret', timeoutMs: 25, fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch });
+    const body = { authorityId: 'a', ownerId: 'o', generation: 1 };
+    await post({ ...body, reason: 'app-quit' });
+    await post({ ...body, reason: 'window-closed' });
+    assert.deepEqual(durations, [10000, 25]);
+  } finally { AbortSignal.timeout = originalTimeout; }
+});
+
 test('window events revoke current document and close it', async () => {
   const calls: LeaseRevokeBody[] = [];
   const a = new TargetLeaseAuthority({ post: async body => { calls.push(body); return 200; } });

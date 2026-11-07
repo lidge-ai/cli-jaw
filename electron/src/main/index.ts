@@ -462,7 +462,7 @@ async function prepareApplicationShutdown(reason: string): Promise<boolean> {
       // best-effort — quit must not block on cookie flush
     }
     if (mainWindow && !mainWindow.isDestroyed()) targetLeaseAuthority.revokeWindow(mainWindow.webContents.id, 'app-quit');
-    try { await targetLeaseAuthority.flush(2000); } catch { /* best effort during shutdown */ }
+    try { await targetLeaseAuthority.flush(10000); } catch { /* best effort during shutdown */ }
     const child = managerProcess;
     if (!QA_POLICY) managerProcess = null;
     try {

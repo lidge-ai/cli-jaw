@@ -196,6 +196,69 @@ test('revoke settles commands immediately and responds after worker deletion', a
     assert.equal(responded, true);
 });
 
+test('app-quit waits for a slow instance GET and deletion while settling commands immediately', async () => {
+    await publish(); await relay(7101);
+    const pending = action('snapshot'); await tick();
+    let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextGet = async () => { started(); await new Promise(resolve => setTimeout(resolve, 1800)); };
+    let responded = false;
+    const revocation = revoke({ ...mount(), reason: 'app-quit' }, () => { responded = true; });
+    await entered;
+    assert.equal((await pending).code, 410);
+    assert.deepEqual((await list()).body.targets, []);
+    assert.equal(responded, false);
+    const response = await revocation;
+    assert.equal(response.code, 200);
+    assert.equal(remote.get(7101)?.length, 0, 'DELETE must finish before the response');
+});
+
+test('app-quit retries a failed DELETE before responding', async () => {
+    await publish(); await relay(7101);
+    deleteFailures = 1;
+    assert.equal((await revoke({ ...mount(), reason: 'app-quit' })).code, 200);
+    assert.equal(deleteFailures, 0);
+    assert.equal(remote.get(7101)?.length, 0, 'retry must delete before the response');
+});
+
+test('app-quit also waits for dirty ports left by an earlier revoke', async () => {
+    await publish(); await relay(7101);
+    deleteFailures = 1;
+    await revoke(mount());
+    assert.equal(remote.get(7101)?.length, 1);
+    assert.equal((await revoke({ ...mount(), reason: 'app-quit' })).code, 200);
+    assert.equal(remote.get(7101)?.length, 0);
+});
+
+test('app-quit retries a failed port while another port remains blocked', async () => {
+    await publish(); await relay(7101);
+    let release!: () => void; let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextGet = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
+    await relay(7102); await entered;
+    deleteFailures = 1;
+    const revocation = revoke({ ...mount(), reason: 'app-quit' });
+    try {
+        await new Promise(resolve => setTimeout(resolve, 700));
+        assert.equal(remote.get(7102)?.length, 0, 'blocked port must not delay another port retry');
+    } finally { release(); await revocation; }
+});
+
+test('app-quit responds within eight seconds when an instance never answers', async () => {
+    await publish(); await relay(7101);
+    let release!: () => void; let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    blockNextGet = () => { started(); return new Promise<void>(resolve => { release = resolve; }); };
+    const start = Date.now();
+    const revocation = revoke({ ...mount(), reason: 'app-quit' });
+    await entered;
+    try {
+        assert.equal((await revocation).code, 200);
+        const elapsed = Date.now() - start;
+        assert.ok(elapsed >= 7000 && elapsed < 9500, `response took ${elapsed}ms`);
+    } finally { release(); await tick(); }
+});
+
 test('revoke responds within its bound when worker does not answer', async () => {
     await publish(); await relay(7101);
     let release!: () => void; let started!: () => void;

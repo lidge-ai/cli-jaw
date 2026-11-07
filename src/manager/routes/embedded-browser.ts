@@ -56,6 +56,8 @@ const RUNTIME_CONTEXT_LABEL_PREFIX = 'embedded-browser:';
 const SHARE_TTL_MS = 2 * 60 * 60 * 1000;
 const INSTANCE_FETCH_TIMEOUT_MS = 5000;
 let instanceFetchTimeoutMs = INSTANCE_FETCH_TIMEOUT_MS;
+const QUIT_RECONCILE_TIMEOUT_MS = 8000;
+const QUIT_RETRY_DELAY_MS = 250;
 const COMMAND_TIMEOUT_MS = 20_000;
 const COMMAND_POLL_MAX_WAIT_MS = 25_000;
 const SCREENSHOT_DIR = join(tmpdir(), 'cli-jaw-embedded-browser');
@@ -265,6 +267,32 @@ function dirtyPort(port: number, managerPort: number): Promise<{ added: number; 
     };
     owned.running = run();
     return owned.running;
+}
+
+async function waitForPortsToSettle(deadline: number): Promise<void> {
+    try {
+        while (Date.now() < deadline) {
+            const pending: Promise<unknown>[] = [];
+            for (const [port, state] of portStates) {
+                if (state.running) pending.push(state.running.catch(() => undefined));
+                else if (state.dirty) pending.push(dirtyPort(port, state.managerPort).catch(() => undefined));
+            }
+            if (!pending.length) return;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+                Promise.race(pending),
+                new Promise<void>(resolve => { timer = setTimeout(resolve, Math.max(0, deadline - Date.now())); }),
+            ]);
+            if (timer) clearTimeout(timer);
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) return;
+            if ([...portStates.values()].some(state => state.dirty && !state.running)) {
+                await new Promise<void>(resolve => setTimeout(resolve, Math.min(QUIT_RETRY_DELAY_MS, remaining)));
+            }
+        }
+    } catch {
+        // Shutdown must continue even if reconciliation fails unexpectedly.
+    }
 }
 
 // --- v3/v4/v5: renderer-relayed command queue ---
@@ -586,7 +614,9 @@ export function registerEmbeddedBrowserRoutes(app: Express, requireAuth: AuthMid
             for (const command of [...pendingCommands]) settleCommand(command.id, unavailable());
             reconciles.push(...dirtyAllPorts());
         }
-        if (reconciles.length) {
+        if (body['reason'] === 'app-quit') {
+            await waitForPortsToSettle(Date.now() + QUIT_RECONCILE_TIMEOUT_MS);
+        } else if (reconciles.length) {
             let timer: ReturnType<typeof setTimeout> | undefined;
             await Promise.race([
                 Promise.all(reconciles),
