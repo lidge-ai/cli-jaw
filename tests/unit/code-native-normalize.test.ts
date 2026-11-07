@@ -1077,6 +1077,24 @@ test('file change diff credentials are withheld on added and removed lines', () 
     assert.equal(result.at(-1)?.diff, ordinary);
 });
 
+test('file change diff credentials split across lines or escaped in JSON keys are withheld through the store item', () => {
+    const diffs = [
+        '@@ -1,2 +1,3 @@\n {\n+  "password":\n+    "hunter2"\n }',
+        '@@ -1 +1 @@\n+  "pass\\u0077ord": "hunter2"',
+        '@@ -1 +1,2 @@\n+client_secret =\n+  "abc"',
+    ];
+    const f = fixture();
+    diffs.forEach((diff, i) => f.observer.tool(`edit-${i}`, { semantic: 'file_change',
+        fileChanges: [{ path: `config${i}.json`, kind: { type: 'update' }, diff }], status: 'done' }, {}));
+    const stored = f.rows('file_change');
+    assert.equal(stored.length, diffs.length);
+    for (const item of stored) {
+        assert.equal(item.fileChange?.changes[0]?.patch, 'withheld');
+        assert.equal(item.fileChange?.changes[0]?.diff, undefined);
+        assert.doesNotMatch(JSON.stringify(item), /hunter2|"abc"/);
+    }
+});
+
 test('file change trimming matches naive reference and scales to 5000 patches', () => {
     const fits = (value: unknown, maxBytes: number, maxChars: number) => {
         const json = JSON.stringify(value);

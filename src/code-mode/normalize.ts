@@ -159,15 +159,23 @@ function trimFileChange(value: CodeFileChange, maxBytes: number, maxChars: numbe
     return verified() ? result : null;
 }
 
+/**
+ * A captured patch is shown verbatim, so any line that assigns to a
+ * secret-named key withholds the whole patch. This is deliberately broad: the
+ * value may sit on the next line (`"password":` then `"…"`), a JSON key may be
+ * written with \u escapes, and a type annotation such as `token: string` is
+ * indistinguishable from a value without parsing the file, so it withholds too.
+ */
 function diffHasCredential(diff: string): boolean {
     if (redactCodeText(diff) !== diff) return true;
     for (const raw of diff.split('\n')) {
         if (/^(?:@@|---|\+\+\+)/.test(raw)) continue;
-        const line = /^[+\- ]/.test(raw) ? raw.slice(1) : raw;
-        if (redactCodeText(line) !== line) return true;
+        const body = /^[+\- ]/.test(raw) ? raw.slice(1) : raw;
+        if (redactCodeText(body) !== body) return true;
+        const line = body.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
         if (!SECRET_KEY_RE.test(line)) continue;
         for (const match of line.matchAll(/[A-Za-z_$][\w$-]*/g)) {
-            if (SECRET_KEY_RE.test(match[0]) && /^["']?\s*(?::=|=>|:|=)\s*\S/.test(line.slice(match.index! + match[0].length))) return true;
+            if (SECRET_KEY_RE.test(match[0]) && /^["']?\s*(?::=|=>|:|=)/.test(line.slice(match.index! + match[0].length))) return true;
         }
     }
     return false;
