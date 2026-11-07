@@ -801,9 +801,17 @@
 @media (prefers-reduced-motion: reduce) {
     .code-canvas *, .code-session-list *, .code-footer-floating * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
-.code-file-list { display: grid; gap: .75rem; }
+/* A file change lists its files like the sections of a tool call: same inset,
+   mono paths, and a Review that shows the captured patch in the output pane style. */
+.code-file-list { display: grid; gap: 6px; margin: 8px 10px 0; }
 .code-file-entry { min-width: 0; }
-.code-file-kind { color: var(--text-muted); font-size: .75rem; text-transform: capitalize; margin-right: .35rem; }
-.code-file-review { margin-top: .35rem; }
-.code-file-review > summary { cursor: pointer; color: var(--text-muted); }
-.code-file-diff { max-height: min(18rem, 50dvh); overflow: auto; white-space: pre; }
+.code-file-path { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.code-file-kind { display: inline-block; min-width: 3.5em; margin-right: 6px; color: var(--text-dim); font-family: var(--font-sans, inherit);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.code-file-note { margin: 2px 0 0; color: var(--text-dim); font-size: 11px; }
+.code-file-review { margin-top: 2px; }
+.code-file-review > summary { cursor: pointer; width: fit-content; color: var(--accent); font-size: 11px; }
+.code-file-review > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.code-file-diff { margin: 4px 0 0; padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--bg-base);
+    color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; line-height: 1.4;
+    max-height: min(18rem, 50dvh); overflow: auto; white-space: pre; user-select: text; }

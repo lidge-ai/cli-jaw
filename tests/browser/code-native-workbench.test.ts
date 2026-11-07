@@ -448,70 +448,79 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                 await log.locator('.katex').first().waitFor({ state: 'visible' });
                 return containment(p);
             }, true);
-            let fileSession!: CodeSessionInfo;
-            let reentrySession!: CodeSessionInfo;
+            // These steps reuse the history session and Alpha: the fixture's Code
+            // runtime admits four resident sessions and the Korean case below
+            // still needs its own.
+            const historyTitle = 'qa:rows virtual history';
             let anchor = -1;
             await step('file-change-cards', async () => {
+                assert.ok(history, 'History session admission is required for the file change case');
+                const session = history;
                 await p.setViewportSize({ width: 1440, height: 1000 });
-                fileSession = await createSession(p, 'Codex', 'qa:file-change cards');
-                async function checkCards() {
+                await closeVisibleDrawer(p);
+                await p.getByRole('tab', { name: 'Code', exact: true }).click();
+                await selectSession(p, historyTitle);
+                await send(p, 'qa:file-change cards');
+                async function checkCards(pass: string) {
                     const log = transcript(p);
                     await log.getByText('Edit src/app.ts', { exact: true }).waitFor();
-                    assert.equal(await log.locator('.code-tool-name').filter({ hasText: /^file change(?:\s|$)/ }).count(), 1);
+                    assert.equal(await log.locator('.code-tool-name').filter({ hasText: /^file change(?:\s|$)/ }).count(), 1,
+                        `${pass}: the legacy-shaped call still renders as one generic tool row`);
                     const single = card(p, 'Edit src/app.ts');
-                    await single.locator('summary').first().click();
-                    await single.getByText('Review patch', { exact: true }).click();
-                    assert.equal(await single.locator('pre.code-file-diff').textContent(), fixtureDiff);
+                    if (await single.getAttribute('open') === null) await single.locator('summary').first().click();
+                    const review = single.locator('details.code-file-review');
+                    if (await review.getAttribute('open') === null) await single.getByText('Review patch', { exact: true }).click();
+                    assert.equal(await single.locator('pre.code-file-diff').textContent(), fixtureDiff, `${pass}: Review shows the exact captured patch`);
                     const multi = card(p, 'Edit 2 files');
-                    await multi.locator('summary').first().click();
+                    if (await multi.getAttribute('open') === null) await multi.locator('summary').first().click();
                     const missing = multi.locator('.code-file-entry').filter({ hasText: 'src/other.ts' });
-                    assert.equal(await missing.getByText('Patch unavailable', { exact: true }).count(), 1);
-                    assert.equal(await missing.getByText('Review patch', { exact: true }).count(), 0);
+                    assert.equal(await missing.count(), 1, `${pass}: the file without a patch is listed once`);
+                    assert.match(await missing.innerText(), /Patch unavailable/, `${pass}: a missing patch says so`);
+                    assert.equal(await missing.locator('details.code-file-review').count(), 0, `${pass}: no Review without a captured patch`);
                 }
-                await checkCards();
-                const live = await waitSession(p, fileSession.sessionId, 'idle');
+                const live = await waitSession(p, session.sessionId, 'idle');
+                await checkCards('live');
+                await p.screenshot({ path: join(manifest.evidenceDir, 'file-change-cards-live.png') });
                 const changed = live.items.filter(item => item.kind === 'file_change');
-                assert.equal(changed.length, 2);
-                assert.ok(live.items.some(item => item.kind === 'tool_call' && item.tool?.name === 'file change'));
+                assert.equal(changed.length, 2, 'two semantic file changes are stored');
+                assert.ok(live.items.some(item => item.kind === 'tool_call' && item.tool?.name === 'file change'),
+                    'the legacy-shaped call stays a tool_call');
                 await p.reload({ waitUntil: 'domcontentloaded' });
                 await p.getByRole('tab', { name: 'Code', exact: true }).click();
-                await selectSession(p, 'qa:file-change cards');
-                await checkCards();
-                const replay = await waitSession(p, fileSession.sessionId, 'idle');
-                assert.deepEqual(replay.items.filter(item => item.kind === 'file_change'), changed);
-                return { session: fileSession.sessionId, diff: fixtureDiff };
+                await selectSession(p, historyTitle);
+                await checkCards('replay');
+                const replay = await waitSession(p, session.sessionId, 'idle');
+                assert.deepEqual(replay.items.filter(item => item.kind === 'file_change'), changed, 'replay returns the same items');
+                return { session: session.sessionId, diff: fixtureDiff };
             }, true);
             await step('reentry-restores-anchor-and-disclosure', async () => {
-                reentrySession = await createSession(p, 'Codex', 'qa:rows reentry');
-                await send(p, 'qa:file-change disclosures');
-                await waitSession(p, reentrySession.sessionId, 'idle');
+                assert.ok(history, 'History session admission is required for re-entry');
                 const single = card(p, 'Edit src/app.ts');
-                await single.locator('summary').first().click();
-                await single.getByText('Review patch', { exact: true }).click();
+                await single.waitFor();
+                assert.equal(await single.getAttribute('open'), '', 'the file card was opened in the previous step');
                 anchor = await scrollToMiddle(p);
                 await reenter(p);
                 await assertAnchor(p, anchor);
-                // Return to the disclosure to check its state after the remount,
-                // then restore the saved anchor for the screenshot and next case.
+                // Return to the disclosure to check its state after the remount.
                 const log = transcript(p); await log.focus(); await log.press('End');
                 await single.waitFor();
-                assert.equal(await single.getAttribute('open'), '');
-                assert.equal(await single.locator('details.code-file-review').getAttribute('open'), '');
+                assert.equal(await single.getAttribute('open'), '', 'the opened file card is still open after re-entry');
+                assert.equal(await single.locator('details.code-file-review').getAttribute('open'), '', 'its Review is still open');
+                await single.scrollIntoViewIfNeeded();
                 await p.screenshot({ path: join(manifest.evidenceDir, 'reentry-disclosure-open.png') });
-                await log.evaluate(node => { node.scrollTop = node.scrollHeight * 0.6; });
-                await p.waitForTimeout(300); anchor = await firstVisible(p);
-                return { session: reentrySession.sessionId, firstVisibleRow: anchor };
+                return { session: history.sessionId, firstVisibleRow: anchor };
             }, true);
             await step('reentry-following-returns-to-latest', async () => {
-                assert.ok(reentrySession);
+                assert.ok(history, 'History session admission is required for re-entry');
                 await transcript(p).focus(); await transcript(p).press('End');
                 await assertBottom(p); await reenter(p); await assertBottom(p);
-                return { session: reentrySession.sessionId };
+                return { session: history.sessionId };
             }, true);
             await step('reentry-delayed-hydration-and-user-scroll-wins', async () => {
-                assert.ok(reentrySession);
+                assert.ok(history, 'History session admission is required for re-entry');
                 anchor = await scrollToMiddle(p);
-                const sessionPath = `/api/code/sessions/${encodeURIComponent(reentrySession.sessionId)}`;
+                const original = anchor;
+                const sessionPath = `/api/code/sessions/${encodeURIComponent(history.sessionId)}`;
                 let delayed = 0;
                 const handler = async (route: import('playwright-core').Route) => {
                     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -539,21 +548,24 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                     assert.ok(Math.abs(wheeled - anchor) > 1, `Wheel must change the saved anchor: ${anchor} -> ${wheeled}`);
                     await p.unroute('**/api/code/sessions/**', handler);
                     await reenter(p); await assertAnchor(p, wheeled);
-                    return { delayedRequests: delayed, original: anchor, wheeled };
+                    anchor = wheeled;
+                    return { delayedRequests: delayed, original, wheeled };
                 } finally { await p.unroute('**/api/code/sessions/**', handler); }
             }, true);
             await step('reentry-session-isolation', async () => {
-                const second = await createSession(p, 'Codex', 'qa:file-change isolation');
+                assert.ok(history, 'History session admission is required for re-entry');
+                await selectSession(p, 'Alpha Codex');
                 await assertBottom(p);
-                const single = card(p, 'Edit src/app.ts'); await single.waitFor();
-                assert.equal(await single.getAttribute('open'), null);
+                assert.equal(await transcript(p).locator('details.code-tool-card[open]').count(), 0,
+                    'another session opens no row the history session opened');
                 await reenter(p); await assertBottom(p);
-                assert.equal(await card(p, 'Edit src/app.ts').getAttribute('open'), null);
+                await selectSession(p, historyTitle);
+                await assertAnchor(p, anchor);
                 // Endpoint isolation cannot be activated by routing the instance
-                // list: AppChrome passes the Manager page's port to CodeCanvas,
-                // independently of the selected instance. A second Manager origin
-                // needs supervision outside this scope; component coverage owns it.
-                return { second: second.sessionId, first: reentrySession.sessionId, endpointIsolation: 'blocked by single-worker supervision' };
+                // list: the Manager passes its own port to CodeCanvas regardless
+                // of the selected instance, and the fixture supervises one worker.
+                // The component tests cover two endpoint keys.
+                return { other: 'Alpha Codex', history: history.sessionId, anchor };
             }, true);
             const koreanTitle = '네이티브 코드 작업 검토 — 긴 한국어 세션 제목과 좁은 화면에서의 승인 및 초안 보존 확인';
             const koreanDraft = '이 초안은 전송하지 않습니다. 좁은 화면에서도 한국어 문장과 긴 작업 설명이 잘리지 않고 읽히는지 확인해 주세요.\n'

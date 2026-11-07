@@ -156,25 +156,25 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
                 and constructing it costs the same whether or not it is painted. */}
             {open && <div ref={bodyRef} className="code-tool-body" data-expanded={showAll}>
                 {item.kind === 'file_change' && item.fileChange && <div className="code-file-list">
-                    {item.fileChange.schema === 'unknown' && <p>Unrecognized file change format</p>}
+                    {item.fileChange.schema === 'unknown' && <p className="code-file-note">Unrecognized file change format</p>}
                     {item.fileChange.changes.map((change, index) => {
                         const key = `${item.itemId}#review:${index}`;
                         const reviewOpen = (choices ?? localReviews).get(key) ?? false;
                         return <section className="code-file-entry" key={index}>
-                            <div><span className="code-file-kind">{change.kind}</span> {shortenPath(change.path, workingDir)}{change.movePath && ` → ${shortenPath(change.movePath, workingDir)}`}</div>
+                            <div className="code-file-path"><span className="code-file-kind">{change.kind}</span>{shortenPath(change.path, workingDir)}{change.movePath && ` → ${shortenPath(change.movePath, workingDir)}`}</div>
                             {change.patch === 'captured' ? <details className="code-file-review" open={reviewOpen} onToggle={event => {
                                 const value = event.currentTarget.open;
                                 if (value === reviewOpen) return;
                                 if (onChoiceChange) onChoiceChange(key, value);
                                 else setLocalReviews(previous => new Map(previous).set(key, value));
                                 onLayoutChange?.(item.itemId);
-                            }}><summary>Review patch</summary>{reviewOpen && <>{change.diff === '' && <span>Empty patch</span>}<pre className="code-file-diff">{change.diff ?? ''}</pre></>}</details>
-                                : <p>Patch {change.patch === 'missing' ? 'unavailable' : change.patch}</p>}
+                            }}><summary>Review patch</summary>{reviewOpen && <>{change.diff === '' && <span className="code-file-note">Empty patch</span>}<pre className="code-file-diff">{change.diff ?? ''}</pre></>}</details>
+                                : <p className="code-file-note">Patch {change.patch === 'missing' ? 'unavailable' : change.patch}</p>}
                         </section>;
                     })}
-                    {!!item.fileChange.omittedChanges && <p>{item.fileChange.omittedChanges} more files not shown</p>}
+                    {!!item.fileChange.omittedChanges && <p className="code-file-note">{item.fileChange.omittedChanges} more files not shown</p>}
                 </div>}
-                {item.kind === 'file_change' && !item.fileChange && item.truncation?.reason.includes('file_change_limit') && <p>File change details unavailable</p>}
+                {item.kind === 'file_change' && !item.fileChange && item.truncation?.reason.includes('file_change_limit') && <p className="code-file-note code-file-list">File change details unavailable</p>}
                 {item.tool?.detail !== undefined && <p className="code-tool-text">{item.tool.detail}</p>}
                 {toolBlocks.map(block => <section key={block.key} className="code-tool-section">
                     <div className="code-tool-section-head">
