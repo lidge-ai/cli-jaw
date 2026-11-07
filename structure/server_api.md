@@ -595,7 +595,9 @@ classifier after ordinary authentication. Both actual/effective peers must be
 loopback, with a valid local Host, exact Origin when present, permitted fetch
 metadata, and no forwarding/proxy marker. Safe/custom and proxy/remote requests
 retain scoped/operator credentials. Full-first resolution ignores stale grant
-headers for authority; valid context is retained only for protected RTS search.
+headers for authority; valid context is retained only for protected RTS search
+and as the requester that owns an `interaction.choice` (rechecked for expiry,
+revocation, credential and workspace before reservation and dispatch).
 `authorization.mode` identifies full-local/turn/operator/unavailable, independently
 of implemented, granted, available and verified status. Full sends require explicit
 destinations and use server-created file-root/target options, never JSON privilege

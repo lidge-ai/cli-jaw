@@ -30,7 +30,13 @@ provider scopes, resource integrity and privacy exclusions still apply.
 Full authority is independent of a stale automatically attached grant. A valid
 ordinary grant supplies context for the protected `search.quote` workflow, which
 retains its existing turn, token, expiry, membership and privacy checks. A
-`serverOwnedDelivery` grant also applies the write refusal below.
+`serverOwnedDelivery` grant also applies the write refusal below. The same
+context supplies the owner of an `interaction.choice`: the choice binds to that
+grant's requester instead of the operator. A grant that is already invalid when the
+request arrives is dropped, which leaves no context; without that context, Auto
+cannot create a choice (`slack_interaction_turn_required`). A grant that is revoked
+or expires during the request, or is tied to another credential or workspace, is
+refused with `slack_turn_grant_expired`.
 Capabilities report `authorization.mode` and keep authorization separate from
 provider availability and verified results.
 
@@ -92,7 +98,7 @@ Schedules are tied to the exact creating credential. A changed token cannot prov
 
 Canvas and List tools in Slack turns currently require a freshly verified requester/bot DM: requester access alone cannot authorize disclosure to a group. Writes require both the local ownership record and fresh requester write permission. DM Canvas creation uses a standalone document and requests direct write access for the captured requester; plan or sharing restrictions remain explicit and never trigger channel creation. Create/share acknowledgements do not prove requester visibility. Canvas content comes from the actual file download URL returned by Slack; missing access, unsupported format, incomplete content, and plan restrictions remain explicit.
 
-Choices allow at most ten options and require the connected Socket transport. The server binds opaque controls to the captured requester, conversation, posted message, credential and expiry. A valid callback stores the selected value once; it does not execute code, an API method, or a model prompt. `interaction.get` reads that owned result. Choice verification in the catalog requires an observed callback; URL controls use posted-content readback. General modal opening is explicitly unsupported.
+Choices allow at most ten options and require the connected Socket transport. The server binds opaque controls to the captured requester, conversation, posted message, credential and expiry. A valid callback stores the selected value once; it does not execute code, an API method, or a model prompt. `interaction.get` reads that owned result with a turn grant; a full-local Auto request can post a choice for its captured requester but cannot read it back. Choice verification in the catalog requires an observed callback; URL controls use posted-content readback. General modal opening is explicitly unsupported.
 
 `rts.reconcile` sends no message and returns no source text. It can release only a terminal publication hold with matching ownership and exact scope after a complete scan proves the expected output count. Active publishers, incomplete scans, legacy holds, and crash records without terminal evidence remain protected. New RTS publication uses one payload and one POST attempt.
 

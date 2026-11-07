@@ -8,7 +8,7 @@ import type { ActionContext, ActionDefinition, ActionResult } from './action-typ
 import { SlackActionRateLimiter } from './action-rate.js';
 import { slackApi, addSlackReaction, removeSlackReaction, deleteSlackMessage, readBoundedResponse, type SlackFetch, type SlackApiResult } from './api.js';
 import { readSlackAuthSnapshot } from './verified-workspace.js';
-import { slackCredentialKey } from './tool-context.js';
+import { slackCredentialKey, type SlackToolGrant } from './tool-context.js';
 import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
 import { assertSlackWriteAllowed } from './write-guard.js';
 import type { RemoteTarget } from '../messaging/types.js';
@@ -25,6 +25,23 @@ const WRITE_METHODS = new Set(['reactions.add','reactions.remove','chat.update',
 const WRITE_ACTIONS = new Set(['reaction.add','reaction.remove','message.update','message.delete','schedule.create','schedule.cancel','schedule.update','pin.add','pin.remove','bookmark.add','bookmark.edit','bookmark.remove','canvas.create','canvas.edit','list.create','list.item.add','list.item.update','interaction.url','interaction.choice']);
 const SAFE_ERRORS = new Set(['missing_scope','invalid_auth','not_authed','not_in_channel','channel_not_found','message_not_found','invalid_scheduled_message_id','already_reacted','no_reaction','not_pinned','already_pinned','bookmark_not_found','invalid_arguments','invalid_name','permission_denied','restricted_action','list_not_found','row_not_found','canvas_not_found']);
 export type ActionRuntimeOptions = { getToken(): string | null; store: SlackActionStore; fetchImpl?: SlackFetch; rateLimiter?: SlackActionRateLimiter; inboundReady?: () => boolean; evidenceSource: 'slack_api' | 'fixture'; resolveHost?: SlackInboundUrlOptions['resolveHost']; now?: () => number };
+
+function interactiveGrantFor(definition: ActionDefinition, principal: SlackToolPrincipal) {
+    // Full-local Auto carries a freshly captured Slack turn grant as context.
+    // Use only that grant's actor for the callback binding; the enclosing
+    // operator keeps its normal destination authority. An unscoped operator
+    // remains unable to mint a choice.
+    if (definition.operation === 'interaction.choice' && principal.kind === 'operator'
+        && principal.source === 'full-local' && principal.context) {
+        return principal.context;
+    }
+    return undefined;
+}
+
+function interactiveGrantCurrent(grant: SlackToolGrant, token: string): boolean {
+    return !grant.signal.aborted && grant.expiresAt > Date.now() && grant.credentialKey === slackCredentialKey(token);
+}
+
 export class SlackActionRuntime {
     private readonly rate: SlackActionRateLimiter;
     constructor(private readonly options: ActionRuntimeOptions) { this.rate = options.rateLimiter ?? new SlackActionRateLimiter(); }
@@ -46,6 +63,7 @@ export class SlackActionRuntime {
         throw slackToolDenied(reason);
     }
     async execute(definition: ActionDefinition, raw: Record<string, unknown>, principal: SlackToolPrincipal, requestSignal?: AbortSignal): Promise<ActionResult> {
+        const interactiveGrant = interactiveGrantFor(definition, principal);
         const recoveryGrant = slackToolContext(principal);
         if (slackFailureRoutingEnabled() && recoveryGrant && typeof raw['invocationId'] === 'string'
             && this.options.store.blockedState(recoveryGrant, raw['invocationId'])) {
@@ -71,7 +89,11 @@ export class SlackActionRuntime {
         if (!identity?.userId) throw slackToolDenied('slack_bot_identity_unverified', 409);
         if (definition.scopes.length && identity.scopes === null) throw slackToolDenied('slack_action_scopes_unverified', 403);
         if (definition.scopes.some(scope => !identity.scopes?.includes(scope))) throw slackToolDenied('slack_action_scopes_missing', 403);
-        const workspace = identity.teamId; const actor = principal.kind === 'turn' ? principal.grant.actorId : 'operator';
+        // Operator principals skip withSlackToolAccess grant checks.
+        if (interactiveGrant && (!interactiveGrantCurrent(interactiveGrant, token) || interactiveGrant.teamId !== identity.teamId)) throw slackToolDenied('slack_turn_grant_expired', 401);
+        if (interactiveGrant && interactiveGrant.actorId === identity.userId) throw slackToolDenied('slack_interaction_turn_required', 403);
+        const workspace = identity.teamId;
+        const actor = interactiveGrant?.actorId ?? (principal.kind === 'turn' ? principal.grant.actorId : 'operator');
         const credentialKey = slackCredentialKey(token); const store = this.options.store;
         const hash = createHash('sha256').update(JSON.stringify({ credentialKey, operation: definition.operation, args: prepared.canonical })).digest('hex');
         const existing = definition.mutates ? store.invocation(workspace, actor, args.invocationId!) : undefined;
@@ -88,6 +110,7 @@ export class SlackActionRuntime {
             const checkCurrent = () => {
                 if (signal?.aborted) throw slackToolDenied('slack_action_cancelled', 499);
                 if (this.options.getToken() !== token) throw slackToolDenied('slack_credential_changed', 409);
+                if (interactiveGrant && !interactiveGrantCurrent(interactiveGrant, token)) throw slackToolDenied('slack_turn_grant_expired', 401);
             };
             checkCurrent();
             if (slackFailureRoutingEnabled() && principal.kind === 'turn') recovery = store.blockedFor(principal.grant);
@@ -116,7 +139,8 @@ export class SlackActionRuntime {
             }
             let calls = 0;
             const context: ActionContext = {
-                token, workspace, botUserId: identity.userId!, actor, channel: args.channel, credentialKey, operator: principal.kind === 'operator', ...(signal ? { signal } : {}),
+                token, workspace, botUserId: identity.userId!, actor, channel: args.channel, credentialKey,
+                operator: principal.kind === 'operator' && !interactiveGrant, ...(signal ? { signal } : {}),
                 checkCurrent, now: this.options.now ?? (() => Date.now()),
                 api: async <T>(method: string, body: Record<string, unknown>, beforeDispatch?: () => void | Promise<void>): Promise<SlackApiResult<T>> => {
                     checkCurrent();
