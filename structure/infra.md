@@ -1109,13 +1109,13 @@ top-level 채널은 현재 event ts 직전의 `conversations.history`를 세션 
 
 선택된 스킬은 요청 수락(admission) 시점에 읽고, 캡처한 내용·해시·출처 메타데이터를 큐 대기와 재시작 이후에도 보존한다. 이 기능을 선택한 워크플로 요청은 busy 상태에서 `followup` 큐로 보내며, 관련 없는 실행 중 턴에 steer하거나 collect로 합치지 않는다.
 
+등록 워크플로의 결과가 비었거나 단독 `SILENT`이면 `slack.workflow.unconfirmed` 안내와 실패 ACK로 끝낸다. 워크플로 요청은 unconfirmed/failed로 판정하되 provider/native의 최종 텍스트와 상태는 보존한다. 이미 작업이 시작되었을 수 있으므로 자동 재실행하지 않고 기록을 확인한 뒤 재시도한다. AI 답변 수신만으로 업무 완료를 판정하지 않는다.
+
 ### app block actions (`events.ts`, `bot.ts`)
 
 `interactive` 봉투 중 `action_id`가 `agent:`로 시작하는 `block_actions` 하나는 `slackBlockActionEvent()`가 `type: 'block_actions'` 메시지 이벤트로 바꾼다. ts는 클릭의 `action_ts`, thread는 클릭된 메시지(또는 그 부모)라서 preflight journal, `slackEventKey` 중복 제거, 게이트, 턴 수락이 메시지와 같은 경로를 탄다. 팀 불일치, ephemeral, 메시지 밖 컨테이너, 사람 아닌 클릭, 두 개 이상의 액션은 null이며 기존 `appr:`/`jaw_choice_` 경로로 그대로 간다. 게이트는 클릭을 `app_mention`처럼 이미 지목된 것으로 보아 `mentionOnly`만 건너뛰고 허용목록은 유지한다. `payload.token`, `response_url`, `trigger_id`는 읽지 않는다.
 
 클릭 턴은 `preSendContext.jobKind = 'slack_block_action'`을 큐와 재시작 너머까지 싣고, 답 전체가 `[SILENT]`이면 direct·queued·orphan 세 경로 모두 `tg.noResponse` 대신 아무것도 게시하지 않고 진행 카드를 complete로 닫는다.
-
-등록 워크플로의 결과가 비었거나 단독 `SILENT`이면 `slack.workflow.unconfirmed` 안내와 실패 ACK로 끝낸다. 워크플로 요청은 unconfirmed/failed로 판정하되 provider/native의 최종 텍스트와 상태는 보존한다. 이미 작업이 시작되었을 수 있으므로 자동 재실행하지 않고 기록을 확인한 뒤 재시도한다. AI 답변 수신만으로 업무 완료를 판정하지 않는다.
 
 ### mention-watch.ts (345L)
 
