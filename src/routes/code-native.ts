@@ -246,8 +246,9 @@ export function registerNativeCodeRoutes(
     }));
     router.post('/sessions/:id/attach', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
-        body(req.body ?? {}, []);
-        const result = await getService().attach(sessionId);
+        const input = body(req.body ?? {}, ['operationId']);
+        if ('operationId' in input && (typeof input['operationId'] !== 'string' || !CREATION_KEY.test(input['operationId']))) return invalid('invalid_operation_id');
+        const result = await getService().attach(sessionId, 'operationId' in input ? { operationId: input['operationId'] as string } : {});
         res.json({ ok: true, session: result.session, attach: { operationId: result.operationId, outcome: result.outcome } });
     }));
     router.post('/sessions/:id/rollback', asyncHandler(async (req, res) => {

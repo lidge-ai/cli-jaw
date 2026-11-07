@@ -901,7 +901,8 @@ test('explicit attach reserves a fresh epoch, blocks new prompts, and stores res
     const admitted = admit(store);
     store.writeNativeCursor(owner(admitted.session), 'durable-id');
     const finished = store.settleTurn(owner(admitted.session), { status: 'completed' });
-    const attached = store.beginAttach('session-a', 0);
+    const attached = store.beginAttach('session-a', 0, 'client-attach');
+    assert.equal(attached.session.operationId, 'client-attach');
     assert.equal(attached.session.turnId, null);
     assert.equal(attached.session.status, 'starting');
     assert.equal(attached.session.epoch, finished.session.epoch + 1);

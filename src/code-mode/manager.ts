@@ -370,7 +370,7 @@ export class CodeSessionManager {
         return result.session;
     }
 
-    async attach(id: string): Promise<CodeAttachResult> {
+    async attach(id: string, options: { operationId?: string } = {}): Promise<CodeAttachResult> {
         this.ready();
         const record = this.record(id);
         this.fenced(id);
@@ -379,7 +379,7 @@ export class CodeSessionManager {
         let settled: ReturnType<CodeSession['start']>;
         let operationId: string;
         try {
-            const result = this.storage(() => this.options.store.beginAttach(id, record.revision));
+            const result = this.storage(() => this.options.store.beginAttach(id, record.revision, options.operationId));
             this.admitted = true;
             operationId = result.session.operationId!;
             settled = session.start({ ...record, ...result.session }, null);

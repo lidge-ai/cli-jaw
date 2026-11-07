@@ -1016,7 +1016,7 @@ export class CodeStore {
     }
 
     /** Reserve an explicit resume without inventing a prompt or consuming a client key. */
-    beginAttach(sessionId: string, expectedRevision?: number): CodeStoreMutation {
+    beginAttach(sessionId: string, expectedRevision?: number, operationId?: string): CodeStoreMutation {
         return this.write(() => {
             const record = this.requireRecord(sessionId);
             if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
@@ -1027,7 +1027,7 @@ export class CodeStore {
             if (!record.nativeCursor || !record.capabilities.resume) throw new CodeStoreError('resume_unavailable', 'Code session cannot resume native history', 409);
             record.epoch += 1;
             record.status = 'starting';
-            record.operationId = this.newId();
+            record.operationId = operationId ?? this.newId();
             record.error = null;
             record.lastUsedAt = this.now();
             record.nativePolicy = { model: record.model, effort: record.effort, permissionMode: record.permissionMode };

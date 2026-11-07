@@ -44,7 +44,7 @@ export interface CodeSessionClient {
     steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
     cancelPrompt(id: string, input: CodeCancelRequest): Promise<CodeSessionInfo>;
     findCreation(key: string, signal?: AbortSignal): Promise<CodeSessionInfo>;
-    attachSession(id: string): Promise<{ session: CodeSessionInfo; attach: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } | null }>;
+    attachSession(id: string, operationId?: string, onIdentityUnknown?: () => void): Promise<{ session: CodeSessionInfo; attach: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } | null; identityUnknown: boolean }>;
     rollbackSession(id: string, input: CodeRollbackRequest): Promise<CodeSessionInfo>;
     visitSession(id: string): Promise<CodeSessionInfo>;
     answerPermission(id: string, input: CodePermissionAnswer): Promise<void>;
@@ -128,9 +128,19 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),
         findCreation: async (key, signal) => (await request<{ session: CodeSessionInfo }>('GET', `/creations/${encodeURIComponent(key)}`, undefined, signal)).session,
-        attachSession: async id => {
-            const result = await request<{ session: CodeSessionInfo; attach?: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } }>('POST', `${sessionPath(id)}/attach`, {});
-            return { session: result.session, attach: result.attach ?? null };
+        attachSession: async (id, operationId, onIdentityUnknown) => {
+            type AttachResponse = { session: CodeSessionInfo; attach?: { operationId: string; outcome: 'completed' | 'cancelled' | 'failed' } };
+            let identityUnknown = !operationId;
+            let result: AttachResponse;
+            try {
+                result = await request<AttachResponse>('POST', `${sessionPath(id)}/attach`, operationId ? { operationId } : {});
+            } catch (error) {
+                if (!operationId || !(error instanceof CodeClientError) || error.status !== 400 || error.code !== 'unknown_field') throw error;
+                identityUnknown = true;
+                onIdentityUnknown?.();
+                result = await request<AttachResponse>('POST', `${sessionPath(id)}/attach`, {});
+            }
+            return { session: result.session, attach: result.attach ?? null, identityUnknown };
         },
         rollbackSession: (id, input) => sessionRequest('POST', `${sessionPath(id)}/rollback`, input),
         visitSession: id => sessionRequest('POST', `${sessionPath(id)}/visit`, {}),

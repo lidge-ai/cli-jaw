@@ -662,10 +662,16 @@ test('HTTP attach Stop aborts provider open and rejects stale attach identities'
             const created = await (await request(`${url}/sessions`, 'POST', input)).json();
             const id = created.session.sessionId;
             db.prepare('UPDATE code_sessions SET native_cursor = ?, native_started = 1 WHERE session_id = ?').run('durable', id);
-            const attach = request(`${url}/sessions/${id}/attach`, 'POST', {});
+            for (const operationId of ['', 'bad space', 'x'.repeat(129), 7]) {
+                const invalid = await request(`${url}/sessions/${id}/attach`, 'POST', { operationId });
+                assert.equal(invalid.status, 400); assert.equal((await invalid.json()).error, 'invalid_operation_id');
+            }
+            const unknown = await request(`${url}/sessions/${id}/attach`, 'POST', { operationId: 'client-op', extra: true });
+            assert.equal(unknown.status, 400); assert.equal((await unknown.json()).error, 'unknown_field');
+            const attach = request(`${url}/sessions/${id}/attach`, 'POST', { operationId: 'client-op' });
             const firstOpen = await opened;
             const starting = (await (await request(`${url}/sessions/${id}`)).json()).session;
-            assert.equal(starting.status, 'starting'); assert.ok(starting.operationId);
+            assert.equal(starting.status, 'starting'); assert.equal(starting.operationId, 'client-op');
             const target = { operationId: starting.operationId, epoch: starting.epoch };
             const stopped = await request(`${url}/sessions/${id}/cancel`, 'POST', target);
             assert.equal(stopped.status, 200); assert.equal(firstOpen.signal.aborted, true);

@@ -18,6 +18,7 @@ export interface CodeDraft {
     createUnknown: boolean;
     creationKey: string | null;
     attachToken: number;
+    restore: { token: number; operationId: string | null; settled: boolean; stopRequested: boolean; cancelSent: boolean } | null;
     requiredSequence: number;
     stopTarget: { turnId: string | null; operationId?: string; epoch: number; outcome: 'pending' | 'unknown' | 'retryable' | 'accepted' } | null;
     permissionOperations: CodeControllerModel['permissionOperations'];
@@ -57,7 +58,7 @@ const tabBooks = new WeakMap<Storage, Map<string, CodeDraftBook>>();
 export function createCodeDraft(selection: CodeCreateSessionRequest): CodeDraft {
     return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0,
         operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, creationKey: null, attachToken: 0, requiredSequence: 0,
-        stopTarget: null, permissionOperations: {}, awaitingTurn: null, steer: null };
+        restore: null, stopTarget: null, permissionOperations: {}, awaitingTurn: null, steer: null };
 }
 function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     const draft = createCodeDraft(saved.selection);
