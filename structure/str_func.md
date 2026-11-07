@@ -542,6 +542,7 @@ cli-jaw/
 │   │   ├── skill-mention.ts ← `$skill` mention grammar, ranking and mention word shared by server, TUI and web
 │   │   ├── shell-command-display.ts ← shell command display sanitization helper
 │   │   ├── structured-fence.ts ← structured renderer fence scanner/parser helper
+│   │   ├── markdown-table.ts ← GFM table model → Markdown/CSV (RFC 4180, formula guard) shared by Classic and Manager
 │   │   ├── tool-log-sanitize.ts ← tool log sanitization helpers
 │   │   └── reminders/tray-triage.ts ← tray reminder badge/count triage helper
 │   │   └── shell-command-display.ts ← shell command display formatter
@@ -601,6 +602,8 @@ cli-jaw/
 │   ├── manager/src/code/transcript-view-memory.ts ← bounded endpoint/session transcript view memory
 │   ├── manager/src/components/process-control.css ← manager-wide process table, feedback and recovery disclosure
 │   ├── manager/src/settings-standalone.tsx ← shared instance settings root
+│   ├── manager/src/notes/rendering/MarkdownTableActions.tsx ← opt-in table Copy Markdown / Download CSV / Preview frame and dialog
+│   ├── manager/src/notes/rendering/markdown-table-model.ts ← remark collector: mdast table → shared table model
 │   ├── manager/src/manager-desktop-titlebar.css ← Electron titlebar rail and zoom-aware traffic-light spacing
 │   ├── manager/src/settings/ ← unified instance and Manager settings
 │   │   ├── SettingsPage.tsx ← full workspace Back/navigation layout
@@ -630,6 +633,7 @@ cli-jaw/
 │       │   └── native-requests.ts ← live exact-bound approvals/questions and manual recovery
 │       └── render/
 │           ├── markdown.ts   ← marked/sanitize pipeline + `/media`/guarded `/api/image` inline media rewrite
+│           ├── table-actions.ts ← final-render GFM table toolbar, model transport, preview dialog and focus restore
 │           └── delegations.ts ← one-time document capture image-error delegation + render delegation registry
 ├── electron/                 ← Electron tray background app ✨
 │   ├── package.json / electron-builder.yml / electron.vite.config.ts

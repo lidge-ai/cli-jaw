@@ -1,4 +1,5 @@
 // ── One-time render event delegations ──
+import { ensureTableActionDelegation } from './table-actions.js';
 import { ensureCodeCopyDelegation } from './code-copy.js';
 import { ensureDiagramActionDelegation } from './svg-actions.js';
 import { ensureFilePathDelegation } from './file-links.js';
@@ -33,6 +34,7 @@ function ensureInlineImageErrorDelegation(): void {
 export function ensureRenderDelegations(): void {
     ensureInlineImageErrorDelegation();
     ensureCodeCopyDelegation();
+    ensureTableActionDelegation();
     ensureDiagramActionDelegation();
     ensureFilePathDelegation();
     ensureElicitationDelegation();

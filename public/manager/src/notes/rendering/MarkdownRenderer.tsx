@@ -3,6 +3,10 @@ import type { MouseEvent } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
+import type { Pluggable, PluggableList } from 'unified';
+import type { TableModel } from '../../../../../src/shared/markdown-table';
+import { MarkdownTableActionsContext, MarkdownTableFrame } from './MarkdownTableActions';
+import { remarkCollectTableModels } from './markdown-table-model';
 import rehypeKatex from 'rehype-katex';
 import rehypeSanitize from 'rehype-sanitize';
 import remarkBreaks from 'remark-breaks';
@@ -20,6 +24,8 @@ import { buildWikiLinkLookup, splitChildrenWithWikiLinks, type WikiLinkContext }
 import { splitPreviewFrontmatter } from '../frontmatter-preview';
 import type { NotesNoteLinkRef, NotesNoteMetadata } from '../notes-types';
 
+export const MARKDOWN_REMARK_PLUGINS: PluggableList = [remarkGfm, remarkBreaks, remarkMath];
+
 type MarkdownRendererProps = {
     markdown: string;
     outgoing?: NotesNoteLinkRef[] | undefined;
@@ -27,6 +33,7 @@ type MarkdownRendererProps = {
     onWikiLinkNavigate?: ((path: string) => void) | undefined;
     onLocalFileOpen?: ((path: string) => void) | undefined;
     tableMode?: 'semantic' | 'linear' | undefined;
+    tableActions?: boolean | undefined;
 };
 
 type MarkdownAnchorProps = ComponentProps<'a'> & {
@@ -61,7 +68,7 @@ type LinearTableContainerProps = {
     children?: ReactNode;
     className?: string | undefined;
     style?: CSSProperties | undefined;
-    node?: unknown;
+    node?: { position?: { start: { offset?: number | undefined } } | undefined } | undefined;
 };
 
 type LinearTableCellProps = LinearTableContainerProps & {
@@ -194,6 +201,12 @@ function MarkdownRendererImpl(props: MarkdownRendererProps) {
         [props.markdown],
     );
 
+    const tableActionsCapable = props.tableActions !== undefined;
+    const tableModels = useMemo(() => new Map<number, TableModel>(), [renderedMarkdown]);
+    const remarkPlugins = useMemo<PluggableList>(() => tableActionsCapable
+        ? [...MARKDOWN_REMARK_PLUGINS, [remarkCollectTableModels, tableModels] as Pluggable]
+        : [...MARKDOWN_REMARK_PLUGINS], [tableActionsCapable, tableModels]);
+
     const wikiCtx = useMemo<WikiLinkContext>(() => ({
         lookup: buildWikiLinkLookup(props.outgoing),
         outgoing: props.outgoing,
@@ -280,16 +293,17 @@ function MarkdownRendererImpl(props: MarkdownRendererProps) {
     };
 
     if (props.tableMode === 'linear') {
-        components.table = ({ children, node: _node, className, style }: LinearTableContainerProps) => {
+        components.table = ({ children, node, className, style }: LinearTableContainerProps) => {
             const tableStyle = {
                 ...style,
                 '--markdown-linear-table-grid': linearTableGridTemplate(countLinearTableColumns(children)),
             } as CSSProperties;
-            return (
+            const table = (
                 <div className={mergeClassName('markdown-linear-table', className)} style={tableStyle} role="list">
                     {children}
                 </div>
             );
+            return tableActionsCapable ? <MarkdownTableFrame offset={node?.position?.start.offset}>{table}</MarkdownTableFrame> : table;
         };
         components.thead = ({ children, node: _node, className, style }: LinearTableContainerProps) => (
             <div className={mergeClassName('markdown-linear-table-head', className)} style={style}>
@@ -308,15 +322,20 @@ function MarkdownRendererImpl(props: MarkdownRendererProps) {
         );
         components.th = linearCellTransform('th');
         components.td = linearCellTransform('td');
+    } else if (tableActionsCapable) {
+        components.table = ({ node, children, ...tableProps }) => (
+            <MarkdownTableFrame offset={node?.position?.start.offset}><table {...tableProps}>{children}</table></MarkdownTableFrame>
+        );
     }
         return components;
-    }, [wikiCtx, props.onLocalFileOpen, props.tableMode]);
+    }, [wikiCtx, props.onLocalFileOpen, props.tableMode, tableActionsCapable]);
 
     return (
+        <MarkdownTableActionsContext.Provider value={{ ready: props.tableActions === true, models: tableModels }}>
         <ReactMarkdown
             skipHtml
             urlTransform={safeMarkdownUrl}
-            remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+            remarkPlugins={remarkPlugins}
             rehypePlugins={[
                 [rehypeSanitize, markdownSanitizeSchema],
                 rehypeKatex,
@@ -325,6 +344,7 @@ function MarkdownRendererImpl(props: MarkdownRendererProps) {
         >
             {renderedMarkdown}
         </ReactMarkdown>
+        </MarkdownTableActionsContext.Provider>
     );
 }
 

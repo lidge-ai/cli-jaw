@@ -1,3 +1,7 @@
+import { MARKDOWN_REMARK_PLUGINS } from '../../public/manager/src/notes/rendering/MarkdownRenderer';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -99,7 +103,7 @@ test('MarkdownRenderer wires math, sanitize, safe links, and block routing', () 
     assert.ok(renderer.includes("import remarkMath from 'remark-math';"), 'remark-math must be wired');
     assert.ok(renderer.includes("import rehypeKatex from 'rehype-katex';"), 'rehype-katex must be wired');
     assert.ok(renderer.includes("import rehypeSanitize from 'rehype-sanitize';"), 'rehype-sanitize must be wired');
-    assert.ok(renderer.includes('remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}'), 'GFM must run before breaks/math in ReactMarkdown');
+    assert.deepEqual(MARKDOWN_REMARK_PLUGINS, [remarkGfm, remarkBreaks, remarkMath], 'GFM must run before breaks/math in ReactMarkdown');
     assert.ok(renderer.includes('[rehypeSanitize, markdownSanitizeSchema]'), 'sanitize schema must be passed before KaTeX');
     assert.ok(renderer.includes('rehypeKatex'), 'KaTeX renderer must be passed to ReactMarkdown');
     assert.ok(renderer.includes('skipHtml'), 'raw HTML must stay disabled');
