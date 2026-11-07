@@ -1,10 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { CodeItem, CodeItemKind, CodeProviderId } from '../../../../src/code-mode/wire';
 import { useCodeTranscriptVirtualRows } from './useCodeTranscriptVirtualRows';
 import { useCodeTranscriptScroll } from './use-code-transcript-scroll';
 import { useThrottledMarkdown } from './use-throttled-markdown';
 import { CODE_RUNTIME_LABELS, codeItemStatus } from './code-types';
-import { noteworthyStatus, toolInputDescription, toolInputDisplay, toolSummary } from './tool-summary';
+import { noteworthyStatus, shortenPath, toolInputDescription, toolInputDisplay, toolSummary } from './tool-summary';
+import { readTranscriptView, writeTranscriptView } from './transcript-view-memory';
 import { copyText } from '../clipboard/copy-text';
 import { PENDING_USER_ITEM_ID } from './pending-user-item';
 
@@ -32,8 +33,6 @@ const HIDDEN_KINDS: ReadonlySet<CodeItemKind> = new Set<CodeItemKind>(['turn_sta
  */
 const COLLAPSED_ROW_PX = 44;
 const EXPANDED_ROW_PX = 480;
-/** Same bound the scroll anchors use, for the same reason. */
-const MAX_OPEN_ROWS = 64;
 
 // Past ~15 wrapped lines the capped scroll height already engages; only then
 // is a Show-all toggle worth showing (jsdom cannot measure overflow either, so
@@ -61,11 +60,14 @@ function ItemMarkdown({ item, identity, onOpenLocalFile }: { item: CodeItem; ide
     </Suspense>;
 }
 
-export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = '', onOpenLocalFile, expanded, onExpandedChange, onRollback }: {
+export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = '', onOpenLocalFile, expanded, onExpandedChange, onRollback, choices, onChoiceChange, onLayoutChange }: {
     item: CodeItem; provider: CodeProviderId; sessionKey: string; workingDir?: string;
     onOpenLocalFile?: ((path: string) => void) | undefined;
     expanded?: boolean;
     onExpandedChange?: ((itemId: string, open: boolean) => void) | undefined;
+    choices?: ReadonlyMap<string, boolean> | undefined;
+    onChoiceChange?: ((key: string, open: boolean) => void) | undefined;
+    onLayoutChange?: ((itemId: string) => void) | undefined;
     /** Present only on a row the conversation may be rolled back to; asks before calling. */
     onRollback?: ((itemId: string) => void) | undefined;
 }) {
@@ -102,6 +104,7 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
         || (item.tool?.detail !== undefined && isTallToolText(item.tool.detail))
         || (item.text !== undefined && isTallToolText(item.text));
     const [showAll, setShowAll] = useState(false);
+    const [localReviews, setLocalReviews] = useState<ReadonlyMap<string, boolean>>(new Map());
     const bodyRef = useRef<HTMLDivElement | null>(null);
     const [measuredTall, setMeasuredTall] = useState<boolean | null>(null);
     // A measurement describes the body it was taken from, and the estimate is
@@ -152,6 +155,26 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
             {/* Built only while open: a collapsed call's output can be megabytes,
                 and constructing it costs the same whether or not it is painted. */}
             {open && <div ref={bodyRef} className="code-tool-body" data-expanded={showAll}>
+                {item.kind === 'file_change' && item.fileChange && <div className="code-file-list">
+                    {item.fileChange.schema === 'unknown' && <p>Unrecognized file change format</p>}
+                    {item.fileChange.changes.map((change, index) => {
+                        const key = `${item.itemId}#review:${index}`;
+                        const reviewOpen = (choices ?? localReviews).get(key) ?? false;
+                        return <section className="code-file-entry" key={index}>
+                            <div><span className="code-file-kind">{change.kind}</span> {shortenPath(change.path, workingDir)}{change.movePath && ` → ${shortenPath(change.movePath, workingDir)}`}</div>
+                            {change.patch === 'captured' ? <details className="code-file-review" open={reviewOpen} onToggle={event => {
+                                const value = event.currentTarget.open;
+                                if (value === reviewOpen) return;
+                                if (onChoiceChange) onChoiceChange(key, value);
+                                else setLocalReviews(previous => new Map(previous).set(key, value));
+                                onLayoutChange?.(item.itemId);
+                            }}><summary>Review patch</summary>{reviewOpen && <>{change.diff === '' && <span>Empty patch</span>}<pre className="code-file-diff">{change.diff ?? ''}</pre></>}</details>
+                                : <p>Patch {change.patch === 'missing' ? 'unavailable' : change.patch}</p>}
+                        </section>;
+                    })}
+                    {!!item.fileChange.omittedChanges && <p>{item.fileChange.omittedChanges} more files not shown</p>}
+                </div>}
+                {item.kind === 'file_change' && !item.fileChange && item.truncation?.reason.includes('file_change_limit') && <p>File change details unavailable</p>}
                 {item.tool?.detail !== undefined && <p className="code-tool-text">{item.tool.detail}</p>}
                 {toolBlocks.map(block => <section key={block.key} className="code-tool-section">
                     <div className="code-tool-section-head">
@@ -168,7 +191,7 @@ export function CodeTranscriptItem({ item, provider, sessionKey, workingDir = ''
                 {running && item.tool?.output === undefined && item.tool?.detail === undefined
                     && <p className="code-tool-waiting">Waiting for output…</p>}
                 {toolBodyOverflowing && <button type="button" className="code-tool-toggle" aria-expanded={showAll}
-                    onClick={() => setShowAll(value => !value)}>{showAll ? 'Show less' : 'Show all'}</button>}
+                    onClick={() => { setShowAll(value => !value); onLayoutChange?.(item.itemId); }}>{showAll ? 'Show less' : 'Show all'}</button>}
             </div>}
         </details> : reasoning ? <details className="code-thinking" open={open}
             onToggle={event => onExpandedChange?.(item.itemId, event.currentTarget.open)}>
@@ -208,27 +231,22 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
     // Scoped by session so the reserved pending-user id cannot carry one
     // session's disclosure into another, and bounded so a long-lived tab does
     // not accumulate ids for sessions it will never show again.
-    const [openRows, setOpenRows] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-    // `getItemKey` is called by the virtualizer outside render, so it reads the
-    // choice through a ref; the callback identity is refreshed below so the
-    // virtualizer actually re-keys after a toggle.
-    const openRef = useRef(openRows); openRef.current = openRows;
+    const [openState, setOpenState] = useState(() => ({ key: sessionKey, rows: readTranscriptView(sessionKey).open }));
+    let openRows = openState.rows;
+    if (openState.key !== sessionKey) {
+        openRows = readTranscriptView(sessionKey).open;
+        setOpenState({ key: sessionKey, rows: openRows });
+    }
     const [historyPending, setHistoryPending] = useState(false);
     const [historyError, setHistoryError] = useState<{ sessionKey: string; message: string } | null>(null);
     const historyGuard = useRef(false);
     const firstId = visible[0]?.itemId;
-    // The disclosure is part of the key, because a measured size always beats an
-    // estimate: without it a row measured while collapsed would keep that height
-    // after it expands, and no better estimate could correct it. Opening a row
-    // gives it a key that has never been measured, so it falls back to the
-    // estimate until the ResizeObserver reports the real height. The identity
-    // that has to stay stable is the DOM node's, which comes from the React
-    // `key` on the row, and that is unchanged.
+    // Disclosure changes geometry, not identity; remeasure the mounted row after commit.
     const getItemKey = useCallback((index: number) => {
         const item = itemsRef.current[index];
         if (!item) return `${sessionKey}:${index}`;
-        return `${sessionKey}:${item.itemId}${isRowOpen(openRef.current, sessionKey, item) ? ':open' : ''}`;
-    }, [sessionKey, firstId, openRows]);
+        return `${sessionKey}:${item.itemId}`;
+    }, [sessionKey, firstId]);
     const estimateSize = useCallback((index: number) => {
         const item = itemsRef.current[index];
         const collapsible = item?.kind === 'tool_call' || item?.kind === 'file_change' || item?.kind === 'reasoning';
@@ -239,23 +257,27 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
         return item && isRowOpen(openRows, sessionKey, item) ? EXPANDED_ROW_PX : COLLAPSED_ROW_PX;
     }, [openRows, sessionKey]);
     const virtual = useCodeTranscriptVirtualRows({ count: visible.length, resetKey: sessionKey, scrollElementRef: transcriptRef, getItemKey, estimateSize });
-    const { showJump, jumpToLatest } = useCodeTranscriptScroll({ items: visible, sessionKey, transcriptRef, virtual });
-    const setExpanded = useCallback((itemId: string, open: boolean) => {
-        const key = `${sessionKey}:${itemId}`;
-        setOpenRows(current => {
-            if (current.get(key) === open) return current;
-            const next = new Map(current);
-            next.delete(key); next.set(key, open);
-            // Same bound as the scroll anchors: remembering every row a reader
-            // ever touched is not worth an unbounded map. Re-inserting above
-            // keeps the row just acted on newest, so it is never the one evicted.
-            if (next.size > MAX_OPEN_ROWS) {
-                const oldest = next.keys().next().value;
-                if (oldest !== undefined) next.delete(oldest);
-            }
-            return next;
-        });
+    const { showJump, jumpToLatest } = useCodeTranscriptScroll({ items: visible, sessionKey, transcriptRef, virtual, hydrating: loading || !visible.length });
+    const [layoutChanges, setLayoutChanges] = useState<{ key: string; ids: Set<string> }>({ key: sessionKey, ids: new Set() });
+    const layoutChange = useCallback((itemId: string) => setLayoutChanges(current => ({ key: sessionKey, ids: new Set([...(current.key === sessionKey ? current.ids : []), itemId]) })), [sessionKey]);
+    useLayoutEffect(() => {
+        if (layoutChanges.key !== sessionKey || !layoutChanges.ids.size) return;
+        for (const id of layoutChanges.ids) {
+            const index = visible.findIndex(item => item.itemId === id);
+            if (index >= 0) virtual.remeasure(index);
+        }
+        setLayoutChanges({ key: sessionKey, ids: new Set() });
+    }, [layoutChanges, sessionKey, visible, virtual]);
+    const setChoice = useCallback((key: string, open: boolean) => {
+        const next = readTranscriptView(sessionKey).open;
+        if (next.get(key) === open) return;
+        next.delete(key); next.set(key, open);
+        writeTranscriptView(sessionKey, { open: next });
+        setOpenState(current => current.key === sessionKey ? { key: sessionKey, rows: readTranscriptView(sessionKey).open } : current);
     }, [sessionKey]);
+    const setExpanded = useCallback((itemId: string, open: boolean) => {
+        setChoice(`${sessionKey}:${itemId}`, open); layoutChange(itemId);
+    }, [sessionKey, setChoice, layoutChange]);
     async function older() {
         if (historyGuard.current) return;
         historyGuard.current = true; setHistoryPending(true); setHistoryError(null);
@@ -292,6 +314,7 @@ export function CodeTranscript({ items, provider, sessionKey, workingDir, loadin
                                 workingDir={workingDir} onOpenLocalFile={onOpenLocalFile}
                                 expanded={isRowOpen(openRows, sessionKey, item)}
                                 onExpandedChange={setExpanded}
+                                choices={openRows} onChoiceChange={setChoice} onLayoutChange={layoutChange}
                                 onRollback={rollbackRows?.has(item.itemId) ? onRollback : undefined} />
                         </div> : null;
                     })}

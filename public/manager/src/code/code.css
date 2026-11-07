@@ -801,3 +801,9 @@
 @media (prefers-reduced-motion: reduce) {
     .code-canvas *, .code-session-list *, .code-footer-floating * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.code-file-list { display: grid; gap: .75rem; }
+.code-file-entry { min-width: 0; }
+.code-file-kind { color: var(--text-muted); font-size: .75rem; text-transform: capitalize; margin-right: .35rem; }
+.code-file-review { margin-top: .35rem; }
+.code-file-review > summary { cursor: pointer; color: var(--text-muted); }
+.code-file-diff { max-height: min(18rem, 50dvh); overflow: auto; white-space: pre; }

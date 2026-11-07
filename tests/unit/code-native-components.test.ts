@@ -24,6 +24,9 @@ const { CodeDraftEmptyState } = await import('../../public/manager/src/code/Code
 const { recentCodeWorkspaces } = await import('../../public/manager/src/code/code-recent-workspaces');
 const { formatShortcut } = await import('../../public/manager/src/manager-shortcuts');
 const { useThrottledMarkdown } = await import('../../public/manager/src/code/use-throttled-markdown');
+const { useCodeTranscriptVirtualRows } = await import('../../public/manager/src/code/useCodeTranscriptVirtualRows');
+const { useCodeTranscriptScroll } = await import('../../public/manager/src/code/use-code-transcript-scroll');
+const { __resetTranscriptViewMemoryForTests, readTranscriptView, writeTranscriptView } = await import('../../public/manager/src/code/transcript-view-memory');
 after(() => {
     dom.window.close();
     for (const [key, descriptor] of previous) {
@@ -469,6 +472,42 @@ test('a retired send says why: the server never ran it, or a rollback removed it
 });
 
 function item(patch: Partial<CodeItem>): CodeItem { return { itemId: 'item-a', turnId: 't-a', kind: 'user_message', status: 'done', createdAt: 1, updatedAt: 1, ...patch }; }
+
+test('file change review preserves an empty patch and reports unavailable details', bounded, async t => {
+    const h = await surface(t);
+    const change = item({ kind: 'file_change', fileChange: { schema: 'known', changes: [{ path: '/work/a', kind: 'add', patch: 'captured', diff: '' }] } });
+    await h.render(createElement(CodeTranscriptItem, { item: change, provider: 'codex-app', sessionKey: 'review', expanded: true }));
+    const review = h.container.querySelector<HTMLDetailsElement>('.code-file-review');
+    assert.ok(review, 'captured patch has a review disclosure');
+    await act(async () => { review.open = true; review.dispatchEvent(new dom.window.Event('toggle')); });
+    assert.equal(h.container.querySelector('.code-file-diff')?.textContent, '');
+    assert.match(h.container.textContent ?? '', /Empty patch/);
+    await h.render(createElement(CodeTranscriptItem, { item: item({ kind: 'file_change', truncation: { storedChars: 0, sourceChars: 10, reason: 'file_change_limit' } }), provider: 'codex-app', sessionKey: 'review', expanded: true }));
+    assert.match(h.container.textContent ?? '', /File change details unavailable/);
+});
+
+test('file change cards expose only captured patches and report uncertain formats', bounded, async t => {
+    const h = await surface(t);
+    const changes = [
+        { path: '/work/a', kind: 'update' as const, patch: 'captured' as const, diff: '<tag>\n+x' },
+        { path: '/work/b', kind: 'delete' as const, patch: 'missing' as const },
+        { path: '/work/c', kind: 'add' as const, patch: 'truncated' as const },
+        { path: '/work/d', kind: 'unknown' as const, patch: 'withheld' as const },
+    ];
+    await h.render(createElement(CodeTranscriptItem, { item: item({ kind: 'file_change', fileChange: { schema: 'unknown', changes, unrecognizedChanges: 1, omittedChanges: 2 } }),
+        provider: 'codex-app', sessionKey: 'review-many', workingDir: '/work', expanded: true }));
+    assert.match(h.container.textContent ?? '', /File change \(unrecognized format\)/);
+    assert.match(h.container.textContent ?? '', /Unrecognized file change format/);
+    assert.match(h.container.textContent ?? '', /Patch unavailable/);
+    assert.match(h.container.textContent ?? '', /Patch truncated/);
+    assert.match(h.container.textContent ?? '', /Patch withheld/);
+    assert.match(h.container.textContent ?? '', /2 more files not shown/);
+    assert.equal(h.container.querySelectorAll('.code-file-review').length, 1);
+    const review = h.container.querySelector<HTMLDetailsElement>('.code-file-review')!;
+    await act(async () => { review.open = true; review.dispatchEvent(new dom.window.Event('toggle')); });
+    assert.equal(h.container.querySelector('.code-file-diff')?.textContent, '<tag>\n+x');
+    assert.equal(h.container.querySelector('.code-file-diff tag'), null);
+});
 test('timeline retains stable item ID, escaped tool output, truncation and distinct stopped/failed states', bounded, async t => {
     const h = await surface(t);
     // Tool detail is built only while the disclosure is open, so this asserts
@@ -674,13 +713,13 @@ test('assistant uses sanitized Markdown, math and linear tables; local file open
     await click(button(h.container, 'report.md')); assert.deepEqual(opened, ['/tmp/report.md']);
 });
 
-function virtualGeometry(t: TestContext) {
+function virtualGeometry(t: TestContext, dynamic = false) {
     const prototype = dom.window.HTMLElement.prototype;
     const descriptors = new Map<string, PropertyDescriptor | undefined>();
     const offsets = new WeakMap<HTMLElement, number>();
     const properties: Record<string, PropertyDescriptor> = {
         offsetWidth: { get() { return 1000; } },
-        offsetHeight: { get(this: HTMLElement) { return this.classList.contains('code-transcript') ? 600 : 92; } },
+        offsetHeight: { get(this: HTMLElement) { return this.classList.contains('code-transcript') ? 600 : dynamic && this.querySelector('details[open]') ? 180 : 92; } },
         clientHeight: { get() { return 600; } },
         scrollHeight: { get(this: HTMLElement) { return Math.max(600, Number.parseFloat(this.querySelector<HTMLElement>('.code-transcript-virtual-spacer')?.style.height ?? '0') || 0); } },
         scrollTop: {
@@ -692,13 +731,192 @@ function virtualGeometry(t: TestContext) {
         descriptors.set(key, Object.getOwnPropertyDescriptor(prototype, key));
         Object.defineProperty(prototype, key, { configurable: true, ...value });
     }
+    const oldScrollTo = Object.getOwnPropertyDescriptor(prototype, 'scrollTo');
+    Object.defineProperty(prototype, 'scrollTo', { configurable: true, value(this: HTMLElement, options: ScrollToOptions) {
+        const before = this.scrollTop; this.scrollTop = options.top ?? 0;
+        if (this.scrollTop !== before) this.dispatchEvent(new dom.window.Event('scroll'));
+    } });
     t.after(() => {
+        if (oldScrollTo) Object.defineProperty(prototype, 'scrollTo', oldScrollTo); else Reflect.deleteProperty(prototype, 'scrollTo');
         for (const [key, descriptor] of descriptors) {
             if (descriptor) Object.defineProperty(prototype, key, descriptor);
             else Reflect.deleteProperty(prototype, key);
         }
     });
 }
+
+test('disclosures keep row identity and remeasure the following row', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t, true); __resetTranscriptViewMemoryForTests();
+    const rows = [item({ itemId: 'tool', kind: 'tool_call', tool: { name: 'read' }, firstSequence: 1 }),
+        item({ itemId: 'reason', kind: 'reasoning', text: 'thinking', firstSequence: 2 }), item({ itemId: 'last', firstSequence: 3 })];
+    await h.render(createElement(CodeTranscript, { items: rows, provider: 'codex-app', sessionKey: 'geometry', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    for (const id of ['tool', 'reason']) {
+        const article = h.container.querySelector(`[data-code-item-id="${id}"]`)!;
+        const wrapper = article.parentElement!;
+        const details = article.querySelector<HTMLDetailsElement>('details')!;
+        const summary = details.querySelector<HTMLElement>('summary')!; summary.focus();
+        const next = wrapper.nextElementSibling as HTMLElement;
+        const before = next.style.transform;
+        await act(async () => { details.open = true; details.dispatchEvent(new dom.window.Event('toggle')); });
+        assert.equal(h.container.querySelector(`[data-code-item-id="${id}"]`), article);
+        assert.equal(article.parentElement, wrapper);
+        assert.equal(document.activeElement, summary);
+        assert.notEqual(next.style.transform, before, 'measured expansion moves the next row');
+    }
+});
+
+test('row expansion preserves reading position and bottom following', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t, true); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 35 }, (_, i) => item({ itemId: `r${i}`, kind: 'tool_call', tool: { name: 'read' }, firstSequence: i + 1 }));
+    await h.render(createElement(CodeTranscript, { items: rows, provider: 'codex-app', sessionKey: 'scroll-geometry', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    await act(async () => { scroller.scrollTop = 1000; scroller.dispatchEvent(new dom.window.Event('scroll')); });
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 180)); });
+    const above = h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r9"] details'); assert.ok(above);
+    const before = scroller.scrollTop;
+    await act(async () => { above.open = true; above.dispatchEvent(new dom.window.Event('toggle')); });
+    assert.equal(scroller.scrollTop - before, 88, 'the viewport follows the size added above it');
+    await act(async () => { scroller.scrollTop = scroller.scrollHeight; scroller.dispatchEvent(new dom.window.Event('scroll')); });
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 180)); });
+    const last = h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r34"] details'); assert.ok(last);
+    await act(async () => { last.open = true; last.dispatchEvent(new dom.window.Event('toggle')); });
+    assert.equal(scroller.scrollTop, scroller.scrollHeight - scroller.clientHeight);
+});
+
+test('a row measured at exactly its estimate is marked measured', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t);
+    let measured = false;
+    const getItemKey = () => 'row';
+    const estimateSize = () => 92;
+    function Probe() {
+        const ref = React.useRef<HTMLDivElement>(null);
+        const virtual = useCodeTranscriptVirtualRows({ count: 1, resetKey: 'equal', scrollElementRef: ref, getItemKey, estimateSize });
+        return createElement('div', { className: 'code-transcript', ref },
+            ...virtual.virtualItems.map(row => createElement('div', { key: row.key, ref: virtual.measureElement, 'data-code-transcript-idx': row.index })),
+            createElement('button', { onClick: () => { measured = virtual.isMeasured(0); } }, 'check'));
+    }
+    await h.render(createElement(Probe));
+    await click(button(h.container, 'check'));
+    assert.equal(measured, true, 'measurement is recorded even when size equals the estimate');
+});
+
+test('restoration corrects delayed geometry before converging', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    writeTranscriptView('delayed', { anchor: { itemId: 'target', offset: 0, firstSequence: 1, successors: [], following: false } });
+    const items = [item({ itemId: 'target', firstSequence: 1 })];
+    let node: HTMLDivElement | null = null, measured = false;
+    const row = { index: 0, key: 'target', start: 100, end: 192, size: 92, lane: 0 };
+    const virtual = { virtualItems: [row], totalSize: 2500, measureElement() {}, remeasure() {}, isMeasured: () => measured,
+        scrollOffset: () => node?.scrollTop ?? 0, restoreAnchor: (_index: number, offset: number) => { if (node) node.scrollTop = row.start + offset; } };
+    function Probe() {
+        const ref = React.useRef<HTMLDivElement>(null);
+        useCodeTranscriptScroll({ items, sessionKey: 'delayed', transcriptRef: ref, virtual, hydrating: false });
+        return createElement('div', { className: 'code-transcript', ref: (el: HTMLDivElement | null) => { ref.current = el; node = el; } },
+            createElement('div', { className: 'code-transcript-virtual-spacer', style: { height: 2500 } }));
+    }
+    await h.render(createElement(Probe));
+    assert.equal(node!.scrollTop, 100);
+    row.start = 300; row.end = 392; measured = true;
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 40)); });
+    assert.equal(node!.scrollTop, 300, 'later measurement is applied before restore settles');
+});
+
+test('wheel intent after rows arrive cancels pending restoration', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 35 }, (_, i) => item({ itemId: `r${i}`, firstSequence: i + 1 }));
+    writeTranscriptView('intent', { anchor: { itemId: 'r14', offset: 0, firstSequence: 15, successors: [], following: false } });
+    await h.render(createElement(CodeTranscript, { items: rows, provider: 'codex-app', sessionKey: 'intent', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    await act(async () => { scroller.dispatchEvent(new dom.window.WheelEvent('wheel')); scroller.scrollTop = 250; scroller.dispatchEvent(new dom.window.Event('scroll')); });
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 40)); });
+    assert.equal(scroller.scrollTop, 250);
+    assert.notEqual(readTranscriptView('intent').anchor?.itemId, 'r14');
+});
+
+test('a wheel while following does not stop bottom-follow for later rows', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = (count: number) => Array.from({ length: count }, (_, i) => item({ itemId: `f${i}`, firstSequence: i + 1, text: `row ${i}` }));
+    const render = (count: number) => h.render(createElement(CodeTranscript, { items: rows(count), provider: 'codex-app', sessionKey: 'follow-wheel', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    await render(30);
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    assert.equal(scroller.scrollTop, scroller.scrollHeight - scroller.clientHeight, 'a fresh session follows the bottom');
+    // A wheel at the bottom that does not move the view is not a request to stop following.
+    await act(async () => { scroller.dispatchEvent(new dom.window.WheelEvent('wheel')); });
+    await render(45);
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 40)); });
+    assert.equal(scroller.scrollTop, scroller.scrollHeight - scroller.clientHeight, 'new rows still pull the view to the bottom');
+});
+
+test('hydration restore respects user intent and endpoint isolation', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 30 }, (_, i) => item({ itemId: `r${i}`, firstSequence: i + 1, text: `row ${i}` }));
+    writeTranscriptView('1:s', { anchor: { itemId: 'r10', offset: 5, firstSequence: 11, successors: ['r11'], following: false }, open: new Map([['1:s:r10', true]]) });
+    const render = (key: string, items: CodeItem[], loading = false) => h.render(createElement(CodeTranscript, { items, provider: 'codex-app', sessionKey: key, workingDir: '', loading,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    await render('1:s', [], true);
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    await act(async () => { scroller.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true })); });
+    await render('1:s', rows);
+    assert.equal(scroller.scrollTop, 0, 'intent during hydration prevents the saved jump');
+    assert.equal(readTranscriptView('1:s').anchor?.itemId, 'r0');
+    await render('2:s', rows);
+    assert.ok(scroller.scrollTop > 0, 'another endpoint defaults to following');
+    assert.equal(readTranscriptView('2:s').open.size, 0);
+});
+
+test('a missing saved anchor restores its first sequence successor', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 30 }, (_, i) => item({ itemId: `r${i}`, firstSequence: i + 1, text: `row ${i}` }));
+    writeTranscriptView('successor', { anchor: { itemId: 'evicted', offset: 0, firstSequence: 10, successors: ['r15'], following: false } });
+    await h.render(createElement(CodeTranscript, { items: rows, provider: 'codex-app', sessionKey: 'successor', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    assert.ok(scroller.scrollTop > 600 && scroller.scrollTop < 1300, `sequence successor position ${scroller.scrollTop}`);
+});
+
+test('view anchor and disclosure survive a transcript remount after delayed hydration', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 40 }, (_, i) => item({ itemId: `r${i}`, kind: 'tool_call', tool: { name: 'read' }, firstSequence: i + 1 }));
+    const render = (items: CodeItem[], loading = false) => h.render(createElement(CodeTranscript, { items, provider: 'codex-app', sessionKey: 'remount', workingDir: '', loading,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    await render(rows);
+    let scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    await act(async () => { scroller.scrollTop = 700; scroller.dispatchEvent(new dom.window.Event('scroll')); });
+    const visible = h.container.querySelector<HTMLElement>('[data-code-item-id="r8"]'); assert.ok(visible);
+    const card = visible.querySelector<HTMLDetailsElement>('details')!;
+    await act(async () => { card.open = true; card.dispatchEvent(new dom.window.Event('toggle')); });
+    const saved = readTranscriptView('remount').anchor; assert.ok(saved?.itemId);
+    await h.render(null);
+    await render([], true);
+    await render(rows);
+    scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    assert.ok(scroller.scrollTop > 0, 'saved anchor is restored when rows arrive');
+    assert.equal(h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r8"] details')?.open, true);
+});
+
+test('captured patch review and following position survive remount', bounded, async t => {
+    const h = await surface(t); virtualGeometry(t); __resetTranscriptViewMemoryForTests();
+    const rows = Array.from({ length: 30 }, (_, i) => item({ itemId: `r${i}`, kind: 'file_change', firstSequence: i + 1,
+        fileChange: { schema: 'known', changes: [{ path: 'a', kind: 'update', patch: 'captured', diff: '+a' }] } }));
+    const render = () => h.render(createElement(CodeTranscript, { items: rows, provider: 'codex-app', sessionKey: 'review-remount', workingDir: '', loading: false,
+        hasOlderHistory: false, async loadOlderHistory() {}, permissionCount: 0 }));
+    await render();
+    await act(async () => { h.container.querySelector('.code-transcript')!.dispatchEvent(new dom.window.Event('scroll')); });
+    const card = h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r29"] .code-tool-card')!;
+    await act(async () => { card.open = true; card.dispatchEvent(new dom.window.Event('toggle')); });
+    const review = h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r29"] .code-file-review')!;
+    await act(async () => { review.open = true; review.dispatchEvent(new dom.window.Event('toggle')); });
+    await h.render(null); await render();
+    const scroller = h.container.querySelector<HTMLDivElement>('.code-transcript')!;
+    await act(async () => { scroller.dispatchEvent(new dom.window.Event('scroll')); });
+    assert.equal(scroller.scrollTop, scroller.scrollHeight - scroller.clientHeight);
+    assert.equal(h.container.querySelector<HTMLDetailsElement>('[data-code-item-id="r29"] .code-file-review')?.open, true);
+    assert.equal(h.container.querySelector('[data-code-item-id="r29"] .code-file-diff')?.textContent, '+a');
+});
 
 test('real virtualizer keeps item DOM identity through equal text, updates and prepend, while bounding rendered rows', bounded, async t => {
     const h = await surface(t); virtualGeometry(t);

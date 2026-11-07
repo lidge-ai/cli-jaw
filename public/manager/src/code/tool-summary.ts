@@ -35,8 +35,9 @@ function isActive(status: CodeItem['status']): boolean {
 /** Longest-suffix workspace-relative path, so the row stays scannable. */
 export function shortenPath(value: string, workingDir: string): string {
     const trimmed = value.trim();
-    if (workingDir && trimmed.startsWith(workingDir)) {
-        const relative = trimmed.slice(workingDir.length).replace(/^[\\/]+/, '');
+    const base = workingDir.replace(/[\\/]+$/, '') || workingDir;
+    if (base && trimmed.startsWith(base) && (/[\\/]$/.test(base) || /^[\\/]/.test(trimmed.slice(base.length)))) {
+        const relative = trimmed.slice(base.length).replace(/^[\\/]+/, '');
         if (relative) return relative;
     }
     if (trimmed.length <= 64) return trimmed;
@@ -108,13 +109,29 @@ export function toolInputDisplay(input: string | undefined): { content: string; 
     return { content, command, parameters, description: parsed.description };
 }
 
+export function fileChangeSummary(item: CodeItem, workingDir: string): string {
+    const active = isActive(item.status);
+    const payload = item.fileChange;
+    if (payload) {
+        const count = payload.changes.length + (payload.omittedChanges ?? 0);
+        if (payload.schema === 'unknown' && (payload.changes.length !== 1 || payload.unrecognizedChanges || payload.omittedChanges)) return 'File change (unrecognized format)';
+        if (count > 1) return `${active ? 'Editing' : 'Edit'} ${count} files`;
+        const change = payload.changes[0];
+        if (!change) return payload.schema === 'unknown' ? 'File change (unrecognized format)' : 'File change';
+        const verbs = { add: ['Create', 'Creating'], delete: ['Delete', 'Deleting'], rename: ['Rename', 'Renaming'], update: ['Edit', 'Editing'], unknown: ['Edit', 'Editing'] };
+        const verb = verbs[change.kind][active ? 1 : 0];
+        return `${verb} ${shortenPath(change.path, workingDir)}${change.kind === 'rename' && change.movePath ? ` → ${shortenPath(change.movePath, workingDir)}` : ''}`;
+    }
+    if (item.truncation?.reason.includes('file_change_limit')) return 'File change details unavailable';
+    // A file_change written before the payload existed still names its target in tool.input.
+    const target = summariseToolInput(item.tool?.input, workingDir) || item.tool?.detail || '';
+    const verb = active ? 'Editing' : 'Edit';
+    return target ? `${verb} ${target}` : 'File change';
+}
+
 export function toolSummary(item: CodeItem, workingDir: string): string {
     const active = isActive(item.status);
-    if (item.kind === 'file_change') {
-        const target = summariseToolInput(item.tool?.input, workingDir) || item.tool?.detail || '';
-        const verb = active ? 'Editing' : 'Edit';
-        return target ? `${verb} ${target}` : 'File change';
-    }
+    if (item.kind === 'file_change') return fileChangeSummary(item, workingDir);
     const name = item.tool?.name?.trim() || 'Tool';
     const match = VERBS.find(([pattern]) => pattern.test(name));
     const verb = match ? (active ? match[2] : match[1]) : undefined;
