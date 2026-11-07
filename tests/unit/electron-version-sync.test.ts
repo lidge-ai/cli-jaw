@@ -139,10 +139,10 @@ test('the write mode preserves everything except the version', () => {
 });
 
 test('both release paths sync before they gate and stage the result', () => {
-    // release-preview.sh bumps the root version and THEN runs gate:all. Adding
+    // release.sh bumps the root version and THEN runs gate:all. Adding
     // the gate without the sync would have failed every preview release on its
     // next run -- the audit caught this in a path the original plan never read.
-    for (const path of ['scripts/release-preview.sh']) {
+    for (const path of ['scripts/release.sh']) {
         const source = readFileSync(join(projectRoot, path), 'utf8');
 
         const syncAt = source.indexOf('node scripts/sync-electron-version.cjs');

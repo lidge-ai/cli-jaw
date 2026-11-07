@@ -45,7 +45,7 @@ Activity persistence uses the existing SQLite trace tables: nullable `trace_runs
 | `check:strict-baseline` | `node scripts/check-strict-baseline.mjs` |
 | `gate:redaction-sinks` | `node scripts/release-gates.mjs redaction-sinks` — channel replies/sends/loggers must route through a credential masker |
 | `gate:electron-version` | `node scripts/release-gates.mjs electron-version` — `electron/package.json` version must equal the root `package.json` so desktop artifacts carry the release version |
-| `sync:electron-version` | `node scripts/sync-electron-version.cjs` — writes the root version into `electron/package.json` and its lockfile; called by both release scripts before `gate:all` |
+| `sync:electron-version` | `node scripts/sync-electron-version.cjs` — writes the root version into `electron/package.json` and its lockfile; called by `release.sh` before `gate:all` |
 | `gate:gate-docs` | `node scripts/release-gates.mjs gate-docs` — `structure/INDEX.md` must list exactly the live gates, with the right count, and each must have its `gate:<name>` npm script |
 | `gate:sidecar-prune-safety` | `node scripts/release-gates.mjs sidecar-prune-safety` — the sidecar prune list must never delete a package the server imports (a packaged app died on `node-fetch`) |
 | `gate:native-load` | `node scripts/release-gates.mjs native-load` — `node-pty` must actually `dlopen` and `spawn-helper` must genuinely execute. Both are resolved from `build/Release` or `prebuilds/<platform>-<arch>`: node-pty's install is `prebuild.js \|\| node-gyp rebuild`, so a matching prebuild skips the source build and `build/Release` is never created. Needs `electron/node_modules`, so it reports `SKIPPED` (exit 3) when absent and only hard-fails under `JAW_GATE_REQUIRE_NATIVE=1`, which `desktop-release.yml` sets after `npm ci --prefix electron` |
@@ -183,10 +183,7 @@ packaged Electron behavior on other platforms.
 | — | — | failure / cancelled / 빈 값 / 미지 값 | fail |
 | ≠ success | 또는 true/false 이외 | — | fail |
 
-`ci-aggregate` 이름은 브랜치 ruleset 이 문자 그대로 매칭하므로 바꾸지 않는다. `publish.yml` 과
-릴리스 스크립트는 잡 이름이 아니라 **워크플로 파일명·정확한 SHA·push 이벤트·preview|main 브랜치**로
-런을 고른다 (`publish.yml:85`, `promote-to-main.sh:29`, `release-preview.sh:289`). `workflow_dispatch` 런은
-그 필터를 통과하지 못하므로 릴리스를 인증할 수 없다.
+`ci-aggregate` 이름은 브랜치 ruleset이 문자 그대로 매칭하므로 바꾸지 않는다. `publish.yml`과 릴리스 스크립트는 정확한 SHA의 성공한 `dev` push `test.yml` 런을 인증에 사용한다. Postinstall Platform Checks는 이벤트·브랜치와 관계없이 같은 SHA의 성공한 런이 항상 필요하다. Tests의 `workflow_dispatch` 런은 인증할 수 없다.
 
 CI 에서 skip 은 실패다: `api-smoke` 는 서버가 없으면 `CI` 아래에서 assert-fail 한다. 격리(quarantine) 목록 —
 provider 인증과 실제 추론이 필요해 opt-in 으로만 도는 파일:
@@ -438,325 +435,59 @@ packaged resources, actual native UI, provider authentication or OS-wide behavio
 
 ### `scripts/` 실제 파일
 
-`atomic-build.sh`, `audit-fresh-install-evidence.mjs`, `bundle-sidecar.sh`, `capture-agy-quota-fixture.mjs`, `check-app-icon-assets.cjs`, `check-cli-bin-links.cjs`, `check-copilot-gap.ts`, `check-deps-offline.ts`, `check-deps-online.sh`, `check-electron-no-native.cjs`, `check-electron-sidecar-no-jwc.cjs`, `check-redaction-sinks.mjs`, `check-sidecar-prune-safety.mjs`, `check-strict-baseline.mjs`, `check-web-ui-build-output.ts`, `claim-audit.mjs`, `collect-fresh-install-evidence.sh`, `electron-dev-manager.mjs`, `ensure-native-modules.cjs`, `fresh-install-smoke.ts`, `i18n-registry.ts`, `install-officecli.ps1`, `install-officecli.sh`, `install-risk-gate.mjs`, `install-wsl.sh`, `install.sh`, `retired-runtime-package-smoke.mjs`, `link-current-nvm-bin.cjs`, `pi-rpc-probe.mts`, `postinstall-guard.cjs`, `prepare-sidecar-package-json.cjs`, `release-1.6.0.sh`, `release-gates.mjs`, `release-preview.sh`, `promote-to-main.sh`, `pick-gyp-python.sh`, `require-release-evidence.mjs`, `signal-dashboard-restart.mjs`, `sync-electron-version.cjs`, `verify-fresh-install.sh`, `verify-release-evidence.mjs`, `ci/aggregate-check.sh`, `ci/windows-unit-manifest.mjs`, `ci/windows-unit-manifest.txt`, `smoke/opencode-external-dir-smoke.ts`, `smoke/tui-frame-resize-stress.ts`, `smoke/tui-fullscreen-frame-smoke.ts`, `smoke/tui-ws-sequence-stress.ts`.
+`atomic-build.sh`, `audit-fresh-install-evidence.mjs`, `bundle-sidecar.sh`, `capture-agy-quota-fixture.mjs`, `check-app-icon-assets.cjs`, `check-cli-bin-links.cjs`, `check-copilot-gap.ts`, `check-deps-offline.ts`, `check-deps-online.sh`, `check-electron-no-native.cjs`, `check-electron-sidecar-no-jwc.cjs`, `check-redaction-sinks.mjs`, `check-sidecar-prune-safety.mjs`, `check-strict-baseline.mjs`, `check-web-ui-build-output.ts`, `claim-audit.mjs`, `collect-fresh-install-evidence.sh`, `electron-dev-manager.mjs`, `ensure-native-modules.cjs`, `fresh-install-smoke.ts`, `i18n-registry.ts`, `install-officecli.ps1`, `install-officecli.sh`, `install-risk-gate.mjs`, `install-wsl.sh`, `install.sh`, `retired-runtime-package-smoke.mjs`, `link-current-nvm-bin.cjs`, `pi-rpc-probe.mts`, `postinstall-guard.cjs`, `prepare-sidecar-package-json.cjs`, `release-1.6.0.sh`, `release-gates.mjs`, `release.sh`, `release-version.mjs`, `release-preview.sh` (thin wrapper for `release.sh --preview`), `verify-npm-provenance.mjs`, `pick-gyp-python.sh`, `require-release-evidence.mjs`, `signal-dashboard-restart.mjs`, `sync-electron-version.cjs`, `verify-fresh-install.sh`, `verify-release-evidence.mjs`, `ci/aggregate-check.sh`, `ci/windows-unit-manifest.mjs`, `ci/windows-unit-manifest.txt`, `smoke/opencode-external-dir-smoke.ts`, `smoke/tui-frame-resize-stress.ts`, `smoke/tui-fullscreen-frame-smoke.ts`, `smoke/tui-ws-sequence-stress.ts`.
 
 ---
 
-## 릴리스 파이프라인과 부분 실패 복구 (preview → main → npm)
+## 릴리스 파이프라인과 부분 실패 복구
 
-Canonical release path is `feature → preview → main`, then an npm publish
-dispatched onto `main`. `dev` is the contributor integration base and is **not**
-part of the release path — nothing publishes from `dev`.
+`dev`는 유일한 장기 브랜치이자 기본 및 릴리스 브랜치다. 피처 브랜치를 PR로 `dev`에 병합하고, stable과 preview 모두 `scripts/release.sh`로 시작한다. 릴리스 버전은 재사용하지 않는다.
 
-Every command below is quoted from the file and line noted beside it. Read the
-source before improvising; a wrong command during a broken release is worse
-than no command.
+### 정상 경로
 
-### 정상 경로 (normal flow)
+| 단계 | 실행 및 증명 |
+| --- | --- |
+| 1. 준비 | `bash scripts/release.sh` 또는 `bash scripts/release.sh --preview`. `--major`, `--minor`, `--patch` 또는 `X.Y.Z` base를 선택할 수 있다. 깨끗하고 원격과 일치하는 dev, 미게시 버전 및 dist-tag 순서를 확인하고 버전 manifests를 갱신한다. |
+| 2. 빌드와 푸시 | 빌드, Electron 검사, `gate:all` 및 pack 검사를 통과한 버전 커밋을 non-force로 dev에 푸시한다. 원격이 움직이면 멈춘다. |
+| 3. 인증과 증거 | 정확한 커밋 SHA의 성공한 `test.yml` dev push 런과 성공한 Postinstall Platform Checks 런을 기다린다. stable은 필요한 설치 증거를 필수 검사하고, preview는 `--require-evidence`로 필수화할 수 있다. |
+| 4. 태그와 게시 | 인증된 SHA에 불변 `v<version>` 태그를 만들고 `publish.yml`을 그 태그에서 dispatch한다. request-id로 해당 게시 런을 찾아 완료와 성공을 기다린다. |
+| 5. GitHub와 desktop | `publish.yml`은 두 채널의 GitHub release를 만들거나 갱신하고 `desktop-release.yml`에 태그와 expected SHA를 전달한다. Desktop은 체크아웃 SHA와 업로드 전 태그를 확인한다. |
 
-| 단계 | 실행 | 검증되는 SHA |
-| --- | --- | --- |
-| 1. preview 릴리스 | `bash scripts/release-preview.sh [--major\|--minor\|--patch\|<X.Y.Z>]` | the `origin/preview` head just pushed, re-read with `git ls-remote` and compared before dispatch (`scripts/release-preview.sh:356-362`) |
-| 2. 인증 (certification) | `.github/workflows/test.yml` push run on `preview` | the same preview SHA; promotion refuses to start without a successful run for it (`scripts/promote-to-main.sh:28-38`) |
-| 3. 승격 (promotion) | `bash scripts/promote-to-main.sh [<preview-sha>]` | the live `origin/preview` head; an explicit argument must equal it (`scripts/promote-to-main.sh:13-18`) |
-| 4. stable publish | `.github/workflows/publish.yml`, `workflow_dispatch` only (`publish.yml:3-4`) | `expected-sha` must equal the checked-out `GITHUB_SHA` (`publish.yml:54-65`) |
+실제 publish는 `refs/tags/v<version>`만 허용하고 `dev` ref는 dry-run에만 허용한다. 태그의 커밋은 dev의 조상이어야 한다. Tests 인증은 dev push만 받아들이며 플랫폼 인증은 같은 SHA의 성공한 런이면 이벤트와 관계없이 인정한다. 두 인증은 모든 게시에 필수다. 동시 publish는 하나의 그룹으로 직렬화하고 새 게시에서는 채널 dist-tag의 단조 증가를 검사한다. 게시가 없는 pending 런도 새 pending 런에 의해 취소될 수 있으므로 스크립트는 자기 request-id의 결과를 기다리고 취소·실패 시 재실행 명령을 출력한다.
 
-**1 — preview.** `release-preview.sh` bumps `package.json` to
-`X.Y.Z-preview.TIMESTAMP` (`:131`), syncs the Electron version (`:167`), runs
-`npm run gate:all` (`:181`), commits (`:200`), pushes to `origin/preview`
-(`:204-209`), then dispatches:
+stable release가 새로 게시되면 GitHub Latest로 지정한다. 이미 게시된 stable 복구는 npm `latest`와 버전이 일치할 때만 Latest를 지정하며, preview는 prerelease로 만든다. workflow의 `GITHUB_TOKEN`으로 만든 release는 release 이벤트를 발생시키지 않으므로 publish workflow가 두 채널 모두 desktop을 명시적으로 dispatch한다.
+
+### 복구 1 — dev 푸시 뒤 CI 실패 또는 publish 실패
+
+CI가 빨갛다면 실패한 런을 `gh run rerun <run-id>`로 다시 실행한 뒤, 해당 미게시 릴리스 커밋을 체크아웃하고 `bash scripts/release.sh --resume <sha>`를 실행한다. resume은 SHA가 dev에 속하고 HEAD가 그 SHA이며 커밋 및 manifests가 릴리스 조건에 맞는지 검사한다. 또는 fix-forward 후 새 버전을 만든다. 플랫폼 런이 아예 없다면 먼저 기존 태그가 없거나 같은 SHA를 가리키는지 확인한 뒤 아래 명령으로 태그를 푸시하고 플랫폼 런을 dispatch한다. 성공 후 resume한다:
 
 ```bash
-gh workflow run publish.yml --ref preview \
-  -f version="$VERSION" -f tag=preview -f expected-sha="$RELEASE_SHA" -f dry-run=false
+git push origin <sha>:refs/tags/v<version>
+gh workflow run postinstall-platform.yml --ref v<version>
+bash scripts/release.sh --resume <sha>
 ```
 
-(`scripts/release-preview.sh:365-366`.) Note it does **not** pass
-`create-github-release`, so that input defaults to `false` (`publish.yml:27-31`);
-the GitHub *pre*release is created by the script itself (`:242-256`), not by the
-workflow.
+publish 런이 실패하거나 취소됐다면 스크립트가 출력한 `gh workflow run publish.yml` 명령을 같은 태그와 SHA로 다시 dispatch한다. 런의 `headSha`, 완료 및 성공 상태를 확인한다. 실 게시에서 dev를 dispatch ref로 쓰지 않는다.
 
-**2 — certification.** Nothing is promoted that does not already have a green
-`test.yml` push run on `preview` for that exact commit.
+### 복구 2 — npm 게시 후 GitHub release 또는 desktop 누락
 
-**3 — promotion.** `promote-to-main.sh` requires `origin/main` to be an ancestor
-of the certified preview SHA, builds a throwaway worktree at that SHA, runs
-`npm version <stable>`, `sync-electron-version`, `npm run gate:all` and
-`require-release-evidence.mjs`, and commits `chore: promote vX.Y.Z` **on top of
-preview**. It then fast-forwards `preview` to that commit, waits for `test.yml`
-(and `postinstall-platform.yml` when installer-sensitive files changed) to go
-green **on that exact SHA**, re-checks that live `preview` still equals it, and
-fast-forwards `main` to the same commit with a plain non-force push.
-
-The wait is not a wall clock over execution. `wait_for_run` spends its 1200s
-budget only while no run for the SHA has appeared; once one is queued or running
-it is followed for its own lifetime, because the `windows-wsl` job alone may take
-25 minutes and the old fixed budget was shorter than that. A failed or cancelled
-conclusion is terminal only when no live run remains for the SHA: both workflows
-set `cancel-in-progress`, so a superseded run leaves a cancelled row beside its
-replacement. The platform lookup carries no `--event` filter, matching
-`publish.yml` and `require-release-evidence.mjs`, which resolve it by commit; the
-Tests lookup stays push-only because `publish.yml` accepts nothing else.
-
-Because the script writes to the remote before it is finished, it can be
-interrupted with `preview` already carrying the stable bump and `main` behind.
-`scripts/promotion-state.mjs` classifies that state (`prerelease`, `resume`,
-`already_on_main`, `refuse`) and a re-run resumes: it takes the commit `preview`
-already holds and skips both the version bump and the preview push, so a tree CI
-has certified is never replaced by a same-version copy. `resume` requires the
-full fingerprint — `main` an ancestor, the parent the matching prerelease, the
-subject `chore: promote vX.Y.Z`, and a diff touching only the four version
-manifests — and anything else is refused rather than guessed at.
-
-There is no PR and no squash (#480). `main` and `preview` end up on the SAME
-commit, which is why the ancestry guard keeps holding on the next cycle.
-
-**4 — publish.** Only after all of that:
-
-```bash
-gh workflow run publish.yml \
-  --ref main \
-  -f version="$STABLE_VERSION" \
-  -f tag=latest \
-  -f expected-sha="$MERGED_MAIN_SHA" \
-  -f dry-run=false \
-  -f create-github-release=true
-```
-
-(`scripts/promote-to-main.sh:175-181`.)
-
-Because `create-github-release=true`, the stable GitHub release is created by the
-workflow rather than by an operator. That difference decides how desktop builds
-start, and the two channels are NOT symmetric:
-
-| 채널 | 릴리스를 만드는 주체 | `desktop-release.yml` 시작 방법 |
-| --- | --- | --- |
-| preview | `release-preview.sh` (운영자 토큰) | `release: published` 이벤트로 자동 |
-| stable | `publish.yml` (기본 `GITHUB_TOKEN`) | `publish.yml`이 `gh workflow run`으로 명시 dispatch |
-
-A release created with the default `GITHUB_TOKEN` emits no `release: published`
-event — GitHub suppresses it so a workflow cannot trigger itself. `workflow_dispatch`
-is a documented exception, so `publish.yml` starts the desktop build explicitly
-with `actions: write` and `-f release-tag=vX.Y.Z`. Before that step existed,
-`v2.17.57` and `v2.17.58` both published to npm with an **empty** GitHub release
-and needed a manual dispatch. The dispatch is limited to `tag == 'latest'`; adding
-it to preview as well would build every preview twice.
-
-#### 승격된 SHA는 인증된 SHA와 문자 그대로 같다
-
-The commit published to npm is the SAME commit CI certified — not a copy of its
-tree. That is the point of the #480 ff promotion: the version bump is committed
-on top of preview, preview is fast-forwarded to it, that exact SHA is certified,
-and `main` is fast-forwarded to the same object.
-
-This section previously described a PR + squash promotion in which `main` got a
-NEW SHA sharing only the tree. That implementation is gone; if you are reading
-recovery advice that assumes a differing SHA, it predates #480.
-
-### ⚠️ 승격 성공 후에는 스크립트를 다시 돌릴 수 없다
-
-`promote-to-main.sh` dispatches `publish.yml` at `:167-173`, prints one line at
-`:175`, and **exits without ever checking whether the publish run succeeded**.
-That is the single most important property of this pipeline: a green script exit
-means *the publish was requested*, never *the publish happened*.
-
-And the script cannot simply be re-run. Under the ff design the rejection comes
-from the preview-version check near the top: after a successful promotion the
-live `preview` head carries the STABLE version, which does not match the
-required `X.Y.Z-preview.TIMESTAMP` shape, so the script refuses before it
-reaches the ancestry guard. **Every recovery below is therefore manual.**
-
-### 복구 1 — git은 성공, npm은 실패
-
-Symptom: `main` carries the stable version, `npm view cli-jaw@<version>` finds
-nothing, and there is no `v<version>` GitHub release.
-
-Re-dispatch `publish.yml` by hand with the same inputs the script would have
-used. The correct `expected-sha` is the **merged `main` head**, read the same way
-the script reads it (`scripts/promote-to-main.sh:86`):
-
-```bash
-git fetch origin main
-MERGED_MAIN_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
-STABLE_VERSION="$(git show "$MERGED_MAIN_SHA:package.json" \
-  | node -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).version)')"
-
-gh workflow run publish.yml \
-  --ref main \
-  -f version="$STABLE_VERSION" \
-  -f tag=latest \
-  -f expected-sha="$MERGED_MAIN_SHA" \
-  -f dry-run=false \
-  -f create-github-release=true
-```
-
-All five inputs are the full set declared at `publish.yml:5-31`; `version`,
-`tag` and `expected-sha` are `required: true`, `dry-run` defaults to `true` and
-`create-github-release` defaults to `false`, so both must be passed explicitly
-for a real release.
-
-The workflow re-checks, and will refuse if any of these no longer hold:
-
-- `expected-sha` equals the checked-out `GITHUB_SHA` (`publish.yml:54-65`) — so
-  if `main` moved after the audit, the dispatch fails instead of publishing a
-  different tree.
-- a successful `test.yml` push run exists for that commit **on `preview` or
-  `main`** (`publish.yml:67-84`). The branch filter matters because `test.yml`
-  also runs on `dev` pushes (#521) and every cycle fast-forwards `dev` onto the
-  preview head, so one SHA carries runs from both branches; the lookup scans the
-  run list rather than the newest single run, or a newer `dev` run would be
-  selected and then discarded, falsely blocking a certified release.
-- `postinstall-platform.yml` is green for that commit when the installer surface
-  changed since the previous stable tag (`publish.yml:80-120`).
-- `package.json` version equals `version` (`publish.yml:179-182`).
-- a real `latest` publish runs from `main` (`publish.yml:184-193`) and the
-  version is not a prerelease (`publish.yml:230-237`).
-
-Re-dispatching is safe when the version is already on npm: the run detects it
-and skips the publish rather than failing (`publish.yml:307-332`).
-
-### 복구 2 — npm은 게시됨, GitHub 릴리스가 없거나 잘못됨
-
-**Re-dispatch `publish.yml` — that is the supported repair.** `Create GitHub
-release` is gated only on `skip-publish`, `dry-run` and `create-github-release`;
-the `registry.exists` gate that once blocked backfill was removed in
-`20fa16232`. The step is create-or-edit (`gh release view` then `edit`/`create`),
-so a re-dispatch fixes a missing or wrong release for a version that is already
-on npm. The publish itself is skipped because `registry.exists` is `true`.
-
-`Registry smoke` runs AFTER release creation and the desktop dispatch, so a slow
-registry can no longer skip them. It used to run before both, and a publish whose
-version stayed invisible past the 15-minute window failed the job there — leaving
-a published npm version with no GitHub release at all.
-
-A stable re-dispatch also re-dispatches `desktop-release.yml`; asset upload uses
-`gh release upload --clobber`, so repeating it is safe.
-
-Backfill by hand only if the workflow itself cannot run:
-
-```bash
-# stable (latest)
-gh release create "v<version>" --target "<merged-main-sha>" \
-  --title "v<version>" --latest --notes-file <notes-file>
-
-# if a wrong release already exists, edit instead of create
-gh release edit "v<version>" --target "<merged-main-sha>" \
-  --title "v<version>" --latest --notes-file <notes-file>
-```
-
-For a preview release the workflow uses `--prerelease` and the title
-`v<version> (preview)` instead of `--latest` (`publish.yml:397-405`).
+출력된 publish 명령을 같은 태그로 다시 dispatch한다. 기존 npm 버전이면 workflow는 새 게시와 dist-tag 순서 검사를 건너뛰고 provenance를 확인한 뒤 GitHub release와 desktop dispatch를 수행한다. provenance는 npm registry의 attestation과 패키지 integrity, 저장소, workflow 경로 및 git commit을 대조한다. DSSE 서명 자체는 암호학적으로 검증하지 않으며 npm registry를 신뢰한다. 태그가 이동하거나 SHA가 다르면 복구를 거부한다. Desktop 업로드는 같은 SHA에 묶여 있다.
 
 ### 복구 3 — 잘못된 버전이 npm `latest`에 도달함
 
-This is the real rollback case.
-
-**`npm unpublish` is not the normal remedy.** npm only permits unpublishing
-within a limited window after publish (documented as 72 hours), it breaks every
-consumer that already resolved the version, and **the version number can never
-be reused** — a republish of the same `X.Y.Z` will be rejected forever. Treat it
-as a last resort for a genuine secret leak or legal problem, not for a bad
-build. *(npm's unpublish policy is registry-side and has changed over time;
-confirm the current rules against npm's own documentation before relying on the
-72-hour figure. Additional restrictions apply when other packages depend on the
-version.)*
-
-**The normal remedy is to move the dist-tag back, then ship forward.**
+`npm unpublish`는 정상적인 롤백 수단이 아니다. 이미 해결된 버전을 사용하는 소비자를 깨뜨리며 버전 번호를 재사용할 수 없다. 비밀 유출이나 법적 문제 같은 경우에만 현재 npm 정책을 확인하고 고려한다. 보통은 dist-tag를 이전 버전으로 옮기고 새 버전으로 수정한다:
 
 ```bash
 npm dist-tag ls cli-jaw
 npm dist-tag add cli-jaw@<last-good-version> latest
-```
-
-(`npm dist-tag ls cli-jaw` is the same read the publish run does at
-`publish.yml:341`; `release-preview.sh:83` reads the moved tag back via
-`npm view cli-jaw dist-tags.latest`, so the next preview bump computes off the
-restored version.)
-
-What moving the tag **does** fix: `npm install -g cli-jaw`,
-`npm install -g cli-jaw@latest`, and new `Dockerfile` builds — which default to
-`ARG CLI_JAW_VERSION=latest` — resolve to the last good version again.
-
-What it **does not** fix:
-
-- `npm install cli-jaw@<bad-version>` still resolves. The tarball stays on the
-  registry; only the pointer moved.
-- users who already installed the bad version are not downgraded.
-- lockfiles that pinned the bad version keep resolving to it.
-- already-built Docker images keep the bad version baked in.
-- the `main` commit and the GitHub release are untouched.
-
-So also move the GitHub "Latest" pointer back, using the same flag the workflow
-uses (`publish.yml:402`, `:407`):
-
-```bash
 gh release edit "v<last-good-version>" --latest
 ```
 
-The `preview` channel has the exact same shape:
+이 조치는 새 `latest` 설치와 새 Docker 빌드의 해석만 바꾼다. 이미 설치한 버전, 정확한 버전 지정, lockfile과 기존 이미지에는 영향을 주지 않는다. preview 채널도 `npm dist-tag add cli-jaw@<last-good-preview-version> preview`로 되돌릴 수 있다. 이후 정상 경로로 새 버전을 릴리스한다.
 
-```bash
-npm dist-tag add cli-jaw@<last-good-preview-version> preview
-```
+### 복구 4 — 검증 실패한 커밋이 dev에 도달함
 
-Then ship a forward patch through the normal path — a new
-`release-preview.sh` run, certification, and `promote-to-main.sh`. The dist-tag
-move buys time; only a new version actually fixes users.
-
-### 복구 4 — 검증 실패한 커밋이 `main`에 도달함
-
-Much less reachable since #480. The promotion certifies the exact SHA **on
-`preview`, before `main` moves**: it waits for `test.yml` (and
-`postinstall-platform.yml` when installer-sensitive files changed) on the
-promotion commit, re-checks that live `preview` still equals it, and only then
-fast-forwards `main` to that same object. There is no PR and no post-merge
-certification window.
-
-`main` still has **no ruleset and no branch protection** (`gh api
-repos/lidge-ai/cli-jaw/rulesets` returns `[]`), so nothing stops a human from
-pushing to it by hand — that, not the promotion path, is how a bad commit
-reaches `main` now. Repo-admin rights to install a ruleset are tracked in #333.
-
-Revert path:
-
-1. Determine the shape of the offending commit first. A promotion commit is
-   single-parent by construction, but a hand-pushed one may not be:
-
-   ```bash
-   git fetch origin main
-   git log --graph --oneline origin/main -5
-   ```
-
-2. Revert on a branch, never by pushing to `main` directly:
-
-   ```bash
-   git checkout -b revert/<version> origin/main
-   git revert <sha>            # single-parent (squash) commit
-   git revert -m 1 <sha>       # two-parent merge commit — mainline is parent 1
-   git push -u origin revert/<version>
-   gh pr create --base main --title "revert: <version>"
-   ```
-
-3. If the bad commit already reached npm `latest`, the revert alone changes
-   nothing for users — do 복구 3 as well.
-
-4. Do not try to re-promote the same `preview` head afterwards. Its version is
-   now stable-shaped, so the preview-version check rejects it before any other
-   gate runs. Cut a fresh preview instead.
-
-### 하지 말 것
-
-- Do not push directly to `main` or `preview`.
-- Do not hand-edit a published npm tarball; publish a new version.
-- Do not re-run `promote-to-main.sh` to "retry" a failed publish — see the
-  preview-version check above; re-dispatch `publish.yml` instead (복구 1).
-- Do not treat a green script exit as a completed publish. Both release scripts
-  DISPATCH `publish.yml` and return without waiting for it, so a host can
-  reinstall the OLD `latest` while every command in the sequence looked fine.
-  Verify `status=completed`, `conclusion=success`, the exact `headSha`, and the
-  registry version before deploying anything.
-- Do not dispatch `publish.yml` with a stale `expected-sha`; it is the only
-  thing standing between a moved branch and a mismatched publish.
+문제 커밋의 부모 관계를 확인하고 dev 기반 피처 브랜치에서 revert PR을 만든다. 단일 부모 커밋은 `git revert <sha>`, 병합 커밋은 올바른 mainline 부모를 확인한 뒤 `git revert -m 1 <sha>`를 사용한다. PR을 dev에 병합하고 새 버전을 릴리스한다. 이미 잘못된 버전이 npm에 있다면 복구 3도 수행한다. 기존 게시 버전이나 태그를 덮어쓰지 않는다.
 
 ---
 

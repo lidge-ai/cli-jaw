@@ -2,27 +2,8 @@ name: Postinstall Platform Checks
 
 on:
   push:
-    branches:
-      # preview + dev. preview stays the release-certifying run (see below);
-      # dev carries the post-merge cross-platform evidence since pull_request
-      # no longer triggers this workflow — PRs keep the minimal test.yml
-      # contract and installer-surface proof lands on the dev push after merge.
-      #
-      # Promotion fast-forwards main onto the exact commit
-      # preview already certified (#480), so a main push re-ran this workflow
-      # against a byte-identical tree: no new information about the code, and a
-      # second exposure to runner-side failure. Both post-promotion reds on main
-      # were exactly that, with the preview run for the SAME sha green:
-      #   729f0dca  Setup WSL   -> `wsl.exe --update` answered Forbidden (403)
-      #   53eff414  where.exe   -> hit the 3s discovery budget (test ran 3126ms)
-      # Every consumer resolves this workflow BY COMMIT, never by branch, so the
-      # preview run still certifies main: publish.yml "Require platform checks
-      # when installer surface changed", require-release-evidence.mjs
-      # --accept-ci-evidence, and promote-to-main.sh which waits on the preview
-      # run before it fast-forwards main. Branch protection on main requires
-      # only ci-aggregate, which test.yml supplies.
-      - preview
-      - dev
+    # Each release changes package.json, producing a dev push platform run.
+    branches: [dev]
     paths:
       - '.gitattributes'
       - '.github/workflows/postinstall-platform.yml'
@@ -105,8 +86,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: postinstall-platform-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: postinstall-platform-${{ github.event_name }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   linux:

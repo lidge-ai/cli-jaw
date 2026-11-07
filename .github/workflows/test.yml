@@ -2,30 +2,16 @@ name: Tests
 
 on:
   push:
-    branches:
-      # `dev` runs the suite so its HEAD is never unverified live code (#521).
-      # It does NOT become a release branch: publish.yml only accepts a
-      # certifying Tests run from `preview`/`main` (see its headBranch filter),
-      # and promote-to-main.sh pins `--branch preview`.
-      - dev
-      - preview
-      - main
-  # The pull_request contract is deliberately the minimal Linux set
-  # (changes -> test, integration, gates -> ci-aggregate). Cross-platform lanes
-  # — windows-unit and macos-unit — run on push to dev/preview/main and on
-  # dispatch instead, so their evidence lands on the dev push after merge and a
-  # red lane is fixed forward rather than blocking review.
+    branches: [dev]
+  # PRs run the minimal Linux contract; dev push supplies cross-platform evidence.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  # publish.yml and the release scripts only accept `--event push` runs, so
-  # a dispatch never certifies a release. Advisory coverage moved to its own
-  # coverage-advisory.yml (weekly schedule + dispatch), so manual runs of this
-  # workflow no longer include it.
   workflow_dispatch:
 
+# Distinct push SHAs must retain their certifying runs.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # This workflow carries no `paths-ignore` on purpose. A required status check
@@ -474,7 +460,7 @@ jobs:
           echo "macos-unit: ${#files[@]} files"
           npx tsx --import ./tests/setup/test-home.ts --experimental-test-module-mocks --test "${files[@]}"
 
-  # The single required status check for the `main` ruleset.
+  # The required status check for dev branch protection (main before 261107).
   #
   # The check name is the job `name:` below and is load-bearing: the branch
   # ruleset matches on the literal string `ci-aggregate`. (publish.yml and the

@@ -95,13 +95,13 @@ jaw init                              # interactive setup later when you're read
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 -->
 
 **Windows support.** WSL is the recommended, stable path. A native PowerShell installer also exists, but it is still **beta**:
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 ```
 
 Requires Node.js 22.4+.
@@ -175,7 +175,7 @@ That's it. Open **http://localhost:24576** for the manager dashboard. Per-instan
 <summary><b>macOS one-click</b> — don't have Node.js? This installs everything</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -194,7 +194,7 @@ Restart, open **Ubuntu**, then:
 
 ```bash
 # 2. Install CLI-JAW + all dependencies
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -310,7 +310,7 @@ Run this on a clean VM before publishing installer changes. It writes environmen
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -321,7 +321,7 @@ bash "$COLLECTOR" --target wsl
 From Windows PowerShell, enter the supported WSL path:
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 If the collector says `powershell.exe` is not available inside WSL, run this from Windows PowerShell before auditing:
@@ -362,17 +362,17 @@ node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /
 
 The matrix gate rejects evidence collected with stale collector, installer, or verifier scripts; archived evidence scripts must match the current package or checkout that runs the gate.
 
-When `scripts/promote-to-main.sh`, `scripts/release-preview.sh`, or `npm publish` detects installer-sensitive changes since the previous tag, it runs this same matrix gate before any git push or npm publish. Set the evidence directories before starting a release:
+`bash scripts/release.sh` starts a stable release from `dev`. It checks the build and release gates, pushes the version commit, waits for successful Tests and Postinstall Platform Checks for that exact SHA, and checks required installer evidence before publishing. Set the evidence directories before starting:
 
 ```bash
 CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence \
 CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence \
-bash scripts/promote-to-main.sh
+bash scripts/release.sh
 ```
 
-`scripts/promote-to-main.sh` promotes **only an already-certified `preview` head**. It refuses to start unless a successful `test.yml` push run exists for that exact `preview` SHA. With no argument it promotes the live `origin/preview` head; an optional SHA argument must equal that same head, so it acts as an assertion rather than a way to promote an older commit.
+Use `bash scripts/release.sh --preview` for a preview release; add `--require-evidence` to enforce the evidence gate for preview. Both channels dispatch `publish.yml` on the immutable `v<version>` tag and wait for the matching publish run. After a CI failure, rerun the failed run and use `bash scripts/release.sh --resume <sha>` for the unpublished release commit, or fix forward and cut a new version.
 
-The script dispatches the npm publish and then exits without checking whether the publish succeeded, and it cannot be re-run afterwards. Recovery for a partially completed release — npm publish missing, GitHub release missing, a bad version on `latest`, or a red commit on `main` — is documented in [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구-preview--main--npm).
+For publish failure or missing GitHub release or desktop assets, re-dispatch the printed command on the same tag. Recovery and rollback are documented in [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구).
 
 </details>
 

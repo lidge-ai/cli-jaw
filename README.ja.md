@@ -95,13 +95,13 @@ jaw init                              # interactive setup later when you're read
      manager-port: 24576
      runtime-port: 3457
      registered-service: windows-startup
-     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+     install-command: irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 -->
 
 **Windows サポート。** 安定して使うなら WSL 経路をおすすめします。ネイティブ PowerShell 用のインストーラーもありますが、まだ beta です:
 
 ```powershell
-irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.ps1 | iex
 ```
 
 Node.js 22.4+ が必要です。
@@ -163,7 +163,7 @@ node "$(npm prefix -g)\node_modules\cli-jaw\dist\bin\cli-jaw.js" doctor
 <summary><b>macOS ワンクリック</b> — Node.js がない場合はこちらで全部入ります</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install.sh | bash
 source "${ZDOTDIR:-$HOME}/.zshrc" 2>/dev/null || true
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
 ```
@@ -182,7 +182,7 @@ wsl --install
 
 ```bash
 # 2. Install CLI-JAW + all dependencies
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/install-wsl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/install-wsl.sh | bash
 source ~/.bashrc
 jaw dashboard
 bash "$(npm root -g)/cli-jaw/scripts/verify-fresh-install.sh"
@@ -284,7 +284,7 @@ foreach ($path in @($outLog, $errLog)) {
 ```bash
 # macOS Terminal
 COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh
-curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
+curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"
 bash "$COLLECTOR" --target macos
 
 # Ubuntu inside WSL
@@ -295,7 +295,7 @@ bash "$COLLECTOR" --target wsl
 Windows PowerShell からは、対応している WSL 経路に入ります:
 
 ```powershell
-wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/main/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
+wsl.exe -d Ubuntu -- bash -lc 'COLLECTOR=/tmp/cli-jaw-collect-fresh-install-evidence.sh; curl -fsSL https://raw.githubusercontent.com/lidge-ai/cli-jaw/dev/scripts/collect-fresh-install-evidence.sh -o "$COLLECTOR"; bash "$COLLECTOR" --target wsl'
 ```
 
 collector が WSL 内では `powershell.exe` が使えないと報告する場合は、監査の前に Windows PowerShell から次を実行してください:
@@ -336,17 +336,17 @@ node scripts/verify-release-evidence.mjs --macos /path/to/macos-evidence --wsl /
 
 matrix gate は、古い collector / installer / verifier スクリプトで収集された証跡を拒否します。アーカイブされた証跡スクリプトは、gate を実行する現在のパッケージまたはチェックアウトと一致していなければなりません。
 
-`scripts/promote-to-main.sh`、`scripts/release-preview.sh`、または `npm publish` が、前回のタグ以降にインストーラーに影響する変更を検出すると、git push や npm publish の前に同じ matrix gate を実行します。リリースを始める前に証跡ディレクトリを設定してください:
+`bash scripts/release.sh` は `dev` から stable リリースを開始します。ビルドとリリースゲートを確認し、バージョンコミットを push した後、その SHA に対する Tests と Postinstall Platform Checks の成功を待ち、公開前に必要なインストール証跡を検証します。開始前に証跡ディレクトリを設定してください:
 
 ```bash
 CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence \
 CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence \
-bash scripts/promote-to-main.sh
+bash scripts/release.sh
 ```
 
-`scripts/promote-to-main.sh` が昇格させるのは、**すでに認証済みの `preview` ヘッドだけ**です。その正確な `preview` SHA に対する成功した `test.yml` push ランが存在しない限り、処理を開始しません。引数なしでは現在の `origin/preview` ヘッドを昇格させ、任意の SHA 引数を渡した場合はその同じヘッドと一致していなければならないため、この引数は古いコミットを昇格させる手段ではなくアサーションとして機能します。
+プレビューには `bash scripts/release.sh --preview` を使い、プレビューでも証跡ゲートを必須にするには `--require-evidence` を追加します。両チャネルとも不変の `v<version>` タグで `publish.yml` を dispatch し、対応する公開ランを待ちます。CI 失敗後は失敗したランを再実行して未公開のリリースコミットに `bash scripts/release.sh --resume <sha>` を使うか、修正を前に進めて新しいバージョンを作成してください。
 
-このスクリプトは npm publish を dispatch したあと、公開が成功したかを確認せずに終了し、その後で再実行することはできません。部分的に完了したリリース（npm publish が未実行、GitHub リリースが未作成、`latest` のバージョンが誤っている、`main` のコミットが赤い、など）からの復旧手順は [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구-preview--main--npm) に記載されています。
+公開失敗や GitHub リリースまたは desktop アセットの欠落時は、表示されたコマンドを同じタグで再 dispatch します。復旧とロールバックは [`structure/infra.md` § 릴리스 파이프라인과 부분 실패 복구](structure/infra.md#릴리스-파이프라인과-부분-실패-복구) を参照してください。
 
 </details>
 

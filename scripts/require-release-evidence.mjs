@@ -41,7 +41,9 @@ const EXTRA_SENSITIVE_PATHS = [
   // artifact users install. They are not part of the installed surface the
   // platform matrix exercises, so they do not belong in the workflow triggers,
   // but a change to either one changes how a release is produced.
-  'scripts/promote-to-main.sh',
+  'scripts/release.sh',
+  'scripts/release-version.mjs',
+  'scripts/verify-npm-provenance.mjs',
   'scripts/release-preview.sh',
 ];
 
@@ -272,7 +274,7 @@ function currentPackageVersionTag() {
 }
 
 function latestVersionTag() {
-  const result = git(['tag', '--sort=-v:refname']);
+  const result = git(['tag', '--merged', 'HEAD', '--sort=-v:refname']);
   if (result.status !== 0) return '';
   const currentTag = currentPackageVersionTag();
   const tags = result.stdout
@@ -416,13 +418,7 @@ if (!macosEvidence || !wslEvidence) {
       '--json', 'url',
       '--jq', '.[0].url // ""',
     ], { cwd: repoRoot, encoding: 'utf8', shell: false });
-    // No --event filter, mirroring bc7c19ba which already made publish.yml
-    // accept any-event Postinstall Platform Checks. A merge commit whose diff
-    // is empty (e.g. main merged back into preview after a promotion) never
-    // produces a push run for its own SHA, so requiring the push event made
-    // this gate unpassable for exactly the SHA a promotion certifies. Any
-    // successful run of the pinned workflow on this commit is the same
-    // evidence regardless of the event that started it.
+    // Platform evidence is bound to the commit, regardless of triggering event.
     const ciUrl = (ciCheck.stdout || '').trim();
     if (ciUrl) {
       console.log(`[release-evidence-required] PASS CI postinstall-platform evidence: ${ciUrl}`);
@@ -432,7 +428,7 @@ if (!macosEvidence || !wslEvidence) {
     console.error('Falling back to local evidence requirement.');
   }
   console.error('[release-evidence-required] FAIL');
-  console.error('Strict fresh-machine evidence is required before git push or npm publish.');
+  console.error('Strict fresh-machine evidence is required before npm publish.');
   console.error('Set both variables and rerun:');
   console.error('  CLI_JAW_MACOS_EVIDENCE_DIR=/path/to/macos-evidence');
   console.error('  CLI_JAW_WSL_EVIDENCE_DIR=/path/to/wsl-evidence');

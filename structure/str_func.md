@@ -707,6 +707,9 @@ cli-jaw/
 │   └── fixtures/
 │       └── period-thread-child.ts ← process-isolated root claim and consumer sequence fixture
 ├── scripts/                  ← 도구 스크립트 (TypeScript + Shell + CJS; atomic build, sidecar bundle, release gates, install-risk evidence)
+│   ├── release.sh            ← dev 릴리스 및 인증된 태그 dispatch
+│   ├── release-version.mjs   ← 버전 결정 및 dist-tag 순서 검증
+│   └── verify-npm-provenance.mjs ← 게시된 패키지의 provenance 검증
 ├── officecli/                ← OfficeCLI 포크 서브모듈 (lidge-jun/OfficeCLI, Apache 2.0)
 ├── skills_ref/               ← 레퍼런스 스킬
 │   ├── registry.json         ← public reference skill registry + `codex-imagegen` metadata
