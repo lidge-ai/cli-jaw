@@ -802,6 +802,11 @@ export class CodeController {
     pin = async (id: string, pinned: boolean): Promise<void> => { await this.sidebarPatch(id, { pinned }); };
     markUnread = async (id: string, unread: boolean): Promise<void> => { await this.sidebarPatch(id, { unread }); };
     private async restoreSession(id: string, draft: CodeDraft, sending: boolean): Promise<NonNullable<CodeDraft['restore']> | null> {
+        // A stopped restore keeps its identity until it settles, so its Stop can still reach it.
+        if (draft.restore) {
+            draft.operation = { kind: 'idle', error: 'The previous restore is still stopping. Try again once it finishes; your text is kept.' };
+            this.notify(); return null;
+        }
         const restore: NonNullable<CodeDraft['restore']> = { token: ++draft.attachToken, operationId: crypto.randomUUID(), settled: false, stopRequested: false, cancel: 'none' };
         draft.restore = restore;
         draft.operation = { kind: 'resuming', error: null }; this.notify();
@@ -817,9 +822,12 @@ export class CodeController {
             if (draft.restore === restore) {
                 draft.restore = null;
                 // Say what the attach itself reported; a Stop is only "done" when the attach says cancelled.
-                const outcome = result?.attach?.outcome;
+                // An older server reports no outcome; its returned session status is the only evidence.
+                const legacy = result && !result.attach ? result.session.status : null;
+                const outcome = result?.attach?.outcome
+                    ?? (legacy === 'failed' ? 'failed' : legacy === 'idle' ? 'completed' : undefined);
                 const restored = outcome === 'cancelled' ? 'Restore stopped.'
-                    : outcome === 'completed' || (result && !result.attach) ? 'The session was restored before Stop took effect.'
+                    : outcome === 'completed' ? 'The session was restored before Stop took effect.'
                         : outcome === 'failed' ? 'Restore failed.'
                             : 'The restore outcome is unknown after Stop; refresh to check the session.';
                 draft.operation = { kind: 'idle', error: sending ? `${restored} Your text was not sent.` : restored };

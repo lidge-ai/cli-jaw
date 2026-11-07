@@ -1656,6 +1656,49 @@ test('a lost attach response after a failed cancel is reported as unknown, never
     assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
 });
 
+test('a stopped restore keeps its identity until it settles: a second Send cannot replace it', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    await f.controller.stop();
+    await f.controller.send(); await f.controller.resume();
+    assert.equal(f.posts().filter(c => c.path.endsWith('/attach')).length, 1, 'no successor restore while the stopped one is unsettled');
+    assert.match(f.controller.getModel().operation.error!, /previous restore is still stopping/);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2,
+        session: session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 }) });
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.match(f.controller.getModel().operation.error!, /^Restore stopped\./);
+    assert.equal(f.controller.getModel().input, 'keep');
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+for (const [status, expected] of [['failed', /Restore failed\./], ['idle', /restored before Stop took effect/], ['suspended', /outcome is unknown/]] as const) {
+    test(`an older server's ${status} attach after Stop is reported from its session status`, async t => {
+        const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+        await f.controller.refresh(); await f.controller.selectSession('a');
+        const retry = deferred<Response>();
+        f.intercept(call => {
+            if (call.path.endsWith('/attach')) return call.body['operationId'] ? response({ ok: false, error: 'unknown_field' }, 400) : retry.promise;
+            return undefined;
+        });
+        f.controller.setInput('keep'); const sending = f.controller.send();
+        for (let i = 0; i < 200 && f.posts().filter(c => c.path.endsWith('/attach')).length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.equal(f.posts().filter(c => c.path.endsWith('/attach')).length, 2);
+        await f.controller.stop();
+        retry.resolve(response({ ok: true, session: session('a', { status, epoch: 2, sequence: 6,
+            ...(status === 'failed' ? { error: { code: 'native_open_failed', message: 'open failed', at: 1, recoverable: true } } : {}) }) }));
+        await sending;
+        assert.match(f.controller.getModel().operation.error!, expected);
+        assert.equal(f.posts().filter(c => c.path.endsWith('/prompt') || c.path.endsWith('/cancel')).length, 0);
+    });
+}
+
 test('an early Stop finds its own attach by reading when the starting event never arrives', async t => {
     const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
     await f.controller.refresh(); await f.controller.selectSession('a');
