@@ -1,17 +1,14 @@
 import type { RuntimeEventContext } from './events.js';
-import { markActivityFailure } from '../../trace/activity-journal.js';
 import { finalizeTraceRun } from '../../trace/store.js';
 import { RuntimeProjection, type RuntimeEnd } from './projection.js';
 import { createPrintActivityProjection, type PrintActivityProjection } from './print-projection.js';
 
-/** Reuses canonical redaction, preview bounds and the existing per-run gap latch. */
+/**
+ * Reuses canonical redaction, preview bounds and the existing per-run gap latch.
+ * Preview loss remains non-fatal; journal write and admission failures still seal.
+ */
 export function createPrintActivity(context: RuntimeEventContext, provider: string): PrintActivityProjection {
-    const projection: RuntimeProjection = new RuntimeProjection(context, undefined, reason => {
-        if (reason === 'capacity' || reason === 'truncated') {
-            markActivityFailure(context, 'run_limit');
-            projection.report('persistence');
-        }
-    });
+    const projection = new RuntimeProjection(context);
     projection.start(provider);
     return createPrintActivityProjection(body => {
         switch (body.kind) {

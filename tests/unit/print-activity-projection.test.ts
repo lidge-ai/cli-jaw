@@ -11,7 +11,9 @@ import { settings } from '../../src/core/config.js';
 import { emitAgentTool } from '../../src/agent/events/helpers.js';
 import { addBroadcastListener, removeBroadcastListener } from '../../src/core/bus.js';
 import { extractFromEvent } from '../../src/agent/events.js';
-import type { RuntimeEventBody } from '../../src/shared/runtime-contract.js';
+import { RuntimeProjection } from '../../src/agent/runtime/projection.js';
+import { FULLTEXT_MAX_CHARS } from '../../src/agent/events/fulltext-bound.js';
+import type { RuntimeEvent, RuntimeEventBody } from '../../src/shared/runtime-contract.js';
 import type { SpawnContext } from '../../src/types/agent.js';
 
 test('pure observer keeps message boundaries, operations, unknown phase and stable tool references', () => {
@@ -71,18 +73,128 @@ test('factory uses actual journal and preserves selected null/empty/whitespace a
     }
 });
 
-test('preview capacity fails visibly through one gap, with no fabricated terminal', () => {
-    const seen: BusEvent[] = []; const unsubscribe = subscribe(e => seen.push(e));
+function printFixture() {
     const runId = startTraceRun({ cli: 'print', sessionId: 'default', scopeKey: 'default' });
+    const ctx = { runId, sessionId: 'default', scope: 'default', turnId: runId, audience: 'public' as const };
+    return { runId, ctx, observer: createPrintActivity(ctx, 'print') };
+}
+function allEvents(runId: string) {
+    let after = 0; const events: RuntimeEvent[] = [];
+    while (true) {
+        const p = readActivityPage({ runId, sessionId: 'default', after, limit: 40 })!;
+        events.push(...p.events); after = p.nextAfter;
+        if (!p.hasMore) return events;
+    }
+}
+
+test('preview truncation degrades once without blocking later Activity or the lifecycle terminal (#776)', t => {
+    t.mock.method(console, 'warn', () => {});
+    const seen: BusEvent[] = []; const unsubscribe = subscribe(e => seen.push(e));
     try {
-        const observer = createPrintActivity({ runId, sessionId: 'default', scope: 'default', turnId: runId, audience: 'public' }, 'print');
-        observer.message('x'.repeat(4000), 'append'); observer.message('late', 'append');
-        observer.finish({ kind: 'turn-end', status: 'done', finalText: 'still selected by lifecycle' });
+        const { runId, observer } = printFixture();
+        observer.message('x'.repeat(4000), 'append'); observer.message('y', 'append');
+        observer.nextMessage(); observer.message('after the long preview', 'append');
+        observer.tool({ icon: 'x', label: 'cmd', toolType: 'tool', stepRef: 'after', status: 'done', detail: 'ok' });
+        observer.finish({ kind: 'turn-end', status: 'done', finalText: 'still selected by lifecycle' }); finalizeTraceRun(runId, 'done');
         const p = readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })!;
-        assert.equal(p.incomplete, true); assert.equal(p.loss, 'run_limit');
-        assert.equal(p.events.some(e => e.kind === 'turn-end'), false);
-        assert.equal(seen.filter(e => e.event === 'agent_runtime_gap').length, 1);
+        const first = p.events.find(e => e.kind === 'message');
+        assert.ok(first?.kind === 'message' && first.text.length <= 3000 && /^x+$/.test(first.text));
+        assert.ok(p.events.some(e => e.kind === 'message' && e.text === 'after the long preview'));
+        assert.ok(p.events.some(e => e.kind === 'tool' && e.status === 'done'));
+        assert.equal(p.events.filter(e => e.kind === 'turn-end').length, 1);
+        const end = p.events.at(-1); assert.ok(end?.kind === 'turn-end');
+        assert.equal(end.status, 'done'); assert.equal(end.finalText, 'still selected by lifecycle');
+        assert.equal(p.incomplete, true); assert.equal(p.loss, 'projection_degraded');
+        const gaps = seen.filter(e => e.event === 'agent_runtime_gap' && e.data['runId'] === runId);
+        assert.equal(gaps.length, 1); assert.equal(gaps[0]?.data['reason'], 'projection_degraded');
     } finally { unsubscribe(); }
+});
+
+test('journal write failure seals later rows and terminal with or without earlier preview loss', t => {
+    t.mock.method(console, 'warn', () => {}); t.mock.method(console, 'error', () => {});
+    for (const preview of [false, true]) {
+        const seen: BusEvent[] = []; const unsubscribe = subscribe(e => seen.push(e));
+        let trigger = false;
+        try {
+            const { runId, observer } = printFixture();
+            if (preview) observer.message('x'.repeat(4000), 'append');
+            db.exec("CREATE TRIGGER print_write_fault BEFORE INSERT ON trace_events WHEN new.source='runtime' BEGIN SELECT RAISE(ABORT,'fixture'); END"); trigger = true;
+            observer.nextMessage(); observer.message('rejected by storage', 'append');
+            db.exec('DROP TRIGGER print_write_fault'); trigger = false;
+            observer.nextMessage(); observer.message('after storage recovered', 'append');
+            observer.tool({ icon: 'x', label: 'cmd', toolType: 'tool', stepRef: 'late', status: 'done' });
+            observer.finish({ kind: 'turn-end', status: 'done', finalText: 'final' });
+            const p = readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })!;
+            assert.equal(p.loss, 'storage_error'); assert.equal(p.incomplete, true);
+            assert.equal(p.events.some(e => e.kind === 'message' && ['rejected by storage', 'after storage recovered'].includes(e.text)), false);
+            assert.equal(p.events.some(e => e.kind === 'tool' || e.kind === 'turn-end'), false);
+            assert.equal(seen.filter(e => e.event === 'agent_runtime_gap' && e.data['runId'] === runId).length, 1);
+        } finally { if (trigger) db.exec('DROP TRIGGER print_write_fault'); unsubscribe(); }
+    }
+});
+
+test('preview budget exhaustion still terminalizes a running tool beside exactly one turn-end', t => {
+    t.mock.method(console, 'warn', () => {});
+    const runId = startTraceRun({ cli: 'print', sessionId: 'default', scopeKey: 'default' });
+    const ctx = { runId, sessionId: 'default', scope: 'default', turnId: runId, audience: 'public' as const };
+    const projection = new RuntimeProjection(ctx); projection.start('print'); projection.tool('early', { name: 'cmd', status: 'running' });
+    let i = 0;
+    while (24000 - projection.diagnostics().previewChars > 3100) projection.text('message', `fill-${i++}`, 'a'.repeat(3000), 'replace');
+    const remaining = 24000 - projection.diagnostics().previewChars;
+    const itemId = `item-${projection.diagnostics().items + 1}`;
+    const overhead = JSON.stringify({ kind: 'message', itemId, text: '', phase: 'unknown', operation: 'replace' }).length;
+    const size = remaining - overhead - 10; assert.ok(size > 0 && size <= 3000);
+    projection.text('message', 'last', 'a'.repeat(size), 'replace');
+    assert.equal(24000 - projection.diagnostics().previewChars, 10);
+    projection.close({ kind: 'turn-end', status: 'done', finalText: 'final' });
+    const events = allEvents(runId); const tools = events.filter(e => e.kind === 'tool');
+    assert.equal(tools.at(-1)?.status, 'stopped');
+    assert.equal(events.filter(e => e.kind === 'turn-end').length, 1);
+    const end = events.at(-1); assert.ok(end?.kind === 'turn-end'); assert.equal(end.finalText, 'final');
+});
+
+test('item capacity omits only new items and still records one turn-end', t => {
+    t.mock.method(console, 'warn', () => {});
+    const seen: BusEvent[] = []; const unsubscribe = subscribe(e => seen.push(e));
+    try {
+        const { runId, observer } = printFixture();
+        for (let i = 0; i < 165; i++) observer.tool({ icon: 'x', label: 'cmd', toolType: 'tool', stepRef: String(i), status: 'done' });
+        observer.nextMessage(); observer.message('after capacity', 'append'); observer.finish({ kind: 'turn-end', status: 'done', finalText: 'final' });
+        const events = allEvents(runId);
+        assert.equal(new Set(events.filter(e => e.kind === 'tool').map(e => e.itemId)).size, 160);
+        assert.equal(events.some(e => e.kind === 'message' && e.text === 'after capacity'), false);
+        assert.equal(events.filter(e => e.kind === 'turn-end').length, 1); assert.equal(events.at(-1)?.kind, 'turn-end');
+        assert.equal(readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })?.loss, 'projection_degraded');
+        assert.equal(seen.filter(e => e.event === 'agent_runtime_gap' && e.data['runId'] === runId).length, 1);
+    } finally { unsubscribe(); }
+});
+
+test('oversized source withholds its preview and keeps later rows', t => {
+    t.mock.method(console, 'warn', () => {});
+    const { runId, observer } = printFixture();
+    observer.message('z'.repeat(FULLTEXT_MAX_CHARS + 1), 'append'); observer.nextMessage();
+    observer.message('after withheld', 'append'); observer.finish({ kind: 'turn-end', status: 'done', finalText: 'final' });
+    const p = readActivityPage({ runId, sessionId: 'default', after: 0, limit: 40 })!;
+    assert.ok(p.events.some(e => e.kind === 'message' && e.text === '[structured content withheld]'));
+    assert.ok(p.events.some(e => e.kind === 'message' && e.text === 'after withheld'));
+    assert.equal(p.events.filter(e => e.kind === 'turn-end').length, 1); assert.equal(p.loss, 'projection_degraded');
+});
+
+test('reentrant close records terminal tool first and exactly one outer turn-end', () => {
+    const ctx = { runId: 'run', sessionId: 'session', scope: 'scope', turnId: 'turn', audience: 'internal' as const };
+    const bodies: RuntimeEventBody[] = []; let reentered = false;
+    const projection = new RuntimeProjection(ctx, (owner, body) => {
+        bodies.push(body);
+        if (body.kind === 'tool' && body.status === 'stopped' && !reentered) {
+            reentered = true; projection.close({ kind: 'turn-end', status: 'error', finalText: 'inner' });
+        }
+        return { ...owner, version: 1, seq: bodies.length, ...body };
+    }, () => {});
+    projection.start('print'); projection.tool('early', { name: 'cmd', status: 'running' });
+    projection.close({ kind: 'turn-end', status: 'done', finalText: 'outer' });
+    assert.equal(bodies.filter(e => e.kind === 'turn-end').length, 1);
+    assert.equal(bodies.at(-2)?.kind, 'tool');
+    const end = bodies.at(-1); assert.ok(end?.kind === 'turn-end'); assert.equal(end.finalText, 'outer');
 });
 
 test('bypass observer failure and trace failure are independently contained', t => {
