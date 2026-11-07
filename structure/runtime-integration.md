@@ -566,6 +566,37 @@ payload under that key fails. Restart marks unfinished turns as orphaned without
 replaying prompts. Resume failure preserves history and never silently starts a
 contextless replacement.
 
+An optional client creation key is stored with the session in `code_session_creations`
+(key, session, original request with both the submitted and canonical cwd) inside the
+create transaction. A replay with the same immutable fields returns that session without
+catalog or workspace validation; a mismatch is `creation_key_conflict`, also when another
+connection committed the key while this one was validating. The Manager mints the key,
+stores it with the `creating` marker and reads it back before the POST (no verified record,
+no POST; an old server's `unknown_field` never falls back to a keyless create). After a lost
+response or a reload, Refresh looks the session up only by that exact key and moves the
+draft into it without sending a prompt or taking the user's current selection. Settings
+stay frozen while the create is unconfirmed, so the session carries the exact creation
+settings and the newest draft text.
+
+An explicit attach publishes `operationId` on the `starting`/`turnId: null` session; it is
+supplied by the client or minted by `beginAttach` and cleared by the store whenever the session is not busy or holds a
+turn, before any session event is built or the row is saved. Cancel with that id and the
+attach epoch interrupts the captured operation: the binding's AbortController aborts the
+provider open signal, there is no `stopping` write for a turnless operation, bounded cleanup
+runs, and the operation settles `idle`. A handle that resolves after the abort is still
+registered and closed; `cleanupPending` covers residue. The attach response carries the
+captured operation's `outcome`, so an attach-then-send continuation never sends after a
+Stop, including a Stop from another client. Restart recovery is unchanged: a `starting`
+attach becomes `failed`/`orphaned_turn` with `operationId: null` and no item or prompt.
+The Manager captures its own attach identity before the request; Stop waits for a matching
+starting event if needed and never cancels a successor during post-attach synchronization.
+Without that event it makes one read with a deadline; if the attach is not visible yet the
+composer is released and a later matching event still cancels it. The settlement message reports
+the attach outcome (cancelled, completed before Stop, failed or unknown), never an unconfirmed Stop.
+A failed cancel is shown and retried only by another explicit Stop for the same identity.
+An older server rejecting the identity as `unknown_field` is retried once without it; that
+restore cannot issue an identity-fenced cancellation.
+
 Healthy turns reuse their native handle when model/effort/policy are unchanged.
 Each operation captures session, turn, epoch and native handle ownership. Startup
 resources register before asynchronous setup and remain counted even if open

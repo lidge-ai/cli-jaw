@@ -23,7 +23,7 @@ const creation: CodeSessionCreate = {
 };
 const dtoKeys = [
     'sessionId', 'provider', 'cwd', 'title', 'model', 'effort', 'permissionMode', 'status',
-    'turnId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
+    'turnId', 'operationId', 'archivedAt', 'error', 'resume', 'capabilities', 'epoch', 'sequence', 'revision',
     'createdAt', 'lastUsedAt', 'lastTurnCompletedAt', 'lastVisitedAt', 'pinnedAt', 'markedUnread', 'thinking', 'rollback', 'historyGeneration',
 ].sort();
 
@@ -421,7 +421,7 @@ test('full row mapping includes every field and public surfaces exclude private 
             7, 8, 111, 222, 'session-a');
     const expected: CodeSessionInfo = {
         sessionId: 'session-a', provider: 'claude', cwd: '/workspace/a', title: 'Stored title',
-        model: 'stored-model', effort: 'low', permissionMode: 'auto', status: 'suspended', turnId: null,
+        model: 'stored-model', effort: 'low', permissionMode: 'auto', status: 'suspended', turnId: null, operationId: null,
         archivedAt: null, error: { code: 'stored_error', message: 'diagnostic', at: 56, recoverable: true },
         resume: { available: true, reason: null }, capabilities, epoch: 7, sequence: 1, revision: 8,
         createdAt: 111, lastUsedAt: 222, lastTurnCompletedAt: null, lastVisitedAt: null, pinnedAt: null, markedUnread: false,
@@ -444,7 +444,7 @@ test('full row mapping includes every field and public surfaces exclude private 
 
 test('public mapper also strips future private properties nested in capabilities', () => {
     const record: CodeSessionRecord = {
-        ...creation, sessionId: 's', title: null, status: 'idle', turnId: null,
+        ...creation, sessionId: 's', title: null, status: 'idle', turnId: null, operationId: null,
         archivedAt: null, error: null, epoch: 0, sequence: 0, revision: 0, createdAt: 1, lastUsedAt: 2,
         lastTurnCompletedAt: null, lastVisitedAt: null, pinnedAt: null, markedUnread: false,
         thinking: null, nativeCursor: 'secret', nativeStarted: true, nativePolicy: null,
@@ -901,7 +901,8 @@ test('explicit attach reserves a fresh epoch, blocks new prompts, and stores res
     const admitted = admit(store);
     store.writeNativeCursor(owner(admitted.session), 'durable-id');
     const finished = store.settleTurn(owner(admitted.session), { status: 'completed' });
-    const attached = store.beginAttach('session-a', 0);
+    const attached = store.beginAttach('session-a', 0, 'client-attach');
+    assert.equal(attached.session.operationId, 'client-attach');
     assert.equal(attached.session.turnId, null);
     assert.equal(attached.session.status, 'starting');
     assert.equal(attached.session.epoch, finished.session.epoch + 1);
@@ -1720,4 +1721,84 @@ test('escaped patch bytes are bounded in the full stored event', t => {
         fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: '\u0001'.repeat(200_000) }] }, {});
     assert.equal(events[0]?.item?.fileChange?.changes[0]?.patch, 'truncated');
     assert.ok(Buffer.byteLength(JSON.stringify(events[0])) <= CODE_MAX_EVENT_BYTES);
+});
+
+test('creation key replays immutable request and attach ids clear on settlement', t => {
+    const { store } = fixture(t);
+    const input = { ...creation, sessionId: 'keyed', clientCreationKey: 'creation-key', submittedCwd: '/workspace/a' };
+    const first = store.create(input);
+    assert.equal(first.created, true);
+    const replay = store.create({ ...input, sessionId: 'unused' });
+    assert.equal(replay.created, false);
+    assert.equal(replay.session.sessionId, first.session.sessionId);
+    assert.deepEqual(replay.events, []);
+    expectError(() => store.create({ ...input, model: 'other' }), 'creation_key_conflict');
+    assert.equal(store.readCreation('creation-key')?.session.sessionId, first.session.sessionId);
+    store.patchSession(first.session.sessionId, { expectedRevision: first.session.revision, model: 'changed-after-create' });
+    assert.equal(store.create({ ...input, sessionId: 'unused-after-patch' }).created, false);
+    assert.equal(store.readCreation('creation-key')?.request.model, 'model-a');
+    const admitted = store.admitTurn({ sessionId: first.session.sessionId, clientTurnKey: 'turn', text: 'hello' });
+    store.writeNativeCursor(owner(admitted.session), 'durable');
+    store.settleTurn(owner(admitted.session), { status: 'completed' });
+    const attached = store.beginAttach(first.session.sessionId);
+    assert.ok(attached.session.operationId);
+    assert.equal(store.snapshot(first.session.sessionId).session.operationId, attached.session.operationId);
+    assert.equal(store.list().find(row => row.sessionId === first.session.sessionId)?.operationId, attached.session.operationId);
+    assert.equal(attached.events[0]?.session?.operationId, attached.session.operationId);
+    const ended = store.setRuntimeState(owner(attached.session), 'idle');
+    assert.equal(ended.session.operationId, null);
+    assert.equal(store.readRecord(first.session.sessionId)?.operationId, null);
+});
+
+test('legacy schema migrates attach ownership and old events remain replayable', t => {
+    const db = new Database(':memory:');
+    t.after(() => db.close());
+    db.exec(CREATE_CODE_SCHEMA_SQL.replace(' active_turn_id TEXT, operation_id TEXT,', ' active_turn_id TEXT,'));
+    db.exec('DROP TABLE code_session_creations');
+    const store = new CodeStore(db);
+    assert.ok((db.pragma('table_info(code_sessions)') as Array<{ name: string }>).some(c => c.name === 'operation_id'));
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'code_session_creations'").get());
+    store.create(creation);
+    const row = db.prepare('SELECT event_json FROM code_events WHERE session_id = ? AND sequence = 1').get('session-a') as { event_json: string };
+    const event = JSON.parse(row.event_json);
+    delete event.session.operationId;
+    db.prepare('UPDATE code_events SET event_json = ? WHERE session_id = ? AND sequence = 1').run(JSON.stringify(event), 'session-a');
+    assert.equal(store.readEvents('session-a').events[0]?.session?.sessionId, 'session-a');
+});
+
+test('interrupted attach clears its operation in row and event', t => {
+    const { store } = fixture(t);
+    const admitted = admit(store);
+    store.writeNativeCursor(owner(admitted.session), 'durable');
+    store.settleTurn(owner(admitted.session), { status: 'completed' });
+    const attached = store.beginAttach('session-a');
+    assert.equal(attached.events[0]?.session?.operationId, attached.session.operationId);
+    const events = store.recoverInterrupted();
+    assert.equal(store.readRecord('session-a')?.operationId, null);
+    assert.equal(events.at(-1)?.session?.operationId, null);
+});
+
+test('different creation keys allocate separate sessions and turn events discard stale attach ids', t => {
+    const { store, db } = fixture(t);
+    const one = store.create({ ...creation, sessionId: 'first-key', clientCreationKey: 'one' });
+    const two = store.create({ ...creation, sessionId: 'second-key', clientCreationKey: 'two' });
+    assert.notEqual(one.session.sessionId, two.session.sessionId);
+    const turn = store.admitTurn({ sessionId: one.session.sessionId, clientTurnKey: 'turn', text: 'hello' });
+    db.prepare('UPDATE code_sessions SET operation_id = ? WHERE session_id = ?').run('stale', one.session.sessionId);
+    store.commitItem(owner(turn.session), message(turn.receipt.turnId));
+    assert.equal(store.readRecord(one.session.sessionId)?.operationId, null);
+    const settled = store.settleTurn(owner(turn.session), { status: 'completed' });
+    assert.equal(settled.session.operationId, null);
+    assert.equal(settled.events.at(-1)?.session?.operationId, null);
+});
+
+test('recovery of an active turn clears any stale operation id in event and row', t => {
+    const { store, db } = fixture(t);
+    const turn = admit(store);
+    db.prepare('UPDATE code_sessions SET operation_id = ? WHERE session_id = ?').run('stale', turn.session.sessionId);
+    const events = store.recoverInterrupted();
+    assert.equal(store.readRecord(turn.session.sessionId)?.operationId, null);
+    const terminal = events.filter(event => event.sessionId === turn.session.sessionId && event.session).at(-1);
+    assert.equal(terminal?.session?.operationId, null);
+    assert.equal(store.snapshot(turn.session.sessionId).session.status, 'failed');
 });

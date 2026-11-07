@@ -48,7 +48,7 @@ export const CREATE_CODE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS code_sessions (
     session_id TEXT PRIMARY KEY, provider TEXT NOT NULL, cwd TEXT NOT NULL,
     title TEXT, model TEXT NOT NULL, effort TEXT, permission_mode TEXT NOT NULL,
-    status TEXT NOT NULL, active_turn_id TEXT, archived_at INTEGER, error_json TEXT,
+    status TEXT NOT NULL, active_turn_id TEXT, operation_id TEXT, archived_at INTEGER, error_json TEXT,
     native_cursor TEXT, native_started INTEGER NOT NULL DEFAULT 0,
     native_policy_json TEXT, capabilities_json TEXT NOT NULL,
     epoch INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0,
@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS code_sessions (
     replay_floor_sequence INTEGER NOT NULL DEFAULT 0, history_generation INTEGER NOT NULL DEFAULT 0,
     rollback_since INTEGER,
     pinned_at INTEGER, marked_unread INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS code_session_creations (
+    client_creation_key TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, request_json TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
@@ -99,6 +102,17 @@ export interface CodeSessionRecord extends Omit<CodeSessionInfo, 'resume' | 'rol
 
 export interface CodeStoreOwner { sessionId: string; turnId: string | null; epoch: number }
 export interface CodeStoreMutation { session: CodeSessionInfo; events: CodeWireEvent[] }
+export interface CodeCreateMutation extends CodeStoreMutation { created: boolean }
+export interface CodeCreationRequest { provider: CodeCreateSessionRequest['provider']; cwd: string; submittedCwd: string; model: string; effort: string | null; permissionMode: CodeCreateSessionRequest['permissionMode']; thinking: boolean | null }
+export function creationRequest(input: CodeCreateSessionRequest & { submittedCwd?: string }): CodeCreationRequest {
+    return { provider: input.provider, cwd: input.cwd, submittedCwd: input.submittedCwd ?? input.cwd, model: input.model, effort: input.effort, permissionMode: input.permissionMode, thinking: input.provider === 'claude' ? input.thinking ?? true : input.thinking ?? null };
+}
+export function creationCwdMatches(stored: Pick<CodeCreationRequest, 'cwd' | 'submittedCwd'>, incoming: { raw: string; canonical: string | null }): boolean {
+    return incoming.raw === stored.submittedCwd || incoming.raw === stored.cwd || (incoming.canonical !== null && incoming.canonical === stored.cwd);
+}
+export function creationMatches(stored: CodeCreationRequest, incoming: CodeCreationRequest, canonical: string | null): boolean {
+    return stored.provider === incoming.provider && stored.model === incoming.model && stored.effort === incoming.effort && stored.permissionMode === incoming.permissionMode && stored.thinking === incoming.thinking && creationCwdMatches(stored, { raw: incoming.submittedCwd, canonical });
+}
 export interface CodeTurnAdmission extends CodeStoreMutation {
     receipt: CodePromptReceipt;
     duplicate: boolean;
@@ -109,6 +123,7 @@ export interface CodeTurnSettlement extends CodeStoreMutation { receipt: CodePro
 export interface CodeStoreOptions { now?: () => number; newId?: () => string; limits?: Partial<CodeStoreLimits> }
 export interface CodeSessionCreate extends CodeCreateSessionRequest {
     capabilities: CodeCapabilities;
+    submittedCwd?: string;
     sessionId?: string;
     title?: string | null;
 }
@@ -168,7 +183,7 @@ export class CodeStoreError extends Error {
 type SessionRow = {
     session_id: string; provider: CodeSessionInfo['provider']; cwd: string; title: string | null;
     model: string; effort: string | null; permission_mode: CodeSessionInfo['permissionMode'];
-    status: CodeSessionStatus; active_turn_id: string | null; archived_at: number | null;
+    status: CodeSessionStatus; active_turn_id: string | null; operation_id: string | null; archived_at: number | null;
     error_json: string | null; native_cursor: string | null; native_started: number;
     native_policy_json: string | null; capabilities_json: string;
     epoch: number; sequence: number; revision: number; created_at: number; last_used_at: number;
@@ -193,7 +208,7 @@ const ROLLBACK_SINCE_SQL = `(SELECT i.first_sequence FROM code_turns t
 // `rollback_since` is stored: it is refreshed only where boundaries or user rows change, so a
 // session read on the streaming path never walks the session's turns.
 const SESSION_COLUMNS = `session_id, provider, cwd, title, model, effort, permission_mode,
-    status, active_turn_id, archived_at, error_json, native_cursor, native_started,
+    status, active_turn_id, operation_id, archived_at, error_json, native_cursor, native_started,
     native_policy_json, capabilities_json, epoch, sequence, revision, created_at, last_used_at,
     last_turn_completed_at, last_visited_at, thinking, replay_floor_sequence, history_generation, rollback_since,
     pinned_at, marked_unread`;
@@ -302,7 +317,7 @@ export function toCodeSessionInfo(record: CodeSessionRecord): CodeSessionInfo {
     return {
         sessionId: record.sessionId, provider: record.provider, cwd: record.cwd, title: record.title,
         model: record.model, effort: record.effort, permissionMode: record.permissionMode,
-        status: record.status, turnId: record.turnId, archivedAt: record.archivedAt,
+        status: record.status, turnId: record.turnId, operationId: record.operationId, archivedAt: record.archivedAt,
         error: mapError(record.error), resume: { available: reason === null, reason },
         rollback: { available: rollback === null, reason: rollback, sinceSequence: record.rollbackSince },
         historyGeneration: record.historyGeneration,
@@ -318,7 +333,7 @@ function rowToRecord(row: SessionRow): CodeSessionRecord {
     return {
         sessionId: row.session_id, provider: row.provider, cwd: row.cwd, title: row.title,
         model: row.model, effort: row.effort, permissionMode: row.permission_mode,
-        status: row.status, turnId: row.active_turn_id, archivedAt: row.archived_at,
+        status: row.status, turnId: row.active_turn_id, operationId: row.operation_id, archivedAt: row.archived_at,
         error: row.error_json === null ? null : JSON.parse(row.error_json) as CodeSessionError,
         nativeCursor: row.native_cursor, nativeStarted: row.native_started === 1,
         nativePolicy: row.native_policy_json === null ? null : JSON.parse(row.native_policy_json) as CodeNativePolicy,
@@ -362,11 +377,18 @@ export class CodeStore {
             }
         }
         this.database.exec(CREATE_CODE_SCHEMA_SQL);
+        this.ensureOperationColumn();
         this.ensureSessionListIndex();
         this.ensureBudgetColumns();
         this.ensureActivityColumns();
         this.ensureRollbackColumns();
         this.ensureSidebarColumns();
+    }
+
+    private ensureOperationColumn(): void {
+        const present = () => (this.database.prepare('PRAGMA table_info(code_sessions)').all() as { name: string }[]).some(column => column.name === 'operation_id');
+        if (present()) return;
+        this.database.transaction(() => { if (!present()) this.database.exec('ALTER TABLE code_sessions ADD COLUMN operation_id TEXT'); }).immediate();
     }
 
     /** Rebuild the list index only when it does not already match the page key. */
@@ -670,12 +692,13 @@ export class CodeStore {
     }
 
     private save(record: CodeSessionRecord): void {
+        if (!isBusy(record.status) || record.turnId !== null) record.operationId = null;
         this.database.prepare(`UPDATE code_sessions SET title = ?, model = ?, effort = ?, permission_mode = ?,
-            status = ?, active_turn_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
+            status = ?, active_turn_id = ?, operation_id = ?, archived_at = ?, error_json = ?, native_cursor = ?, native_started = ?,
             native_policy_json = ?, epoch = ?, sequence = ?, revision = ?, last_used_at = ?,
             last_turn_completed_at = ?, last_visited_at = ?, thinking = ?, replay_floor_sequence = ?,
             history_generation = ?, rollback_since = ?, pinned_at = ?, marked_unread = ? WHERE session_id = ?`)
-            .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId,
+            .run(record.title, record.model, record.effort, record.permissionMode, record.status, record.turnId, record.operationId,
                 record.archivedAt, record.error === null ? null : JSON.stringify(mapError(record.error)),
                 record.nativeCursor, Number(record.nativeStarted),
                 record.nativePolicy === null ? null : JSON.stringify(record.nativePolicy), record.epoch,
@@ -719,6 +742,7 @@ export class CodeStore {
     /** `reserve` holds extra settlement bytes for a frame this item may need at settlement. */
     private event(record: CodeSessionRecord, item?: CodeItem, mode: EventBudgetMode = 'ordinary', budgetTurnId = record.turnId,
         reserve = 0): CodeWireEvent {
+        if (!isBusy(record.status) || record.turnId !== null) record.operationId = null;
         record.sequence += 1;
         let retainedItem: CodeItem | undefined;
         let previousItem: CodeItem | undefined;
@@ -749,8 +773,19 @@ export class CodeStore {
         return event;
     }
 
-    create(input: CodeSessionCreate): CodeStoreMutation {
+    readCreation(key: string): { session: CodeSessionInfo; request: CodeCreationRequest } | null {
+        const row = this.database.prepare('SELECT session_id, request_json FROM code_session_creations WHERE client_creation_key = ?').get(key) as { session_id: string; request_json: string } | undefined;
+        return row ? { session: toCodeSessionInfo(this.requireRecord(row.session_id)), request: JSON.parse(row.request_json) as CodeCreationRequest } : null;
+    }
+
+    create(input: CodeSessionCreate): CodeCreateMutation {
         return this.write(() => {
+            const request = creationRequest(input);
+            const existing = input.clientCreationKey ? this.readCreation(input.clientCreationKey) : null;
+            if (existing) {
+                if (!creationMatches(existing.request, request, input.cwd)) throw new CodeStoreError('creation_key_conflict', 'Client creation key was used for different settings', 409);
+                return { session: existing.session, events: [], created: false };
+            }
             const now = this.now();
             const sessionId = input.sessionId ?? this.newId();
             this.database.prepare(`INSERT INTO code_sessions
@@ -759,9 +794,11 @@ export class CodeStore {
                 .run(sessionId, input.provider, input.cwd, input.title ?? null, input.model, input.effort,
                     input.permissionMode, JSON.stringify(mapCapabilities(input.capabilities)), now, now,
                     input.thinking === undefined ? null : Number(input.thinking));
+            if (input.clientCreationKey) this.database.prepare('INSERT INTO code_session_creations (client_creation_key, session_id, request_json, created_at) VALUES (?, ?, ?, ?)')
+                .run(input.clientCreationKey, sessionId, JSON.stringify(request), now);
             const record = this.requireRecord(sessionId);
             const events = [this.event(record)];
-            return { session: toCodeSessionInfo(record), events };
+            return { session: toCodeSessionInfo(record), events, created: true };
         });
     }
 
@@ -979,7 +1016,7 @@ export class CodeStore {
     }
 
     /** Reserve an explicit resume without inventing a prompt or consuming a client key. */
-    beginAttach(sessionId: string, expectedRevision?: number): CodeStoreMutation {
+    beginAttach(sessionId: string, expectedRevision?: number, operationId?: string): CodeStoreMutation {
         return this.write(() => {
             const record = this.requireRecord(sessionId);
             if (record.archivedAt !== null) throw new CodeStoreError('session_archived', 'Code session is archived', 409);
@@ -990,6 +1027,7 @@ export class CodeStore {
             if (!record.nativeCursor || !record.capabilities.resume) throw new CodeStoreError('resume_unavailable', 'Code session cannot resume native history', 409);
             record.epoch += 1;
             record.status = 'starting';
+            record.operationId = operationId ?? this.newId();
             record.error = null;
             record.lastUsedAt = this.now();
             record.nativePolicy = { model: record.model, effort: record.effort, permissionMode: record.permissionMode };

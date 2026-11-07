@@ -32,6 +32,12 @@ export interface CodeSessionInfo {
     permissionMode: CodePermissionMode;
     status: CodeSessionStatus;
     turnId: string | null;
+    /**
+     * Public identity of an attach/restore in flight: set while the session is
+     * `starting` with no turn, null otherwise. Stop it with `{ operationId, epoch }`.
+     * Responses from servers that predate this field omit it; read absence as null.
+     */
+    operationId: string | null;
     archivedAt: number | null;
     error: CodeSessionError | null;
     resume: { available: boolean; reason: string | null };
@@ -247,6 +253,12 @@ export interface CodeCreateSessionRequest {
     permissionMode: CodePermissionMode;
     /** Claude only; omitted means on. */
     thinking?: boolean;
+    /**
+     * Opaque client identity for this creation (`[A-Za-z0-9_-]{1,128}`), unique within one
+     * server's store. Repeating it with the same immutable fields returns the original session;
+     * different fields answer 409 `creation_key_conflict`. Look it up with GET /creations/:key.
+     */
+    clientCreationKey?: string;
 }
 
 export interface CodePatchSessionRequest {
@@ -269,7 +281,11 @@ export interface CodePromptRequest { text: string; clientTurnKey: string }
 export interface CodeSteerRequest extends CodePromptRequest { turnId: string; epoch: number }
 /** Keep turns through the opaque `${turnId}:user` item; later turns leave the conversation, files do not change. */
 export interface CodeRollbackRequest { expectedRevision: number; expectedEpoch: number; upToItemId: string }
-export interface CodeCancelRequest { turnId: string; epoch: number }
+/** A turn is stopped by its turnId; an attach/restore in flight by the public operationId it published. */
+export type CodeCancelRequest = { turnId: string; epoch: number } | { operationId: string; epoch: number };
+export type CodeAttachOutcome = 'completed' | 'cancelled' | 'failed';
+/** How an explicit attach ended: `cancelled` means a Stop for this operationId won, so nothing may continue from it. */
+export interface CodeAttachResult { session: CodeSessionInfo; operationId: string; outcome: CodeAttachOutcome }
 export interface CodePermissionAnswer {
     sessionId: string;
     turnId: string;

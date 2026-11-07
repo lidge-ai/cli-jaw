@@ -12,7 +12,7 @@ function deferred<T>() {
 }
 function session(id: string, patch: Partial<CodeSessionInfo> = {}): CodeSessionInfo {
     return { sessionId: id, provider: 'codex-app', cwd: `/workspace/${id}`, title: id, model: 'native-model', effort: null,
-        permissionMode: 'ask', status: 'idle', turnId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
+        permissionMode: 'ask', status: 'idle', turnId: null, operationId: null, epoch: 1, sequence: 3, revision: 2, archivedAt: null, error: null,
         resume: { available: true, reason: null }, capabilities: { resume: true, interrupt: true, permissions: true,
             setModelMidSession: false, efforts: ['medium', 'high'], permissionModes: ['ask', 'auto'] }, createdAt: 1, lastUsedAt: 2, lastTurnCompletedAt: null, lastVisitedAt: null, thinking: null,
         pinnedAt: null, markedUnread: false, ...patch };
@@ -27,7 +27,7 @@ const catalog: CodeModelCatalog = { defaultProvider: 'codex-app', providers: ['c
         efforts: id === 'cursor' ? [] : ['medium', 'high'], permissionModes: id === 'grok' ? ['auto'] : ['ask', 'auto'] },
 })) };
 let port = 51000;
-function fixture(t: TestContext) {
+function fixture(t: TestContext, browser = browserDraftStorage(t)) {
     const savedFetch = globalThis.fetch;
     const calls: { path: string; method: string; body: Record<string, unknown>; url: URL }[] = [];
     const snapshots = new Map([['a', snap(session('a'))], ['b', snap(session('b'))]]);
@@ -39,6 +39,7 @@ function fixture(t: TestContext) {
         calls.push(call);
         const result = intercept?.(call);
         if (result) return result;
+        if (path.startsWith('/creations/')) return response({ ok: false, error: 'creation_not_found' }, 404);
         if (path === '/models') return response({ ok: true, ...catalog });
         if (path === '/git-info') return response({ ok: true, isRepo: true, branch: url.searchParams.get('cwd'), worktrees: [] });
         if (path === '/sessions' && call.method === 'GET') return response({ ok: true, sessions: [...snapshots.values()].map(s => s.session), limit: 100, nextCursor: null, hasMore: false });
@@ -320,7 +321,9 @@ test('unknown creation remains frozen and is never automatically retried', async
     assert.equal(f.controller.getModel().operation.kind, 'creating');
     assert.equal(f.controller.getModel().input, 'keep this');
     await f.controller.setSelection({ cwd: '/changed' });
+    await f.controller.setSelection({ model: 'other-model' });
     assert.equal(f.controller.getModel().selection.cwd, '/workspace/new');
+    assert.equal(f.controller.getModel().selection.model, 'native-model');
     await f.controller.refresh(); f.controller.newSession(); await f.controller.send();
     assert.equal(f.posts().length, 1);
 });
@@ -590,7 +593,7 @@ function browserDraftStorage(t: TestContext) {
 }
 
 test('a fresh tab storage object restores exact new/session drafts and choices with no server cache', async t => {
-    const browser = browserDraftStorage(t), f = fixture(t); await f.controller.refresh();
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh();
     await f.controller.setSelection({ effort: 'medium', permissionMode: 'auto' });
     f.controller.setInput('new draft\n  trailing ');
     await f.controller.selectSession('a'); f.controller.setInput('session A draft');
@@ -613,11 +616,12 @@ test('a fresh tab storage object restores exact new/session drafts and choices w
 });
 
 test('create intent is stored before HTTP and restores as creationUnknown without replaying create', async t => {
-    const browser = browserDraftStorage(t), f = fixture(t); await f.controller.refresh();
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh();
     const pending = deferred<Response>();
     f.intercept(call => {
         if (call.path !== '/sessions' || call.method !== 'POST') return undefined;
         assert.equal(browser.saved(`http://127.0.0.1:${f.options.port}`).fresh.creating, true);
+        assert.equal(browser.saved(`http://127.0.0.1:${f.options.port}`).fresh.creationKey, call.body['clientCreationKey']);
         return pending.promise;
     });
     f.controller.setInput('create original'); const creating = f.controller.send();
@@ -636,7 +640,7 @@ test('create intent is stored before HTTP and restores as creationUnknown withou
 });
 
 test('send key is stored before HTTP and reload reconciles a committed key without resending or clearing newer text', async t => {
-    const browser = browserDraftStorage(t), f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh(); await f.controller.selectSession('a');
     const pending = deferred<Response>();
     f.intercept(call => {
         if (!call.path.endsWith('/prompt')) return undefined;
@@ -665,7 +669,7 @@ test('send key is stored before HTTP and reload reconciles a committed key witho
 });
 
 test('reloaded in-flight Stop stays captured and reconciles through reads without a cancellation retry', async t => {
-    const browser = browserDraftStorage(t), f = fixture(t);
+    const browser = browserDraftStorage(t), f = fixture(t, browser);
     f.snapshots.set('a', snap(session('a', { status: 'streaming', turnId: 't' })));
     await f.controller.refresh(); await f.controller.selectSession('a');
     const pending = deferred<Response>();
@@ -1215,8 +1219,8 @@ test('a follow-up outcome never overwrites a Stop in progress', async t => {
     assert.equal(f.controller.getModel().followUp, false, 'a stopping turn takes no follow-up');
 });
 
-function rolledBackFixture(t: TestContext) {
-    const f = fixture(t);
+function rolledBackFixture(t: TestContext, browser?: ReturnType<typeof browserDraftStorage>) {
+    const f = fixture(t, browser);
     const claude = session('a', { provider: 'claude', sequence: 9, rollback: { available: true, reason: null, sinceSequence: 1 }, historyGeneration: 0 });
     const turn = (id: string, at: number): CodeItem[] => [
         { itemId: `${id}:user`, turnId: id, kind: 'user_message', status: 'done', text: `prompt ${id}`, clientTurnKey: `key-${id}`, createdAt: 1, updatedAt: 1, firstSequence: at },
@@ -1300,7 +1304,7 @@ test('a rollback seen from elsewhere keeps a send it never saw admitted on its k
 
 test('a same-key retry the server answers cancelled after a rollback retires the key as rolled back, across a reload', async t => {
     const browser = browserDraftStorage(t);
-    const f = rolledBackFixture(t);
+    const f = rolledBackFixture(t, browser);
     await f.controller.refresh(); await f.controller.selectSession('a');
     const original = await lostSend(f);
     f.snapshots.set('a', f.rolled);
@@ -1409,7 +1413,7 @@ test('a follow-up in flight holds a rollback back, and an unconfirmed one leaves
 
 test('after a reload, a same-key retry answered cancelled for a turn a rollback removed reads rolled back', async t => {
     const browser = browserDraftStorage(t);
-    const f = rolledBackFixture(t);
+    const f = rolledBackFixture(t, browser);
     await f.controller.refresh(); await f.controller.selectSession('a');
     const original = await lostSend(f);
     // Reload. Meanwhile the server had admitted the send as t3, and a rollback elsewhere removed it.
@@ -1476,4 +1480,509 @@ test('an unconfirmed follow-up whose turn a rollback removed goes, also when the
     assert.doesNotMatch(model.error ?? '', /not confirmed/, 'the removed turn can no longer show the follow-up');
     assert.equal(model.input, 'one more thing', 'its text stays in the composer');
     assert.equal(f.posts().filter(call => call.path.endsWith('/steer')).length, 1, 'never resent');
+});
+
+
+test('lost keyed creation reconnects the latest draft without sending', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    let key = '';
+    const created = session('created', { cwd: '/workspace/new' });
+    f.snapshots.set('created', snap(created));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { key = String(call.body['clientCreationKey']); return Promise.reject(new TypeError('lost')); }
+        if (call.path === `/creations/${key}`) return response({ ok: true, session: created });
+        return undefined;
+    });
+    f.controller.setInput('first'); await f.controller.send();
+    f.controller.setInput('latest'); await f.controller.refresh();
+    assert.ok(key && key !== 'undefined');
+    assert.equal(f.controller.getModel().selectedId, 'created');
+    assert.equal(f.controller.getModel().input, 'latest');
+    assert.equal(f.posts().length, 1);
+});
+
+test('a missing creation stays unknown over repeated refresh without another POST', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? Promise.reject(new TypeError('lost')) : undefined);
+    f.controller.setInput('keep'); await f.controller.send();
+    for (let i = 0; i < 3; i++) await f.controller.refresh();
+    assert.equal(f.posts().length, 1);
+    assert.equal(f.calls.filter(c => c.path.startsWith('/creations/')).length, 3);
+    assert.equal(f.controller.getModel().creationUnknown, true);
+});
+
+test('creation fails closed when browser storage cannot persist', async t => {
+    const browser = browserDraftStorage(t);
+    Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new Error('blocked'); } });
+    const f = fixture(t, browser); await f.controller.refresh();
+    f.controller.setInput('keep'); await f.controller.send();
+    assert.equal(f.posts().length, 0);
+    assert.equal(f.controller.getModel().input, 'keep');
+});
+
+test('old servers never receive a keyless create', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? response({ ok: false, error: 'unknown_field' }, 400) : undefined);
+    f.controller.setInput('keep'); await f.controller.send(); await f.controller.send();
+    assert.equal(f.posts().length, 2);
+    for (const call of f.posts()) assert.ok(call.body['clientCreationKey']);
+});
+
+test('a remote cancelled attach does not submit the draft', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => {
+        if (!call.path.endsWith('/attach')) return undefined;
+        const idle = session('a', { sequence: 5 }); f.snapshots.set('a', snap(idle));
+        return response({ ok: true, session: idle, attach: { operationId: 'op', outcome: 'cancelled' } });
+    });
+    f.controller.setInput('keep'); await f.controller.send();
+    assert.deepEqual(f.posts().map(c => c.path), ['/sessions/a/attach']);
+    assert.equal(f.controller.getModel().input, 'keep');
+});
+
+
+test('throwing storage refuses a create without losing the draft', async t => {
+    const browser = browserDraftStorage(t);
+    window.sessionStorage.setItem = () => { throw new Error('quota'); };
+    const f = fixture(t, browser); await f.controller.refresh();
+    f.controller.setInput('keep'); await f.controller.send();
+    assert.equal(f.posts().length, 0); assert.equal(f.controller.getModel().input, 'keep');
+});
+
+test('recovery does not overwrite an existing meaningful session draft', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    const found = session('created', { cwd: '/workspace/new' }); f.snapshots.set('created', snap(found));
+    let key = '';
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { key = String(call.body['clientCreationKey']); return Promise.reject(new TypeError('lost')); }
+        if (call.path.startsWith('/creations/')) return response({ ok: true, session: found });
+        return undefined;
+    });
+    f.controller.setInput('fresh text'); await f.controller.send();
+    await f.controller.selectSession('created'); f.controller.setInput(' '); f.controller.newSession();
+    await f.controller.refresh();
+    assert.ok(key); assert.equal(f.controller.getModel().selectedId, null);
+    assert.equal(f.controller.getModel().input, 'fresh text'); assert.equal(f.controller.getModel().creationUnknown, false);
+    assert.match(f.controller.getModel().operation.error!, /already has its own draft/);
+    await f.controller.selectSession('created'); assert.equal(f.controller.getModel().input, ' ');
+    assert.equal(f.posts().length, 1);
+});
+
+test('Stop owns a held attach by operationId and prevents its late continuation', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', operationId: null, epoch: 2, sequence: 5 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return attach.promise;
+        if (call.path.endsWith('/cancel')) { f.snapshots.set('a', snap(idle)); return response({ ok: true, session: idle }); }
+        return undefined;
+    });
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = f.posts()[0]!.body['operationId'] as string;
+    const starting = session('a', { status: 'starting', operationId, epoch: 2, sequence: 4 });
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 4, epoch: 2, session: starting });
+    await f.controller.stop(); attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } })); await sending;
+    assert.deepEqual(f.posts().map(c => c.path), ['/sessions/a/attach', '/sessions/a/cancel']);
+    assert.deepEqual(f.posts()[1]!.body, { operationId, epoch: 2 });
+    assert.equal(f.controller.getModel().input, 'keep');
+});
+
+test('an early Stop releases the composer, then still cancels its attach admitted after the read', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    await f.controller.stop();
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    assert.equal(f.controller.getModel().operation.kind, 'idle', 'nothing waits on discovery');
+    assert.match(f.controller.getModel().operation.error!, /before the restore reached the server/);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2,
+        session: session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 }) });
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.match(f.controller.getModel().operation.error!, /^Restore stopped\. Your text was not sent\./);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+test('a hanging read cannot hold an early Stop, and an attach that won reports it truthfully', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>(); let hang = false;
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return attach.promise;
+        if (hang && call.path === '/sessions/a' && call.method === 'GET') return new Promise<Response>(() => {});
+        return undefined;
+    });
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    hang = true;
+    const started = Date.now(); await f.controller.stop();
+    assert.ok(Date.now() - started < 5000, 'the read has a deadline');
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    hang = false;
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'completed' } }));
+    await sending;
+    assert.match(f.controller.getModel().operation.error!, /restored before Stop took effect/);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+test('a lost attach response after a failed cancel is reported as unknown, never as stopped', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return attach.promise;
+        if (call.path.endsWith('/cancel')) return Promise.reject(new TypeError('connection reset'));
+        return undefined;
+    });
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    const starting = session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 });
+    f.snapshots.set('a', snap(starting));
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2, session: starting });
+    await f.controller.stop();
+    assert.match(f.controller.getModel().operation.error!, /could not be confirmed/);
+    attach.reject(new TypeError('attach response lost'));
+    await sending;
+    assert.match(f.controller.getModel().operation.error!, /outcome is unknown after Stop/);
+    assert.doesNotMatch(f.controller.getModel().operation.error!, /^Restore stopped/);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+test('a stopped restore keeps its identity until it settles: a second Send cannot replace it', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    await f.controller.stop();
+    await f.controller.send(); await f.controller.resume();
+    assert.equal(f.posts().filter(c => c.path.endsWith('/attach')).length, 1, 'no successor restore while the stopped one is unsettled');
+    assert.match(f.controller.getModel().operation.error!, /previous restore is still stopping/);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2,
+        session: session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 }) });
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.match(f.controller.getModel().operation.error!, /^Restore stopped\./);
+    assert.equal(f.controller.getModel().input, 'keep');
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+for (const [status, expected] of [['failed', /Restore failed\./], ['idle', /restored before Stop took effect/], ['suspended', /outcome is unknown/]] as const) {
+    test(`an older server's ${status} attach after Stop is reported from its session status`, async t => {
+        const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+        await f.controller.refresh(); await f.controller.selectSession('a');
+        const retry = deferred<Response>();
+        f.intercept(call => {
+            if (call.path.endsWith('/attach')) return call.body['operationId'] ? response({ ok: false, error: 'unknown_field' }, 400) : retry.promise;
+            return undefined;
+        });
+        f.controller.setInput('keep'); const sending = f.controller.send();
+        for (let i = 0; i < 200 && f.posts().filter(c => c.path.endsWith('/attach')).length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.equal(f.posts().filter(c => c.path.endsWith('/attach')).length, 2);
+        await f.controller.stop();
+        retry.resolve(response({ ok: true, session: session('a', { status, epoch: 2, sequence: 6,
+            ...(status === 'failed' ? { error: { code: 'native_open_failed', message: 'open failed', at: 1, recoverable: true } } : {}) }) }));
+        await sending;
+        assert.match(f.controller.getModel().operation.error!, expected);
+        assert.equal(f.posts().filter(c => c.path.endsWith('/prompt') || c.path.endsWith('/cancel')).length, 0);
+    });
+}
+
+test('an early Stop finds its own attach by reading when the starting event never arrives', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    // No code_session event is delivered; only a read shows the owned starting attach.
+    f.snapshots.set('a', snap(session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 })));
+    await f.controller.stop();
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+});
+
+for (const failure of ['lost', 'refused'] as const) {
+    test(`a ${failure} owned-restore cancel is surfaced and retried only by an explicit Stop`, async t => {
+        const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+        await f.controller.refresh(); await f.controller.selectSession('a');
+        const attach = deferred<Response>();
+        const idle = session('a', { status: 'idle', epoch: 2, sequence: 9 });
+        let cancels = 0;
+        f.intercept(call => {
+            if (call.path.endsWith('/attach')) return attach.promise;
+            if (call.path.endsWith('/cancel')) {
+                cancels++;
+                if (cancels === 1) return failure === 'lost' ? Promise.reject(new TypeError('connection reset'))
+                    : response({ ok: false, error: 'session_busy' }, 409);
+                return response({ ok: true, session: idle });
+            }
+            return undefined;
+        });
+        f.controller.setInput('keep'); const sending = f.controller.send();
+        const operationId = String(f.posts()[0]!.body['operationId']);
+        const starting = session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 });
+        f.snapshots.set('a', snap(starting));
+        f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2, session: starting });
+        await f.controller.stop();
+        assert.equal(cancels, 1);
+        assert.match(f.controller.getModel().operation.error!, failure === 'lost' ? /could not be confirmed/ : /Stop was refused/);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        assert.equal(cancels, 1, 'a failed cancel is never resent on its own');
+        await f.controller.stop();
+        assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }, { operationId, epoch: 2 }]);
+        attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+        await sending;
+        assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    });
+}
+
+test('Stop waits for its delayed starting event and ignores a different attach', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 7 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? response({ ok: true, session: idle }) : undefined);
+    f.controller.setInput('keep'); const sending = f.controller.send();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    await f.controller.stop();
+    // Discovery never holds the composer: the Stop stays requested for a later matching event.
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    assert.match(f.controller.getModel().operation.error!, /before the restore reached the server/);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 4, epoch: 2,
+        session: session('a', { status: 'starting', operationId: 'different', epoch: 2, sequence: 4 }) });
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 5, epoch: 2,
+        session: session('a', { status: 'starting', operationId, epoch: 2, sequence: 5 }) });
+    assert.deepEqual(f.posts().filter(c => c.path.endsWith('/cancel')).map(c => c.body), [{ operationId, epoch: 2 }]);
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } }));
+    await sending;
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    assert.equal(f.controller.getModel().input, 'keep');
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+});
+
+for (const stop of [false, true]) {
+    test(`old server retries attach without identity; ${stop ? 'Stop does not cancel' : 'send proceeds once'}`, async t => {
+        const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+        await f.controller.refresh(); await f.controller.selectSession('a');
+        const retry = deferred<Response>(), posted = deferred<void>();
+        const idle = session('a', { status: 'idle', epoch: 2, sequence: 5 });
+        f.intercept(call => {
+            if (call.path.endsWith('/attach')) {
+                if (call.body['operationId']) return response({ ok: false, error: 'unknown_field' }, 400);
+                posted.resolve(); return retry.promise;
+            }
+            if (call.path.endsWith('/prompt')) return response({ ok: true, turnId: 't', clientTurnKey: call.body['clientTurnKey'], sequence: 5, status: 'accepted' });
+            return undefined;
+        });
+        f.controller.setInput('keep'); const sending = f.controller.send(); await posted.promise;
+        if (stop) await f.controller.stop();
+        f.snapshots.set('a', snap(idle)); retry.resolve(response({ ok: true, session: idle, attach: { operationId: 'server-op', outcome: 'completed' } }));
+        await sending;
+        assert.equal(f.posts().filter(c => c.path.endsWith('/attach')).length, 2);
+        assert.deepEqual(f.posts().filter(c => c.path.endsWith('/attach'))[1]!.body, {});
+        assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+        assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, stop ? 0 : 1);
+    });
+}
+
+test('second Send during held post-attach synchronization is blocked', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(); const started = deferred<void>(); let snapshotHeld = false;
+    const idle = session('a', { status: 'idle', sequence: 5 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) { f.snapshots.set('a', snap(idle)); return response({ ok: true, session: idle, attach: { operationId: 'op', outcome: 'completed' } }); }
+        if (call.path === '/sessions/a' && call.method === 'GET' && !snapshotHeld) { snapshotHeld = true; started.resolve(); return gate.promise; }
+        if (call.path.endsWith('/prompt')) return response({ ok: true, turnId: 't', clientTurnKey: call.body['clientTurnKey'], sequence: 6, status: 'accepted' });
+        return undefined;
+    });
+    f.controller.setInput('first'); const first = f.controller.send();
+    await started.promise;
+    f.controller.setInput('second'); await f.controller.send();
+    gate.resolve(response({ ok: true, ...snap(idle) })); await first;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 1);
+    assert.equal(f.posts().find(c => c.path.endsWith('/prompt'))!.body['text'], 'first');
+});
+
+
+test('reload resolves the exact creation key without affecting another endpoint', async t => {
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh();
+    const created = session('created', { cwd: '/workspace/new' }); f.snapshots.set('created', snap(created));
+    let key = '', found = false;
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { key = String(call.body['clientCreationKey']); return Promise.reject(new TypeError('lost')); }
+        if (call.path === `/creations/${key}`) return found ? response({ ok: true, session: created }) : response({ ok: false, error: 'creation_not_found' }, 404);
+        return undefined;
+    });
+    f.controller.setInput('old'); await f.controller.send(); f.controller.setInput('newest');
+    const saved = browser.checkpoint(); f.cleanups[0]!(); f.cleanups[0] = () => {}; browser.reload(saved); found = true;
+    const other = new CodeController({ ...f.options, port: port++ }); f.cleanups.push(other.mount()); await other.refresh();
+    const restored = new CodeController(f.options); f.cleanups.push(restored.mount()); await restored.refresh();
+    assert.equal(restored.getModel().selectedId, 'created'); assert.equal(restored.getModel().input, 'newest');
+    assert.equal(other.getModel().selectedId, null); assert.equal(other.getModel().input, '');
+    assert.equal(f.posts().length, 1);
+});
+
+test('creation lookup does not steal a selection changed while it was in flight', async t => {
+    const f = fixture(t); await f.controller.refresh(); const gate = deferred<Response>(); const started = deferred<void>();
+    const created = session('created', { cwd: '/workspace/new' }); f.snapshots.set('created', snap(created));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') return Promise.reject(new TypeError('lost'));
+        if (call.path.startsWith('/creations/')) { started.resolve(); return gate.promise; }
+        return undefined;
+    });
+    f.controller.setInput('kept'); await f.controller.send(); const refresh = f.controller.refresh(); await started.promise;
+    await f.controller.selectSession('b'); f.controller.setInput('B'); gate.resolve(response({ ok: true, session: created })); await refresh;
+    assert.equal(f.controller.getModel().selectedId, 'b'); assert.equal(f.controller.getModel().input, 'B');
+    await f.controller.selectSession('created'); assert.equal(f.controller.getModel().input, 'kept'); assert.equal(f.posts().length, 1);
+});
+
+test('start another session uses a fresh creation key', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? Promise.reject(new TypeError('lost')) : undefined);
+    f.controller.setInput('draft'); await f.controller.send(); f.controller.startAnotherSession(); await f.controller.send();
+    const keys = f.posts().map(c => c.body['clientCreationKey']);
+    assert.equal(keys.length, 2); assert.ok(keys[0]); assert.ok(keys[1]); assert.notEqual(keys[0], keys[1]);
+});
+
+test('Stop while post-attach synchronization is held prevents prompt admission', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(), started = deferred<void>(); let held = false;
+    const starting = session('a', { status: 'starting', operationId: 'op2', epoch: 2, sequence: 5 });
+    const idle = session('a', { status: 'idle', operationId: null, epoch: 2, sequence: 6 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return response({ ok: true, session: idle, attach: { operationId: 'op', outcome: 'completed' } });
+        if (call.path === '/sessions/a' && call.method === 'GET' && !held) { held = true; started.resolve(); return gate.promise; }
+        if (call.path.endsWith('/cancel')) { f.snapshots.set('a', snap(idle)); return response({ ok: true, session: idle }); }
+        return undefined;
+    });
+    f.controller.setInput('keep'); const sending = f.controller.send(); await started.promise;
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 7, epoch: 3,
+        session: { ...starting, epoch: 3, sequence: 7 } });
+    const stopping = f.controller.stop();
+    gate.resolve(response({ ok: true, ...snap({ ...idle, epoch: 3, sequence: 8 }) }));
+    await Promise.all([sending, stopping]);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    assert.equal(f.controller.getModel().input, 'keep');
+});
+
+test('Stop during post-attach sync never cancels a successor prompt', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(), started = deferred<void>(); let held = false;
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 6 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return response({ ok: true, session: idle, attach: { operationId: call.body['operationId'], outcome: 'completed' } });
+        if (call.path === '/sessions/a' && call.method === 'GET' && !held) { held = true; started.resolve(); return gate.promise; }
+        return undefined;
+    });
+    f.controller.setInput('keep'); const sending = f.controller.send(); await started.promise;
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 7, epoch: 3,
+        session: session('a', { status: 'streaming', turnId: 'successor', epoch: 3, sequence: 7 }) });
+    await f.controller.stop(); gate.resolve(response({ ok: true, ...snap(idle) })); await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel') || c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().input, 'keep');
+});
+
+
+test('Stop after attach settled retires the queued send locally, without a successor operation', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(), started = deferred<void>(); let held = false;
+    const idle = session('a', { status: 'idle', operationId: null, epoch: 2, sequence: 6 });
+    f.intercept(call => {
+        if (call.path.endsWith('/attach')) return response({ ok: true, session: idle, attach: { operationId: 'op', outcome: 'completed' } });
+        if (call.path === '/sessions/a' && call.method === 'GET' && !held) { held = true; started.resolve(); return gate.promise; }
+        return undefined;
+    });
+    f.controller.setInput('queued text'); const sending = f.controller.send(); await started.promise;
+    assert.equal(f.controller.getModel().restoring, true);
+    await f.controller.stop();
+    assert.equal(f.controller.getModel().restoring, false);
+    assert.match(f.controller.getModel().operation.error!, /not sent/);
+    f.snapshots.set('a', snap(idle));
+    gate.resolve(response({ ok: true, ...snap(idle) }));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/cancel')).length, 0);
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().input, 'queued text');
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+});
+
+test('a late create response never overwrites a draft the user started in the listed session', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    const pending = deferred<Response>(), posted = deferred<void>();
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { posted.resolve(); return pending.promise; }
+        return undefined;
+    });
+    f.controller.setInput('captured prompt'); const sending = f.controller.send(); await posted.promise;
+    const created = session('created'); f.snapshots.set('created', snap(created));
+    await f.controller.selectSession('created'); f.controller.setInput('typed in the listed session');
+    f.controller.newSession();
+    pending.resolve(response({ ok: true, session: created }, 201));
+    await sending;
+    assert.equal(f.posts().filter(c => c.path.endsWith('/prompt')).length, 0);
+    assert.equal(f.controller.getModel().selectedId, null);
+    assert.equal(f.controller.getModel().input, 'captured prompt');
+    assert.match(f.controller.getModel().error!, /already has its own draft/);
+    await f.controller.selectSession('created');
+    assert.equal(f.controller.getModel().input, 'typed in the listed session');
+});
+
+test('text edited while create is pending survives a lost response and reconnect', async t => {
+    const f = fixture(t); await f.controller.refresh(); const pending = deferred<Response>();
+    let key = '', posted: Record<string, unknown> = {};
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { posted = call.body; key = String(call.body['clientCreationKey']); return pending.promise; }
+        if (call.path === `/creations/${key}`) return response({ ok: true, session: session('created', { cwd: String(posted['cwd']), model: String(posted['model']), effort: posted['effort'] as string | null, permissionMode: posted['permissionMode'] as CodeSessionInfo['permissionMode'] }) });
+        return undefined;
+    });
+    f.controller.setInput('first'); const sending = f.controller.send();
+    f.controller.setInput('edited during request'); pending.reject(new TypeError('lost')); await sending;
+    await f.controller.refresh();
+    assert.equal(f.controller.getModel().input, 'edited during request');
+    assert.equal(f.controller.getModel().selection.cwd, posted['cwd']);
+    assert.equal(f.controller.getModel().selection.model, posted['model']);
+    assert.equal(f.controller.getModel().selection.effort, posted['effort']);
+    assert.equal(f.controller.getModel().selection.permissionMode, posted['permissionMode']);
+    assert.equal(f.posts().length, 1);
+});
+
+
+test('a late resume response cannot overwrite an in-flight Stop', async t => {
+    const f = fixture(t); f.snapshots.set('a', snap(session('a', { status: 'suspended' })));
+    await f.controller.refresh(); await f.controller.selectSession('a');
+    const attach = deferred<Response>(), cancel = deferred<Response>();
+    const idle = session('a', { status: 'idle', epoch: 2, sequence: 5 });
+    f.intercept(call => call.path.endsWith('/attach') ? attach.promise : call.path.endsWith('/cancel') ? cancel.promise : undefined);
+    const resuming = f.controller.resume();
+    const operationId = String(f.posts()[0]!.body['operationId']);
+    const starting = session('a', { status: 'starting', operationId, epoch: 2, sequence: 4 });
+    f.controller.onEvent({ topic: 'code', event: 'code_session', sessionId: 'a', sequence: 4, epoch: 2, session: starting });
+    const stopping = f.controller.stop();
+    attach.resolve(response({ ok: true, session: idle, attach: { operationId, outcome: 'cancelled' } })); await resuming;
+    assert.equal(f.controller.getModel().operation.kind, 'idle');
+    f.snapshots.set('a', snap(idle)); cancel.resolve(response({ ok: true, session: idle })); await stopping;
+    assert.deepEqual(f.posts()[1]!.body, { operationId, epoch: 2 });
 });

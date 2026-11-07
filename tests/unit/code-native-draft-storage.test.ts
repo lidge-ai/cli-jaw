@@ -186,3 +186,23 @@ test('a rolled-back retry keeps its reason across reload; an unknown reason fall
     assert.deepEqual(loadCodeDraftStorage(store, draftBook.endpoint).data!.sessions[0]!.draft.retry, { text: 'unsent', key: 'k', edit: 0 },
         'a reason means nothing without a spent key');
 });
+
+
+test('creation and attach Stop identities round-trip, while malformed identities are rejected', () => {
+    const store = storage(), b = book(store);
+    b.fresh.operation.kind = 'creating'; b.fresh.creationKey = 'create-key_1';
+    const d = createCodeDraft(b.fresh.selection);
+    d.stopTarget = { turnId: null, operationId: 'op', epoch: 2, outcome: 'unknown' };
+    b.sessions.set('s', d); b.selectedId = 's';
+    assert.equal(saveCodeDraftStorage(store, b.endpoint, b), null);
+    const saved = loadCodeDraftStorage(store, b.endpoint).data!;
+    assert.equal(saved.fresh.creationKey, 'create-key_1');
+    assert.deepEqual(saved.sessions[0]!.draft.stop, { turnId: null, operationId: 'op', epoch: 2 });
+    const raw = JSON.parse(store.getItem('cli-jaw:code-drafts:v1')!);
+    raw.endpoints[0].fresh.creationKey = 'bad/key';
+    store.setItem('cli-jaw:code-drafts:v1', JSON.stringify(raw));
+    assert.equal(loadCodeDraftStorage(store, b.endpoint).data, null);
+    raw.endpoints[0].fresh.creationKey = 'valid'; raw.endpoints[0].sessions[0].draft.stop.turnId = 'turn';
+    store.setItem('cli-jaw:code-drafts:v1', JSON.stringify(raw));
+    assert.equal(loadCodeDraftStorage(store, b.endpoint).data, null);
+});

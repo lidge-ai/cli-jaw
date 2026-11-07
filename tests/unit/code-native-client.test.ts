@@ -13,6 +13,20 @@ const session: CodeSessionInfo = {
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+test('attach sends its chosen identity and retries only unknown_field without it', async () => {
+    const original = globalThis.fetch;
+    const bodies: unknown[] = [];
+    globalThis.fetch = async (_url, init = {}) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return bodies.length === 1 ? reply({ ok: false, error: 'unknown_field' }, 400) : reply({ ok: true, session });
+    };
+    try {
+        const result = await createCodeSessionClient(4567).attachSession('s', 'client-op');
+        assert.deepEqual(bodies, [{ operationId: 'client-op' }, {}]);
+        assert.equal(result.identityUnknown, true);
+    } finally { globalThis.fetch = original; }
+});
+
 test('native client sends final paths, encoded IDs, exact command identities and bounded read cursors', async () => {
     const original = globalThis.fetch;
     const calls: { url: string; init: RequestInit }[] = [];
@@ -147,4 +161,25 @@ test('rollback posts only the opaque row, revision and epoch, and a refusal carr
         await assert.rejects(client.rollbackSession('s', { expectedRevision: 2, expectedEpoch: 9, upToItemId: 'turn:user' }),
             (error: unknown) => error instanceof CodeClientError && error.session?.revision === 3);
     } finally { globalThis.fetch = original; }
+});
+
+
+test('creation lookup and attach retain their operation outcome', async () => {
+    const original = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = async url => { calls.push(String(url)); return reply({ ok: true, session, attach: { operationId: 'op', outcome: 'cancelled' } }); };
+    try {
+        const client = createCodeSessionClient(4567);
+        assert.equal((await client.findCreation('key/a')).sessionId, session.sessionId);
+        assert.deepEqual((await client.attachSession('s')).attach, { operationId: 'op', outcome: 'cancelled' });
+        assert.match(calls[0]!, /creations\/key%2Fa$/);
+    } finally { globalThis.fetch = original; }
+});
+
+
+test('old attach responses have no attach outcome', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => reply({ ok: true, session });
+    try { assert.equal((await createCodeSessionClient(4567).attachSession('s')).attach, null); }
+    finally { globalThis.fetch = original; }
 });

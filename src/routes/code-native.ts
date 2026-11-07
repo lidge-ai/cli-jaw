@@ -11,8 +11,13 @@ import { fail } from '../http/response.js';
 import { httpCode, httpStatus } from './_http-error.js';
 import { CODE_PROMPT_MAX_BYTES } from './code-body-parser.js';
 
-export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'list' | 'snapshot' | 'readEvents' | 'history'
+export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'creation' | 'list' | 'snapshot' | 'readEvents' | 'history'
     | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'rollback' | 'answerPermission' | 'models'>;
+const CREATION_KEY = /^[A-Za-z0-9_-]{1,128}$/;
+function creationKey(value: unknown): string {
+    if (typeof value !== 'string' || !CREATION_KEY.test(value)) return invalid('invalid_client_creation_key');
+    return value;
+}
 /** Only an opaque Code user row is a rollback target; native message identities are never accepted. */
 const ROLLBACK_TARGET = /^[^:\s]{1,200}:user$/;
 
@@ -76,24 +81,28 @@ function sessionCursor(value: unknown): CodeSessionCursor {
 }
 
 function createInput(value: unknown): CodeCreateSessionRequest {
-    const input = body(value, ['provider', 'cwd', 'model', 'effort', 'permissionMode', 'thinking']);
+    const input = body(value, ['provider', 'cwd', 'model', 'effort', 'permissionMode', 'thinking', 'clientCreationKey']);
     if (!PROVIDERS.includes(input['provider'] as CodeProviderId)) return invalid('invalid_provider');
-    let directory: string;
-    try {
-        directory = realpathSync(cwd(input['cwd']));
-        if (!statSync(directory).isDirectory()) return invalid('workspace_missing');
-    } catch (error) {
-        if (error instanceof CodeStoreError) throw error;
-        return invalid('workspace_missing');
-    }
     return {
         provider: input['provider'] as CodeProviderId,
-        cwd: directory,
+        cwd: cwd(input['cwd']),
+        ...('clientCreationKey' in input ? { clientCreationKey: creationKey(input['clientCreationKey']) } : {}),
         model: string(input['model'], 'model'),
         effort: input['effort'] == null ? null : string(input['effort'], 'effort', 80),
         permissionMode: permission(input['permissionMode']),
         ...('thinking' in input ? { thinking: bool(input['thinking'], 'invalid_thinking') } : {}),
     };
+}
+
+function workspace(path: string): string {
+    try {
+        const directory = realpathSync(path);
+        if (!statSync(directory).isDirectory()) return invalid('workspace_missing');
+        return directory;
+    } catch (error) {
+        if (error instanceof CodeStoreError) throw error;
+        return invalid('workspace_missing');
+    }
 }
 
 function bool(value: unknown, code: string): boolean {
@@ -169,6 +178,10 @@ export function registerNativeCodeRoutes(
         res.json({ ok: true, sessions, limit, hasMore,
             nextCursor: hasMore && last ? JSON.stringify({ createdAt: last.createdAt, sessionId: last.sessionId }) : null });
     }));
+    router.get('/creations/:key', asyncHandler(async (req, res) => {
+        const key = creationKey(req.params['key']);
+        res.json({ ok: true, session: getService().creation(key) });
+    }));
     router.get('/sessions/:id', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
         res.json({ ok: true, ...getService().snapshot(sessionId) });
@@ -187,7 +200,11 @@ export function registerNativeCodeRoutes(
     }));
     router.post('/sessions', asyncHandler(async (req, res) => {
         const input = createInput(req.body);
-        res.status(201).json({ ok: true, session: getService().create(input) });
+        // Without a key nothing can replay, so a missing workspace is refused before the lazy host
+        // initializes; a keyed create reaches the store first because its original may already exist.
+        const create = input.clientCreationKey === undefined ? { ...input, cwd: workspace(input.cwd) } : input;
+        const result = getService().create(create, { resolveCwd: workspace });
+        res.status(result.created ? 201 : 200).json({ ok: true, session: result.session });
     }));
     router.patch('/sessions/:id', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
@@ -221,14 +238,18 @@ export function registerNativeCodeRoutes(
     }));
     router.post('/sessions/:id/cancel', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
-        const input = body(req.body, ['turnId', 'epoch']);
-        const command = { turnId: id(input['turnId']), epoch: integer(input['epoch'], 'epoch') };
+        const input = body(req.body, ['turnId', 'operationId', 'epoch']);
+        if (('turnId' in input) === ('operationId' in input)) return invalid('invalid_cancel_target');
+        const epoch = integer(input['epoch'], 'epoch');
+        const command = 'turnId' in input ? { turnId: id(input['turnId']), epoch } : { operationId: id(input['operationId']), epoch };
         res.json({ ok: true, session: await getService().cancel(sessionId, command) });
     }));
     router.post('/sessions/:id/attach', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);
-        body(req.body ?? {}, []);
-        res.json({ ok: true, session: await getService().attach(sessionId) });
+        const input = body(req.body ?? {}, ['operationId']);
+        if ('operationId' in input && (typeof input['operationId'] !== 'string' || !CREATION_KEY.test(input['operationId']))) return invalid('invalid_operation_id');
+        const result = await getService().attach(sessionId, 'operationId' in input ? { operationId: input['operationId'] as string } : {});
+        res.json({ ok: true, session: result.session, attach: { operationId: result.operationId, outcome: result.outcome } });
     }));
     router.post('/sessions/:id/rollback', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']);

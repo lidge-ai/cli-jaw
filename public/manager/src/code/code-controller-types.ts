@@ -50,6 +50,8 @@ export interface CodeControllerModel {
     hasOlderHistory: boolean;
     filter: CodeSessionFilter;
     creationUnknown: boolean;
+    /** A restore (attach, or attach-then-send) is in flight for the selected session; Stop can end it. */
+    restoring?: boolean;
     startAnotherSession(): void;
     newSession(): void;
     selectSession(id: string): Promise<void>;
