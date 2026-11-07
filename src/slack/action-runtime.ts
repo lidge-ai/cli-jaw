@@ -8,7 +8,7 @@ import type { ActionContext, ActionDefinition, ActionResult } from './action-typ
 import { SlackActionRateLimiter } from './action-rate.js';
 import { slackApi, addSlackReaction, removeSlackReaction, deleteSlackMessage, readBoundedResponse, type SlackFetch, type SlackApiResult } from './api.js';
 import { readSlackAuthSnapshot } from './verified-workspace.js';
-import { slackCredentialKey } from './tool-context.js';
+import { slackCredentialKey, type SlackToolGrant } from './tool-context.js';
 import { slackToolContext, slackToolDenied, withSlackToolAccess, type SlackToolPrincipal } from './tool-access.js';
 import { assertSlackWriteAllowed } from './write-guard.js';
 import type { RemoteTarget } from '../messaging/types.js';
@@ -36,6 +36,10 @@ function interactiveGrantFor(definition: ActionDefinition, principal: SlackToolP
         return principal.context;
     }
     return undefined;
+}
+
+function interactiveGrantCurrent(grant: SlackToolGrant, token: string): boolean {
+    return !grant.signal.aborted && grant.expiresAt > Date.now() && grant.credentialKey === slackCredentialKey(token);
 }
 
 export class SlackActionRuntime {
@@ -85,6 +89,9 @@ export class SlackActionRuntime {
         if (!identity?.userId) throw slackToolDenied('slack_bot_identity_unverified', 409);
         if (definition.scopes.length && identity.scopes === null) throw slackToolDenied('slack_action_scopes_unverified', 403);
         if (definition.scopes.some(scope => !identity.scopes?.includes(scope))) throw slackToolDenied('slack_action_scopes_missing', 403);
+        // Operator principals skip withSlackToolAccess grant checks.
+        if (interactiveGrant && (!interactiveGrantCurrent(interactiveGrant, token) || interactiveGrant.teamId !== identity.teamId)) throw slackToolDenied('slack_turn_grant_expired', 401);
+        if (interactiveGrant && interactiveGrant.actorId === identity.userId) throw slackToolDenied('slack_interaction_turn_required', 403);
         const workspace = identity.teamId;
         const actor = interactiveGrant?.actorId ?? (principal.kind === 'turn' ? principal.grant.actorId : 'operator');
         const credentialKey = slackCredentialKey(token); const store = this.options.store;
@@ -103,6 +110,7 @@ export class SlackActionRuntime {
             const checkCurrent = () => {
                 if (signal?.aborted) throw slackToolDenied('slack_action_cancelled', 499);
                 if (this.options.getToken() !== token) throw slackToolDenied('slack_credential_changed', 409);
+                if (interactiveGrant && !interactiveGrantCurrent(interactiveGrant, token)) throw slackToolDenied('slack_turn_grant_expired', 401);
             };
             checkCurrent();
             if (slackFailureRoutingEnabled() && principal.kind === 'turn') recovery = store.blockedFor(principal.grant);
