@@ -474,6 +474,8 @@ test('native Code workbench on isolated real Manager', { timeout: 320_000 }, asy
                     const multi = card(p, 'Edit 2 files');
                     if (await multi.getAttribute('open') === null) await multi.locator('summary').first().click();
                     const missing = multi.locator('.code-file-entry').filter({ hasText: 'src/other.ts' });
+                    // count() does not wait, and the opened body renders after the click.
+                    await missing.first().waitFor();
                     assert.equal(await missing.count(), 1, `${pass}: the file without a patch is listed once`);
                     assert.match(await missing.innerText(), /Patch unavailable/, `${pass}: a missing patch says so`);
                     assert.equal(await missing.locator('details.code-file-review').count(), 0, `${pass}: no Review without a captured patch`);
