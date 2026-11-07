@@ -14,7 +14,7 @@ import { mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createServer as createPortReservation } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -222,6 +222,11 @@ const worker = createServer((req, res) => {
         else workerRequestOverflow = true;
     }
     if (req.method !== 'GET') return json(res, 405, { error: 'fake_worker_read_only' });
+    if (mode !== 'code' && url.pathname === '/dist/settings/index.html') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(readFileSync(join(project, 'public/dist/settings/index.html')));
+        return;
+    }
     if (mode === 'manager-layout' && (url.pathname === '/0' || url.pathname === '/')) {
         const documentId = randomUUID();
         if (workerHtmlLoads.length < 2048) workerHtmlLoads.push({
@@ -229,7 +234,7 @@ const worker = createServer((req, res) => {
         });
         else workerRequestOverflow = true;
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Owned layout worker</title><body><main data-qa-worker="${workerDocumentNonce}" data-qa-document-id="${documentId}">Owned layout worker</main></body></html>`);
+        res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Owned layout worker</title><body><main data-qa-worker="${workerDocumentNonce}" data-qa-document-id="${documentId}" data-qa-settings-open-count="0">Owned layout worker</main><script>window.addEventListener('message', event => { if (event.data?.type === 'jaw-preview-settings-open') { const marker = document.querySelector('main'); marker.dataset.qaSettingsOpenCount = String(Number(marker.dataset.qaSettingsOpenCount) + 1); } });</script></body></html>`);
         return;
     }
     if (mode === 'manager-layout' && url.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
@@ -248,7 +253,7 @@ const worker = createServer((req, res) => {
         '/api/messages': { messages: [] },
     };
     if (mode === 'manager-layout') Object.assign(responses, {
-        '/api/settings': { ...responses['/api/settings'], permissions: 'auto', runtimeDefaultMigration: null,
+        '/api/settings': { ...responses['/api/settings'], port: policy.workerPort, permissions: 'auto', runtimeDefaultMigration: null,
             activeOverrides: {}, perCli: { 'codex-app': { model: 'qa-codex-app', effort: 'medium' } },
             presentation: { mode: 'activity' }, tui: { pasteCollapseLines: 2, pasteCollapseChars: 160,
                 keymapPreset: 'default', diffStyle: 'summary', themeSeed: 'jaw-default' } },
@@ -263,7 +268,7 @@ const worker = createServer((req, res) => {
         '/api/employees': { ok: true, data: [] },
     });
     if (mode === 'retired-settings') Object.assign(responses, {
-        '/api/settings': { ...responses['/api/settings'], cli: 'jwc', model: 'qa-retired-model', permissions: 'auto',
+        '/api/settings': { ...responses['/api/settings'], port: policy.workerPort, cli: 'jwc', model: 'qa-retired-model', permissions: 'auto',
             runtimeDefaultMigration: null, activeOverrides: {},
             perCli: { jwc: { model: 'qa-retired-model', effort: 'high' },
                 claude: { model: 'qa-claude-settings', effort: 'low' },

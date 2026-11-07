@@ -19,7 +19,7 @@ const layoutNames = [
     'manager preview iframe survives Workbench tab changes',
     'manager preview header toggles and refreshes the iframe',
     'manager sidebar shell resizes, persists, resets, and collapses',
-    'instance settings page has bounded layout and guarded keyboard close',
+    'manager settings page has bounded layout and guarded keyboard close',
 ];
 const phases = [
     { id: 'native-code', mode: 'code', file: 'tests/browser/code-native-workbench.test.ts',
