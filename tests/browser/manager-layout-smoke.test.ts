@@ -51,7 +51,7 @@ const scenarioNames = [
     'manager preview iframe survives Workbench tab changes',
     'manager preview header toggles and refreshes the iframe',
     'manager sidebar shell resizes, persists, resets, and collapses',
-    'instance settings page has bounded layout and guarded keyboard close',
+    'manager settings page has bounded layout and guarded keyboard close',
 ];
 const evidence: {
     version: number; result: 'INCOMPLETE' | 'PASS' | 'FAIL'; workerNonce: string; scenarios: Scenario[];
@@ -318,14 +318,20 @@ layoutTest('manager preview iframe survives Workbench tab changes', async (t) =>
     assert.equal(before.hostHidden, false, 'preview host should be visible on Preview tab');
     assert.equal(before.hasFrame, true, 'preview iframe should render for an online selected instance');
 
+    const workerFrame = page.frameLocator('iframe.preview-frame');
+    const marker = workerFrame.locator('main[data-qa-worker]');
+    assert.equal(await marker.getAttribute('data-qa-settings-open-count'), '0');
     await page.getByRole('button', { name: 'Instance settings', exact: true }).click();
-
-    await page.locator('.workbench-settings-page').waitFor({ state: 'visible' });
+    await workerFrame.locator('main[data-qa-worker][data-qa-settings-open-count="1"]').waitFor({ state: 'attached' });
+    assert.deepEqual(await workerDocument(page), beforeDocument, 'relay keeps the same worker document and source');
+    assert.equal(await marker.getAttribute('data-qa-settings-open-count'), '1');
+    await page.getByRole('button', { name: 'Dashboard settings', exact: true }).click();
+    await page.locator('.settings-full-page').waitFor({ state: 'visible' });
     const during = await page.evaluate(() => {
         const host = document.querySelector('[data-preview-host="persistent"]');
         const frame = document.querySelector('iframe.preview-frame');
         return {
-            hostHidden: host?.hasAttribute('hidden') ?? null,
+            surfaceHidden: host?.closest('.workspace-surface')?.hasAttribute('hidden') ?? null,
             sameFrame: frame === (window as Window & { __jawPreviewFrame?: Element | null }).__jawPreviewFrame,
             src: frame?.getAttribute('src') || null,
         };
@@ -333,17 +339,36 @@ layoutTest('manager preview iframe survives Workbench tab changes', async (t) =>
 
     const duringDocument = await workerDocument(page);
     assert.deepEqual(duringDocument, beforeDocument, 'Settings retains the loaded worker document');
-    assert.equal(during.hostHidden, true, 'full-page settings hides the retained Preview host');
+    assert.equal(during.surfaceHidden, true, 'Manager settings hides the WorkspaceSurface containing the retained Preview');
     assert.equal(during.sameFrame, true, 'preview iframe must stay mounted while settings replaces the workspace');
     assert.equal(during.src, before.src, 'opening settings must keep the preview source');
 
     await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-    await page.locator('.workbench-settings-page').waitFor({ state: 'detached' });
+    await page.locator('.settings-full-page').waitFor({ state: 'detached' });
+    const afterBack = await page.evaluate(() => {
+        const host = document.querySelector('[data-preview-host="persistent"]');
+        const frame = document.querySelector('iframe.preview-frame');
+        return {
+            selected: document.querySelector('#workbench-tab-preview')?.getAttribute('aria-selected'),
+            hostHidden: host?.hasAttribute('hidden') ?? null,
+            surfaceHidden: host?.closest('.workspace-surface')?.hasAttribute('hidden') ?? null,
+            sameFrame: frame === (window as Window & { __jawPreviewFrame?: Element | null }).__jawPreviewFrame,
+            src: frame?.getAttribute('src') || null,
+        };
+    });
+    assert.equal(afterBack.selected, 'true', 'Back returns to the Preview tab');
+    assert.equal(afterBack.hostHidden, false, 'Back shows the retained Preview host');
+    assert.equal(afterBack.surfaceHidden, false, 'Back shows the WorkspaceSurface containing Preview');
+    assert.equal(afterBack.sameFrame, true, 'Back retains the same preview iframe');
+    assert.equal(afterBack.src, before.src, 'Back retains the preview source');
+    const afterBackDocument = await workerDocument(page);
+    assert.deepEqual(afterBackDocument, beforeDocument, 'Back retains the worker document');
+
+    await page.getByRole('tab', { name: 'Overview', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#workbench-tab-overview')?.getAttribute('aria-selected') === 'true');
     assert.equal(await page.locator('[data-preview-host]').evaluate(el => el.hasAttribute('hidden')), true,
-        'Back returns to Overview with Preview still hidden');
-    const afterBackDocument = await workerDocument(page);
-    assert.deepEqual(afterBackDocument, beforeDocument, 'Overview after Back retains the worker document');
+        'Overview hides the retained Preview');
+    assert.deepEqual(await workerDocument(page), beforeDocument, 'Overview retains the worker document');
     await page.getByRole('tab', { name: 'Preview', exact: true }).click();
 
     const after = await page.evaluate(() => {
@@ -358,6 +383,7 @@ layoutTest('manager preview iframe survives Workbench tab changes', async (t) =>
 
     const afterPreviewDocument = await workerDocument(page);
     assert.deepEqual(afterPreviewDocument, beforeDocument);
+    assert.equal(await marker.getAttribute('data-qa-settings-open-count'), '1', 'exactly one settings request reached the retained document');
     const retention = { before: beforeDocument, during: duringDocument, afterBack: afterBackDocument, afterPreview: afterPreviewDocument, tabs: [] as Array<DocumentProof & { mode: string }> };
     evidence.preview.retention = retention;
     assert.equal(after.hostHidden, false, 'preview host should show again on Preview tab');
@@ -629,13 +655,13 @@ layoutTest('manager sidebar shell resizes, persists, resets, and collapses', asy
     assert.equal(reset.width, 300, 'double-click resets the width to the default');
     assert.equal(reset.stored, null, 'reset removes the persisted key');
 
-    await page.keyboard.press('Meta+Shift+B');
+    await page.keyboard.press('ControlOrMeta+Shift+B');
     await page.waitForFunction(() => document.querySelector('.manager-workspace')?.classList.contains('is-sidebar-collapsed'));
     await page.waitForTimeout(400);
     const collapsed = await readSidebar();
     assert.equal(collapsed.width, 44, 'collapsed sidebar leaves the 44px rail');
     assert.equal(collapsed.cssVar, '44px', 'collapsed width comes from the hook constant');
-    await page.keyboard.press('Meta+Shift+B');
+    await page.keyboard.press('ControlOrMeta+Shift+B');
     await page.waitForFunction(() => {
         const workspace = globalThis.document.querySelector('.manager-workspace');
         const sidebar = globalThis.document.querySelector('.manager-sidebar');
@@ -649,16 +675,16 @@ layoutTest('manager sidebar shell resizes, persists, resets, and collapses', asy
 });
 
 
-layoutTest('instance settings page has bounded layout and guarded keyboard close', async (t) => {
+layoutTest('manager settings page has bounded layout and guarded keyboard close', async (t) => {
     const page = await pageForManager(t); if (!page) return;
     await page.goto(MANAGER_URL, { waitUntil: 'domcontentloaded' }); await selectFirstOnlineInstance(page);
-    const toggle = page.getByRole('button', { name: 'Instance settings', exact: true });
+    await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+    const toggle = page.getByRole('button', { name: 'Dashboard settings', exact: true });
     await toggle.click();
-    const panel = page.locator('#workbench-instance-settings');
+    const panel = page.locator('.settings-full-page');
     await panel.waitFor({ state: 'visible' });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
-    assert.equal(await toggle.getAttribute('aria-controls'), await panel.getAttribute('id'));
-    assert.equal(await panel.locator('.settings-full-page').getAttribute('aria-label'), 'Settings');
+    assert.equal(await panel.getAttribute('aria-label'), 'Dashboard settings');
     assert.equal(await panel.getAttribute('aria-modal'), null);
     assert.equal(await panel.locator('.settings-shell-host').evaluate(el => getComputedStyle(el).containerType), 'inline-size');
     assert.equal(await page.getByRole('tab', { name: 'Settings', exact: true }).count(), 0);
@@ -666,7 +692,7 @@ layoutTest('instance settings page has bounded layout and guarded keyboard close
         await page.setViewportSize({ width, height: 900 });
         await settleLayout(page);
         const metrics = await panel.evaluate(el => {
-            const rect = el.getBoundingClientRect(), body = el.closest('.workbench-body')!.getBoundingClientRect();
+            const rect = el.getBoundingClientRect(), body = el.closest('.workspace-surface')!.getBoundingClientRect();
             const shell = el.querySelector('.settings-shell')!, main = el.querySelector('.settings-page-main')!;
             return { width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom,
                 bodyWidth: body.width, bodyHeight: body.height, mainWidth: main.getBoundingClientRect().width,
@@ -678,39 +704,75 @@ layoutTest('instance settings page has bounded layout and guarded keyboard close
         evidence.settingsWidths.push({ width, height: 900, metrics, screenshot: `060_settings-page-${width}x900.png` });
         saveEvidence();
         assert.ok(metrics.width > 0 && metrics.height > 0, 'Settings must occupy visible workspace');
-        assert.ok(Math.abs(metrics.width - metrics.bodyWidth) <= 1, 'Settings uses the workbench body width');
+        assert.ok(Math.abs(metrics.width - metrics.bodyWidth) <= 1, 'Settings uses the workspace surface width');
         assert.ok(metrics.height <= metrics.bodyHeight + 1 && metrics.bottom <= 901, 'Settings remains inside the viewport');
         assert.ok(metrics.right <= width + 1); assert.equal(metrics.documentWidth, width);
         assert.ok(metrics.mainWidth <= 897, 'Settings content keeps its 896px cap');
         assert.equal(metrics.navWidth, width >= 1024 ? 264 : 40, 'Settings navigation follows the full-page breakpoint');
         assert.equal(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
         await page.emulateMedia({ reducedMotion: 'reduce' });
-        assert.equal(await panel.evaluate(el => getComputedStyle(el).transitionDuration), '0s');
-        assert.equal(await page.locator('.workbench').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+        // manager-layout.css:293 reduces transitions to at most 0.01ms.
+        for (const element of [panel, page.locator('.workbench')]) {
+            const durations = await element.evaluate(el => getComputedStyle(el).transitionDuration.split(','));
+            for (const duration of durations) {
+                const value = duration.trim();
+                assert.match(value, /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:ms|s)$/i);
+                const seconds = parseFloat(value) * (value.endsWith('ms') ? 0.001 : 1);
+                assert.ok(seconds <= 0.00001, `reduced-motion transition duration: ${value}`);
+            }
+        }
         await page.emulateMedia({ reducedMotion: 'no-preference' });
     }
-    const display = panel.getByRole('button', { name: 'Display', exact: true });
-    assert.equal(await display.count(), 1);
-    assert.equal(await panel.getByRole('tab', { name: 'Display', exact: true }).count(), 0);
-    await display.click();
-    assert.equal(await display.getAttribute('aria-current'), 'page');
+    const meta = panel.getByRole('button', { name: 'Dashboard meta', exact: true });
+    assert.equal(await meta.count(), 1);
+    assert.equal(await panel.getByRole('tab', { name: 'Dashboard meta', exact: true }).count(), 0);
+    await meta.click();
+    assert.equal(await meta.getAttribute('aria-current'), 'page');
     assert.equal(await panel.locator('.settings-sidebar-item[aria-current="page"]').count(), 1);
     assert.equal(await panel.locator('.settings-sidebar [role=tab]').count(), 0);
-    const field = panel.locator('#display-pasteCollapseLines');
-    const initial = Number(await field.inputValue()); await field.fill(String(initial + 1));
+    const field = panel.locator('#dashmeta-label');
+    await field.waitFor({ state: 'visible' });
+    const draft = `${await field.inputValue()} QA draft`; await field.fill(draft);
     await panel.getByRole('button', { name: 'Back to workspace', exact: true }).focus();
-    page.once('dialog', dialog => dialog.dismiss()); await page.keyboard.press('Escape');
-    assert.equal(await panel.count(), 1); assert.equal(await field.inputValue(), String(initial + 1));
+    let escapeDialogs = 0;
+    const onEscapeDialog = (dialog: import('playwright-core').Dialog) => {
+        escapeDialogs++;
+        return escapeDialogs === 1 ? dialog.dismiss() : dialog.accept();
+    };
+    page.on('dialog', onEscapeDialog);
+    await page.keyboard.press('Escape');
+    assert.equal(escapeDialogs, 1, 'first Escape must show exactly one dirty-draft confirmation');
+    assert.equal(await panel.count(), 1); assert.equal(await field.inputValue(), draft);
     scenario(t).observations['dirtyDismissed'] = true;
-    page.once('dialog', dialog => dialog.accept()); await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    page.off('dialog', onEscapeDialog);
+    assert.equal(escapeDialogs, 2, 'second Escape must show exactly one dirty-draft confirmation');
     await panel.waitFor({ state: 'detached' });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
     await page.waitForFunction(() => document.querySelector('#workbench-tab-overview')?.getAttribute('aria-selected') === 'true');
     assert.equal(await toggle.evaluate(el => el === document.activeElement), true);
     scenario(t).observations['acceptedBackOverview'] = true;
-    await page.keyboard.press('Meta+,'); await panel.waitFor({ state: 'visible' });
+    await page.keyboard.press('ControlOrMeta+,'); await panel.waitFor({ state: 'visible' });
     scenario(t).observations['shortcutReopened'] = true;
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
-    await page.keyboard.press('Meta+,'); await panel.waitFor({ state: 'detached' });
+    await page.keyboard.press('ControlOrMeta+,'); await panel.waitFor({ state: 'detached' });
     scenario(t).observations['shortcutClosed'] = true;
+    await page.keyboard.press('ControlOrMeta+,'); await panel.waitFor({ state: 'visible' });
+    await meta.click();
+    await field.waitFor({ state: 'visible' });
+    const shortcutDraft = `${await field.inputValue()} shortcut draft`;
+    await field.fill(shortcutDraft);
+    let shortcutDialogs = 0;
+    const onShortcutDialog = (dialog: import('playwright-core').Dialog) => {
+        shortcutDialogs++;
+        return shortcutDialogs === 1 ? dialog.dismiss() : dialog.accept();
+    };
+    page.on('dialog', onShortcutDialog);
+    await page.keyboard.press('ControlOrMeta+,');
+    assert.equal(shortcutDialogs, 1, 'first shortcut must show exactly one dirty-draft confirmation');
+    assert.equal(await panel.count(), 1); assert.equal(await field.inputValue(), shortcutDraft);
+    await page.keyboard.press('ControlOrMeta+,');
+    page.off('dialog', onShortcutDialog);
+    assert.equal(shortcutDialogs, 2, 'second shortcut must show exactly one dirty-draft confirmation');
+    await panel.waitFor({ state: 'detached' });
 });

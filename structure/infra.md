@@ -168,8 +168,9 @@ remain in the explicit runner artifact directory. It runs native Code, retired
 settings and Manager layout files sequentially: seven named tests, including
 16 native Code scenarios, two retirement widths and five layout scenarios.
 Structured results reject skipped or missing cases; logs, screenshots, traces
-and process-exit receipts are uploaded even on failure. The layout fixture serves
-real worker HTML through the production Preview proxy. This proves deterministic
+and process-exit receipts are uploaded even on failure. The retirement fixture serves
+standalone instance settings through the Manager proxy; the layout fixture serves
+owned worker HTML through the production Preview proxy. This proves deterministic
 Linux browser integration; it does not certify live provider authentication or
 packaged Electron behavior on other platforms.
 

@@ -17,7 +17,7 @@ not a scope. Files here are imported or spawned by a test that is.
 | `code-fake-providers.mts` | Injectable Code providers that never spawn a runtime, with per-instance open/send counters | `tests/integration/code-native-api.test.ts` |
 | `code-host-child.mts` | A child Code host that can crash itself mid-turn, so recovery has a real orphan to seal | `tests/integration/code-native-api.test.ts` |
 | `skip-policy.mts` | The registry of every test file that skips, with a reason and a CI policy, plus the detector both it and its test use | `tests/integration/skip-policy.test.ts` |
-| `code-native-qa-server.mjs` | Supervises a built Manager with mocked Code providers, plus a `/__qa` control surface | `tests/browser/code-native-workbench.test.ts`, `tests/browser/retired-runtime-settings.test.ts` |
+| `code-native-qa-server.mjs` | Supervises a built Manager with mocked Code providers and read-only standalone settings/Preview workers, plus a `/__qa` control surface | `tests/browser/code-native-workbench.test.ts`, `tests/browser/retired-runtime-settings.test.ts`, `tests/browser/manager-layout-smoke.test.ts` |
 | `hosted-manager-qa.mjs` | Hosted Manager + Playwright QA driver | the `workflow_dispatch`-only Hosted Manager QA job |
 
 The last two need a build and a browser, which is why they sit outside the

@@ -1,4 +1,4 @@
-/** Real built Manager Settings -> Agent, through its real /i/:port proxy.
+/** Real built standalone instance Settings -> Agent, through the Manager /i/:port proxy.
  * Start code-native-qa-server.mjs with CODE_NATIVE_QA_MODE=retired-settings.
  * Required: CODE_NATIVE_QA_MANIFEST + existing MANAGER_BROWSER_CDP_URL.
  * The worker is a read-only fixture; no routes/DOM/components are intercepted.
@@ -57,6 +57,11 @@ async function settleDrawer(page: Page) {
             && [...workspace.getAnimations(), ...sidebar.getAnimations()].every(animation => animation.playState !== 'running' && !animation.pending);
     }, undefined, { timeout: 5_000 });
 }
+async function settleSettings(page: Page) {
+    await page.locator('.settings-shell').waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Agent', exact: true }).getAttribute('aria-current'), 'page');
+    await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== 'running' && !animation.pending), undefined, { timeout: 5_000 });
+}
 async function choices(page: Page, label: string): Promise<string[]> {
     await page.getByRole('combobox', { name: `${label}: JWC (retired)`, exact: true }).click();
     const list = page.getByRole('listbox', { name: label, exact: true });
@@ -107,11 +112,16 @@ async function fieldLayout(grid: Locator, labels: string[], stacked: boolean) {
 async function shutdown(manifest: Manifest) {
     const receipt = join(manifest.evidenceDir, 'provider-events.json');
     const exited = new Promise<void>((resolve, reject) => {
-        const watcher = watch(manifest.evidenceDir, () => {
-            if (existsSync(receipt)) { clearTimeout(timer); watcher.close(); resolve(); }
-        });
-        const timer = setTimeout(() => { watcher.close(); reject(new Error('Owned Manager shutdown receipt timed out')); }, 20_000);
-        watcher.on('error', error => { clearTimeout(timer); watcher.close(); reject(error); });
+        const finish = (error?: Error) => {
+            clearTimeout(timer); clearInterval(check); watcher.close();
+            if (error) reject(error); else resolve();
+        };
+        const observe = () => { if (existsSync(receipt)) finish(); };
+        const watcher = watch(manifest.evidenceDir, observe);
+        // Some filesystems coalesce the temporary-file and rename notifications.
+        const check = setInterval(observe, 100);
+        const timer = setTimeout(() => finish(new Error('Owned Manager shutdown receipt timed out')), 20_000);
+        watcher.on('error', finish);
     });
     const results = await Promise.allSettled([exited, control(manifest, 'shutdown', 'POST')]);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
@@ -131,7 +141,7 @@ test('retired saved runtime stays explicit in real Manager settings until user e
     let owned = false;
     let failure: unknown;
     async function capture(page: Page, name: string, detail?: unknown) {
-        await settleDrawer(page);
+        await settleSettings(page);
         const screenshot = join(manifest.evidenceDir, `${name}.png`);
         const capturedAt = new Date().toISOString();
         await page.screenshot({ path: screenshot, fullPage: false });
@@ -148,7 +158,7 @@ test('retired saved runtime stays explicit in real Manager settings until user e
                 const page = await context.newPage();
                 page.setDefaultTimeout(15_000);
                 page.on('pageerror', error => errors.push(error.message));
-                page.on('request', request => {
+                context.on('request', request => {
                     const url = new URL(request.url());
                     const apiRequest = url.pathname.startsWith('/i/') || url.pathname.startsWith('/api/');
                     const managerSelection = request.method() === 'PATCH' && url.pathname === '/api/dashboard/registry';
@@ -158,12 +168,14 @@ test('retired saved runtime stays explicit in real Manager settings until user e
                 });
                 await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
                 try {
+                    const requestStart = (await control(manifest, 'state')).workerRequests.length;
                     const healthResponse = await page.request.get(`${manifest.managerUrl}api/dashboard/health`);
                     const health = await healthResponse.json();
                     assert.equal(health.pid, manifest.pid); assert.equal(health.rangeFrom, manifest.workerPort); assert.equal(health.rangeTo, manifest.workerPort);
                     const response = await page.goto(manifest.managerUrl, { waitUntil: 'domcontentloaded' });
                     assert.equal(response?.headers()['x-jaw-manager-ui'], 'dist');
                     await page.locator('.dashboard-shell.manager-shell').waitFor({ state: 'visible' });
+                    await page.evaluate(() => localStorage.setItem('jaw.previewEnabled', 'false'));
                     const selection = await page.request.patch(`${manifest.managerUrl}api/dashboard/registry`, { data: { ui: {
                         selectedPort: manifest.workerPort, selectedTab: 'overview', sidebarMode: 'instances', instanceSettingsOpen: false,
                         sidebarCollapsed: false, activityDockCollapsed: true, locale: 'en',
@@ -175,13 +187,22 @@ test('retired saved runtime stays explicit in real Manager settings until user e
                         const body = await response.json();
                         return body.instances?.some((instance: { port: number; ok: boolean }) => instance.port === port && instance.ok);
                     }, manifest.workerPort);
+                    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+                    await settleDrawer(page);
+                    assert.equal(await page.getByRole('switch', { name: /Preview off/i }).getAttribute('aria-checked'), 'false');
                     await page.getByRole('button', { name: 'Instance settings', exact: true }).click();
-                    await page.locator('.workbench-settings-page').getByRole('navigation', { name: 'Settings categories' })
-                        .getByRole('button', { name: 'Agent', exact: true }).click();
+                    await page.getByRole('status').filter({ hasText: 'Preview is off. Turn it on from the header to mount the iframe.' }).waitFor({ state: 'visible' });
+                    assert.equal(await page.locator('.workbench-settings-page').count(), 0);
+                    assert.equal(await page.locator('.settings-full-page').count(), 0);
+                    assert.equal(await page.getByRole('button', { name: 'Dashboard settings', exact: true }).getAttribute('aria-pressed'), 'false');
+                    assert.equal(await page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Agent', exact: true }).count(), 0);
+                    assertReadOnly(await control(manifest, 'state'), browserWrites);
+                    await page.goto(`${manifest.managerUrl}i/${manifest.workerPort}/dist/settings/index.html`, { waitUntil: 'domcontentloaded' });
+                    await page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Agent', exact: true }).click();
                     const active = page.getByRole('combobox', { name: 'Active CLI: JWC (retired)', exact: true });
                     await active.waitFor({ state: 'visible' });
                     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-                    await settleDrawer(page);
+                    await settleSettings(page);
                     await active.scrollIntoViewIfNeeded();
                     assert.equal(await active.getAttribute('aria-invalid'), 'true');
                     assert.equal(await page.getByRole('combobox', { name: /^Active model:/ }).isDisabled(), true);
@@ -222,8 +243,8 @@ test('retired saved runtime stays explicit in real Manager settings until user e
                     assert.equal(saved.cli, 'jwc'); assert.equal(saved.perCli.jwc.model, 'qa-retired-model');
                     const state = await control(manifest, 'state');
                     assertReadOnly(state, browserWrites);
-                    for (const path of ['/api/settings', '/api/cli-registry', '/api/cli-status', '/api/memory-files', '/api/employees']) {
-                        assert.ok(state.workerRequests.some(request => request.method === 'GET' && request.path === path), `Real Manager must read ${path}`);
+                    for (const path of ['/dist/settings/index.html', '/api/settings', '/api/cli-registry', '/api/cli-status', '/api/memory-files', '/api/employees']) {
+                        assert.ok(state.workerRequests.slice(requestStart).some(request => request.method === 'GET' && request.path === path), `Real Manager must read ${path} at ${width}px`);
                     }
                     await capture(page, `retired-${width}-claude-local-draft`, { savedCli: saved.cli, workerRequests: state.workerRequests });
                     // Explicit local discard; never Save or a transport mutation.
@@ -254,7 +275,7 @@ test('retired saved runtime stays explicit in real Manager settings until user e
         if (owned) try { await shutdown(manifest); } catch (error) { cleanupErrors.push(String(error)); }
         await writeFile(join(manifest.evidenceDir, 'retired-runtime-settings.json'), JSON.stringify({
             result: failure || cleanupErrors.length ? 'FAIL' : 'PASS', failure: failure ? String(failure) : null,
-            evidence, browserWrites, errors, cleanupErrors, notRun: ['Save/persistence mutation', 'Real worker/provider authentication', 'Manual screenshot review'],
+            evidence, browserWrites, errors, cleanupErrors, notRun: ['Save/persistence mutation', 'Real worker/provider authentication', 'Auth token path (fixture has no auth route; empty-token fallback)', 'Manual screenshot review'],
         }, null, 2));
         if (!failure && cleanupErrors.length) failure = new Error(cleanupErrors.join('\n'));
     }
