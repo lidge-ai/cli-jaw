@@ -643,6 +643,7 @@ cli-jaw/
 │       ├── main/lib/fatal-quit.ts ← fatal-dialog quit guarantee and post-bootstrap startup gate
 │       ├── main/lib/tray-menu-model.ts ← pure menu bar instance list model: parse, order, labels, stale marking
 │       ├── main/lib/tray-instances.ts ← menu bar instance poller for /api/dashboard/instances
+│       ├── main/lib/browser/lease-notifier.ts ← Manager Browser target lease authority: process/window identity, mount grants, revoke delivery queue
 │       ├── main/lib/         ← top-level helpers plus subdirectories (jaw-spawn, tray-manager, tray-instances, tray-menu-model, qa-session, install-cli, dock-icon, terminal, navigation-policy, app-metrics, health-check, deep-link, permissions, path-security, quit-progress, etc.)
 │       └── preload/          ← preload scripts (index + metrics)
 ├── bin/
@@ -708,6 +709,9 @@ cli-jaw/
 │       ├── heartbeat-prompt-skills.test.ts ← 스킬 로드 실패·PUT 상속·실행 주입 회귀
 │       ├── heartbeat-prompt-skills-integration.test.ts ← 격리 PUT/GET/재로드 + 멘션 워치 실패·복구 틱
 │       ├── heartbeat-period-thread-run.test.ts ← heartbeat binding, grant, parent and final delivery guards
+│       ├── manager-embedded-browser-lease.test.ts ← embedded target lease ordering, owner-loss revoke, 410 settlement and instance reconcile
+│       ├── manager-embedded-target-sync-lease.test.ts ← renderer lease acquisition, keepalive unmount revoke and mount-bound commands
+│       ├── electron-browser-target-lease.test.ts ← Electron lease authority ordering, grant barrier and revoke delivery
 │       └── electron-fatal-quit.test.ts ← fatal dialog and post-bootstrap shutdown continuation guarantees
 │   └── fixtures/
 │       └── period-thread-child.ts ← process-isolated root claim and consumer sequence fixture

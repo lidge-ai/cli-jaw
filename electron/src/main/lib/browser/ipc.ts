@@ -2,6 +2,7 @@ import { ipcMain, webContents as webContentsRegistry, type BrowserWindow, type W
 import { isAllowedSender } from '../ipc-origin-guard.js';
 import { detachCdp, domSnapshot, isInspecting, pageLayoutMetrics, performAct, startInspect, stopInspect, type ActPayload, type PickedElement } from './cdp.js';
 import { computeFitZoom, FIT_ZOOM_EPSILON } from './fit-zoom.js';
+import type { TargetLeaseAuthority } from './lease-notifier.js';
 
 /**
  * Embedded browser webview IPC (030 v1).
@@ -18,6 +19,7 @@ export type BrowserIpcOptions = {
     normalizeEmbeddedBrowserUrl: (url: string) => string | null;
     isAllowedEmbeddedBrowserUrl: (url: string) => boolean;
     openExternalNavigation: (url: string) => boolean;
+    leaseAuthority?: TargetLeaseAuthority;
 };
 
 type RegisteredBrowserTab = {
@@ -43,6 +45,8 @@ const faviconListenerIds = new Set<number>();
 const fitToWidthListenerIds = new Set<number>();
 const fitToWidthTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const tabsById = new Map<string, RegisteredBrowserTab>();
+const guestLeaseWindow = new Map<number, number>();
+let leaseAuthority: TargetLeaseAuthority | undefined;
 const FIT_TO_WIDTH_DEBOUNCE_MS = 200;
 const MAX_ACT_COORD = 100_000;
 const MAX_ACT_TEXT = 2_000;
@@ -78,6 +82,11 @@ export function markOwnedEmbeddedBrowserWebContents(contents: WebContents): void
         detachCdp(contents);
         for (const [tabId, entry] of tabsById) {
             if (entry.webContentsId === contents.id) tabsById.delete(tabId);
+        }
+        const windowKey = guestLeaseWindow.get(contents.id);
+        if (windowKey !== undefined) {
+            leaseAuthority?.revokeGuest(windowKey, contents.id);
+            guestLeaseWindow.delete(contents.id);
         }
     });
 }
@@ -216,6 +225,7 @@ function tabState(entry: RegisteredBrowserTab, contents: WebContents) {
 }
 
 export function registerBrowserIpc(options: BrowserIpcOptions): void {
+    leaseAuthority = options.leaseAuthority;
     /**
      * Origin alone is not enough: other same-origin Electron surfaces (e.g.
      * the tray reminders popover) share the manager origin and preload. Only
@@ -226,6 +236,26 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         const win = options.getManagerWindow();
         return !!win && !win.isDestroyed() && event.sender.id === win.webContents.id;
     }
+
+    function isMainFrameSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
+        const frame = event.senderFrame;
+        return !!frame && frame.processId === event.sender.mainFrame.processId && frame.routingId === event.sender.mainFrame.routingId;
+    }
+
+    ipcMain.handle('browser:target-lease-document', event => {
+        if (!isManagerSender(event)) return null;
+        return isMainFrameSender(event) && leaseAuthority ? leaseAuthority.beginDocument(event.sender.id) : null;
+    });
+    ipcMain.handle('browser:target-lease-mount', (event, doc: unknown) => {
+        if (!isManagerSender(event)) return { ok: false, error: 'unauthorized' };
+        if (!isMainFrameSender(event) || !leaseAuthority) return { ok: false, error: 'lease unavailable' };
+        return leaseAuthority.acquireMount(event.sender.id, doc);
+    });
+    ipcMain.handle('browser:target-lease-release', (event, mount: unknown) => {
+        if (!isManagerSender(event)) return { ok: false, error: 'unauthorized' };
+        if (!isMainFrameSender(event) || !leaseAuthority) return { ok: false };
+        return { ok: leaseAuthority.releaseMount(event.sender.id, mount) };
+    });
 
     function emitState(entry: RegisteredBrowserTab, contents: WebContents): void {
         const win = options.getManagerWindow();
@@ -337,7 +367,8 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         const webContentsId = typeof input?.webContentsId === 'number' ? input.webContentsId : NaN;
         if (!tabId) return { ok: false, error: 'tabId required' };
         const contents = resolveOwnedGuest(webContentsId);
-        if (!contents) return { ok: false, error: 'not an owned embedded webview' };
+        if (!contents || contents.hostWebContents?.id !== event.sender.id) return { ok: false, error: 'not an owned embedded webview' };
+        guestLeaseWindow.set(webContentsId, event.sender.id);
         const prior = tabsById.get(tabId);
         const entry: RegisteredBrowserTab = {
             tabId,
@@ -425,11 +456,13 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
         return { ok: true, state: tabState(entry, contents) };
     });
 
-    ipcMain.handle('browser:perform-webview-action', async (event, action: { kind?: unknown; tabId?: unknown; mode?: unknown; x?: unknown; y?: unknown; shared?: unknown; enabled?: unknown; act?: unknown }) => {
+    ipcMain.handle('browser:perform-webview-action', async (event, action: { kind?: unknown; tabId?: unknown; mode?: unknown; x?: unknown; y?: unknown; shared?: unknown; enabled?: unknown; act?: unknown; webContentsId?: unknown; agentLease?: unknown }) => {
         if (!isManagerSender(event)) return { ok: false, error: 'unauthorized' };
         const resolved = resolveRegisteredGuest(typeof action?.tabId === 'string' ? action.tabId : '');
         if (!resolved) return { ok: false, error: 'unknown or stale browser tab' };
         const { entry, contents } = resolved;
+        if (typeof action.webContentsId === 'number' && action.webContentsId !== entry.webContentsId) return { ok: false, error: 'unknown or stale browser tab' };
+        if ((action.kind === 'captureScreenshot' || action.kind === 'getDomSnapshot' || action.kind === 'act') && action.agentLease !== undefined && !leaseAuthority?.isMountActive(event.sender.id, action.agentLease)) return { ok: false, error: 'stale agent lease' };
         switch (action?.kind) {
             case 'openExternal': {
                 const opened = options.openExternalNavigation(contents.getURL());
@@ -541,6 +574,6 @@ export function registerBrowserIpc(options: BrowserIpcOptions): void {
             if (!contents) continue;
             tabs.push(tabState(entry, contents));
         }
-        return { ok: true, tabs };
+        return { ok: true, tabs, guestEpoch: leaseAuthority?.guestEpoch ?? 0 };
     });
 }

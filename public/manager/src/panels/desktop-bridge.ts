@@ -235,20 +235,22 @@ export type BrowserWebviewCommand =
     | { kind: 'zoomReset'; tabId: string }
     | { kind: 'fitToWidth'; tabId: string };
 
+export type TargetLeaseMount = { authorityId: string; ownerId: string; generation: number; mountSeq: number };
+
 export type BrowserWebviewNativeAction =
     | { kind: 'openExternal'; tabId: string }
     | { kind: 'openDevTools'; tabId: string; mode?: 'right' | 'bottom' | 'detach' }
     | { kind: 'closeDevTools'; tabId: string }
-    | { kind: 'captureScreenshot'; tabId: string }
+    | { kind: 'captureScreenshot'; tabId: string; webContentsId?: number; agentLease?: TargetLeaseMount }
     | { kind: 'inspectElement'; tabId: string; x: number; y: number }
     | { kind: 'setSharedWithAgent'; tabId: string; shared: boolean }
     // v5 native inspect + snapshot
     | { kind: 'startInspect'; tabId: string }
     | { kind: 'stopInspect'; tabId: string }
-    | { kind: 'getDomSnapshot'; tabId: string }
+    | { kind: 'getDomSnapshot'; tabId: string; webContentsId?: number; agentLease?: TargetLeaseMount }
     // v4 interactive actions; setActionsEnabled remains for older renderers.
     | { kind: 'setActionsEnabled'; tabId: string; enabled: boolean }
-    | { kind: 'act'; tabId: string; act: BrowserActPayload };
+    | { kind: 'act'; tabId: string; act: BrowserActPayload; webContentsId?: number; agentLease?: TargetLeaseMount };
 
 export type BrowserWebviewScreenshot = {
     tabId: string;
@@ -268,7 +270,9 @@ export type BrowserBridgeApi = {
     unregisterWebview?: (input: { tabId: string; webContentsId?: number }) => Promise<{ ok: boolean; error?: string }>;
     controlWebview?: (command: BrowserWebviewCommand) => Promise<{ ok: boolean; state?: BrowserWebviewTabState; error?: string }>;
     performWebviewAction?: (action: BrowserWebviewNativeAction) => Promise<{ ok: boolean; state?: BrowserWebviewTabState; screenshot?: BrowserWebviewScreenshot; snapshot?: BrowserDomSnapshotNode[]; error?: string }>;
-    getWebviewTabs?: () => Promise<{ ok: boolean; tabs?: BrowserWebviewTabState[]; error?: string }>;
+    acquireTargetLease?: () => Promise<{ ok: boolean; authorityId?: string; ownerId?: string; generation?: number; mountSeq?: number; retryable?: boolean; error?: string }>;
+    releaseTargetLease?: (mount: TargetLeaseMount) => Promise<{ ok: boolean }>;
+    getWebviewTabs?: () => Promise<{ ok: boolean; tabs?: BrowserWebviewTabState[]; guestEpoch?: number; error?: string }>;
     onWebviewState?: (cb: (state: BrowserWebviewTabState) => void) => () => void;
     onElementPicked?: (cb: (payload: { tabId: string; element: BrowserPickedElement }) => void) => () => void;
 };

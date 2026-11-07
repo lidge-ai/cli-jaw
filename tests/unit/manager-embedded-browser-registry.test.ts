@@ -19,7 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import type { Express, RequestHandler } from 'express';
-import { registerEmbeddedBrowserRoutes } from '../../src/manager/routes/embedded-browser.js';
+import { registerEmbeddedBrowserRoutes, __resetEmbeddedBrowserStateForTests } from '../../src/manager/routes/embedded-browser.js';
 
 type Handler = (req: unknown, res: FakeResponse) => void | Promise<void>;
 type Middleware = (req: unknown, res: FakeResponse, next: () => void) => void | Promise<void>;
@@ -71,11 +71,21 @@ function makeRes(): { res: FakeResponse; get: () => { code: number; body: unknow
 const RENDERER_TOKEN = 'test-renderer-token';
 process.env['CLI_JAW_ELECTRON_RENDERER_TOKEN'] = RENDERER_TOKEN;
 
+const mount = { authorityId: 'registry-authority', ownerId: 'registry-owner', generation: 1, mountSeq: 1 };
+let snapshotSeq = 0;
+
 /** Fake request from the Electron Manager renderer (desktop identity token present). */
 function rendererReq(req: Record<string, unknown>): Record<string, unknown> {
+    const body = req['body'] as { targets?: unknown[] } | undefined;
+    const enriched = Array.isArray(body?.targets) ? {
+        ...body, lease: { ...mount, snapshotSeq: ++snapshotSeq }, guestEpoch: 0, selected: true,
+        targets: body.targets.map((target, index) => target && typeof target === 'object' ? { ...target, webContentsId: index + 1 } : target),
+    } : body;
     return {
         headers: {},
         ...req,
+        ...(body ? { body: enriched } : {}),
+        ...(req['query'] ? { query: { ...mount, ...(req['query'] as object) } } : {}),
         get: (name: string) => (name.toLowerCase() === 'x-cli-jaw-electron' ? RENDERER_TOKEN : undefined),
     };
 }
@@ -105,6 +115,8 @@ const noopAuth: RequestHandler = (_req, _res, next) => next();
 const options = { scanFrom: 7100, scanCount: 20, managerPort: 24576 };
 
 function setup() {
+    __resetEmbeddedBrowserStateForTests();
+    snapshotSeq = 0;
     const { handlers, app } = makeApp();
     registerEmbeddedBrowserRoutes(app, noopAuth, options);
     return handlers;
@@ -341,6 +353,7 @@ test('v4/v5 surface: visibility + relay + screenshot/snapshot/act queue, no eval
         'POST /api/manager/embedded-browser/:targetId/screenshot',
         'POST /api/manager/embedded-browser/:targetId/snapshot',
         'POST /api/manager/embedded-browser/commands/:id/result',
+        'POST /api/manager/embedded-browser/lease/revoke',
         'POST /api/manager/embedded-browser/targets',
     ], 'act/snapshot are the only new surfaces; no evaluate/DOM-write endpoints');
 });
