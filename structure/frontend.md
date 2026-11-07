@@ -164,6 +164,8 @@ public/
 | `js/render/file-links.ts` | — | local absolute path linkification, `.md` → `postPreviewOpenDoc()` 분기, external web-link `_blank` targeting |
 | `js/render/post-render.ts` | — | Mermaid render, rehighlight, zoom binding, elicitation/search-results/link-preview hydration, file-path linkify를 100ms debounce로 coalesce |
 | `js/render/code-copy.ts` | — | code block copy button |
+| `js/render/table-actions.ts` | — | Ordinary GFM table actions (#777). `renderer.table` adds a toolbar (Copy Markdown / Download CSV / Preview) only on non-streaming renders, carrying the table model as escaped JSON in `data-table-model` plus a `data-table-key` fingerprint. One document click delegation converts through `src/shared/markdown-table.ts`. Preview is a body-level modal (focus trap, Escape/close/backdrop, focus return). `preserveTableActionFocus` keeps a focused table button across `replaceAgentAnswer`. Raw HTML tables and code fences get no toolbar; dataframe fences are unchanged. |
+| `src/shared/markdown-table.ts` | — | Pure table model → GFM Markdown (pipe/newline escaping, alignment) and CSV (CRLF, RFC 4180 quoting, UTF-8 BOM added by callers). Formula policy: cells starting with `=` `+` `-` `@` (after leading whitespace) or TAB/CR get a leading `'`, except strict numeric literals such as `-12.5`. |
 | `js/render/html.ts` | — | HTML rendering helpers |
 | `js/render/math.ts` | — | KaTeX math rendering |
 | `js/render/notes-vault-path.ts` | — | notes vault path resolution |
@@ -654,6 +656,17 @@ two so the real item replaces the local one. Tool calls collapse to one action
 line (`Read src/app.ts`, `Bash npm test`) and open only on failure, `Done` is
 not printed, and user messages use a right-aligned bubble while the assistant
 keeps the full column as plain prose.
+
+Assistant Markdown tables in the transcript get the same Copy Markdown /
+Download CSV / Preview actions as Classic (#777). `MarkdownRenderer`'s opt-in
+`tableActions` prop is passed only by `CodeTranscript`, as true once the item is
+no longer running or pending. Notes, DocPanel and rich-markdown widgets omit it
+and keep their legacy markup. `markdown-table-model.ts` builds the shared table
+model from mdast (reference links rewritten inline), and `MarkdownTableActions.tsx`
+renders the toolbar in a stable frame, so finishing a stream adds buttons
+without remounting the table. Preview mounts in its own root on `document.body`,
+so a virtualized row unmounting cannot strand it. Labels follow `<html lang>`
+through the per-component locale record.
 
 Turn boundaries are bookkeeping and never become transcript rows: `turn_started`
 and `turn_completed` stay in the store and on the wire, where history replay and

@@ -56,7 +56,7 @@ function ItemMarkdown({ item, identity, onOpenLocalFile }: { item: CodeItem; ide
     const text = useThrottledMarkdown(item.text ?? '', item.status !== 'running' && item.status !== 'pending', identity);
     if (!text.trim()) return <span className="code-plain-text">{text}</span>;
     return <Suspense fallback={<span className="code-plain-text">{text}</span>}>
-        <MarkdownRenderer markdown={text} tableMode="linear" onLocalFileOpen={onOpenLocalFile} />
+        <MarkdownRenderer markdown={text} tableMode="linear" tableActions={item.status !== 'running' && item.status !== 'pending'} onLocalFileOpen={onOpenLocalFile} />
     </Suspense>;
 }
 

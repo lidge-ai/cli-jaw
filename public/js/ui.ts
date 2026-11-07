@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { preserveTableActionFocus } from './render/table-actions.js';
 import { renderMarkdown, escapeHtml, stripOrchestration, linkifyFilePaths } from './render.js';
 import { renderMermaidBlocks, releaseMermaidNodes } from './render.js';
 import { generateId } from './uuid.js';
@@ -436,7 +437,7 @@ export function replaceAgentAnswer(message: HTMLElement, text: string): void {
     const raw = stripOrchestration(text);
     if (content.getAttribute('data-raw') === raw && (raw || content.childNodes.length === 0)) return;
     releaseMermaidNodes(content);
-    content.innerHTML = raw ? renderMarkdown(text) : '';
+    preserveTableActionFocus(content, () => { content.innerHTML = raw ? renderMarkdown(text) : ''; });
     content.setAttribute('data-raw', raw);
     content.classList.remove('lazy-pending');
     activateWidgets(content);

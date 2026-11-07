@@ -1,10 +1,11 @@
 // ── Markdown rendering pipeline ──
-import { marked, Renderer } from 'marked';
+import { marked, Renderer, type Tokens } from 'marked';
 import { t } from '../features/i18n.js';
 import { fixCjkPunctuationBoundary } from '../cjk-fix.js';
 import { shieldCodeFenceSvg, unshieldCodeFenceSvg, extractTopLevelSvg } from '../diagram/types.js';
 import { escapeHtml, stripOrchestration } from './html.js';
-import { shieldMath, unshieldMath } from './math.js';
+import { shieldMath, unshieldMath, type MathBlock } from './math.js';
+import { classicTableModel, renderTableActionsBlock } from './table-actions.js';
 import { sanitizeHtml } from './sanitize.js';
 import { unshieldSvgBlocks } from './svg-actions.js';
 import { highlightCode, ensureHighlightLanguages } from './highlight.js';
@@ -22,6 +23,8 @@ import { hasIncompleteStructuredFence } from '../../../src/shared/structured-fen
 // ── marked.js configuration (ES module — always available) ──
 let markedReady = false;
 let renderContextIsStreaming = false;
+let renderContextMessageStreaming = false;
+let renderContextMathBlocks: MathBlock[] = [];
 
 const STRUCTURED_FENCE_LANGS = [
     'elicitation',
@@ -65,6 +68,11 @@ function ensureMarked(): boolean {
     if (markedReady) return true;
 
     const renderer = new Renderer();
+
+    renderer.table = function (token: Tokens.Table) {
+        const html = Renderer.prototype.table.call(this, token);
+        return renderContextMessageStreaming ? html : renderTableActionsBlock(html, classicTableModel(token, renderContextMathBlocks));
+    };
 
     // Code blocks: highlight.js + mermaid + diagram-html + elicitation detection
     renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
@@ -174,10 +182,14 @@ export function renderMarkdown(text: string, isStreaming = false): string {
     const fixed = fixCjkPunctuationBoundary(shielded);
     let html = '';
     renderContextIsStreaming = isStreaming || structuredFenceIncomplete;
+    renderContextMessageStreaming = isStreaming;
+    renderContextMathBlocks = mathBlocks;
     try {
         html = marked.parse(fixed) as string;
     } finally {
         renderContextIsStreaming = false;
+        renderContextMessageStreaming = false;
+        renderContextMathBlocks = [];
     }
     html = html.replace(/<table/g, '<div class="table-wrapper"><table').replace(/<\/table>/g, '</table></div>');
     html = unshieldMath(html, mathBlocks, isStreaming);
