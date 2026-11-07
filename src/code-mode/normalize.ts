@@ -4,6 +4,7 @@ import type { RuntimeEventContext } from '../agent/runtime/events.js';
 import type { RuntimeToolPatch, RuntimeTranscriptObserver } from '../agent/runtime/projection.js';
 import type { RuntimeEvent, RuntimeEventBody, RuntimePhase, RuntimeTurnOutcome } from '../shared/runtime-contract.js';
 import { encodeRuntimeBody, redactRuntimeContent } from '../trace/runtime-body-codec.js';
+import { SECRET_KEY_RE } from '../trace/redact.js';
 import type { CodeTurnContext } from './provider.js';
 import type { CodeItem, CodeFileChange, CodeFileChangeEntry } from './wire.js';
 import { CODE_MAX_EVENT_BYTES } from './store.js';
@@ -20,7 +21,7 @@ type Source = { raw: string; safe: string; sourceChars: number; structured: bool
     explicitStructured: boolean; retired: boolean; reason: string; dirty: boolean };
 type Entry = { item: CodeItem; context: RuntimeEventContext; fields: Map<Field, Source>; committed: boolean;
     persisted: CodeItem | null; pending: boolean; metadataOnly: boolean;
-    fileChange: FileChangeSource | null; fileChangeLimited: boolean };
+    fileChange: FileChangeSource | null; fileChangeLimited: boolean; fileChangeSourceChars: number };
 type FileChangeSource = { value: CodeFileChange; chars: number; sourceChars: number; truncated: boolean };
 
 export interface CodeTurnNormalizerOptions {
@@ -116,31 +117,60 @@ const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(v
 // Trimming is deterministic and keeps exact patches only when they fit whole.
 function trimFileChange(value: CodeFileChange, maxBytes: number, maxChars: number): CodeFileChange | null {
     const result: CodeFileChange = structuredClone(value);
-    const fits = () => {
-        const json = JSON.stringify(result);
-        return json.length <= maxChars && Buffer.byteLength(json, 'utf8') <= maxBytes;
+    const size = (item: unknown) => {
+        const json = JSON.stringify(item);
+        return { chars: json.length, bytes: Buffer.byteLength(json, 'utf8') };
     };
-    if (fits()) return result;
+    const sizes = result.changes.map(size);
+    const envelope = size({ ...result, changes: [] });
+    let chars = envelope.chars + sizes.reduce((sum, item) => sum + item.chars, 0) + Math.max(0, sizes.length - 1);
+    let bytes = envelope.bytes + sizes.reduce((sum, item) => sum + item.bytes, 0) + Math.max(0, sizes.length - 1);
+    const fits = () => chars <= maxChars && bytes <= maxBytes;
+    const verified = () => { const final = size(result); return final.chars <= maxChars && final.bytes <= maxBytes; };
+    if (fits()) return verified() ? result : null;
     const diffs = result.changes.map((change, index) => ({ change, index }))
         .filter(({ change }) => change.diff !== undefined)
-        .sort((a, b) => Buffer.byteLength(JSON.stringify(b.change.diff), 'utf8')
-            - Buffer.byteLength(JSON.stringify(a.change.diff), 'utf8') || a.index - b.index);
-    for (const { change } of diffs) {
+        .map(item => ({ ...item, bytes: size(item.change.diff).bytes }))
+        .sort((a, b) => b.bytes - a.bytes || a.index - b.index);
+    for (const { change, index } of diffs) {
         delete change.diff; change.patch = 'truncated';
-        if (fits()) return result;
+        const next = size(change);
+        chars += next.chars - sizes[index]!.chars; bytes += next.bytes - sizes[index]!.bytes;
+        sizes[index] = next;
+        if (fits()) return verified() ? result : null;
     }
     const count = result.changes.length;
     let low = 0, high = count;
     const all = result.changes;
+    const prefixChars = [0], prefixBytes = [0];
+    for (const item of sizes) {
+        prefixChars.push(prefixChars.at(-1)! + item.chars);
+        prefixBytes.push(prefixBytes.at(-1)! + item.bytes);
+    }
     while (low < high) {
         const middle = Math.ceil((low + high) / 2);
-        result.changes = all.slice(0, middle);
-        result.omittedChanges = (value.omittedChanges ?? 0) + count - middle;
+        const base = size({ ...result, changes: [], omittedChanges: (value.omittedChanges ?? 0) + count - middle });
+        chars = base.chars + prefixChars[middle]! + Math.max(0, middle - 1);
+        bytes = base.bytes + prefixBytes[middle]! + Math.max(0, middle - 1);
         if (fits()) low = middle; else high = middle - 1;
     }
     result.changes = all.slice(0, low);
     if (count - low) result.omittedChanges = (value.omittedChanges ?? 0) + count - low;
-    return fits() ? result : null;
+    return verified() ? result : null;
+}
+
+function diffHasCredential(diff: string): boolean {
+    if (redactCodeText(diff) !== diff) return true;
+    for (const raw of diff.split('\n')) {
+        if (/^(?:@@|---|\+\+\+)/.test(raw)) continue;
+        const line = /^[+\- ]/.test(raw) ? raw.slice(1) : raw;
+        if (redactCodeText(line) !== line) return true;
+        if (!SECRET_KEY_RE.test(line)) continue;
+        for (const match of line.matchAll(/[A-Za-z_$][\w$-]*/g)) {
+            if (SECRET_KEY_RE.test(match[0]) && /^["']?\s*(?::=|=>|:|=)\s*\S/.test(line.slice(match.index! + match[0].length))) return true;
+        }
+    }
+    return false;
 }
 
 export function normalizeFileChanges(raw: unknown, budget: { maxBytes: number; maxChars: number }):
@@ -166,7 +196,7 @@ export function normalizeFileChanges(raw: unknown, budget: { maxBytes: number; m
         if (typeof record.diff === 'string') sourceChars += record.diff.length;
         const safeMove = move === undefined ? undefined : redactCodeText(move);
         const withheld = path !== record.path || safeMove !== move
-            || (typeof record.diff === 'string' && redactCodeText(record.diff) !== record.diff);
+            || (typeof record.diff === 'string' && diffHasCredential(record.diff));
         const change: CodeFileChangeEntry = { path, kind: move ? 'rename' : nativeKind.type,
             ...(safeMove === undefined ? {} : { movePath: safeMove }),
             patch: withheld ? 'withheld' : typeof record.diff === 'string' ? 'captured' : 'missing',
@@ -310,7 +340,7 @@ export class CodeTurnNormalizer {
         }
         const at = this.now();
         const entry: Entry = { context: { ...context }, fields: new Map(), committed: false,
-            persisted: null, pending: false, metadataOnly: false, fileChange: null, fileChangeLimited: false, item: {
+            persisted: null, pending: false, metadataOnly: false, fileChange: null, fileChangeLimited: false, fileChangeSourceChars: 0, item: {
             itemId, kind, turnId: this.context.turnId, status: 'running', createdAt: at, updatedAt: at,
             ...(context.parentItemId === undefined ? {} : { parentItemId: context.parentItemId }),
         } };
@@ -386,7 +416,8 @@ export class CodeTurnNormalizer {
         if (reasons.length) next.truncation = {
             storedChars: sources.reduce((sum, source) => sum + source.safe.length, 0)
                 + (next.fileChange?.changes.reduce((sum, c) => sum + c.path.length + (c.movePath?.length ?? 0) + (c.diff?.length ?? 0), 0) ?? 0),
-            sourceChars: sources.reduce((sum, source) => Math.min(Number.MAX_SAFE_INTEGER, sum + source.sourceChars), 0) + (fc?.sourceChars ?? 0),
+            sourceChars: Math.min(Number.MAX_SAFE_INTEGER, sources.reduce((sum, source) => Math.min(Number.MAX_SAFE_INTEGER, sum + source.sourceChars), 0)
+                + (fc?.sourceChars ?? entry.fileChangeSourceChars)),
             reason: reasons.join(','),
         };
         else delete next.truncation;
@@ -527,8 +558,8 @@ export class CodeTurnNormalizer {
             const budget = { maxBytes: CODE_FILE_CHANGE_MAX_BYTES, maxChars: Math.min(this.maxFieldChars, this.maxTotalChars - this.chars) };
             const value = normalizeFileChanges(patch.fileChanges, budget);
             if (value.chars <= budget.maxChars && jsonBytes(value.value) <= budget.maxBytes) {
-                entry.fileChange = value; this.chars += value.chars; entry.fileChangeLimited = false;
-            } else { entry.fileChange = null; entry.fileChangeLimited = true; this.capacity(); }
+                entry.fileChange = value; this.chars += value.chars; entry.fileChangeLimited = false; entry.fileChangeSourceChars = 0;
+            } else { entry.fileChange = null; entry.fileChangeLimited = true; entry.fileChangeSourceChars = value.sourceChars; this.capacity(); }
         }
         if (!terminal || replaceTerminal) {
             if (patch.status !== undefined) entry.item.status = patch.status === 'stopped' ? 'cancelled' : patch.status;
