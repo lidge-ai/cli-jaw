@@ -7,7 +7,9 @@ import { SlackActionStore } from '../../src/slack/action-store.ts';
 import { SlackActionRateLimiter } from '../../src/slack/action-rate.ts';
 import { defineAction, type ActionContext, type ActionResult } from '../../src/slack/action-types.ts';
 import { baseAction, requiredText } from '../../src/slack/task-input.ts';
-import { reserveSlackToolGrant, activateSlackToolGrant, resolveSlackToolGrant, revokeSlackToolScope, slackCredentialKey } from '../../src/slack/tool-context.ts';
+import { reserveSlackToolGrant, activateSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, slackCredentialKey } from '../../src/slack/tool-context.ts';
+import { interactionActions, consumeSlackInteractionCallback } from '../../src/slack/actions-interactions.ts';
+import { SlackInteractionStore, configureSlackInteractionStore, type SlackInteraction } from '../../src/slack/interaction-store.ts';
 import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
 import { RtsOutputStore, configureRtsOutputStore } from '../../src/slack/rts-output-store.ts';
 import type { SlackToolPrincipal } from '../../src/slack/tool-access.ts';
@@ -25,7 +27,7 @@ function turn(threadId?: string, requestId = 'request', actorId = 'U1'): SlackTo
     const secret = activateSlackToolGrant(requestId, 'scope', 'chat'); assert.ok(secret);
     const grant = resolveSlackToolGrant(secret); assert.ok(grant); return { kind: 'turn', grant };
 }
-function fixture(t: TestContext, scopes: string | null = 'chat:write,channels:history') {
+function fixture(t: TestContext, scopes: string | null = 'chat:write,channels:history', identity = { team: 'T1', user: 'UBOT' }) {
     const db = new Database(':memory:'); t.after(() => db.close());
     const store = new SlackActionStore(db); const calls: string[] = [];
     let currentToken = TOKEN; let actorPresent = true;
@@ -35,9 +37,9 @@ function fixture(t: TestContext, scopes: string | null = 'chat:write,channels:hi
         const headers = new Headers(init?.headers);
         const body = headers.get('content-type')?.includes('application/json')
             ? JSON.parse(String(init?.body)) as Record<string, unknown> : Object.fromEntries(new URLSearchParams(String(init?.body)));
-        if (method === 'auth.test') return json({ ok: true, team_id: 'T1', user_id: 'UBOT' }, scopes === null ? {} : { 'x-oauth-scopes': scopes });
-        if (method === 'conversations.info') return json({ ok: true, channel: { id: body.channel, is_shared: false, is_ext_shared: false, context_team_id: 'T1' } });
-        if (method === 'conversations.members') return json({ ok: true, members: actorPresent ? ['U1', 'UBOT'] : ['UBOT'], response_metadata: { next_cursor: '' } });
+        if (method === 'auth.test') return json({ ok: true, team_id: identity.team, user_id: identity.user }, scopes === null ? {} : { 'x-oauth-scopes': scopes });
+        if (method === 'conversations.info') return json({ ok: true, channel: { id: body.channel, is_shared: false, is_ext_shared: false, context_team_id: identity.team } });
+        if (method === 'conversations.members') return json({ ok: true, members: actorPresent ? ['U1', identity.user] : [identity.user], response_metadata: { next_cursor: '' } });
         return reply(method, body);
     };
     const waits: number[] = []; let now = 0;
@@ -46,6 +48,117 @@ function fixture(t: TestContext, scopes: string | null = 'chat:write,channels:hi
     return { db, store, calls, waits, runtime: new SlackActionRuntime(options), options,
         reply(fn: typeof reply) { reply = fn; }, rotate() { currentToken = 'fixture-replacement'; }, removeActor() { actorPresent = false; } };
 }
+
+const choice = interactionActions.find(definition => definition.operation === 'interaction.choice')!;
+const choiceInput = { operation: 'interaction.choice', channel: 'C1', invocationId: 'choice', text: 'Choose', choices: [{ label: 'Approve', value: 'approve' }] };
+function choiceFixture(t: TestContext, identity = { team: 'T1', user: 'UBOT' }) {
+    const f = fixture(t, undefined, identity);
+    const interactions = new SlackInteractionStore(f.db);
+    configureSlackInteractionStore(interactions, { getToken: () => f.options.getToken() });
+    configureRtsOutputStore(new RtsOutputStore(f.db));
+    t.after(() => { configureSlackInteractionStore(null); configureRtsOutputStore(undefined); });
+    let posted: Record<string, unknown> | undefined;
+    f.reply(async (method, body) => {
+        if (method === 'chat.postMessage') { posted = structuredClone(body); return json({ ok: true, channel: 'C1', ts: '2.000001' }); }
+        if (method === 'conversations.history') return json({ ok: true, messages: [{ ts: '2.000001', user: identity.user, text: posted?.text, blocks: posted?.blocks }] });
+        throw new Error(`unexpected method ${method}`);
+    });
+    function row() {
+        const record = f.db.prepare('SELECT id FROM slack_choice_interactions').get() as { id: string } | undefined;
+        return record ? interactions.get(record.id) : undefined;
+    }
+    function count(table: 'slack_choice_interactions' | 'slack_tool_invocations') {
+        return (f.db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n;
+    }
+    return { ...f, interactions, row, count, runtime: new SlackActionRuntime({ ...f.options, inboundReady: () => true }) };
+}
+function capturedOperator(actor = 'U1') {
+    const captured = turn(undefined, 'request', actor);
+    if (captured.kind !== 'turn') throw new Error('expected a captured turn grant');
+    return { kind: 'operator', source: 'full-local', context: captured.grant } as const;
+}
+function callback(row: SlackInteraction, user = 'U1') {
+    const option = row.options[0]!;
+    return { type: 'block_actions', team: { id: row.workspace }, user: { id: user },
+        container: { type: 'message', channel_id: row.channel, message_ts: row.messageTs ?? '2.000001' },
+        actions: [{ type: 'button', block_id: row.blockId, action_id: option.actionId, value: option.wireValue }] };
+}
+
+test('T-a real choice binds the captured actor and accepts only their callback', async t => {
+    const f = choiceFixture(t); const principal = capturedOperator();
+    const result = await f.runtime.execute(choice, choiceInput, principal);
+    assert.equal(result.verification, 'verified');
+    const row = f.row(); assert.ok(row); assert.equal(row.actor, 'U1');
+    assert.deepEqual(await consumeSlackInteractionCallback(callback(row, 'UOTHER'), TOKEN, f.options.fetchImpl), { accepted: false });
+    assert.equal(f.row()?.selectedValue, null);
+    assert.deepEqual(await consumeSlackInteractionCallback(callback(row), TOKEN, f.options.fetchImpl), { accepted: true });
+    assert.equal(f.row()?.selectedValue, 'approve');
+});
+
+for (const [name, principal] of [
+    ['plain operator', { kind: 'operator' }],
+    ['full-local without context', { kind: 'operator', source: 'full-local' }],
+] as const) test(`T-b real choice rejects ${name}`, async t => {
+    const f = choiceFixture(t);
+    const result = await f.runtime.execute(choice, choiceInput, principal);
+    assert.equal(result.verification, 'failed'); assert.equal(result.error, 'slack_interaction_turn_required');
+    assert.equal(f.count('slack_choice_interactions'), 0);
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 0);
+});
+
+for (const mode of ['revoked', 'expired', 'credential rotated', 'team mismatch'] as const) test(`T-c real choice rejects ${mode} grant before reservation`, async t => {
+    if (mode === 'expired') t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+    const f = choiceFixture(t, { team: mode === 'team mismatch' ? 'T2' : 'T1', user: 'UBOT' });
+    const principal = capturedOperator();
+    if (mode === 'revoked') revokeSlackToolGrant(principal.context.requestId);
+    if (mode === 'expired') t.mock.timers.setTime(principal.context.expiresAt);
+    if (mode === 'credential rotated') f.rotate();
+    await assert.rejects(f.runtime.execute(choice, choiceInput, principal), { code: 'slack_turn_grant_expired' });
+    assert.equal(f.count('slack_tool_invocations'), 0); assert.equal(f.count('slack_choice_interactions'), 0);
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 0);
+});
+
+test('T-d captured grant does not change the operator actor on other operations', async t => {
+    const f = choiceFixture(t); const principal = capturedOperator();
+    const probe = action(async ctx => ctx.result('verified', { actor: ctx.actor, operator: ctx.operator }), { methods: [], scopes: [] });
+    const result = await f.runtime.execute(probe, input, principal);
+    assert.equal(result.verification, 'verified'); assert.deepEqual(result.data, { actor: 'operator', operator: true });
+});
+
+test('T-e grant revoked during pacing fails before dispatch and leaves an unbound choice', async t => {
+    const f = choiceFixture(t); const principal = capturedOperator();
+    const limiter = new SlackActionRateLimiter(() => 0, async () => { revokeSlackToolGrant(principal.context.requestId); });
+    await limiter.admit('T1', 'chat.postMessage');
+    const runtime = new SlackActionRuntime({ ...f.options, rateLimiter: limiter, inboundReady: () => true });
+    const result = await runtime.execute(choice, choiceInput, principal);
+    assert.equal(result.verification, 'failed'); assert.equal(result.error, 'slack_turn_grant_expired');
+    assert.equal(f.store.invocation('T1', 'U1', 'choice')?.status, 'failed');
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 0);
+    const row = f.row(); assert.ok(row); assert.equal(row.messageTs, null);
+    assert.deepEqual(await consumeSlackInteractionCallback(callback(row), TOKEN, f.options.fetchImpl), { accepted: false });
+});
+
+test('T-f grant revoked during dispatched post remains unknown and replay never resends', async t => {
+    const f = choiceFixture(t); const principal = capturedOperator();
+    f.reply(async method => {
+        assert.equal(method, 'chat.postMessage'); revokeSlackToolGrant(principal.context.requestId);
+        return json({ ok: true, channel: 'C1', ts: '2.000001' });
+    });
+    const result = await f.runtime.execute(choice, choiceInput, principal);
+    assert.equal(result.verification, 'unknown');
+    assert.equal(f.store.invocation('T1', 'U1', 'choice')?.status, 'unknown');
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 1);
+    const renewed = capturedOperator();
+    await assert.rejects(f.runtime.execute(choice, choiceInput, renewed), { code: 'slack_invocation_conflict_or_unknown' });
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 1);
+});
+
+test('T-g bot-user captured actor cannot create a choice', async t => {
+    const f = choiceFixture(t); const principal = capturedOperator('UBOT');
+    await assert.rejects(f.runtime.execute(choice, choiceInput, principal), { code: 'slack_interaction_turn_required' });
+    assert.equal(f.count('slack_tool_invocations'), 0); assert.equal(f.count('slack_choice_interactions'), 0);
+    assert.equal(f.calls.filter(method => method === 'chat.postMessage').length, 0);
+});
 function action(execute: (ctx: ActionContext, text: string) => Promise<ActionResult>, options: { mutates?: boolean; methods?: string[]; scopes?: string[]; requiresInbound?: boolean } = {}) {
     const mutates = options.mutates ?? true;
     return defineAction({ operation: 'fixture.write', mutates, scopes: options.scopes ?? ['chat:write'], methods: options.methods ?? ['chat.postMessage'],
