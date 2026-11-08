@@ -287,12 +287,13 @@ export function admitSlackRun(params: {
             } } : {}),
         target: params.target, chatId: params.chatId,
         ...(params.preSendContext ? { preSendContext: params.preSendContext } : {}),
-        // A tool turn keeps the default steer policy: its grant is reserved at
+        // An ordinary tool turn keeps the default steer policy: its grant is reserved at
         // admission (gateway onAdmitted) under the same requestId the kill-steer
         // follow-up continues with, so the follow-up spawn re-activates it.
-        // Only synthetic thread addresses still force followup. (#660 review)
-        // A configured automation is its own task, not a steer into someone else's run.
-        ...(params.workflow || params.target.threadIsSynthetic === true ? { midRunPolicy: 'followup' as const } : {}),
+        // Synthetic thread addresses, configured automations and block-action
+        // clicks are their own tasks and never steer into someone else's run.
+        ...(params.workflow || params.target.threadIsSynthetic === true || params.preSendContext?.jobKind === 'slack_block_action'
+            ? { midRunPolicy: 'followup' as const } : {}),
         ...(remoteKey ? { remoteKey } : {}), chatSessionId, scope,
     });
     const session = result.sessionContext || { scope, chatSessionId, ...(remoteKey ? { remoteKey } : {}) };

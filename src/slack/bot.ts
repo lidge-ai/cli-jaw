@@ -71,7 +71,7 @@ import { getQueueNoticeStore } from '../messaging/queue-notice-store.js';
 import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
 import { slackInboundEnvelope } from '../messaging/inbound-envelope.js';
-import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, slackBlockActionEvent, type SlackMessageEvent } from './events.js';
+import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, slackBlockActionEvent, SLACK_AGENT_ACTION_PREFIX, type SlackMessageEvent } from './events.js';
 import { captureMentionWatchInbox } from './mention-watch-inbox.js';
 import {
     markThreadParticipated, threadParticipationKind,
@@ -1375,7 +1375,7 @@ async function runSlackMessageEvent(
     const toolSource: SlackToolSource | undefined = workspace && workspace.teamId === opts.socketTeamId && event.user && sourceToken
         ? { teamId: workspace.teamId, actorId: event.user, destination: target, credentialKey: slackCredentialKey(sourceToken),
             ...(typeof event.action_token === 'string' ? { actionToken: event.action_token } : {}) } : undefined;
-    if (event.type === 'block_actions' && !toolSource) {
+    if (event.type === 'block_actions' && (!toolSource || toolSource.teamId !== String(settings['slack']?.teamId || ''))) {
         log.info('[slack:click] refused (grant_unavailable)');
         return;
     }
@@ -1564,7 +1564,13 @@ async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflight
     const self = { userId: selfUserId, botId: selfBotId, appId: selfAppId };
     const teamId = String(settings['slack']?.teamId || '');
     let event = slackBlockActionEvent(envelope.payload, teamId, self);
-    if (!event?.channel || !event.ts) return 'committed';
+    if (!event?.channel || !event.ts) {
+        const actions = envelope.payload?.['actions'];
+        const action = Array.isArray(actions) && actions.length === 1 ? actions[0] : null;
+        if (action && typeof action === 'object' && typeof action['action_id'] === 'string'
+            && action['action_id'].startsWith(SLACK_AGENT_ACTION_PREFIX)) log.info('[slack:click] refused (not_admissible)');
+        return 'committed';
+    }
     const gate = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
     if (!gate.process) return refuseSlackClick(gate.reason);
     if (!token || !event.user) return refuseSlackClick('clicker_unverified');
@@ -1575,6 +1581,7 @@ async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflight
     ]);
     if (generation !== lifecycleGeneration || token !== getSlackSendClient().token || self.userId !== selfUserId
         || self.botId !== selfBotId || self.appId !== selfAppId) return refuseSlackClick('identity_changed');
+    if (String(settings['slack']?.teamId || '') !== teamId) return refuseSlackClick('workspace_changed');
     if (!workspace || workspace.teamId !== teamId || workspace.userId !== self.userId) return refuseSlackClick('workspace_unverified');
     if (!clicker.ok) return refuseSlackClick('clicker_unverified');
     if (clicker.isBot || event.bot_id || event.bot_profile) {

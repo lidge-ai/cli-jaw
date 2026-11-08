@@ -168,7 +168,7 @@ export function slackBlockActionEvent(payload: unknown, teamId: string, self: Sl
         ...(botId ? { bot_id: botId } : {}),
         ...(botMarked ? { bot_profile: { user_id: user, ...(botId ? { id: botId } : {}) } } : {}),
         text: ['[Slack block action]', field('action_id', actionId), field('block_id', blockId),
-            field('value', blockActionValue(action)), field('message_ts', messageTs)].join('\n'),
+            field('value', blockActionValue(action)), field('message_ts', messageTs), field('action_ts', actionTs)].join('\n'),
     };
 }
 
