@@ -99,9 +99,10 @@ function expandMarkdown(block: SlackBlock): SlackBlock[] {
     return result;
 }
 
-/** One table per message, with blocks between tables carried to the later table;
- * leading blocks stay with the earlier table only when the markdown limit requires it.
- * Blocks after the last table stay with it.
+/** One table per message. Blocks between two tables move to the later table and
+ * blocks after the last table stay with it, except where the 50-block or
+ * 12,000-markdown-character limit splits a message; when carrying would pass the
+ * markdown limit, the blocks nearest the earlier table stay behind with it.
  * Explicit rich payloads render blocks, so fallback text must not be separately
  * chunked into visible duplicate messages. Invalid input fails before posting. */
 export function buildSlackBlockPayloads(text: string, input: unknown): SlackTextPayload[] {
