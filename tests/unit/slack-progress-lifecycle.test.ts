@@ -52,6 +52,7 @@ mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) =
     const call: Call = { method, body, signal: init?.signal }; calls.push(call);
     const special = await override?.(call); if (special) return special;
     if (method === 'auth.test') return response({ ok: true, team_id: 'T_TEST', user_id: 'U_BOT' });
+    if (method === 'users.info') return response({ ok: true, user: { id: 'UTEST', is_bot: false } });
     if (method === 'reactions.add' || method === 'reactions.remove') return response({ ok: true });
     if (method === 'chat.startStream' || method === 'chat.postMessage') {
         const ts = `200.${++messageSeq}`;
@@ -137,8 +138,21 @@ function deferred<T>(fallback: T) {
 }
 function target(): RemoteTarget { return { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: `D_CASE_${seq + 1}`, threadId: '100.1', guildId: 'T_TEST' }; }
 async function run(context: TestContext, destination = target(), signal = new AbortController().signal, fields: Record<string, unknown> = {}) {
-    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId, ...fields } as never,
-        destination, 'hello', signal, fields['type'] === 'block_actions' ? { socketTeamId: 'T_TEST' } : {});
+    if (fields['type'] === 'block_actions') {
+        destination.targetId = `DCASE${seq + 1}`;
+        bot.setSlackSelfIdentityForTest({ userId: 'U_BOT', botId: 'BBOT' });
+        const env = { envelope_id: `click-${seq + 1}`, type: 'interactive' as const, payload: {
+            type: 'block_actions', team: { id: 'T_TEST' }, user: { id: 'UTEST' },
+            container: { type: 'message', channel_id: destination.targetId, message_ts: '100.1' },
+            message: { ts: '100.1', user: 'U_BOT', bot_id: 'BBOT' },
+            actions: [{ action_id: 'agent:test', action_ts: `100.${seq + 2}` }],
+        } };
+        assert.equal(await bot.preflightSlackEnvelope(env), 'committed');
+        await bot.handleSlackEnvelope(env);
+    } else {
+        await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId, ...fields } as never,
+            destination, 'hello', signal);
+    }
     await until(context, () => admissions.some(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId));
     return admissions.find(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId)!;
 }
