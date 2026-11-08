@@ -1560,19 +1560,32 @@ async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflight
     const self = { userId: selfUserId, botId: selfBotId, appId: selfAppId };
     let event = slackBlockActionEvent(envelope.payload, String(settings['slack']?.teamId || ''), self);
     if (!event?.channel || !event.ts) return 'committed';
-    if (!shouldProcessSlackEvent(event, gateConfig(), 'interactive').process || !token || !event.user) return 'ignored';
+    const gate = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
+    if (!gate.process) return refuseSlackClick(gate.reason);
+    if (!token || !event.user) return refuseSlackClick('clicker_unverified');
     const clicker = await lookupSlackClicker(token, event.user, { signal: AbortSignal.timeout(2000) });
     if (generation !== lifecycleGeneration || token !== getSlackSendClient().token || self.userId !== selfUserId
-        || self.botId !== selfBotId || self.appId !== selfAppId || !clicker.ok) return 'ignored';
+        || self.botId !== selfBotId || self.appId !== selfAppId) return refuseSlackClick('identity_changed');
+    if (!clicker.ok) return refuseSlackClick('clicker_unverified');
     if (clicker.isBot || event.bot_id || event.bot_profile) {
         const botId = event.bot_id || clicker.botId;
         event = { ...event, ...(botId ? { bot_id: botId } : {}),
             bot_profile: { user_id: event.user, ...(botId ? { id: botId } : {}) } };
     }
-    if (!shouldProcessSlackEvent(event, gateConfig(), 'interactive').process) return 'ignored';
+    const final = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
+    if (!final.process) return refuseSlackClick(final.reason);
     const result = admitSlackEnvelope(envelope, event);
     if (result === 'committed') stashVerifiedSlackClick(envelope, event, generation);
     return result;
+}
+
+/**
+ * A refused click is ACKed and dropped with no journal row, so this line is the
+ * only trace an operator gets of why a button did nothing.
+ */
+function refuseSlackClick(reason: string): 'ignored' {
+    log.info(`[slack:click] refused (${reason})`);
+    return 'ignored';
 }
 
 function admitSlackEnvelope(envelope: SlackEnvelope, event: SlackMessageEvent): SlackPreflightResult {
