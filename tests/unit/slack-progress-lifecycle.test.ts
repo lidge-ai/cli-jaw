@@ -51,6 +51,8 @@ mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) =
         ? Object.fromEntries(new URLSearchParams(String(init?.body))) : JSON.parse(String(init?.body ?? '{}'));
     const call: Call = { method, body, signal: init?.signal }; calls.push(call);
     const special = await override?.(call); if (special) return special;
+    if (method === 'auth.test') return response({ ok: true, team_id: 'T_TEST', user_id: 'U_BOT' });
+    if (method === 'users.info') return response({ ok: true, user: { id: 'UTEST', is_bot: false } });
     if (method === 'reactions.add' || method === 'reactions.remove') return response({ ok: true });
     if (method === 'chat.startStream' || method === 'chat.postMessage') {
         const ts = `200.${++messageSeq}`;
@@ -135,9 +137,22 @@ function deferred<T>(fallback: T) {
     releases.push(() => resolve(fallback)); return { promise, resolve };
 }
 function target(): RemoteTarget { return { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: `D_CASE_${seq + 1}`, threadId: '100.1', guildId: 'T_TEST' }; }
-async function run(context: TestContext, destination = target(), signal = new AbortController().signal) {
-    await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId } as never,
-        destination, 'hello', signal);
+async function run(context: TestContext, destination = target(), signal = new AbortController().signal, fields: Record<string, unknown> = {}) {
+    if (fields['type'] === 'block_actions') {
+        destination.targetId = `DCASE${seq + 1}`;
+        bot.setSlackSelfIdentityForTest({ userId: 'U_BOT', botId: 'BBOT' });
+        const env = { envelope_id: `click-${seq + 1}`, type: 'interactive' as const, payload: {
+            type: 'block_actions', team: { id: 'T_TEST' }, user: { id: 'UTEST' },
+            container: { type: 'message', channel_id: destination.targetId, message_ts: '100.1' },
+            message: { ts: '100.1', user: 'U_BOT', bot_id: 'BBOT' },
+            actions: [{ action_id: 'agent:test', action_ts: `100.${seq + 2}` }],
+        } };
+        assert.equal(await bot.preflightSlackEnvelope(env), 'committed');
+        await bot.handleSlackEnvelope(env);
+    } else {
+        await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId, ...fields } as never,
+            destination, 'hello', signal);
+    }
     await until(context, () => admissions.some(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId));
     return admissions.find(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId)!;
 }
@@ -271,6 +286,53 @@ test('a SILENT marker inside a sentence is ordinary text', async context => {
     collect = async () => ({ text: 'Reply [SILENT] when idle.', data: {} });
     await run(context); await until(context, complete);
     assert.deepEqual(bodyCalls().map(call => call.body['text']), ['Reply [SILENT] when idle.']);
+});
+
+const click = { type: 'block_actions' };
+const writes = (channel: string) => calls.filter(call => call.body['channel'] === channel && call.method !== 'conversations.replies')
+    .map(call => [call.method, call.body['text'] ?? null]);
+test('a block action that answers only [SILENT] leaves nothing in the card thread', async context => {
+    collect = async () => ({ text: '[SILENT]', data: {} });
+    const destination = target();
+    const admission = await run(context, destination, new AbortController().signal, click);
+    await Promise.allSettled([...tails]); await tick(context, 1000);
+    assert.deepEqual(writes(destination.targetId), []);
+    assert.equal(getQueueNoticeStore()!.findByRequestId(String(admission['requestId'])), null);
+});
+test('a block action with a real answer posts only that answer, without a progress card', async context => {
+    collect = async () => ({ text: 'Approved.', data: {} });
+    const destination = target();
+    await run(context, destination, new AbortController().signal, click);
+    await Promise.allSettled([...tails]); await tick(context, 1000);
+    assert.deepEqual(writes(destination.targetId), [['chat.postMessage', 'Approved.']]);
+});
+test('a queued block action that answers only [SILENT] leaves nothing while a queued real answer posts alone', async context => {
+    queued = true;
+    const silent = target();
+    const quiet = await run(context, silent, new AbortController().signal, click);
+    const answered = target();
+    const loud = await run(context, answered, new AbortController().signal, click);
+    await tick(context, 1000);
+    for (const admission of [quiet, loud]) assert.equal(getQueueNoticeStore()!.findByRequestId(String(admission['requestId'])), null, 'no record a restart could restore');
+    for (const admission of [quiet, loud]) broadcast('queued_run_started', event(admission));
+    broadcast('orchestrate_done', event(quiet, { text: '[SILENT]', fromQueue: true }));
+    broadcast('orchestrate_done', event(loud, { text: 'Approved.', fromQueue: true }));
+    await until(context, () => writes(answered.targetId).length === 1);
+    await tick(context, 1000);
+    assert.deepEqual(writes(silent.targetId), []);
+    assert.deepEqual(writes(answered.targetId), [['chat.postMessage', 'Approved.']]);
+});
+test('an orphan block action reply of [SILENT] posts nothing while an ordinary one still gets the placeholder', async context => {
+    const silent = target();
+    broadcast('orchestrate_done', { requestId: `silent-click-${++seq}`, origin: 'slack', scope: `silent-click-${seq}`, target: silent,
+        replyViaTarget: true, text: '[SILENT]', preSendContext: { requester: 'U_TEST', jobKind: 'slack_block_action' } });
+    const ordinary = { ...target(), targetId: `D_ORDINARY_${seq}` };
+    broadcast('orchestrate_done', { requestId: `silent-mention-${++seq}`, origin: 'slack', scope: `silent-mention-${seq}`, target: ordinary,
+        replyViaTarget: true, text: '[SILENT]', preSendContext: { requester: 'U_TEST', jobKind: 'slack_turn' } });
+    await until(context, () => bodyCalls().length === 1);
+    await tick(context, 1000);
+    assert.deepEqual(writes(silent.targetId), []);
+    assert.deepEqual(bodyCalls().map(call => [call.body['channel'], call.body['text']]), [[ordinary.targetId, t('tg.noResponse', {}, 'en')]]);
 });
 
 test('a queued request has one stream and its started run survives the original queue deadline', async context => {

@@ -59,14 +59,46 @@ export type RawSlackUser = {
     real_name?: string;
     deleted?: boolean;
     is_bot?: boolean;
+    is_workflow_bot?: boolean;
+    is_agentforce_bot?: boolean;
     profile?: {
         display_name?: string;
         display_name_normalized?: string;
         real_name?: string;
         real_name_normalized?: string;
         bot_id?: string;
+        is_sidekick_bot?: boolean;
     };
 };
+
+export type SlackClickerCheck = { ok: true; isBot: boolean; botId?: string } | { ok: false };
+type LookupOptions = { signal?: AbortSignal; fetchImpl?: SlackFetch };
+
+/** Verify the app id against the authenticated bot, independently of the click. */
+export async function lookupSlackBotApp(token: string, botId: string, userId: string, opts: LookupOptions = {}): Promise<string | null> {
+    try {
+        const result = await slackApi<{ bot?: { id?: string; user_id?: string; app_id?: string; deleted?: boolean } }>(
+            token, 'bots.info', { bot: botId }, { form: true, timeoutMs: 5000, ...opts });
+        const bot = result.ok ? result.data?.bot : undefined;
+        if (!bot || (bot.id !== undefined && bot.id !== botId) || bot.user_id !== userId || bot.deleted === true
+            || typeof bot.app_id !== 'string' || !/^A[A-Z0-9]+$/.test(bot.app_id)) return null;
+        return bot.app_id;
+    } catch { return null; }
+}
+
+/** Verify a clicker's bot status before durable admission. */
+export async function lookupSlackClicker(token: string, userId: string, opts: LookupOptions = {}): Promise<SlackClickerCheck> {
+    try {
+        const result = await slackApi<{ user?: RawSlackUser }>(token, 'users.info', { user: userId },
+            { form: true, timeoutMs: 5000, ...opts });
+        const user = result.ok ? result.data?.user : undefined;
+        if (!user || user.id !== userId || user.deleted === true || typeof user.is_bot !== 'boolean') return { ok: false };
+        const botId = user.profile?.bot_id;
+        const isBot = user.is_bot || user.is_workflow_bot === true || user.is_agentforce_bot === true
+            || user.profile?.is_sidekick_bot === true || (typeof botId === 'string' && botId.length > 0) || user.id === 'USLACKBOT';
+        return { ok: true, isBot, ...(isBot && typeof botId === 'string' && /^B[A-Z0-9]+$/.test(botId) ? { botId } : {}) };
+    } catch { return { ok: false }; }
+}
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const MIN_TTL_MS = 60 * 1000;

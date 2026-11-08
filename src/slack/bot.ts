@@ -71,7 +71,7 @@ import { getQueueNoticeStore } from '../messaging/queue-notice-store.js';
 import { createSlackNoticeTransport } from './notice-transport.js';
 import { currentGenerationForEnvelope } from '../messaging/ingress-generation.js';
 import { slackInboundEnvelope } from '../messaging/inbound-envelope.js';
-import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, type SlackMessageEvent } from './events.js';
+import { readSlackAllowlist, resolveEventText, shouldAttachSlack, shouldProcessSlackEvent, slackBlockActionEvent, SLACK_AGENT_ACTION_PREFIX, type SlackMessageEvent } from './events.js';
 import { captureMentionWatchInbox } from './mention-watch-inbox.js';
 import {
     markThreadParticipated, threadParticipationKind,
@@ -86,14 +86,14 @@ import { createSlackForwarder, relaySlackImages } from './forwarder.js';
 import { nextDeliverySeq, wasSelfDelivered } from '../messaging/turn-delivery.js';
 import { shouldSkipForwarding } from '../messaging/forwarder-origin.js';
 import { requiresNativeBodyDelivery } from '../messaging/native-body.js';
-import { visibleReplyText } from '../messaging/silent-reply.js';
+import { hasSilentLine, visibleReplyText, withoutSilentLines } from '../messaging/silent-reply.js';
 import { createQueueNoticeRecorder } from '../messaging/queue-notice-record.js';
 import { admitTargetReply } from '../messaging/target-reply-guard.js';
 import { handleSlackSlashCommand } from './commands.js';
 import { logErrorText, redactOutboundText } from '../messaging/redact.js';
 import { downloadAndSaveSlackFiles, type FailedSlackFile } from './inbound-file.js';
 import { admitSlackRun, claimSlackEvent, commitSlackEvent, currentIngressGeneration, enqueueSlackIngress, isIngressGenerationCurrent, resetSlackIngress, resolveSlackScopeForTarget, slackEventKey, slackIngressLaneKey, type SlackRunContext } from './ingress.js';
-import { buildSenderDisplay, buildSenderPrompt, resolveSenderIdentity } from './identity.js';
+import { buildSenderDisplay, buildSenderPrompt, resolveSenderIdentity, lookupSlackBotApp, lookupSlackClicker } from './identity.js';
 import {
     admitHistoryStart, cachedNameMap, resolveConversationInfo, resolveThreadInfo, THREAD_FETCH_LIMIT,
 } from './conversation.js';
@@ -120,6 +120,13 @@ let selfUserId: string | null = null;
 // bot id matters because this app's own answers post AS the bot (bot_id), not
 // as the user behind the token.
 let selfBotId: string | null = null;
+let selfAppId: string | null = null;
+
+export function setSlackSelfIdentityForTest(identity: { userId: string | null; botId: string | null; appId?: string | null }): void {
+    selfUserId = identity.userId;
+    selfBotId = identity.botId;
+    selfAppId = identity.appId ?? null;
+}
 let slackInitLock = false;
 let activeClaimArbiter: ClaimArbiter | null = null;
 let claimRecheckTimer: ReturnType<typeof setTimeout> | null = null;
@@ -406,6 +413,16 @@ function isPreSendBaseContext(value: unknown): value is SlackPreSendBaseContext 
     return Boolean(value && typeof value === 'object'
         && typeof (value as Record<string, unknown>)['requester'] === 'string'
         && typeof (value as Record<string, unknown>)['jobKind'] === 'string');
+}
+
+const SLACK_BLOCK_ACTION_JOB = 'slack_block_action';
+
+function isSlackBlockActionContext(context: unknown): boolean {
+    return isPreSendBaseContext(context) && context.jobKind === SLACK_BLOCK_ACTION_JOB;
+}
+
+function isSilentBlockActionReply(text: string, context: unknown): boolean {
+    return isSlackBlockActionContext(context) && hasSilentLine(text) && !withoutSilentLines(text);
 }
 
 function buildSlackPreSendContext(
@@ -729,6 +746,12 @@ function trackSlackReply(options: SlackReplyOptions): void {
                 const rawText = String(data['text'] ?? '');
                 const unconfirmed = data['workflowUnconfirmed'] === true || Boolean(options.workflow && isWorkflowReplyUnconfirmed(rawText, data));
                 if (unconfirmed) outcomeData = { ...data, workflowUnconfirmed: true };
+                if (!unconfirmed && data['error'] !== true
+                    && isSilentBlockActionReply(rawText, data['preSendContext'] ?? options.preSendContext)) {
+                    log.info(`[slack:out:silent] ${target.targetId}: block action ended silently`);
+                    await Promise.allSettled([settleAck('success'), display.finish('complete')]);
+                    return;
+                }
                 const text = unconfirmed ? workflowDiagnosticText(rawText, t('slack.workflow.unconfirmed', {}, locale))
                     : data['error'] === true && !requireBodyDelivery ? t('slack.progress.failure', {}, locale)
                     : requireBodyDelivery && !rawText.trim() ? '' : visibleReplyText(rawText, t('tg.noResponse', {}, locale));
@@ -763,7 +786,8 @@ function trackSlackReply(options: SlackReplyOptions): void {
             });
         }, true);
     }
-    slackNoticeRecord.reserve(requestId, target);
+    const showProgress = !isSlackBlockActionContext(options.preSendContext);
+    if (showProgress) slackNoticeRecord.reserve(requestId, target);
     display = createSlackProgressLifecycle({
         token, target, requestId, scope: session.scope, sessionId: session.chatSessionId, locale,
         workflowResponse: Boolean(options.workflow),
@@ -786,7 +810,7 @@ function trackSlackReply(options: SlackReplyOptions): void {
     pendingQueueRequestIds.add(requestId);
     signal.addEventListener('abort', abortInput, { once: true });
     resetTimer();
-    display.start({ initialPhase });
+    if (showProgress) display.start({ initialPhase });
     void ack?.to('running', { wasQueued: initialPhase === 'queued' });
 
 }
@@ -826,6 +850,7 @@ function installSlackTargetReplyForwarder(): void {
             ? workflowDiagnosticText(String(data['text'] ?? ''), t('slack.workflow.unconfirmed', {}, currentLocale()))
             : data['error'] === true && !requireBodyDelivery
             ? t('slack.progress.failure', {}, currentLocale())
+            : isSilentBlockActionReply(String(data['text'] ?? ''), data['preSendContext']) ? ''
             : visibleReplyText(String(data['text'] ?? ''), t('tg.noResponse', {}, currentLocale()));
         const requestId = admitted.requestId;
         const scope = slackReplyDelivery.scope(requestId, target)
@@ -947,10 +972,12 @@ async function slackOrchestrate(
             let bodyAttempted = false;
             let bodySucceeded = false;
             let bodyConfirmed = false;
+            let silent = false;
             let resultData: Record<string, unknown> = {};
             const current = () => !shutdownSealed && !slackStopping && !signal.aborted && generation === lifecycleGeneration;
             if (!current()) return;
-            if (ctx.requestId) slackNoticeRecord.reserve(ctx.requestId, target);
+            const showProgress = !isSlackBlockActionContext(dedupe.preSendContext);
+            if (ctx.requestId && showProgress) slackNoticeRecord.reserve(ctx.requestId, target);
             const display = createSlackProgressLifecycle({
                 token, target, requestId: ctx.requestId, scope: ctx.scope, sessionId: ctx.chatSessionId, locale,
                 workflowResponse: Boolean(dedupe.workflow),
@@ -967,7 +994,7 @@ async function slackOrchestrate(
                 void display.finish(executionOutcome ?? 'expired');
             };
             signal.addEventListener('abort', abortInput, { once: true });
-            display.start({ initialPhase: 'running' });
+            if (showProgress) display.start({ initialPhase: 'running' });
             void ack?.to('running');
             const turnStartedAt = nextDeliverySeq();
             try {
@@ -999,6 +1026,12 @@ async function slackOrchestrate(
                 }
                 const unconfirmed = resultData['workflowUnconfirmed'] === true || Boolean(dedupe.workflow && isWorkflowReplyUnconfirmed(collected.text, resultData));
                 if (unconfirmed) resultData = { ...resultData, workflowUnconfirmed: true };
+                silent = !unconfirmed && !collected.data.collectionFailure && isSilentBlockActionReply(collected.text, dedupe.preSendContext);
+                if (silent) {
+                    log.info(`[slack:out:silent] ${target.targetId}: block action ended silently`);
+                    await settleAck('success');
+                    return;
+                }
                 const text = unconfirmed ? workflowDiagnosticText(collected.text, t('slack.workflow.unconfirmed', {}, locale))
                     : collected.data.collectionFailure === 'error' ? t('slack.progress.failure', {}, locale)
                     : collected.data.collectionFailure === 'timeout' ? t('tg.timeout', {}, locale)
@@ -1036,7 +1069,7 @@ async function slackOrchestrate(
             } finally {
                 signal.removeEventListener('abort', abortInput);
                 await settleAck('failure');
-                await display.finish(bodyProgressOutcome(resultData, bodySucceeded, executionOutcome, !current()),
+                await display.finish(bodyProgressOutcome(resultData, bodySucceeded || silent, executionOutcome, !current()),
                     bodyAttempted ? { bodyDelivered: bodyConfirmed } : {});
             }
         },
@@ -1217,6 +1250,7 @@ export async function processSlackMessageEvent(
         preResolvedScope?: string | null;
         eventKey?: string;
         reservationGeneration?: number;
+        clickBinding?: SlackClickBinding;
     } = {},
 ): Promise<void> {
     // The claim was taken synchronously in handleSlackEnvelope, before this task
@@ -1254,6 +1288,7 @@ async function runSlackMessageEvent(
         preResolvedScope?: string | null;
         eventKey?: string;
         reservationGeneration?: number;
+        clickBinding?: SlackClickBinding;
     },
     commitPrefetch: () => void,
 ): Promise<void> {
@@ -1342,6 +1377,15 @@ async function runSlackMessageEvent(
     const toolSource: SlackToolSource | undefined = workspace && workspace.teamId === opts.socketTeamId && event.user && sourceToken
         ? { teamId: workspace.teamId, actorId: event.user, destination: target, credentialKey: slackCredentialKey(sourceToken),
             ...(typeof event.action_token === 'string' ? { actionToken: event.action_token } : {}) } : undefined;
+    const binding = opts.clickBinding;
+    if (event.type === 'block_actions' && (!toolSource || !binding || sourceToken !== binding.token
+        || sourceToken !== getSlackSendClient().token || workspace?.userId !== binding.selfUserId
+        || selfUserId !== binding.selfUserId || selfBotId !== binding.selfBotId || selfAppId !== binding.selfAppId
+        || lifecycleGeneration !== binding.generation || toolSource.teamId !== binding.teamId
+        || binding.teamId !== String(settings['slack']?.teamId || ''))) {
+        log.info('[slack:click] refused (grant_unavailable)');
+        return;
+    }
     await slackOrchestrate(target, prompt, displayText, signal, {
         ...(workflow.kind === 'ready' ? { workflow: workflow.metadata } : {}),
         ...(toolSource ? { toolSource } : {}),
@@ -1352,9 +1396,9 @@ async function runSlackMessageEvent(
             : opts.preResolvedScope !== undefined ? { preResolvedScope: opts.preResolvedScope } : {}),
         // The ACK anchor is the user's own message. Only this caller has the raw
         // event, so the scope inputs are resolved here rather than re-derived.
-        ...(event.ts ? { ackTs: event.ts } : {}),
+        ...(event.ts && event.type !== 'block_actions' ? { ackTs: event.ts } : {}),
         ...(event.user ? { recipientUserId: event.user } : {}),
-        preSendContext: { requester: event.user || 'unknown', jobKind: 'slack_turn' },
+        preSendContext: { requester: event.user || 'unknown', jobKind: event.type === 'block_actions' ? SLACK_BLOCK_ACTION_JOB : 'slack_turn' },
         isDirect: event.channel_type === 'im',
         // A trusted bot trigger is addressed to this instance as surely as a
         // human mention, and `isSlackMention` deliberately stays narrow.
@@ -1490,12 +1534,25 @@ function raceContextDeadline(work: Promise<string>, ms: number): Promise<string>
  * never recorded as delivered.
  */
 export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
-    if (envelope.type !== 'events_api') return 'committed';
+    if (envelope.type !== 'events_api' && envelope.type !== 'interactive') return 'committed';
 
-    const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
-    const event = payload?.event;
-    // Before the channel/ts check: reaction events carry them under `item`.
-    tapSlackEvent(event);
+    if (envelope.type === 'interactive') {
+        const key = slackClickKey(envelope);
+        const prior = slackClickDecisions.get(key);
+        const mine = (async () => {
+            if (prior) await prior.catch(() => undefined);
+            return decideSlackClick(envelope);
+        })();
+        slackClickDecisions.set(key, mine);
+        try { return await mine; }
+        finally { if (slackClickDecisions.get(key) === mine) slackClickDecisions.delete(key); }
+    }
+
+    const event = slackEnvelopeEvent(envelope);
+    if (envelope.type === 'events_api') {
+        // Before the channel/ts check: reaction events carry them under `item`.
+        tapSlackEvent(event);
+    }
     if (!event?.channel || !event?.ts) return 'committed';
 
     // BEFORE the gate, and before the journal short-circuit, because this is the
@@ -1503,8 +1560,81 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
     // — correctly, since the bot was not addressed — and conversations.history
     // will never show it again if it lives inside a thread. Capturing here is
     // what makes a thread reply answerable at all.
-    captureMentionWatchInbox(event);
+    if (envelope.type === 'events_api') captureMentionWatchInbox(event);
 
+    return admitSlackEnvelope(envelope, event);
+}
+
+async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
+    const generation = lifecycleGeneration;
+    const token = getSlackSendClient().token;
+    const self = { userId: selfUserId, botId: selfBotId, appId: selfAppId };
+    const teamId = String(settings['slack']?.teamId || '');
+    let event = slackBlockActionEvent(envelope.payload, teamId, self);
+    if (!event?.channel || !event.ts) {
+        const actions = envelope.payload?.['actions'];
+        const action = Array.isArray(actions) && actions.length === 1 ? actions[0] : null;
+        if (action && typeof action === 'object' && typeof action['action_id'] === 'string'
+            && action['action_id'].startsWith(SLACK_AGENT_ACTION_PREFIX)) log.info('[slack:click] refused (not_admissible)');
+        return 'committed';
+    }
+    const gate = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
+    if (!gate.process) return refuseSlackClick(gate.reason);
+    if (!token || !event.user) return refuseSlackClick('clicker_unverified');
+    const binding: SlackClickBinding = { generation, token, selfUserId: self.userId, selfBotId: self.botId, selfAppId: self.appId, teamId };
+    const key = slackClickKey(envelope);
+    const cached = slackClickLookups.get(key);
+    let clicker: Awaited<ReturnType<typeof lookupSlackClicker>>;
+    let workspace: Awaited<ReturnType<typeof verifiedSlackWorkspace>>;
+    const reuse = cached && cached.expiresAt > Date.now() && cached.userId === event.user
+        && cached.binding.generation === generation && cached.binding.token === token
+        && cached.binding.selfUserId === self.userId && cached.binding.selfBotId === self.botId
+        && cached.binding.selfAppId === self.appId && cached.binding.teamId === teamId;
+    if (reuse) {
+        ({ clicker, workspace } = cached);
+    } else {
+        const signal = AbortSignal.timeout(2000);
+        [clicker, workspace] = await Promise.all([
+            lookupSlackClicker(token, event.user, { signal }),
+            verifiedSlackWorkspace(token, { signal }).catch(() => null),
+        ]);
+    }
+    if (generation !== lifecycleGeneration || token !== getSlackSendClient().token || self.userId !== selfUserId
+        || self.botId !== selfBotId || self.appId !== selfAppId) return refuseSlackClick('identity_changed');
+    if (String(settings['slack']?.teamId || '') !== teamId) return refuseSlackClick('workspace_changed');
+    const now = Date.now();
+    for (const [held, row] of slackClickLookups) if (row.expiresAt <= now) slackClickLookups.delete(held);
+    if (!slackClickLookups.has(key) && slackClickLookups.size >= 256) {
+        const first = slackClickLookups.keys().next().value;
+        if (first) slackClickLookups.delete(first);
+    }
+    slackClickLookups.set(key, { binding, userId: event.user, clicker, workspace,
+        expiresAt: reuse ? cached.expiresAt : now + 10_000 });
+    if (!workspace || workspace.teamId !== teamId || workspace.userId !== self.userId) return refuseSlackClick('workspace_unverified');
+    if (!clicker.ok) return refuseSlackClick('clicker_unverified');
+    if (clicker.isBot || event.bot_id || event.bot_profile) {
+        const botId = event.bot_id || clicker.botId;
+        event = { ...event, ...(botId ? { bot_id: botId } : {}),
+            bot_profile: { user_id: event.user, ...(botId ? { id: botId } : {}) } };
+    }
+    const final = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
+    if (!final.process) return refuseSlackClick(final.reason);
+    const result = admitSlackEnvelope(envelope, event);
+    if (result === 'committed') stashVerifiedSlackClick(envelope, event, binding);
+    return result;
+}
+
+/**
+ * A refused click is ACKed and dropped with no journal row, so this line is the
+ * only trace an operator gets of why a button did nothing.
+ */
+function refuseSlackClick(reason: string): 'ignored' {
+    log.info(`[slack:click] refused (${reason})`);
+    return 'ignored';
+}
+
+function admitSlackEnvelope(envelope: SlackEnvelope, event: SlackMessageEvent): SlackPreflightResult {
+    if (!event.channel || !event.ts) return 'committed';
     const journal = getIngressJournal();
     if (!journal) return 'committed';
 
@@ -1544,11 +1674,54 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
 }
 
 const SLACK_ADMISSION_TTL_MS = 10 * 60 * 1000;
+type SlackClickBinding = { generation: number; token: string; selfUserId: string | null; selfBotId: string | null; selfAppId: string | null; teamId: string };
 const slackAdmissions = new Map<string, { admission: IngressAdmission; expiresAt: number }>();
+const slackClickDecisions = new Map<string, Promise<SlackPreflightResult>>();
+const slackClickLookups = new Map<string, { binding: SlackClickBinding; userId: string; clicker: Awaited<ReturnType<typeof lookupSlackClicker>>; workspace: Awaited<ReturnType<typeof verifiedSlackWorkspace>>; expiresAt: number }>();
+const verifiedSlackClicks = new Map<string, { event: SlackMessageEvent; binding: SlackClickBinding; expiresAt: number }>();
+
+function slackClickKey(envelope: SlackEnvelope): string {
+    const payload = envelope.payload;
+    const team = (payload?.['team'] as { id?: unknown } | undefined)?.id;
+    const container = payload?.['container'] as { channel_id?: unknown } | undefined;
+    const actions = payload?.['actions'];
+    const action = Array.isArray(actions) ? actions[0] as { action_ts?: unknown } | undefined : undefined;
+    return JSON.stringify([team, container?.channel_id, action?.action_ts]);
+}
+
+function stashVerifiedSlackClick(envelope: SlackEnvelope, event: SlackMessageEvent, binding: SlackClickBinding): void {
+    const key = slackAdmissionKey(envelope);
+    if (!key) return;
+    const now = Date.now();
+    for (const [held, row] of verifiedSlackClicks) if (row.expiresAt <= now) verifiedSlackClicks.delete(held);
+    if (verifiedSlackClicks.size >= 256) {
+        const first = verifiedSlackClicks.keys().next().value;
+        if (first) verifiedSlackClicks.delete(first);
+    }
+    verifiedSlackClicks.set(key, { event, binding, expiresAt: now + SLACK_ADMISSION_TTL_MS });
+}
+
+function takeVerifiedSlackClick(envelope: SlackEnvelope): { event: SlackMessageEvent; binding: SlackClickBinding } | undefined {
+    const key = slackAdmissionKey(envelope);
+    const row = verifiedSlackClicks.get(key);
+    verifiedSlackClicks.delete(key);
+    return row && row.expiresAt > Date.now() && row.binding.generation === lifecycleGeneration ? row : undefined;
+}
+
+function slackEnvelopeEvent(envelope: SlackEnvelope): SlackMessageEvent | undefined {
+    return (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+}
+
+function slackEnvelopeTeamId(envelope: SlackEnvelope): string | undefined {
+    const payload = envelope.payload;
+    const team = envelope.type === 'interactive' ? (payload?.['team'] as { id?: unknown } | undefined)?.id : payload?.['team_id'];
+    return typeof team === 'string' && team ? team : undefined;
+}
 
 function slackAdmissionKey(envelope: SlackEnvelope): string {
     if (envelope.envelope_id) return `eid:${envelope.envelope_id}`;
-    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    if (envelope.type === 'interactive') return `click:${slackClickKey(envelope)}`;
+    const event = slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (event?.channel && event?.ts && team) return `ev:${team}:${event.channel}:${event.ts}`;
     return '';
@@ -1574,7 +1747,15 @@ function takeSlackAdmission(envelope: SlackEnvelope): IngressAdmission | undefin
     const row = slackAdmissions.get(key);
     slackAdmissions.delete(key);
     if (row && row.expiresAt > Date.now()) return row.admission;
-    const event = (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
+    if (envelope.type === 'interactive' && !verifiedSlackClicks.has(key)) return undefined;
+    const payload = envelope.payload;
+    const container = payload?.['container'] as { channel_id?: unknown } | undefined;
+    const actions = payload?.['actions'];
+    const action = Array.isArray(actions) ? actions[0] as { action_ts?: unknown } | undefined : undefined;
+    const event = envelope.type === 'interactive'
+        ? { channel: typeof container?.channel_id === 'string' ? container.channel_id : undefined,
+            ts: typeof action?.action_ts === 'string' ? action.action_ts : undefined }
+        : slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (!event?.channel || !event.ts || !team) return undefined;
     const record = getIngressJournal()?.find('slack', team, `${team}:${event.channel}:${event.ts}`);
@@ -1629,7 +1810,10 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         await handleSlackSlashCommand(envelope.payload || {});
         return;
     }
-    if (envelope.type === 'interactive') {
+    const verifiedClick = envelope.type === 'interactive' ? takeVerifiedSlackClick(envelope) : undefined;
+    const event = envelope.type === 'interactive' ? verifiedClick?.event : slackEnvelopeEvent(envelope);
+    const socketTeamId = slackEnvelopeTeamId(envelope);
+    if (envelope.type === 'interactive' && !event) {
         const payload = envelope.payload || {};
         const actions = payload['actions'];
         const actionId = Array.isArray(actions) && actions[0] && typeof actions[0] === 'object'
@@ -1643,6 +1827,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                 await consumeSlackInteractionCallback(payload, token);
             }
             log.info('[slack:interactive] received (not an approval action)');
+            settleOk();
             return;
         }
         const result = handleApprovalCallback(
@@ -1663,10 +1848,9 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         if (token && channel) {
             await sendSlackText(token, slackTargetFromId(channel), redactOutboundText(reply)).catch(() => undefined);
         }
+        settleOk();
         return;
     }
-    const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
-    const event = payload?.event;
     if (!event) {
         settleOk();
         return;
@@ -1674,7 +1858,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
 
     const receiveGate = gateConfig();
     const workflowSelection = captureSlackWorkflow(event, receiveGate);
-    const approval = workflowSelection.kind === 'none' ? handleApprovalCommand(approvalTransport, {
+    const approval = event.type !== 'block_actions' && workflowSelection.kind === 'none' ? handleApprovalCommand(approvalTransport, {
         ...event,
         __jawSelf: Boolean(event.user && event.user === getSlackSelfUserId()),
     }, String(event.text || '')) : { handled: false };
@@ -1799,7 +1983,8 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                 try {
                     await processSlackMessageEvent(event, target, text, signal, {
                         workflowSelection,
-                        ...(typeof envelope.payload?.['team_id'] === 'string' ? { socketTeamId: envelope.payload['team_id'] } : {}),
+                        ...(verifiedClick ? { clickBinding: verifiedClick.binding } : {}),
+                        ...(socketTeamId ? { socketTeamId } : {}),
                         prefetchToken,
                         ...(prefetchOwner ? { prefetchOwner } : {}),
                         preResolvedScope,
@@ -1920,8 +2105,17 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
         log.error('[slack] auth.test failed:', auth.error);
         return transportNotStarted('failed', 'auth_test_failed');
     }
-    selfUserId = auth.data?.user_id || null;
-    selfBotId = auth.data?.bot_id || null;
+    const userId = auth.data?.user_id || null;
+    const botId = auth.data?.bot_id || null;
+    const appId = botId && userId ? await lookupSlackBotApp(sc.botToken, botId, userId) : null;
+    if (generation !== lifecycleGeneration) {
+        log.info('[slack] init superseded during bot lookup — aborting');
+        return transportNotStarted('superseded');
+    }
+    selfUserId = userId;
+    selfBotId = botId;
+    selfAppId = appId;
+    if (!appId) log.warn('[slack] bot app id unverified (bots.info) — app-stamped block actions are refused until transport restart');
     // The grant is whatever the app was installed with, not whatever the
     // current manifest asks for. Record it here — auth.test already ran, so
     // this costs nothing — and say the whole gap once instead of leaking one
@@ -2229,4 +2423,8 @@ async function disposeSlackRuntime(): Promise<void> {
     clearSlackClaimRecheck();
     selfUserId = null;
     selfBotId = null;
+    selfAppId = null;
+    verifiedSlackClicks.clear();
+    slackClickDecisions.clear();
+    slackClickLookups.clear();
 }
