@@ -12,11 +12,16 @@ let botLookupWait: Promise<void> | undefined;
 let botLookupStarted: (() => void) | undefined;
 let lookupWait: Promise<void> | undefined;
 let lookupStarted: (() => void) | undefined;
+let lookupCalls = 0;
+let authCalls = 0;
+let sendToken = 'xoxb-test';
+let testNumber = 0;
 let clicker: Record<string, unknown> | Error = { id: 'UCEO', is_bot: false };
 let authResponse: Record<string, unknown> = { ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' };
 mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes('users.info')) {
+        lookupCalls++;
         lookupStarted?.();
         await lookupWait;
         if (clicker instanceof Error) throw clicker;
@@ -25,7 +30,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
         return new Response(JSON.stringify({ ok: true, user: clicker }), { status: 200 });
     }
     if (url.includes('bots.info')) { botLookupStarted?.(); await botLookupWait; return new Response(JSON.stringify({ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } })); }
-    if (url.includes('auth.test')) return new Response(JSON.stringify(authResponse));
+    if (url.includes('auth.test')) { authCalls++; return new Response(JSON.stringify(authResponse)); }
     throw new Error('unexpected fetch ' + url);
 });
 const SELF = { userId: 'UBOT', botId: 'BBOT', appId: 'AAPP' };
@@ -49,7 +54,7 @@ mock.module('../../src/orchestrator/gateway.ts', { namedExports: {
 } });
 mock.module('../../src/orchestrator/collect.ts', { namedExports: { orchestrateAndCollectData: async () => ({ text: 'ok', data: {} }) } });
 mock.module('../../src/slack/send-only-client.ts', { namedExports: {
-    getSlackSendClient: () => ({ token: 'xoxb-test' }),
+    getSlackSendClient: () => ({ token: sendToken }),
     sendSlackText: async () => ({ ok: true, ts: '1800.1' }),
 } });
 mock.module('../../src/slack/forwarder.ts', { namedExports: { createSlackForwarder: () => () => {}, relaySlackImages: async () => {} } });
@@ -97,8 +102,9 @@ async function deliver(env: SlackEnvelope): Promise<string> {
 
 test.beforeEach(() => {
     submissions.length = 0; completions.length = 0;
+    sendToken = `xoxb-test-${++testNumber}`; lookupCalls = 0; authCalls = 0;
     inspectGrant = false; capturedGrant = null;
-    settings.slack = { ...settings.slack, enabled: true, botToken: 'xoxb-test', teamId: 'T1', mentionOnly: true, channelIds: [], allowBots: false, replyInThread: true };
+    settings.slack = { ...settings.slack, enabled: true, botToken: sendToken, teamId: 'T1', mentionOnly: true, channelIds: [], allowBots: false, replyInThread: true };
     settings.multiSession = { ...settings.multiSession, enabled: false, channels: { ...settings.multiSession.channels, slack: false } };
     clicker = { id: 'UCEO', is_bot: false }; lookupWait = undefined; lookupStarted = undefined; botLookupWait = undefined; botLookupStarted = undefined;
     authResponse = { ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' };
@@ -155,6 +161,19 @@ test('team changed after preflight cannot authorize the click grant', async () =
     assert.equal(submissions.length, 0);
     assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
 });
+
+for (const [name, userId] of [['different bot', 'UOTHER'], ['same identity', 'UBOT']] as const) {
+    test(`credential changed after preflight refuses grant: ${name}`, async () => {
+        const env = envelope(click());
+        assert.equal(await preflightSlackEnvelope(env), 'committed');
+        sendToken = 'xoxb-replacement';
+        authResponse = { ok: true, team_id: 'T1', user_id: userId };
+        await handleSlackEnvelope(env);
+        while (completions.length) await Promise.allSettled(completions.splice(0));
+        assert.equal(submissions.length, 0);
+        assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
+    });
+}
 
 test('control: verified click submits the workspace and clicker grant', async () => {
     inspectGrant = true;
@@ -383,6 +402,26 @@ test('overlap waits for first lookup before its own admission', async () => {
     assert.equal(await first, 'committed');
     assert.equal(await second, 'committed');
     assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'processing');
+});
+
+test('overlapping deliveries share lookup while each is admitted and dispatch only once', async () => {
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    lookupWait = wait.promise; lookupStarted = started.resolve;
+    const firstEnvelope = envelope(click(), 'shared-1');
+    const secondEnvelope = envelope(click(), 'shared-2');
+    const first = preflightSlackEnvelope(firstEnvelope);
+    await started.promise;
+    const second = preflightSlackEnvelope(secondEnvelope);
+    wait.resolve();
+    assert.equal(await first, 'committed');
+    assert.equal(await second, 'committed');
+    assert.equal(lookupCalls, 1);
+    assert.equal(authCalls, 1);
+    await handleSlackEnvelope(firstEnvelope);
+    await handleSlackEnvelope(secondEnvelope);
+    while (completions.length) await Promise.allSettled(completions.splice(0));
+    assert.equal(submissions.length, 1);
 });
 
 test('overlap retries admission after first append throws', async () => {
