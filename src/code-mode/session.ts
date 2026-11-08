@@ -246,11 +246,18 @@ export class CodeSession {
                 // Terminal persistence owns only this captured turn, even when
                 // Stop/disposal has already revoked native callback admission.
                 if (this.operation !== op || this.binding !== binding || op.settled || owner.turnId === null
-                    || op.persistenceFailure || this.persistenceError || op.failure?.code === 'transcript_limit') return;
+                    || op.persistenceFailure || this.persistenceError) return;
                 const row = this.options.store.readRecord(owner.sessionId);
                 if (!row || row.sessionId !== owner.sessionId || row.epoch !== owner.epoch || row.turnId !== owner.turnId
                     || row.archivedAt !== null || !['starting', 'streaming', 'stopping'].includes(row.status)) return;
-                const result = this.write(op, () => this.options.store.commitItem(owner, item));
+                const result = this.write(op, () => this.options.store.commitAcceptedPrefix(owner, item));
+                if (result.truncated) {
+                    const note = 'Transcript limit reached; some accepted content was not stored. ';
+                    if (!op.failure) op.failure = this.diagnostic('transcript_limit', 'Code transcript storage limit reached');
+                    else if (op.failure.code !== 'transcript_limit' && !op.failure.message.startsWith(note)) {
+                        op.failure = { ...op.failure, message: note + op.failure.message };
+                    }
+                }
                 this.publish(result.events);
                 // Reentrant publication can revoke ownership or fail storage;
                 // the next item must obtain its own fresh authority above.

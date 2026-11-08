@@ -194,6 +194,7 @@ export interface CodeItemUpdate {
     appendToolOutput?: string;
     status?: CodeItem['status'];
     phase?: CodeItem['phase'];
+    truncation?: CodeItem['truncation'];
 }
 
 export interface CodeSnapshot {

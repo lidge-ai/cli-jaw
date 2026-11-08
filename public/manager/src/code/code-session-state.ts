@@ -86,6 +86,7 @@ function apply(state: CodeSessionState, event: CodeWireEvent): CodeSessionState 
                 ...(update.appendToolOutput === undefined ? {} : { tool: { ...previous.tool!, output: (previous.tool!.output ?? '') + update.appendToolOutput } }),
                 ...(update.status === undefined ? {} : { status: update.status }),
                 ...(update.phase === undefined ? {} : { phase: update.phase }),
+                ...(update.truncation === undefined ? {} : { truncation: update.truncation }),
             };
         } else return { ...state, needsSnapshot: true, synced: false };
         items = order([...items.filter(row => row.itemId !== item.itemId), item]);
