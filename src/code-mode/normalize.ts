@@ -471,6 +471,7 @@ export class CodeTurnNormalizer {
             } else this.runningFileChangeBytes += cost;
         }
         next.updatedAt = this.now();
+        entry.pending = true;
         const receipt = this.options.commitItem(structuredClone(next));
         if (!receipt) { this.stale = true; this.release(); return; }
         entry.item = next;
@@ -659,8 +660,8 @@ export class CodeTurnNormalizer {
             return this.guarded(() => {
                 const batch: CodeItem[] = [];
                 for (const entry of this.items.values()) {
-                    if (!entry.committed || !['assistant_message', 'reasoning', 'tool_call', 'file_change'].includes(entry.item.kind)
-                        || (!entry.pending && ![...entry.fields.values()].some(source => source.dirty))) continue;
+                    if (!['assistant_message', 'reasoning', 'tool_call', 'file_change'].includes(entry.item.kind)
+                        || !(entry.pending || (entry.committed && [...entry.fields.values()].some(source => source.dirty)))) continue;
                     const item = this.materialize(entry);
                     if (entry.persisted && sameItem(entry.persisted, item)) continue;
                     item.updatedAt = this.now();

@@ -526,7 +526,7 @@ answering, with status `cancelled`; follow-up rows are unchanged, so their keys 
 spent, and a follow-up row is never a rollback target.
 
 Snapshots contain complete items. Replay may contain `code_item_update` append
-suffixes and status/phase changes; apply only once in contiguous sequence to the
+suffixes, status/phase changes, and truncation; apply only once in contiguous sequence to the
 existing item. Preserve `firstSequence` ordering. Worker and Manager use the same
 Code JSON envelope cap of 6MiB + 4KiB; decoded prompt `text` is limited to 1MiB
 of UTF-8 bytes. The larger envelope accepts JSON escape expansion without
