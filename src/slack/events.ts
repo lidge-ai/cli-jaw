@@ -157,7 +157,11 @@ export function slackBlockActionEvent(payload: unknown, teamId: string, self: Sl
         || (profile['id'] !== undefined && profile['id'] !== self.botId)
         || (profile['user_id'] !== undefined && profile['user_id'] !== self.userId))) return null;
     if ([message['app_id'], profile?.['app_id']].some(id => id !== undefined && (!self.appId || id !== self.appId))) return null;
-    const threadTs = typeof container['thread_ts'] === 'string' && SLACK_TS.test(container['thread_ts']) ? container['thread_ts'] : messageTs;
+    const containerThread = container['thread_ts'];
+    const messageThread = message['thread_ts'];
+    if (containerThread !== undefined && messageThread !== undefined && containerThread !== messageThread) return null;
+    const threadTs = typeof containerThread === 'string' && SLACK_TS.test(containerThread) ? containerThread
+        : typeof messageThread === 'string' && SLACK_TS.test(messageThread) ? messageThread : messageTs;
     const blockId = typeof action['block_id'] === 'string' ? action['block_id'] : '';
     // JSON quoting keeps a value's newlines and brackets inside one line of the prompt.
     const field = (name: string, value: string) => `${name}: ${JSON.stringify(value.slice(0, 2000))}`;

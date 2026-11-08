@@ -204,7 +204,8 @@ test('a click on a threaded card answers in the message parent thread', { timeou
 test('a click with conflicting parent threads is refused before admission', { timeout: 5000 }, async () => {
     const container = { ...click().container, thread_ts: '1500.1' };
     const message = { ...click().message, thread_ts: '1600.1' };
-    assert.equal(await deliver(envelope(click({ container, message }))), 'ignored');
+    assert.equal(blockEvent(click({ container, message }), 'T1', SELF), null);
+    assert.equal(await deliver(envelope(click({ container, message }))), 'committed');
     assert.equal(submissions.length, 0);
     assert.equal(getIngressJournal()!.list({}).length, 0);
 });
