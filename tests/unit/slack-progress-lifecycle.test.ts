@@ -51,6 +51,7 @@ mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) =
         ? Object.fromEntries(new URLSearchParams(String(init?.body))) : JSON.parse(String(init?.body ?? '{}'));
     const call: Call = { method, body, signal: init?.signal }; calls.push(call);
     const special = await override?.(call); if (special) return special;
+    if (method === 'auth.test') return response({ ok: true, team_id: 'T_TEST', user_id: 'U_BOT' });
     if (method === 'reactions.add' || method === 'reactions.remove') return response({ ok: true });
     if (method === 'chat.startStream' || method === 'chat.postMessage') {
         const ts = `200.${++messageSeq}`;
@@ -137,7 +138,7 @@ function deferred<T>(fallback: T) {
 function target(): RemoteTarget { return { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: `D_CASE_${seq + 1}`, threadId: '100.1', guildId: 'T_TEST' }; }
 async function run(context: TestContext, destination = target(), signal = new AbortController().signal, fields: Record<string, unknown> = {}) {
     await bot.processSlackMessageEvent({ user: 'U_TEST', channel: destination.targetId, channel_type: destination.peerKind === 'direct' ? 'im' : 'channel', ts: '100.2', thread_ts: destination.threadId, ...fields } as never,
-        destination, 'hello', signal);
+        destination, 'hello', signal, fields['type'] === 'block_actions' ? { socketTeamId: 'T_TEST' } : {});
     await until(context, () => admissions.some(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId));
     return admissions.find(admission => (admission['target'] as RemoteTarget).targetId === destination.targetId)!;
 }

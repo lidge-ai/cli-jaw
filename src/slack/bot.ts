@@ -1375,6 +1375,10 @@ async function runSlackMessageEvent(
     const toolSource: SlackToolSource | undefined = workspace && workspace.teamId === opts.socketTeamId && event.user && sourceToken
         ? { teamId: workspace.teamId, actorId: event.user, destination: target, credentialKey: slackCredentialKey(sourceToken),
             ...(typeof event.action_token === 'string' ? { actionToken: event.action_token } : {}) } : undefined;
+    if (event.type === 'block_actions' && !toolSource) {
+        log.info('[slack:click] refused (grant_unavailable)');
+        return;
+    }
     await slackOrchestrate(target, prompt, displayText, signal, {
         ...(workflow.kind === 'ready' ? { workflow: workflow.metadata } : {}),
         ...(toolSource ? { toolSource } : {}),
@@ -1558,14 +1562,20 @@ async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflight
     const generation = lifecycleGeneration;
     const token = getSlackSendClient().token;
     const self = { userId: selfUserId, botId: selfBotId, appId: selfAppId };
-    let event = slackBlockActionEvent(envelope.payload, String(settings['slack']?.teamId || ''), self);
+    const teamId = String(settings['slack']?.teamId || '');
+    let event = slackBlockActionEvent(envelope.payload, teamId, self);
     if (!event?.channel || !event.ts) return 'committed';
     const gate = shouldProcessSlackEvent(event, gateConfig(), 'interactive');
     if (!gate.process) return refuseSlackClick(gate.reason);
     if (!token || !event.user) return refuseSlackClick('clicker_unverified');
-    const clicker = await lookupSlackClicker(token, event.user, { signal: AbortSignal.timeout(2000) });
+    const signal = AbortSignal.timeout(2000);
+    const [clicker, workspace] = await Promise.all([
+        lookupSlackClicker(token, event.user, { signal }),
+        verifiedSlackWorkspace(token, { signal }).catch(() => null),
+    ]);
     if (generation !== lifecycleGeneration || token !== getSlackSendClient().token || self.userId !== selfUserId
         || self.botId !== selfBotId || self.appId !== selfAppId) return refuseSlackClick('identity_changed');
+    if (!workspace || workspace.teamId !== teamId || workspace.userId !== self.userId) return refuseSlackClick('workspace_unverified');
     if (!clicker.ok) return refuseSlackClick('clicker_unverified');
     if (clicker.isBot || event.bot_id || event.bot_profile) {
         const botId = event.bot_id || clicker.botId;
