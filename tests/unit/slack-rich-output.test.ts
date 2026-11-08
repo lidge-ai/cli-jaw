@@ -6,7 +6,7 @@ import { marked } from 'marked';
 import { buildSlackTextPayloads } from '../../src/slack/format.ts';
 import { expectedRichFeatures, storedRichFeatures } from '../../src/slack/render-features.ts';
 import { sendSlackText } from '../../src/slack/send-only-client.ts';
-import { buildSlackBlockPayloads } from '../../src/slack/blocks.ts';
+import { buildSlackBlockPayloads, expectedTableShapes, type SlackBlock } from '../../src/slack/blocks.ts';
 import type { RemoteTarget } from '../../src/messaging/types.ts';
 
 // Golden native blocks captured from a test conversation, stripped of IDs.
@@ -151,6 +151,60 @@ test('one table with blocks after it posts as one message; a further table takes
     assert.deepEqual(posts[0]?.['blocks'], [table, after]);
     const split = buildSlackBlockPayloads('card', [table, after, table, after]);
     assert.deepEqual(split.map(part => part.blocks), [[table], [after, table, after]]);
+});
+
+const carryTable = { type: 'table', rows: [[{ type: 'raw_text', text: 'cell' }]] };
+const carryHeader = { type: 'header', text: { type: 'plain_text', text: 'B' } };
+const carryMarkdown = (text: string) => ({ type: 'markdown', text });
+const carryLong = carryMarkdown('p'.repeat(3900));
+const carryHeading = carryMarkdown('## Second\n\n' + 'q'.repeat(180));
+const carryGfm = carryMarkdown('| a | b |\n| - | - |\n| ' + 'x'.repeat(120) + ' | 2 |');
+const limit50 = () => [carryTable, carryMarkdown(Array.from({ length: 48 }, (_, i) => `## \`h${i}\``).join('\n\n')), carryHeader, carryTable];
+const limitChars = () => [carryTable, carryLong, carryLong, carryLong, carryHeading, carryGfm];
+const blockLists = (blocks: unknown) => buildSlackBlockPayloads('card', blocks).map(p => p.blocks as SlackBlock[]);
+const markdownChars = (blocks: SlackBlock[]) => blocks.reduce((n, b) => n + (b.type === 'markdown' ? String(b['text']).length : 0), 0);
+
+test('a second table arriving at the 50-block limit takes the heading before it', () => {
+    const parts = blockLists(limit50());
+    assert.deepEqual(parts.map(p => p.length), [1, 50]);
+    assert.deepEqual(parts[0], [carryTable]);
+    assert.ok(parts[1]!.slice(0, 48).every(block => block.type === 'markdown'));
+    assert.deepEqual(parts[1]!.slice(-2), [carryHeader, carryTable]);
+});
+
+test('a second table arriving at the markdown-character limit takes the heading before it', () => {
+    const parts = blockLists(limitChars());
+    assert.deepEqual(parts, [[carryTable, carryLong], [carryLong, carryLong, carryHeading, carryGfm]]);
+    assert.ok(parts.every(p => markdownChars(p) <= 12000));
+});
+
+test('a third table after a trimmed carry keeps source order, both limits and the section before it', () => {
+    const section = { type: 'section', text: { type: 'mrkdwn', text: 'third' } };
+    const blocks = [...limitChars(), section, carryTable];
+    const parts = blockLists(blocks);
+    assert.deepEqual(parts, [[carryTable, carryLong], [carryLong, carryLong, carryHeading, carryGfm], [section, carryTable]]);
+    assert.deepEqual(parts.flat(), blocks);
+    assert.ok(parts.every(p => p.length <= 50 && markdownChars(p) <= 12000 && expectedTableShapes(p).length === 1));
+});
+
+for (const excess of [0, 1]) test(`${12000 + excess} carried markdown characters ${excess ? 'leave the first block with the earlier table' : 'fit with the later table'}`, () => {
+    const prefix = '| a | b |\n| - | - |\n| ';
+    const suffix = ' | 2 |';
+    const table = carryMarkdown(prefix + 'x'.repeat(300 + excess - prefix.length - suffix.length) + suffix);
+    const parts = blockLists([carryTable, carryLong, carryLong, carryLong, table]);
+    assert.equal(markdownChars([carryLong, carryLong, carryLong, table]), 12000 + excess);
+    assert.deepEqual(parts, excess ? [[carryTable, carryLong], [carryLong, carryLong, table]] : [[carryTable], [carryLong, carryLong, carryLong, table]]);
+});
+
+test('nested tables in one block are rejected before anything is sent', async () => {
+    const nested = carryMarkdown('> | a | b |\n> | - | - |\n> | 1 | 2 |\n>\n> text\n>\n> | c | d |\n> | - | - |\n> | 3 | 4 |');
+    assert.equal(expectedTableShapes([nested]).length, 2);
+    assert.throws(() => buildSlackBlockPayloads('card', [nested]), /slack_nested_tables_require_separate_blocks/);
+    const fake = vendor([]);
+    const result = await sendSlackText('xoxb-fixture', target, 'card', { fetchImpl: fake.fetchImpl, blocks: [nested] });
+    assert.equal(result.ok, false);
+    assert.match(result.error!, /slack_nested_tables_require_separate_blocks/);
+    assert.equal(fake.posts.length, 0);
 });
 
 test('the same renderer and readback work across recipients, channel kinds and concurrent sends', async () => {

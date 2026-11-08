@@ -99,8 +99,9 @@ function expandMarkdown(block: SlackBlock): SlackBlock[] {
     return result;
 }
 
-/** One table per message, with preceding headers/prose attached in source order
- * and blocks after the last table kept with it.
+/** One table per message, with blocks between tables carried to the later table;
+ * leading blocks stay with the earlier table only when the markdown limit requires it.
+ * Blocks after the last table stay with it.
  * Explicit rich payloads render blocks, so fallback text must not be separately
  * chunked into visible duplicate messages. Invalid input fails before posting. */
 export function buildSlackBlockPayloads(text: string, input: unknown): SlackTextPayload[] {
@@ -137,13 +138,19 @@ export function buildSlackBlockPayloads(text: string, input: unknown): SlackText
         const shapes = expectedTableShapes([block]);
         if (shapes.length > 1) return invalid('slack_nested_tables_require_separate_blocks');
         const chars = markdownLength(block);
-        if (current.length === 50 || markdownChars + chars > 12000) flush();
-        else if (shapes.length && tableEnd >= 0) {
-            const carried = current.splice(tableEnd);
+        if (shapes.length && tableEnd >= 0) {
+            // A second table starts a new payload before any limit is checked, so the
+            // blocks introducing it travel with it. Blocks nearest the previous table stay
+            // behind only when carrying them would pass the markdown limit.
+            let start = tableEnd;
+            let carriedChars = current.slice(start).reduce((total, b) => total + markdownLength(b), 0);
+            while (start < current.length && carriedChars + chars > 12000) carriedChars -= markdownLength(current[start++]!);
+            const carried = current.splice(start);
             flush();
             current = carried;
-            markdownChars = carried.reduce((total, b) => total + markdownLength(b), 0);
+            markdownChars = carriedChars;
         }
+        if (current.length === 50 || markdownChars + chars > 12000) flush();
         current.push(block);
         markdownChars += chars;
         if (shapes.length) tableEnd = current.length;
