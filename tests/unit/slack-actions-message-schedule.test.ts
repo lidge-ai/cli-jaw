@@ -33,6 +33,56 @@ function fixture(operation: string, handler: (method: string, body: Record<strin
 const ok = (data: Record<string, unknown>): Reply => ({ ok: true, data });
 const empty = () => ok({ scheduled_messages: [], response_metadata: { next_cursor: '' } });
 
+const carryTable = { type: 'table', rows: [[{ type: 'raw_text', text: 'cell' }]] };
+const carryHeader = { type: 'header', text: { type: 'plain_text', text: 'B' } };
+const carryMarkdown = (text: string) => ({ type: 'markdown', text });
+const carryLong = carryMarkdown('p'.repeat(3900));
+const carryHeading = carryMarkdown('## Second\n\n' + 'q'.repeat(180));
+const carryGfm = carryMarkdown('| a | b |\n| - | - |\n| ' + 'x'.repeat(120) + ' | 2 |');
+const limit50 = () => [carryTable, carryMarkdown(Array.from({ length: 48 }, (_, i) => `## \`h${i}\``).join('\n\n')), carryHeader, carryTable];
+const limitChars = () => [carryTable, carryLong, carryLong, carryLong, carryHeading, carryGfm];
+
+function scheduleCarryFixture(operation: 'schedule.create' | 'schedule.update') {
+    const scheduled: Record<string, unknown>[] = [];
+    const f = fixture(operation, (method, body) => {
+        if (method === 'chat.deleteScheduledMessage') return ok({});
+        if (method === 'chat.scheduleMessage') {
+            const id = `Q${scheduled.length + 2}`;
+            scheduled.push({ id, channel_id: 'D1', post_at: body['post_at'], text: body['text'], blocks: body['blocks'] });
+            return ok({ scheduled_message_id: id });
+        }
+        assert.equal(method, 'chat.scheduledMessages.list');
+        return ok({ scheduled_messages: [...scheduled], response_metadata: { next_cursor: '' } });
+    });
+    if (operation === 'schedule.update') f.ctx.remember('schedule', 'Q1', { postAt: future, payload: { text: 'retained' } });
+    return f;
+}
+
+for (const operation of ['schedule.create', 'schedule.update'] as const) {
+    test(`${operation} keeps one table and the blocks after it in one scheduled message`, async () => {
+        const after = { type: 'section', text: { type: 'mrkdwn', text: 'after' } };
+        const f = scheduleCarryFixture(operation);
+        const receipt = await f.run({ ...(operation === 'schedule.update' ? { scheduledId: 'Q1' } : { postAt: future }), text: 'card', blocks: [carryTable, after] });
+        assert.equal(receipt.verification, 'verified');
+        const posts = f.calls.filter(c => c.method === 'chat.scheduleMessage');
+        assert.equal(posts.length, 1); assert.deepEqual(posts[0]!.body['blocks'], [carryTable, after]);
+        if (operation === 'schedule.update') assert.deepEqual(f.calls.map(c => c.method), ['chat.deleteScheduledMessage', 'chat.scheduledMessages.list', 'chat.scheduleMessage', 'chat.scheduledMessages.list']);
+    });
+}
+
+for (const operation of ['schedule.create', 'schedule.update'] as const) {
+    for (const kind of ['50-block', 'markdown-character'] as const) test(`${operation} sends the heading with the second table at the ${kind} limit`, async () => {
+        const f = scheduleCarryFixture(operation);
+        const receipt = await f.run({ ...(operation === 'schedule.update' ? { scheduledId: 'Q1' } : { postAt: future }), text: 'card', blocks: kind === '50-block' ? limit50() : limitChars() });
+        assert.equal(receipt.verification, 'verified');
+        const posts = f.calls.filter(c => c.method === 'chat.scheduleMessage');
+        assert.equal(posts.length, 2);
+        assert.deepEqual(posts[0]!.body['blocks'], kind === '50-block' ? [carryTable] : [carryTable, carryLong]);
+        assert.deepEqual((posts[1]!.body['blocks'] as unknown[]).slice(-2), kind === '50-block' ? [carryHeader, carryTable] : [carryHeading, carryGfm]);
+        assert.deepEqual(f.calls.map(c => c.method), [...(operation === 'schedule.update' ? ['chat.deleteScheduledMessage', 'chat.scheduledMessages.list'] : []), 'chat.scheduleMessage', 'chat.scheduleMessage', 'chat.scheduledMessages.list']);
+    });
+}
+
 for (const operation of ['reaction.add', 'reaction.remove']) test(`${operation}: exact fields and own bot state without raw RTS message`, async () => {
     const add = operation.endsWith('add');
     const f = fixture(operation, method => method === 'reactions.get' ? ok({ type: 'message', message: { ts: '1.1', text: 'PRIVATE RTS', reactions: [{ name: 'eyes', count: 7, users: add ? ['UBOT'] : ['UOTHER'] }] } }) : { ok: false, error: add ? 'already_reacted' : 'no_reaction' });
@@ -165,6 +215,18 @@ test('message update exact content readback detects changed text', async () => {
             const f = fixture('message.update', method => method === 'chat.update' ? ok({}) : ok({ messages: [{ ts: '1.1', user: 'UBOT', text: ++reads === 1 ? 'old' : text, blocks: [] }], has_more: false }));
             assert.equal((await f.run({ ts: '1.1', text: 'new' })).verification, text === 'new' ? 'verified' : 'failed');
         }
+    } finally { configureRtsOutputStore(undefined); db.close(); }
+});
+test('message update keeps one table with the blocks after it in one payload; a second table is refused', async () => {
+    const db = new Database(':memory:'); configureRtsOutputStore(new RtsOutputStore(db));
+    try {
+        const table = { type: 'table', rows: [[{ type: 'raw_text', text: 'cell' }]] };
+        const after = { type: 'section', text: { type: 'mrkdwn', text: 'after' } };
+        const f = fixture('message.update', method => method === 'chat.update' ? ok({}) : ok({ messages: [{ ts: '1.1', user: 'UBOT', text: 'old', blocks: [] }], has_more: false }));
+        assert.equal((await f.run({ ts: '1.1', text: 'card', blocks: [table, after] })).error, undefined);
+        assert.deepEqual(f.calls.find(c => c.method === 'chat.update')?.body['blocks'], [table, after]);
+        const twice = fixture('message.update', () => { throw new Error('must not call'); });
+        await assert.rejects(async () => twice.run({ ts: '1.1', text: 'card', blocks: [table, after, table] }), /message_update_requires_single_payload/);
     } finally { configureRtsOutputStore(undefined); db.close(); }
 });
 test('runtime-masked RTS message cannot be updated without surviving markers', async () => {

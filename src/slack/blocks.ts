@@ -99,7 +99,10 @@ function expandMarkdown(block: SlackBlock): SlackBlock[] {
     return result;
 }
 
-/** Keep tables separate, with preceding headers/prose attached in source order.
+/** One table per message. Blocks between two tables move to the later table and
+ * blocks after the last table stay with it, except where the 50-block or
+ * 12,000-markdown-character limit splits a message; when carrying would pass the
+ * markdown limit, the blocks nearest the earlier table stay behind with it.
  * Explicit rich payloads render blocks, so fallback text must not be separately
  * chunked into visible duplicate messages. Invalid input fails before posting. */
 export function buildSlackBlockPayloads(text: string, input: unknown): SlackTextPayload[] {
@@ -124,19 +127,34 @@ export function buildSlackBlockPayloads(text: string, input: unknown): SlackText
     const payloads: SlackTextPayload[] = [];
     let current: SlackBlock[] = [];
     let markdownChars = 0;
+    let tableEnd = -1;
+    const markdownLength = (block: SlackBlock) => block.type === 'markdown' ? String(block['text']).length : 0;
     const flush = () => {
         if (current.length) payloads.push({ text: fallback, blocks: current });
         current = [];
         markdownChars = 0;
+        tableEnd = -1;
     };
     for (const block of expanded) {
         const shapes = expectedTableShapes([block]);
         if (shapes.length > 1) return invalid('slack_nested_tables_require_separate_blocks');
-        const chars = block.type === 'markdown' ? String(block['text']).length : 0;
+        const chars = markdownLength(block);
+        if (shapes.length && tableEnd >= 0) {
+            // A second table starts a new payload before any limit is checked, so the
+            // blocks introducing it travel with it. Blocks nearest the previous table stay
+            // behind only when carrying them would pass the markdown limit.
+            let start = tableEnd;
+            let carriedChars = current.slice(start).reduce((total, b) => total + markdownLength(b), 0);
+            while (start < current.length && carriedChars + chars > 12000) carriedChars -= markdownLength(current[start++]!);
+            const carried = current.splice(start);
+            flush();
+            current = carried;
+            markdownChars = carriedChars;
+        }
         if (current.length === 50 || markdownChars + chars > 12000) flush();
         current.push(block);
         markdownChars += chars;
-        if (shapes.length) flush();
+        if (shapes.length) tableEnd = current.length;
     }
     flush();
     return payloads;
