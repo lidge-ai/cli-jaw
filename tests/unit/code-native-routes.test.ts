@@ -780,3 +780,26 @@ test('fence and lookup report the watermark raised by the fence own eviction', a
         } finally { await manager.dispose(); }
     });
 });
+
+test('a recorded revision conflict reports the watermark its own eviction raised', async () => {
+    const db = new Database(':memory:'); const store = new CodeStore(db, { mutationRetention: 1 });
+    await server(async (url, f) => {
+        const providers = Object.fromEntries((['codex-app', 'claude', 'cursor', 'grok'] as CodeProviderId[]).map(id => [id, {
+            id, describe: () => ({ id, label: id, available: true, reason: null, models: ['model-a'], defaultModel: 'model-a', defaultEffort: 'high', modelSource: 'registry', capabilities: f.session.capabilities }),
+            open: async () => { throw new Error('unexpected open'); },
+        }])) as CodeProviders;
+        const manager = new CodeSessionManager({ store, providers, publish() {} });
+        f.service.patch = manager.patch.bind(manager); f.service.patchWithMutation = manager.patchWithMutation.bind(manager);
+        f.service.mutation = manager.mutation.bind(manager); f.service.fenceMutation = manager.fenceMutation.bind(manager);
+        f.service.snapshot = manager.snapshot.bind(manager);
+        try {
+            const row = manager.create({ provider: 'claude', cwd: tmpdir(), model: 'model-a', effort: 'high', permissionMode: 'ask' }).session;
+            const base = url + '/sessions/' + row.sessionId;
+            const future = '7ZZZZZZZZZ0000000000000000'; const stale = '00000000000000000000000005';
+            assert.equal((await request(base, 'PATCH', { expectedRevision: 0, title: 'x', clientMutationId: future })).status, 200);
+            const conflict = await request(base, 'PATCH', { expectedRevision: 0, title: 'y', clientMutationId: stale });
+            assert.equal(conflict.status, 409); const body = await conflict.json();
+            assert.equal(body.mutation.status, 'rejected_conflict'); assert.equal(body.watermark, future);
+        } finally { await manager.dispose(); }
+    });
+});

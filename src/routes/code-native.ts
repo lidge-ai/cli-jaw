@@ -224,7 +224,9 @@ export function registerNativeCodeRoutes(
             const code = httpCode(error);
             if (code === 'revision_conflict') {
                 const mutation = error instanceof CodeStoreError ? error.mutation : undefined;
-                fail(res, 409, code, { session: service.snapshot(sessionId).session, ...(mutation ? { mutation } : {}) });
+                // Recording the conflict may evict and raise the watermark; a retry must mint above it.
+                fail(res, 409, code, { session: service.snapshot(sessionId).session,
+                    ...(mutation ? { mutation, watermark: service.mutation(sessionId, mutation.mutationId).watermark } : {}) });
             } else if (code === 'mutation_fenced' && error instanceof CodeStoreError) fail(res, 409, code, { mutation: error.mutation });
             else if (code === 'mutation_outcome_expired' && error instanceof CodeStoreError) fail(res, 410, code, { watermark: error.watermark });
             else throw error;

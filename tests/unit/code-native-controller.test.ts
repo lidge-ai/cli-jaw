@@ -2351,3 +2351,37 @@ test('a pending batch whose checkpoint failed can be applied or discarded explic
     assert.equal(f.controller.getModel().settings, null);
     await f.controller.setSelection({ effort: 'medium' });
 });
+
+test('a conflict retry mints above the watermark the 409 reported', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const high = '10000000000000000000000000'; const remote = session('a', { model: 'other-model', revision: 3 }); const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        ids.push(String(call.body['clientMutationId']));
+        if (ids.length === 1) { f.snapshots.set('a', snap(remote));
+            return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: ids[0], status: 'rejected_conflict', revision: 3, at: 1 }, watermark: high }, 409); }
+        return response({ ok: true, session: { ...remote, effort: 'high', revision: 4 }, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } });
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(ids.length, 2); assert.ok(ids[1]! > high, ids[1] + ' must exceed ' + high);
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('after the one automatic retry, refresh and remount never send again without Apply', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    let revision = 2;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        // Every send loses to an unrelated title change elsewhere: no field conflicts, but the revision moves.
+        revision++; const remote = session('a', { revision, title: 'renamed ' + revision }); f.snapshots.set('a', snap(remote));
+        return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: call.body['clientMutationId'], status: 'rejected_conflict', revision, at: 1 }, watermark: null }, 409);
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const patches = () => f.calls.filter(call => call.method === 'PATCH').length;
+    assert.equal(patches(), 2); assert.equal(f.controller.getModel().settings?.state, 'pending');
+    await f.controller.refresh(); assert.equal(patches(), 2, 'refresh must not resend');
+    f.cleanups.pop()!(); f.cleanups.push(f.controller.mount()); await f.controller.refresh();
+    assert.equal(patches(), 2, 'remount must not resend');
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
+    await f.controller.reapplySettings(); assert.equal(patches(), 3, 'explicit Apply sends once');
+});

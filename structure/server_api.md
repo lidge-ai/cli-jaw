@@ -519,7 +519,7 @@ PATCH optionally accepts `clientMutationId`, a canonical uppercase ULID matching
 `invalid_mutation_id`). An id-bearing success returns `{ok, session, mutation}`;
 the mutation contains `mutationId`, `status` (`applied`, `rejected_conflict` or
 `fenced`), `revision` and `at`. A revision conflict is recorded and answers409
-with the current `session` and `mutation`. Repeating the same request returns
+with the current `session`, `mutation` and `watermark`. Repeating the same request returns
 its recorded result without publishing another event; a changed payload answers409
 `mutation_id_conflict`, a fenced ID answers409 `mutation_fenced`, and an overlapping
 same-ID request answers409 `mutation_in_flight`. Non-CAS validation failures are

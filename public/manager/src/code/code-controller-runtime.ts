@@ -631,7 +631,8 @@ export class CodeController {
         if (!this.active) return;
         for (const [sessionId, draft] of this.book.sessions) {
             if (draft.settings?.state === 'unknown' && !draft.settings.expired) this.scheduleSettingsLookup(sessionId, draft, true);
-            else if (draft.settings?.state === 'pending' && !draft.settings.op) void this.resumePendingSettings(sessionId, draft);
+            // A batch that already used its automatic retry waits for an explicit Apply, across reloads too.
+            else if (draft.settings?.state === 'pending' && !draft.settings.op && !draft.settings.autoRetried) void this.resumePendingSettings(sessionId, draft);
         }
     };
     private async reconnectCreation(): Promise<void> {
@@ -883,6 +884,7 @@ export class CodeController {
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
             if (error instanceof CodeClientError && error.code === 'revision_conflict' && error.session?.sessionId === id) {
                 this.observe(error.session); this.accept(error.session);
+                batch.watermark = maxId(batch.watermark, error.watermark ?? null);
                 retry = this.reconcileRejected(draft, batch, error.session, mutationId);
             } else if (error instanceof CodeClientError && error.code === 'mutation_fenced') {
                 batch.state = 'rejected'; batch.error = error.message;
