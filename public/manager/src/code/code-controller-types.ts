@@ -9,6 +9,36 @@ export type CodeSessionFilter = { scope: 'all' | 'cwd'; archived: boolean };
 export type CodeOperationKind = 'idle' | 'creating' | 'sending' | 'stopping' | 'resuming' | 'patching' | 'rolling-back' | 'unknown-send';
 export interface CodeControllerOptions { port: number; workingDir: string }
 
+export type CodeSettingsField = 'model' | 'effort' | 'permissionMode' | 'thinking';
+export type CodeSettingsValue = string | boolean | null;
+/**
+ * A batch of settings edits and where its one PATCH stands. `sent` has left (or may have
+ * left) this page; `unknown` means its outcome could not be read; `rejected` was refused
+ * before the server recorded it; `conflict` waits for a per-field choice.
+ */
+export type CodeSettingsState = 'pending' | 'sent' | 'unknown' | 'conflict' | 'rejected';
+export interface CodeSettingsView {
+    state: CodeSettingsState;
+    fields: Array<{
+        field: CodeSettingsField;
+        /** The value this edit was made against. */
+        baseline: CodeSettingsValue;
+        /** The value the user chose. */
+        value: CodeSettingsValue;
+        /** Conflict only: the value another client saved since the baseline. */
+        theirs?: CodeSettingsValue;
+        /** Conflict only: the user's choice so far. */
+        resolution?: 'mine' | 'theirs';
+    }>;
+    /** The server no longer holds this edit's outcome; only an explicit Re-apply or Discard ends it. */
+    expired: boolean;
+    /** A check, fence or send owns the batch; recovery actions wait. */
+    busy: boolean;
+    /** The batch belongs to a new session whose creation is not confirmed yet. */
+    waitingForSession: boolean;
+    error: string | null;
+}
+
 export interface CodeControllerModel {
     catalog: CodeModelCatalog | null;
     sessions: CodeSessionInfo[];
@@ -50,6 +80,10 @@ export interface CodeControllerModel {
     hasOlderHistory: boolean;
     filter: CodeSessionFilter;
     creationUnknown: boolean;
+    /** The new-session draft has a create in flight or unconfirmed; settings edits queue as pending. */
+    creationPending: boolean;
+    /** Pending settings of the shown draft; null when none. Sends wait while this is non-null. */
+    settings: CodeSettingsView | null;
     /** A restore (attach, or attach-then-send) is in flight for the selected session; Stop can end it. */
     restoring?: boolean;
     startAnotherSession(): void;
@@ -76,4 +110,13 @@ export interface CodeControllerModel {
     loadOlderHistory(): Promise<void>;
     setFilter(filter: CodeSessionFilter): void;
     clearError(): void;
+    /** Read the recorded outcome of an unknown settings edit again. Never resends. */
+    checkSettings(): Promise<void>;
+    /** Fence the unknown/rejected edit, then send it again under a new id. */
+    reapplySettings(): Promise<void>;
+    /** Fence the unknown/rejected edit, then drop it. A pending or conflict batch is dropped directly. */
+    discardSettings(): Promise<void>;
+    resolveSettingsConflict(field: CodeSettingsField, choice: 'mine' | 'theirs'): void;
+    /** Send a conflict batch once every conflicting field has a choice. */
+    applyResolvedSettings(): Promise<void>;
 }

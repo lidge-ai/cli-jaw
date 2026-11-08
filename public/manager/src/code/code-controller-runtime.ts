@@ -2,13 +2,14 @@ import type {
     CodeContextUsage, CodeCreateSessionRequest, CodeModelCatalog, CodePatchSessionRequest,
     CodePermissionRequest, CodePromptReceipt, CodeSessionInfo, CodeWireEvent,
 } from '../../../../src/code-mode/wire';
-import type { CodeControllerModel, CodeControllerOptions, CodeSessionFilter, CodeTransportState } from './code-controller-types';
+import type { CodeControllerModel, CodeControllerOptions, CodeSessionFilter, CodeTransportState, CodeSettingsField, CodeSettingsValue } from './code-controller-types';
 import { CodeClientError, codeBaseOrigin, createCodeSessionClient, type CodeGitInfo, type CodeSessionClient } from './code-session-client';
 import { emptyCodeSession, reduceCodeSession, codeSessionBusy, type CodeSessionState } from './code-session-state';
 import {
     acknowledgeCodeSend, acknowledgeCodeSteer, catalogSelection, codeDraftBook, createCodeDraft, persistCodeDraftBook, sessionSelection,
-    type CodeDraft, type CodeDraftBook,
+    type CodeDraft, type CodeDraftBook, type CodePendingSettings,
 } from './code-controller-drafts';
+import { ulid } from './code-ulid';
 import { loadCodeDraftStorage } from './code-controller-draft-storage';
 import { withPendingUserItem } from './pending-user-item';
 import { codeCanResume, codeCanRollback, codeCanStop, codeOperationId, codeResendCopy, type CodeResendReason } from './code-types';
@@ -51,7 +52,21 @@ const spent = (status: CodePromptReceipt['status']): boolean => status === 'fail
 
 /** A session draft the user is working on, whitespace included; recovery and late creates never overwrite it. */
 const meaningfulDraft = (draft: CodeDraft | undefined): boolean => !!draft && (draft.input.length > 0 || !!draft.retry
-    || !!draft.stopTarget || !!draft.steer || draft.operation.kind !== 'idle');
+    || !!draft.stopTarget || !!draft.steer || !!draft.settings || draft.operation.kind !== 'idle');
+const settingFields: CodeSettingsField[] = ['model', 'effort', 'permissionMode', 'thinking'];
+/** Claude reads an unset thinking switch as on (the server stores it that way), so both sides compare as true. */
+const settingValue = (source: CodeCreateSessionRequest | CodeSessionInfo, field: CodeSettingsField): CodeSettingsValue =>
+    field === 'thinking' && source.provider === 'claude' ? source.thinking ?? true : source[field] ?? null;
+function overlay(selection: CodeCreateSessionRequest, settings: CodePendingSettings | null): CodeCreateSessionRequest {
+    const result = { ...selection };
+    for (const row of settings?.fields ?? []) {
+        if (row.field === 'thinking') { if (typeof row.value === 'boolean') result.thinking = row.value; else delete result.thinking; }
+        else if (row.field === 'model' && typeof row.value === 'string') result.model = row.value;
+        else if (row.field === 'effort' && (typeof row.value === 'string' || row.value === null)) result.effort = row.value;
+        else if (row.field === 'permissionMode' && typeof row.value === 'string') result.permissionMode = row.value as CodeCreateSessionRequest['permissionMode'];
+    }
+    return result;
+}
 
 /**
  * Did the transcript already settle the turn this send belongs to?
@@ -125,6 +140,9 @@ export class CodeController {
     private listeners = new Set<() => void>();
     private model: CodeControllerModel;
     private draftSyncQueued = false;
+    private settingsToken = 0;
+    private settingsTimers = new Map<CodeDraft, ReturnType<typeof setTimeout>>();
+    private settingsDelays = new Map<CodeDraft, number>();
 
     constructor(options: CodeControllerOptions) {
         this.client = createCodeSessionClient(options.port);
@@ -159,9 +177,14 @@ export class CodeController {
         this.book.listeners.add(this.changed);
         void this.refresh();
         return () => {
-            persistCodeDraftBook(this.book);
             this.active = false;
             this.lifetime++;
+            for (const draft of [this.book.fresh, ...this.book.sessions.values()]) {
+                if (draft.settings?.op) { draft.settings.op = null; if (draft.settings.state === 'sent') draft.settings.state = 'unknown'; }
+            }
+            for (const timer of this.settingsTimers.values()) clearTimeout(timer);
+            this.settingsTimers.clear(); this.settingsDelays.clear();
+            persistCodeDraftBook(this.book);
             this.abort.abort();
             this.syncing.clear();
             for (const read of this.detailReads.values()) read.abort();
@@ -404,7 +427,7 @@ export class CodeController {
             selectedId: id, session, items: withPendingUserItem(draft, detail?.items ?? []),
             hasUnsentDraft: !!this.book.fresh.input.trim() || this.book.fresh.createUnknown || !!this.book.fresh.retry,
             permissions: detail?.permissions ?? [],
-            input: draft.input, selection: session ? sessionSelection(session) : draft.selection,
+            input: draft.input, selection: overlay(session ? sessionSelection(session) : draft.selection, draft.settings),
             gitInfo: this.gitInfo, loading: this.indexLoading || !!detail?.hydrating || (!!id && !detail?.hydrated && !detail?.error),
             pending, busy: codeSessionBusy(session), working: !!draft.awaitingTurn || codeSessionBusy(session),
             workingIds: new Set([...this.rows, ...this.pinnedOverlay.map(row => row.sessionId)].filter(rowId => {
@@ -413,11 +436,17 @@ export class CodeController {
             })), followUp, followUpSent, steering: draft.steer?.state === 'sending', synced, transport: this.transport, workspacePicking: this.workspacePicking,
             error: [operation.error ?? unconfirmed ?? detail?.error ?? this.indexError ?? this.catalogError ?? this.gitError ?? session?.error?.message, persistenceWarning].filter(Boolean).join(' ') || null,
             operation: { ...operation, error: operation.error && persistenceWarning ? `${operation.error} ${persistenceWarning}` : operation.error }, retryText: draft.retry?.text ?? null,
-            canRetrySameSend: !!id && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
+            canRetrySameSend: !!id && !draft.settings && operation.kind === 'unknown-send' && !!draft.retry && synced && session?.archivedAt === null,
             resendRequired: !!draft.retry?.resend, resendReason: draft.retry?.resend ? draft.retry.resendReason ?? null : null,
             permissionOperations: { ...draft.permissionOperations }, hasMoreSessions: this.moreSessions,
             hasOlderHistory: detail?.hasOlder ?? false, filter: this.filter,
-            creationUnknown: id === null && draft.createUnknown, restoring: id !== null && !!draft.restore && !draft.restore.stopRequested,
+            creationUnknown: id === null && draft.createUnknown, creationPending: id === null && (draft.createUnknown || draft.operation.kind === 'creating'),
+            settings: draft.settings ? { state: draft.settings.state, fields: draft.settings.fields.map(row => ({ field: row.field, baseline: row.baseline, value: row.value,
+                ...(row.conflict ? { theirs: row.conflict.theirs, ...(row.conflict.resolution ? { resolution: row.conflict.resolution } : {}) } : {}) })),
+                expired: draft.settings.expired, busy: !!draft.settings.op, waitingForSession: id === null, error: draft.settings.error } : null,
+            restoring: id !== null && !!draft.restore && !draft.restore.stopRequested,
+            checkSettings: this.checkSettings, reapplySettings: this.reapplySettings, discardSettings: this.discardSettings,
+            resolveSettingsConflict: this.resolveSettingsConflict, applyResolvedSettings: this.applyResolvedSettings,
             startAnotherSession: this.startAnotherSession,
             newSession: this.newSession, selectSession: this.selectSession, setInput: this.setInput,
             setSelection: this.setSelection, pickWorkspace: this.pickWorkspace, send: this.send,
@@ -589,11 +618,19 @@ export class CodeController {
         if (transport === 'connected' && this.active) {
             void this.readIndex();
             for (const id of this.details.keys()) void this.sync(id, true);
+            for (const [id, draft] of this.book.sessions) {
+                if (draft.settings?.state === 'unknown' && !draft.settings.expired) { this.clearSettingsTimer(draft); this.scheduleSettingsLookup(id, draft, true); }
+            }
         }
     };
     refresh = async (): Promise<void> => {
         const id = this.book.selectedId;
         await Promise.all([this.readCatalog(), this.readIndex(), id ? this.sync(id, true) : Promise.resolve(), this.readGit(), this.reconnectCreation()]);
+        if (!this.active) return;
+        for (const [sessionId, draft] of this.book.sessions) {
+            if (draft.settings?.state === 'unknown' && !draft.settings.expired) this.scheduleSettingsLookup(sessionId, draft, true);
+            else if (draft.settings?.state === 'pending' && !draft.settings.op) void this.resumePendingSettings(sessionId, draft);
+        }
     };
     private async reconnectCreation(): Promise<void> {
         const draft = this.book.fresh, key = draft.creationKey, life = this.lifetime, navigation = this.book.navigation;
@@ -606,7 +643,8 @@ export class CodeController {
             const existing = this.book.sessions.get(found.sessionId);
             draft.creationKey = null; draft.createUnknown = false;
             if (meaningfulDraft(existing)) {
-                draft.operation = { kind: 'idle', error: 'The original session was found and already has its own draft. This text stays here as a new draft; sending it creates another session.' };
+                draft.selection = overlay(draft.selection, draft.settings); draft.settings = null;
+                draft.operation = { kind: 'idle', error: 'The original session was found and already has its own draft. This text and settings stay here as a new draft; sending it creates another session.' };
             } else {
                 draft.operation = { kind: 'idle', error: null };
                 this.book.sessions.set(found.sessionId, draft);
@@ -614,8 +652,9 @@ export class CodeController {
                 if (this.book.selectedId === null && this.book.navigation === navigation) {
                     this.book.selectedId = found.sessionId; this.book.navigation++;
                     this.state(found.sessionId);
-                    void this.sync(found.sessionId, true);
                 }
+                this.notify();
+                if (draft.settings) await this.resumePendingSettings(found.sessionId, draft);
             }
             this.scheduleIndex(); this.notify();
         } catch (error) {
@@ -628,7 +667,7 @@ export class CodeController {
     startAnotherSession = (): void => {
         const previous = this.book.fresh;
         if (this.book.selectedId !== null || !previous.createUnknown) return;
-        const draft = createCodeDraft(previous.selection);
+        const draft = createCodeDraft(overlay(previous.selection, previous.settings));
         draft.input = previous.input; draft.edit = previous.edit; draft.selectionEdit = previous.selectionEdit;
         draft.operation.error = 'The original session may still exist. Your text is preserved; Send will create another session.';
         this.book.fresh = draft;
@@ -706,12 +745,20 @@ export class CodeController {
     setSelection = async (patch: Partial<CodeCreateSessionRequest>): Promise<void> => {
         const id = this.book.selectedId;
         const session = this.info(id);
+        const draft = this.draft();
+        const creating = !id && (draft.operation.kind === 'creating' || draft.createUnknown);
+        if (draft.settings && (!creating || draft.settings.state !== 'pending' || draft.settings.op)) return;
         if (session && patch.provider && patch.provider !== session.provider) {
             this.newSession();
             await this.setSelection({ ...patch, cwd: session.cwd });
             return;
         }
-        const draft = this.draft();
+        if (creating) {
+            if ((patch.provider !== undefined && patch.provider !== draft.selection.provider) || (patch.cwd !== undefined && patch.cwd !== draft.selection.cwd)) {
+                draft.operation.error = 'Runtime and workspace cannot change while session creation is unconfirmed.'; this.notify(); return;
+            }
+            this.editSettings(draft, draft.selection, patch); this.notify(); return;
+        }
         if (draft.operation.kind !== 'idle' || draft.createUnknown) return;
         if (session && id) {
             if ((patch.cwd !== undefined && patch.cwd !== session.cwd) || (patch.provider && patch.provider !== session.provider)) {
@@ -722,10 +769,9 @@ export class CodeController {
                 draft.operation.error = 'Wait for this session to be idle and synchronized before changing settings.';
                 this.notify(); return;
             }
-            await this.patch(id, { model: patch.model ?? session.model,
-                effort: patch.effort === undefined ? session.effort : patch.effort,
-                permissionMode: patch.permissionMode ?? session.permissionMode,
-                ...(session.provider === 'claude' ? { thinking: patch.thinking ?? session.thinking ?? true } : {}) });
+            this.editSettings(draft, session, patch);
+            this.notify();
+            if (draft.settings) await this.applySettings(id, draft);
             return;
         }
         if (id) return;
@@ -738,6 +784,205 @@ export class CodeController {
         draft.selectionEdit++;
         this.notify();
         if (patch.cwd !== undefined) await this.readGit();
+    };
+    private editSettings(draft: CodeDraft, baseline: CodeCreateSessionRequest | CodeSessionInfo, patch: Partial<CodeCreateSessionRequest>): void {
+        const batch = draft.settings ?? { fields: [], state: 'pending', mutationId: null, expectedRevision: null, watermark: null,
+            expired: false, autoRetried: false, error: null, op: null } satisfies CodePendingSettings;
+        for (const field of settingFields) {
+            if (patch[field] === undefined) continue;
+            const value = patch[field] ?? null;
+            const existing = batch.fields.find(row => row.field === field);
+            const original = existing?.baseline ?? settingValue(baseline, field);
+            batch.fields = batch.fields.filter(row => row.field !== field);
+            if (value !== original) batch.fields.push({ field, baseline: original, value });
+        }
+        draft.settings = batch.fields.length ? batch : null;
+    }
+    private clearSettingsTimer(draft: CodeDraft): void {
+        const timer = this.settingsTimers.get(draft); if (timer !== undefined) clearTimeout(timer);
+        this.settingsTimers.delete(draft); this.settingsDelays.delete(draft);
+    }
+    private settingsOwner(id: string, draft: CodeDraft, batch: CodePendingSettings, token: number, mutationId: string | null, life: number): boolean {
+        return this.active && this.lifetime === life && this.book.sessions.get(id) === draft && draft.settings === batch
+            && batch.mutationId === mutationId && batch.op?.token === token;
+    }
+    private compareSettings(batch: CodePendingSettings, session: CodeSessionInfo): boolean {
+        batch.fields = batch.fields.filter(row => settingValue(session, row.field) !== row.value);
+        let conflict = false;
+        for (const row of batch.fields) {
+            const theirs = settingValue(session, row.field);
+            if (theirs !== row.baseline) { row.conflict = { theirs }; conflict = true; }
+            else delete row.conflict;
+        }
+        return conflict;
+    }
+    private async syncSettings(id: string, current: () => boolean): Promise<void> {
+        const existing = this.syncing.get(id);
+        if (existing) { await existing; if (!current()) return; }
+        if (current()) await this.sync(id, true);
+    }
+    private async resumePendingSettings(id: string, draft: CodeDraft): Promise<void> {
+        const batch = draft.settings, life = this.lifetime;
+        if (!batch || batch.state !== 'pending' || batch.op || !this.active) return;
+        const token = ++this.settingsToken, mutationId = batch.mutationId;
+        batch.op = { token, kind: 'check' }; this.notify();
+        await this.syncSettings(id, () => this.settingsOwner(id, draft, batch, token, mutationId, life));
+        if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+        batch.op = null;
+        if (!this.details.get(id)?.synced || this.details.get(id)?.error) { batch.error = 'Could not refresh the session to apply settings.'; this.notify(); return; }
+        await this.applySettings(id, draft);
+    }
+    private async applySettings(id: string, draft: CodeDraft): Promise<void> {
+        const batch = draft.settings, session = this.info(id);
+        if (!this.active || !batch || batch.state !== 'pending' || batch.op || !session) return;
+        if (this.compareSettings(batch, session)) { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; this.notify(); return; }
+        if (!batch.fields.length) { draft.settings = null; this.notify(); return; }
+        try { batch.mutationId = ulid(Date.now(), batch.watermark); }
+        catch (error) { batch.error = error instanceof Error ? error.message : 'Could not create a settings identity.'; this.notify(); return; }
+        batch.expectedRevision = session.revision; batch.state = 'sent'; batch.error = null;
+        const mutationId = batch.mutationId, token = ++this.settingsToken, life = this.lifetime;
+        batch.op = { token, kind: 'send' }; this.notify();
+        const saved = this.book.storage && loadCodeDraftStorage(this.book.storage, this.book.endpoint).data?.sessions.find(row => row.id === id)?.draft.settings;
+        if (!saved || saved.state !== 'sent' || saved.mutationId !== mutationId) {
+            batch.state = 'pending'; batch.mutationId = null; batch.op = null;
+            batch.error = 'Draft recovery could not save the settings change, so it was not sent.'; this.notify(); return;
+        }
+        const patch: CodePatchSessionRequest = { expectedRevision: session.revision, clientMutationId: mutationId,
+            model: session.model, effort: session.effort, permissionMode: session.permissionMode,
+            ...(session.provider === 'claude' && session.thinking !== null ? { thinking: session.thinking } : {}) };
+        for (const row of batch.fields) {
+            if (row.field === 'model' && typeof row.value === 'string') patch.model = row.value;
+            else if (row.field === 'effort' && (typeof row.value === 'string' || row.value === null)) patch.effort = row.value;
+            else if (row.field === 'permissionMode' && typeof row.value === 'string') patch.permissionMode = row.value as CodeCreateSessionRequest['permissionMode'];
+            else if (row.field === 'thinking' && typeof row.value === 'boolean') patch.thinking = row.value;
+        }
+        let retry = false;
+        try {
+            const result = await this.client.patchSettings(id, patch);
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            this.accept(result.session); draft.settings = null;
+        } catch (error) {
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            if (error instanceof CodeClientError && error.code === 'revision_conflict' && error.session?.sessionId === id) {
+                this.observe(error.session); this.accept(error.session);
+                if (this.compareSettings(batch, error.session)) { batch.state = 'conflict'; batch.error = error.message; }
+                else if (!batch.fields.length) draft.settings = null;
+                else if (!batch.autoRetried) {
+                    batch.autoRetried = true; for (const row of batch.fields) row.baseline = settingValue(error.session, row.field);
+                    batch.state = 'pending'; batch.watermark = mutationId; retry = true;
+                } else { batch.state = 'conflict'; batch.error = error.message; }
+            } else if (error instanceof CodeClientError && error.code === 'mutation_fenced') {
+                batch.state = 'rejected'; batch.error = error.message;
+            } else if (error instanceof CodeClientError && error.status === 410 && error.code === 'mutation_outcome_expired') {
+                batch.state = 'unknown'; batch.expired = true; batch.watermark = error.watermark ?? batch.watermark; batch.error = error.message;
+            } else {
+                const definite = error instanceof CodeClientError && ((error.status === 400 && (/^(invalid_|unsupported_)/.test(error.code) || ['unknown_field', 'empty_patch'].includes(error.code)))
+                    || (error.status === 404 && error.code === 'session_not_found') || (error.status === 409 && ['session_busy', 'resume_unavailable', 'session_archived', 'cleanup_pending', 'mutation_id_conflict'].includes(error.code)));
+                batch.state = definite ? 'rejected' : 'unknown'; batch.error = message(error);
+            }
+        }
+        if (draft.settings === batch) batch.op = null;
+        this.notify(); this.scheduleIndex();
+        if (retry && draft.settings === batch) await this.applySettings(id, draft);
+        else if (draft.settings === batch && batch.state === 'unknown' && !batch.expired) this.scheduleSettingsLookup(id, draft);
+    }
+    private scheduleSettingsLookup(id: string, draft: CodeDraft, immediate = false): void {
+        if (!this.active || this.settingsTimers.has(draft) || draft.settings?.state !== 'unknown' || draft.settings.expired) return;
+        const delay = immediate ? 0 : this.settingsDelays.get(draft) ?? 1000;
+        this.settingsDelays.set(draft, Math.min(delay ? delay * 2 : 1000, 30000));
+        this.settingsTimers.set(draft, setTimeout(() => {
+            this.settingsTimers.delete(draft); void this.lookupSettings(id, draft, 'lookup');
+        }, delay));
+    }
+    private async lookupSettings(id: string, draft: CodeDraft, kind: 'lookup' | 'check'): Promise<void> {
+        const batch = draft.settings;
+        if (!this.active || !batch || batch.state !== 'unknown' || batch.expired || !batch.mutationId || batch.op) return;
+        const mutationId = batch.mutationId, token = ++this.settingsToken, life = this.lifetime;
+        batch.op = { token, kind }; this.notify();
+        try {
+            const mutation = await this.client.readMutation(id, mutationId);
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            if (mutation.status === 'applied' || mutation.status === 'rejected_conflict') {
+                await this.syncSettings(id, () => this.settingsOwner(id, draft, batch, token, mutationId, life));
+                if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+                if (!this.details.get(id)?.synced || this.details.get(id)?.error) throw new Error('Session refresh failed');
+            }
+            if (mutation.status === 'applied') { draft.settings = null; this.clearSettingsTimer(draft); }
+            else if (mutation.status === 'rejected_conflict') {
+                const session = this.info(id);
+                if (session) { this.compareSettings(batch, session); if (!batch.fields.length) draft.settings = null;
+                    else { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; } }
+                else { batch.state = 'unknown'; batch.error = 'Could not refresh the session to review settings.'; }
+            } else { batch.state = 'rejected'; batch.error = 'This settings change was fenced before it applied.'; }
+        } catch (error) {
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            if (error instanceof CodeClientError && error.status === 410) { batch.expired = true; batch.watermark = error.watermark ?? batch.watermark; }
+            if (!(error instanceof CodeClientError && error.code === 'mutation_not_found')) batch.error = message(error);
+        }
+        if (draft.settings === batch) batch.op = null;
+        this.notify();
+        if (draft.settings === batch && batch.state === 'unknown' && !batch.expired) this.scheduleSettingsLookup(id, draft);
+    }
+    checkSettings = async (): Promise<void> => {
+        const id = this.book.selectedId; if (!id) return;
+        const draft = this.draft(id); this.clearSettingsTimer(draft); await this.lookupSettings(id, draft, 'check');
+    };
+    private async settleSettings(action: 'discard' | 'reapply'): Promise<void> {
+        const id = this.book.selectedId, draft = this.draft(id), batch = draft.settings;
+        if (!batch || batch.op) return;
+        if (!id || batch.state === 'pending' || batch.state === 'conflict') {
+            if (action === 'discard') { draft.settings = null; this.notify(); }
+            return;
+        }
+        if (!['unknown', 'rejected'].includes(batch.state) || !batch.mutationId) return;
+        this.clearSettingsTimer(draft);
+        const mutationId = batch.mutationId, token = ++this.settingsToken, life = this.lifetime;
+        batch.op = { token, kind: 'fence' }; this.notify();
+        let outcome: 'fenced' | 'applied' | 'rejected_conflict' = 'fenced';
+        try {
+            if (!batch.expired) outcome = (await this.client.fenceMutation(id, mutationId)).status;
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+        } catch (error) {
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            if (error instanceof CodeClientError && error.status === 410) { batch.watermark = error.watermark ?? batch.watermark; batch.expired = true; }
+            else { batch.op = null; batch.error = message(error); this.notify(); if (batch.state === 'unknown') this.scheduleSettingsLookup(id, draft); return; }
+        }
+        if (outcome === 'applied' || outcome === 'rejected_conflict') {
+            await this.syncSettings(id, () => this.settingsOwner(id, draft, batch, token, mutationId, life));
+            if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            if (!this.details.get(id)?.synced || this.details.get(id)?.error) { batch.op = null; batch.error = 'Could not refresh the session to review settings.'; this.notify(); return; }
+        }
+        if (outcome === 'applied') draft.settings = null;
+        else if (outcome === 'rejected_conflict') {
+            const session = this.info(id);
+            if (!session) { batch.op = null; batch.error = 'Could not refresh the session to review settings.'; this.notify(); return; }
+            this.compareSettings(batch, session);
+            if (!batch.fields.length) draft.settings = null;
+            else { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; }
+        } else if (action === 'discard') draft.settings = null;
+        else { batch.state = 'pending'; batch.watermark = batch.watermark && batch.watermark > mutationId ? batch.watermark : mutationId;
+            batch.expired = false; batch.autoRetried = false; batch.error = null; batch.mutationId = null; }
+        if (draft.settings === batch) batch.op = null;
+        this.notify();
+        if (action === 'reapply' && draft.settings === batch && batch.state === 'pending') await this.applySettings(id, draft);
+    }
+    reapplySettings = async (): Promise<void> => { await this.settleSettings('reapply'); };
+    discardSettings = async (): Promise<void> => { await this.settleSettings('discard'); };
+    resolveSettingsConflict = (field: CodeSettingsField, choice: 'mine' | 'theirs'): void => {
+        const batch = this.draft().settings;
+        const row = batch?.fields.find(item => item.field === field);
+        if (!batch || batch.state !== 'conflict' || batch.op || !row?.conflict) return;
+        row.conflict.resolution = choice; this.notify();
+    };
+    applyResolvedSettings = async (): Promise<void> => {
+        const id = this.book.selectedId, draft = this.draft(id), batch = draft.settings, session = this.info(id);
+        if (!id || !batch || batch.state !== 'conflict' || batch.op || !session || batch.fields.some(row => row.conflict && !row.conflict.resolution)) return;
+        batch.fields = batch.fields.filter(row => row.conflict?.resolution !== 'theirs');
+        for (const row of batch.fields) { if (row.conflict) row.baseline = row.conflict.theirs; delete row.conflict; }
+        if (!batch.fields.length) { draft.settings = null; this.notify(); return; }
+        if (batch.mutationId && (!batch.watermark || batch.mutationId > batch.watermark)) batch.watermark = batch.mutationId;
+        batch.state = 'pending'; batch.mutationId = null; batch.autoRetried = false; batch.error = null; this.notify();
+        await this.applySettings(id, draft);
     };
     private async patch(id: string, input: Omit<CodePatchSessionRequest, 'expectedRevision'>, rejectFailure = false): Promise<void> {
         const draft = this.draft(id);
@@ -849,6 +1094,7 @@ export class CodeController {
         let id = this.book.selectedId;
         let draft = this.draft(id);
         if (draft.operation.kind !== 'idle' || draft.createUnknown || !draft.input.trim() || draft.steer?.state === 'sending') return;
+        if (draft.settings) { draft.operation.error = 'Apply or discard pending settings before sending.'; this.notify(); return; }
         let session = this.info(id);
         const captured = { text: draft.input, edit: draft.edit, key: crypto.randomUUID() };
         let attachToken: number | null = null;
@@ -905,7 +1151,8 @@ export class CodeController {
                 // started there stays, and ownership of the captured text is no longer clear.
                 if (meaningfulDraft(this.book.sessions.get(id)) && this.book.sessions.get(id) !== draft) {
                     this.accept(created);
-                    draft.operation = { kind: 'idle', error: 'The new session already has its own draft, so this text stayed here and was not sent. Sending it creates another session.' };
+                    draft.selection = overlay(draft.selection, draft.settings); draft.settings = null;
+                    draft.operation = { kind: 'idle', error: 'The new session already has its own draft, so this text and settings stayed here and were not sent. Sending it creates another session.' };
                     this.notify(); this.scheduleIndex(); return;
                 }
                 this.book.sessions.set(id, draft);
@@ -916,10 +1163,23 @@ export class CodeController {
                 }
                 this.accept(created);
                 if (this.active) this.state(id);
+                draft.operation = { kind: 'idle', error: null };
+                this.notify();
+                if (draft.settings) {
+                    await this.resumePendingSettings(id, draft);
+                    if (draft.settings || !this.active) {
+                        draft.operation = { kind: 'idle', error: 'Your message was not sent because the pending settings are not applied yet.' };
+                        this.notify(); return;
+                    }
+                }
                 this.scheduleIndex();
             } catch (error) {
                 draft.createUnknown = !rejected(error);
-                if (!draft.createUnknown) draft.creationKey = null;
+                if (!draft.createUnknown) {
+                    draft.creationKey = null;
+                    // Nothing was created, so the queued edits are simply this draft's choices again.
+                    draft.selection = overlay(draft.selection, draft.settings); draft.settings = null;
+                }
                 draft.operation = { kind: draft.createUnknown ? 'creating' : 'idle', error: draft.createUnknown
                     ? 'Session creation could not be confirmed. The original session may exist. Refresh the list, or choose Start another session to keep this text in a new draft.' : message(error) };
                 this.notify(); this.scheduleIndex(); return;
@@ -927,6 +1187,7 @@ export class CodeController {
         }
         draft = this.draft(id);
         if (attachToken !== null && draft.attachToken !== attachToken) return;
+        if (draft.settings) { draft.operation = { kind: 'idle', error: 'Your message was not sent because the pending settings are not applied yet.' }; this.notify(); return; }
         draft.retry = captured;
         if (restore && draft.restore === restore) draft.restore = null;
         await this.submit(id, draft);

@@ -1,9 +1,16 @@
 import type { CodeCreateSessionRequest, CodeModelCatalog, CodeSessionInfo } from '../../../../src/code-mode/wire';
-import type { CodeControllerModel } from './code-controller-types';
+import type { CodeControllerModel, CodeSettingsField, CodeSettingsState, CodeSettingsValue } from './code-controller-types';
 import { browserCodeDraftStorage, loadCodeDraftStorage, saveCodeDraftStorage, type StoredCodeDraft } from './code-controller-draft-storage';
 import { codeResendCopy, type CodeResendReason } from './code-types';
 
+export interface CodePendingSettings {
+    fields: Array<{ field: CodeSettingsField; baseline: CodeSettingsValue; value: CodeSettingsValue; conflict?: { theirs: CodeSettingsValue; resolution?: 'mine' | 'theirs' } }>;
+    state: CodeSettingsState; mutationId: string | null; expectedRevision: number | null; watermark: string | null;
+    expired: boolean; autoRetried: boolean; error: string | null;
+    op: { token: number; kind: 'send' | 'lookup' | 'fence' | 'check' } | null;
+}
 export interface CodeDraft {
+    settings: CodePendingSettings | null;
     input: string;
     edit: number;
     selection: CodeCreateSessionRequest;
@@ -62,7 +69,7 @@ export interface CodeDraftBook {
 const memoryBooks = new Map<string, CodeDraftBook>();
 const tabBooks = new WeakMap<Storage, Map<string, CodeDraftBook>>();
 export function createCodeDraft(selection: CodeCreateSessionRequest): CodeDraft {
-    return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0,
+    return { input: '', edit: 0, selection: { ...selection }, selectionEdit: 0, settings: null,
         operation: { kind: 'idle', error: null }, retry: null, createUnknown: false, creationKey: null, attachToken: 0, requiredSequence: 0,
         restore: null, stopTarget: null, permissionOperations: {}, awaitingTurn: null, steer: null };
 }
@@ -72,6 +79,7 @@ function restoreDraft(saved: StoredCodeDraft): CodeDraft {
     draft.createUnknown = saved.creating;
     draft.creationKey = saved.creationKey ?? null;
     draft.retry = saved.retry;
+    draft.settings = saved.settings ? { ...saved.settings, state: saved.settings.state === 'sent' ? 'unknown' : saved.settings.state, op: null } : null;
     if (saved.creating) draft.operation = { kind: 'creating', error: 'Creation was interrupted by reload. The original session may exist; no request has been retried.' };
     if (saved.retry) draft.operation = { kind: 'unknown-send', error: saved.retry.resend
         ? codeResendCopy(saved.retry.resendReason).error

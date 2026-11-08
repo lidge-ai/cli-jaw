@@ -60,9 +60,10 @@ function model(patch: Partial<CodeControllerModel> = {}): CodeControllerModel {
     gitInfo: null, loading: false, pending: false, busy: false, synced: true, error: null, transport: 'connected', workspacePicking: false,
     operation: { kind: 'idle', error: null }, retryText: null, canRetrySameSend: false, permissionOperations: {},
     hasMoreSessions: false, hasOlderHistory: false, filter: { scope: 'all', archived: false },
-    creationUnknown: false, startAnotherSession() {}, newSession() {}, async selectSession() {}, setInput() {}, async setSelection() {}, async pickWorkspace() {},
+    creationUnknown: false, creationPending: false, settings: null, startAnotherSession() {}, newSession() {}, async selectSession() {}, setInput() {}, async setSelection() {}, async pickWorkspace() {},
     async send() {}, async stop() {}, async resume() {}, async rename() {}, async archive() {}, async pin() {}, async markUnread() {}, async answer() {},
-    async refresh() {}, async loadMoreSessions() {}, async loadOlderHistory() {}, setFilter() {}, clearError() {}, async retrySameSend() {}, ...patch };
+    async refresh() {}, async loadMoreSessions() {}, async loadOlderHistory() {}, setFilter() {}, clearError() {}, async retrySameSend() {},
+    async checkSettings() {}, async reapplySettings() {}, async discardSettings() {}, resolveSettingsConflict() {}, async applyResolvedSettings() {}, ...patch };
 }
 function button(container: ParentNode, name: string) {
     const found = [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.trim() === name || node.getAttribute('aria-label') === name);
@@ -142,14 +143,99 @@ test('idle model and effort updates work without hot-switch capability and stay 
     assert.equal(patches.length, 3, 'disabled states must not dispatch settings mutations');
 });
 
-test('creation freezes runtime/model/policy and Auto YOLO remains explicit', bounded, async t => {
+test('creation keeps runtime locked while allowing pending settings edits', bounded, async t => {
     const h = await surface(t);
-    const c = model({ selectedId: null, session: null, pending: true, operation: { kind: 'creating', error: null },
+    const c = model({ selectedId: null, session: null, pending: true, creationPending: true, operation: { kind: 'creating', error: null },
+        settings: { state: 'pending', fields: [{ field: 'model', baseline: 'old', value: 'native-model' }], expired: false, busy: false, waitingForSession: true, error: null },
         selection: { provider: 'grok', cwd: '/work/beta', model: 'native-model', effort: null, permissionMode: 'auto' } });
     await h.render(createElement(ComposerFooter, { controller: c }));
-    assert.equal(button(h.container, 'Runtime: Grok').disabled, true); assert.equal(button(h.container, 'Permission: Auto (YOLO)').disabled, true);
-    assert.equal(button(h.container, 'Model: native-model').disabled, true);
+    assert.equal(button(h.container, 'Runtime: Grok').disabled, true); assert.equal(button(h.container, 'Permission: Auto (YOLO)').disabled, false);
+    const modelControl = button(h.container, 'Model: native-model, Pending');
+    assert.equal(modelControl.disabled, false); assert.match(modelControl.textContent ?? '', /Pending/);
     assert.match(h.container.textContent ?? '', /Auto \(YOLO\)/);
+});
+
+test('all pending footer fields remain editable during unconfirmed creation and lock after dispatch', bounded, async t => {
+    const h = await surface(t); const patches: unknown[] = [];
+    const fields = [{ field: 'permissionMode' as const, baseline: 'ask', value: 'auto' },
+        { field: 'model' as const, baseline: 'old', value: 'native-model' },
+        { field: 'effort' as const, baseline: null, value: 'high' },
+        { field: 'thinking' as const, baseline: false, value: true }];
+    const base = { fields, expired: false, busy: false, waitingForSession: true, error: null };
+    const c = model({ selectedId: null, session: null, creationPending: true, creationUnknown: true,
+        selection: { provider: 'claude', cwd: '/work/beta', model: 'native-model', effort: 'high', permissionMode: 'auto', thinking: true },
+        async setSelection(patch) { patches.push(patch); } });
+    const names = ['Permission: Auto (YOLO)', 'Model: native-model', 'Effort: high', 'Thinking: Thinking on'];
+    await h.render(createElement(ComposerFooter, { controller: { ...c, settings: { ...base, state: 'pending' } } }));
+    for (const name of names) assert.equal(button(h.container, `${name}, Pending`).disabled, false);
+    await click(button(h.container, 'Thinking: Thinking on, Pending'));
+    const off = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.startsWith('Thinking off'));
+    assert.ok(off); await click(off);
+    assert.deepEqual(patches, [{ thinking: false }]);
+    await h.render(createElement(ComposerFooter, { controller: { ...c, settings: null } }));
+    for (const name of names) assert.equal(button(h.container, name).disabled, false);
+    for (const [state, marker] of [['sent', 'Pending'], ['unknown', 'Not confirmed'], ['rejected', 'Not confirmed'], ['conflict', 'Conflict']] as const) {
+        await h.render(createElement(ComposerFooter, { controller: { ...c, settings: { ...base, state } } }));
+        for (const name of names) assert.equal(button(h.container, `${name}, ${marker}`).disabled, true);
+        assert.equal(button(h.container, 'Runtime: Claude').disabled, true);
+    }
+});
+
+test('settings unknown locks footer and exposes recovery actions with busy and expiry states', bounded, async t => {
+    const h = await surface(t); const calls: string[] = [];
+    const settings = { state: 'unknown' as const, fields: [{ field: 'model' as const, baseline: 'old', value: 'native-model' }],
+        expired: false, busy: false, waitingForSession: false, error: null };
+    const c = model({ settings, async checkSettings() { calls.push('check'); }, async reapplySettings() { calls.push('reapply'); },
+        async discardSettings() { calls.push('discard'); } });
+    await h.render(createElement(CodeWorkbench, { controller: c, endpointKey: 'local' }));
+    const control = button(h.container, 'Model: native-model, Not confirmed');
+    assert.equal(control.disabled, true); assert.match(control.textContent ?? '', /Not confirmed/);
+    assert.match(h.container.textContent ?? '', /may or may not have applied/i);
+    assert.match(h.container.textContent ?? '', /never.*automatically/i);
+    for (const name of ['Check again', 'Re-apply', 'Discard']) await click(button(h.container, name));
+    assert.deepEqual(calls, ['check', 'reapply', 'discard']);
+    await h.render(createElement(CodeWorkbench, { controller: { ...c, settings: { ...settings, expired: true, busy: true } }, endpointKey: 'local' }));
+    assert.match(h.container.textContent ?? '', /expired/i);
+    for (const name of ['Check again', 'Re-apply', 'Discard']) assert.equal(button(h.container, name).disabled, true);
+});
+
+test('settings conflict requires a choice per conflicting field and calls the selected actions', bounded, async t => {
+    const h = await surface(t); const calls: string[] = [];
+    const settings = { state: 'conflict' as const, fields: [
+        { field: 'model' as const, baseline: 'old', value: 'mine', theirs: 'other' },
+        { field: 'effort' as const, baseline: null, value: 'high', theirs: 'low' },
+    ], expired: false, busy: false, waitingForSession: false, error: null };
+    const c = model({ settings, resolveSettingsConflict(field, choice) { calls.push(`${field}:${choice}`); },
+        async applyResolvedSettings() { calls.push('apply'); }, async discardSettings() { calls.push('discard'); } });
+    await h.render(createElement(CodeWorkbench, { controller: c, endpointKey: 'local' }));
+    assert.match(h.container.textContent ?? '', /Model.*yours.*mine.*now.*other/i);
+    assert.equal(button(h.container, 'Apply').disabled, true);
+    const choices = [...h.container.querySelectorAll<HTMLButtonElement>('button')].filter(b => b.textContent === 'Keep mine' || b.textContent === 'Take theirs');
+    assert.equal(choices.length, 4); await click(choices[0]!); await click(choices[3]!);
+    assert.deepEqual(calls, ['model:mine', 'effort:theirs']);
+    await h.render(createElement(CodeWorkbench, { controller: { ...c, settings: { ...settings,
+        fields: [{ ...settings.fields[0]!, resolution: 'mine' }, settings.fields[1]!] } }, endpointKey: 'local' }));
+    assert.equal(button(h.container, 'Apply').disabled, true, 'one unresolved field still blocks Apply');
+    await h.render(createElement(CodeWorkbench, { controller: { ...c, settings: { ...settings,
+        fields: [{ ...settings.fields[0]!, resolution: 'mine' }, { ...settings.fields[1]!, resolution: 'theirs' }] } }, endpointKey: 'local' }));
+    assert.equal(button(h.container, 'Apply').disabled, false); await click(button(h.container, 'Apply')); await click(button(h.container, 'Discard'));
+    assert.deepEqual(calls, ['model:mine', 'effort:theirs', 'apply', 'discard']);
+    await h.render(createElement(CodeWorkbench, { controller: { ...c, settings: { ...settings, busy: true } }, endpointKey: 'local' }));
+    for (const control of h.container.querySelectorAll<HTMLButtonElement>('.code-settings-strip button')) assert.equal(control.disabled, true);
+});
+
+test('settings states describe progress and rejection and block sending', bounded, async t => {
+    const h = await surface(t); const calls: string[] = [];
+    const base = { fields: [{ field: 'model' as const, baseline: 'old', value: 'native-model' }], expired: false, busy: false, waitingForSession: false, error: null };
+    const c = model({ async reapplySettings() { calls.push('reapply'); }, async discardSettings() { calls.push('discard'); } });
+    for (const [state, waitingForSession, copy] of [['pending', true, /Settings will apply when the session is confirmed/],
+        ['pending', false, /Applying settings…/], ['sent', false, /Applying settings…/], ['rejected', false, /Cannot change model/]] as const) {
+        const settings = { ...base, state, waitingForSession, error: state === 'rejected' ? 'Cannot change model' : null };
+        await h.render(createElement(CodeWorkbench, { controller: { ...c, settings }, endpointKey: 'local' }));
+        assert.match(h.container.textContent ?? '', copy); assert.equal(button(h.container, 'Send prompt').disabled, true);
+    }
+    await click(button(h.container, 'Re-apply')); await click(button(h.container, 'Discard'));
+    assert.deepEqual(calls, ['reapply', 'discard']);
 });
 
 test('icon-only controls keep an accessible name that names the current value', bounded, async t => {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { CodeControllerModel } from './code-controller-types';
+import type { CodeControllerModel, CodeSettingsField } from './code-controller-types';
 import type { CodeCreateSessionRequest } from '../../../../src/code-mode/wire';
 import { CODE_POLICY_DETAILS, CODE_POLICY_LABELS, CODE_RUNTIME_LABELS } from './code-types';
 import type { CodeNotice } from './code-toasts';
@@ -20,10 +20,10 @@ type MenuOption<T extends string> = {
  * because a live Codex catalog can carry 28+ routed ids.
  */
 export function CodeFooterMenu<T extends string>({ label, value, options, disabled, onChange, displayValue,
-    triggerContent, filterable, filterPlaceholder, className, title }: {
+    triggerContent, filterable, filterPlaceholder, className, title, marker }: {
     label: string; value: T; options: MenuOption<T>[]; disabled: boolean; onChange(value: T): void;
     displayValue?: string; triggerContent?: ReactNode; filterable?: boolean; filterPlaceholder?: string;
-    className?: string; title?: string;
+    className?: string; title?: string; marker?: 'Pending' | 'Not confirmed' | 'Conflict' | undefined;
 }) {
     const id = useId();
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -85,14 +85,15 @@ export function CodeFooterMenu<T extends string>({ label, value, options, disabl
         event.preventDefault(); buttons[index]?.focus();
     }
     const shown = selected?.label ?? displayValue ?? (value || 'not selected');
-    const name = `${label}: ${shown}`;
+    const name = `${label}: ${shown}${marker ? `, ${marker}` : ''}`;
     return <div className={`code-footer-menu${className ? ` ${className}` : ''}`}>
-        <button ref={triggerRef} type="button" className={`code-footer-menu-trigger${triggerContent ? ' is-icon' : ''}`}
+        <button ref={triggerRef} type="button" className={`code-footer-menu-trigger${triggerContent ? ' is-icon' : ''}${marker ? ` is-${marker === 'Not confirmed' ? 'unknown' : marker.toLowerCase()}` : ''}`}
             aria-label={name} aria-haspopup="listbox" aria-expanded={Boolean(position)} aria-controls={position ? id : undefined}
             disabled={disabled} title={title ?? selected?.detail ?? name} onClick={() => position ? close() : open()}
             onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); open(); } }}>
             {triggerContent ?? <><span className="code-footer-label">{label}</span>
                 <strong>{selected?.label ?? displayValue ?? (value || 'Not selected')}</strong></>}
+            {marker && <span className="code-footer-pending-badge">{marker}</span>}
         </button>
         {position && createPortal(<div ref={menu} id={id} role="listbox" aria-label={label} className="code-footer-dropup code-footer-floating"
             style={position} onKeyDown={navigate}>
@@ -125,7 +126,16 @@ export function ComposerFooter({ controller: c, onNotice }: {
     // than the snapshot a session was created with; other runtimes keep their snapshot.
     const permissionModes = (selection.provider === 'claude' ? provider?.capabilities : capabilities)?.permissionModes ?? [];
     const locked = c.selectedId !== null;
-    const disabled = c.pending || c.busy || c.creationUnknown || c.operation.kind !== 'idle' || (locked && (!c.synced || c.session?.status !== 'idle' || c.session?.archivedAt !== null));
+    const creationEditable = c.creationPending && (c.settings === null || c.settings.state === 'pending');
+    const disabled = (!creationEditable && (c.pending || c.busy || c.creationUnknown || c.operation.kind !== 'idle'
+        || (locked && (!c.synced || c.session?.status !== 'idle' || c.session?.archivedAt !== null))))
+        || (c.settings !== null && (!creationEditable || c.settings.busy));
+    function marker(field: CodeSettingsField) {
+        if (!c.settings?.fields.some(entry => entry.field === field)) return undefined;
+        if (c.settings.state === 'conflict') return 'Conflict' as const;
+        if (c.settings.state === 'unknown' || c.settings.state === 'rejected') return 'Not confirmed' as const;
+        return 'Pending' as const;
+    }
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const guard = useRef(false);
@@ -171,7 +181,7 @@ export function ComposerFooter({ controller: c, onNotice }: {
     return <>
         <div className="code-composer-footer">
             <CodeFooterMenu label="Runtime" value={selection.provider} className="code-footer-runtime"
-                disabled={locked ? !c.catalog : controlsDisabled || !c.catalog}
+                disabled={c.creationPending || (locked ? !c.catalog : controlsDisabled || !c.catalog)}
                 triggerContent={<ProviderGlyph provider={selection.provider} />}
                 title={CODE_RUNTIME_LABELS[selection.provider]}
                 options={(Object.keys(CODE_RUNTIME_LABELS) as Array<keyof typeof CODE_RUNTIME_LABELS>).map(id => {
@@ -185,21 +195,25 @@ export function ComposerFooter({ controller: c, onNotice }: {
                     else void change({ provider: value });
                 }} />
             <CodeFooterMenu label="Permission" value={selection.permissionMode} displayValue={CODE_POLICY_LABELS[selection.permissionMode]}
+                marker={marker('permissionMode')}
                 disabled={controlsDisabled || !capabilities?.permissions}
                 options={permissionModes.map(value => ({ value, label: CODE_POLICY_LABELS[value], detail: CODE_POLICY_DETAILS[value] }))}
                 onChange={value => void change({ permissionMode: value })} />
             <span className="code-composer-footer-spacer" aria-hidden="true" />
             <ContextUsageMeter usage={c.session?.contextUsage} />
             <CodeFooterMenu label="Model" value={selection.model} className="code-footer-model"
+                marker={marker('model')}
                 disabled={controlsDisabled || models.length === 0} filterable filterPlaceholder="Filter models…"
                 displayValue={selection.model || 'Select model'}
                 options={models.map(value => ({ value, label: value }))}
                 onChange={value => void change({ model: value })} />
             {modelEfforts.length > 0 && <CodeFooterMenu label="Effort" value={selection.effort ?? ''}
+                marker={marker('effort')}
                 className="code-footer-effort" displayValue={selection.effort ?? 'Default'}
                 options={[{ value: '', label: 'Native default' }, ...modelEfforts.map(value => ({ value, label: value }))]}
                 disabled={controlsDisabled} onChange={value => void change({ effort: value || null })} />}
             {selection.provider === 'claude' && <CodeFooterMenu label="Thinking" value={selection.thinking === false ? 'off' : 'on'}
+                marker={marker('thinking')}
                 className="code-footer-thinking"
                 options={[{ value: 'on', label: 'Thinking on', detail: 'Adaptive thinking with summaries' },
                     { value: 'off', label: 'Thinking off', detail: 'Answer without extended thinking' }]}

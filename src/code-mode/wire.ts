@@ -274,6 +274,31 @@ export interface CodePatchSessionRequest {
     pinned?: boolean;
     /** Sidebar mark-unread/read; sidebar metadata, so allowed while the session is busy. */
     unread?: boolean;
+    /**
+     * Client-minted canonical ULID naming this edit. With it the server records the
+     * outcome in a per-session ledger, so a lost response can be looked up instead of
+     * resent, and a fenced or expired id is never applied later.
+     */
+    clientMutationId?: string;
+}
+
+/** Canonical uppercase ULID: 26 Crockford base32 characters within 128 bits. */
+export const CODE_MUTATION_ID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+/** Ledger rows kept per session; older rows are evicted and raise the session watermark. */
+export const CODE_MUTATION_RETENTION = 256;
+export type CodeSessionMutationStatus = 'applied' | 'rejected_conflict' | 'fenced';
+/** One recorded outcome of a PATCH carrying `clientMutationId`, or of a fence. */
+export interface CodeSessionMutation {
+    mutationId: string;
+    status: CodeSessionMutationStatus;
+    /** Session revision after the apply, or the current revision when rejected or fenced. */
+    revision: number;
+    at: number;
+}
+export interface CodePatchSessionResult {
+    session: CodeSessionInfo;
+    /** Null when the PATCH carried no `clientMutationId`. */
+    mutation: CodeSessionMutation | null;
 }
 
 export interface CodePromptRequest { text: string; clientTurnKey: string }

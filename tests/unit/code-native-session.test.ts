@@ -1801,6 +1801,43 @@ async function idleClaude(f: ReturnType<typeof fixture>) {
     return { row, options, handle, live };
 }
 
+test('mutation overlap and applied duplicate never switch the live runtime twice', async t => {
+    const f = fixture(t); const { row, live } = await idleClaude(f);
+    const gate = deferred<void>(); live.hold(gate.promise);
+    const input = { expectedRevision: 0, model: 'model-b', clientMutationId: '00000000000000000000000001' };
+    const pending = f.manager.patchWithMutation(row.sessionId, input);
+    await live.entered;
+    await assert.rejects(f.manager.patchWithMutation(row.sessionId, input), errorCode('mutation_in_flight'));
+    gate.resolve(); const first = await pending;
+    const events = f.events.length;
+    assert.equal(first.mutation?.status, 'applied');
+    assert.equal((await f.manager.patchWithMutation(row.sessionId, input)).mutation?.status, 'applied');
+    assert.equal(live.calls.length, 1); assert.equal(f.events.length, events);
+});
+
+test('fence during live switch wins and disposes runtime without a patch event', async t => {
+    const f = fixture(t); const { row, handle, live } = await idleClaude(f);
+    const gate = deferred<void>(); live.hold(gate.promise);
+    const mutationId = '00000000000000000000000002';
+    const pending = f.manager.patchWithMutation(row.sessionId, { expectedRevision: 0, model: 'model-b', clientMutationId: mutationId });
+    await live.entered;
+    assert.equal(f.manager.fenceMutation(row.sessionId, mutationId).status, 'fenced');
+    const events = f.events.length; gate.resolve();
+    await assert.rejects(pending, errorCode('mutation_fenced'));
+    assert.equal(handle.closes, 1); assert.equal(f.store.read(row.sessionId)?.model, 'model-a');
+    assert.equal(f.events.length, events);
+});
+
+test('competing durable patch during live switch disposes the stale runtime', async t => {
+    const f = fixture(t); const { row, handle, live } = await idleClaude(f);
+    const gate = deferred<void>(); live.hold(gate.promise);
+    const pending = f.manager.patchWithMutation(row.sessionId, { expectedRevision: 0, model: 'model-b', clientMutationId: '00000000000000000000000003' });
+    await live.entered;
+    f.store.patchSession(row.sessionId, { expectedRevision: 0, title: 'other writer' });
+    gate.resolve(); await assert.rejects(pending, errorCode('revision_conflict'));
+    assert.equal(handle.closes, 1); assert.equal(f.store.read(row.sessionId)?.title, 'other writer');
+});
+
 const usageOf = (f: ReturnType<typeof fixture>, id: string) => f.manager.list().find(entry => entry.sessionId === id)?.contextUsage;
 
 test('Claude sessions default thinking on; other providers refuse the switch', async t => {

@@ -49,6 +49,9 @@ function fixture() {
         async attach(id) { capture('attach', id); return { session, operationId: 'attach-one', outcome: 'completed' }; },
         visit(id) { capture('visit', id); return { ...session, lastVisitedAt: 99 }; },
         async patch(id, input) { capture('patch', id, input); return { ...session, title: input.title ?? session.title }; },
+        async patchWithMutation(id, input) { capture('patch', id, input); return { session, mutation: null }; },
+        mutation() { return { mutation: null, watermark: null, expired: false }; },
+        fenceMutation(_id, mutationId) { return { mutationId, status: 'fenced', revision: session.revision, at: 1 }; },
         async rollback(id, input) { capture('rollback', id, input); return { ...session, historyGeneration: 1 }; },
         answerPermission(...args) { capture('permission', ...args); },
         models() { capture('models'); return { providers: [], defaultProvider: 'codex-app' }; },
@@ -97,6 +100,52 @@ function request(url: string, method = 'GET', body?: unknown) {
     return fetch(url, { method, headers: { authorization: 'Bearer fixture', 'content-type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
+
+test('mutation routes authenticate, report outcomes and enforce watermark and id validation', async () => {
+    const db = new Database(':memory:'); const store = new CodeStore(db, { mutationRetention: 1 });
+    await server(async (url, f) => {
+        const providers = Object.fromEntries((['codex-app', 'claude', 'cursor', 'grok'] as CodeProviderId[]).map(id => [id, {
+            id, describe: () => ({ id, label: id, available: true, reason: null, models: ['model-a'], defaultModel: 'model-a', defaultEffort: 'high', modelSource: 'registry', capabilities: f.session.capabilities }),
+            open: async () => { throw new Error('unexpected open'); },
+        }])) as CodeProviders;
+        const manager = new CodeSessionManager({ store, providers, publish() {} });
+        f.service.patch = manager.patch.bind(manager); f.service.patchWithMutation = manager.patchWithMutation.bind(manager);
+        f.service.mutation = manager.mutation.bind(manager); f.service.fenceMutation = manager.fenceMutation.bind(manager);
+        f.service.snapshot = manager.snapshot.bind(manager);
+        try {
+            const row = manager.create({ provider: 'claude', cwd: tmpdir(), model: 'model-a', effort: 'high', permissionMode: 'ask' }).session;
+            const base = `${url}/sessions/${row.sessionId}`; const a = '00000000000000000000000001'; const b = '00000000000000000000000002';
+            assert.equal((await fetch(`${base}/mutations/${a}`)).status, 401);
+            assert.equal((await fetch(`${base}/mutations/${a}/fence`, { method: 'POST' })).status, 401);
+            assert.equal((await request(`${base}/mutations/bad`)).status, 400);
+            const invalid = await request(base, 'PATCH', { expectedRevision: 0, title: 'x', clientMutationId: 'bad' });
+            assert.equal(invalid.status, 400); assert.equal((await invalid.json()).error, 'invalid_mutation_id');
+            assert.equal((await (await request(base, 'PATCH', { expectedRevision: 0, clientMutationId: 'bad' })).json()).error, 'invalid_mutation_id');
+            const missing = await request(`${base}/mutations/${a}`); assert.equal(missing.status, 404); assert.equal((await missing.json()).watermark, null);
+            const applied = await request(base, 'PATCH', { expectedRevision: 0, title: 'x', clientMutationId: a });
+            assert.equal(applied.status, 200); assert.equal((await applied.json()).mutation.status, 'applied');
+            assert.equal((await (await request(`${base}/mutations/${a}`)).json()).mutation.status, 'applied');
+            assert.equal((await (await request(`${base}/mutations/${a}/fence`, 'POST', {})).json()).mutation.status, 'applied');
+            const reused = await request(base, 'PATCH', { expectedRevision: 0, title: 'different', clientMutationId: a });
+            assert.equal(reused.status, 409); assert.equal((await reused.json()).error, 'mutation_id_conflict');
+            const conflict = await request(base, 'PATCH', { expectedRevision: 0, title: 'stale', clientMutationId: b });
+            assert.equal(conflict.status, 409); assert.equal((await conflict.json()).mutation.status, 'rejected_conflict');
+            const expired = await request(`${base}/mutations/${a}`); assert.equal(expired.status, 410); assert.equal((await expired.json()).watermark, a);
+            assert.equal((await request(`${base}/mutations/${a}/fence`, 'POST', {})).status, 410);
+            const late = await request(base, 'PATCH', { expectedRevision: 1, title: 'late', clientMutationId: a });
+            assert.equal(late.status, 410); assert.equal((await late.json()).watermark, a);
+            const c = '00000000000000000000000003';
+            assert.equal((await (await request(`${base}/mutations/${c}/fence`, 'POST')).json()).mutation.status, 'fenced');
+            const fenced = await request(base, 'PATCH', { expectedRevision: 1, title: 'late', clientMutationId: c });
+            assert.equal(fenced.status, 409); assert.equal((await fenced.json()).mutation.status, 'fenced');
+            const legacy = await request(base, 'PATCH', { expectedRevision: 1, title: 'legacy' });
+            assert.equal(legacy.status, 200); const legacyBody = await legacy.json(); assert.equal(legacyBody.session.title, 'legacy'); assert.equal('mutation' in legacyBody, false);
+            const legacyConflict = await request(base, 'PATCH', { expectedRevision: 1, title: 'stale' });
+            assert.equal(legacyConflict.status, 409); const legacyError = await legacyConflict.json(); assert.equal(legacyError.error, 'revision_conflict'); assert.equal('mutation' in legacyError, false);
+        } finally { await manager.dispose(); }
+    });
+    db.close();
+});
 
 test('authentication and malformed inputs cannot initialize the lazy Code host', async () => {
     await server(async (url, f, reads) => {

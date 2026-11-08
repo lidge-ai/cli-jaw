@@ -1,7 +1,7 @@
 import type {
     CodeCancelRequest, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeModelCatalog,
     CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt, CodePromptRequest,
-    CodeRollbackRequest, CodeSessionInfo, CodeSessionPage, CodeSnapshot, CodeSteerRequest,
+    CodeRollbackRequest, CodeSessionInfo, CodeSessionPage, CodeSnapshot, CodeSteerRequest, CodeSessionMutation, CodePatchSessionResult,
 } from '../../../../src/code-mode/wire';
 
 export interface CodeGitInfo {
@@ -39,6 +39,9 @@ export interface CodeSessionClient {
     history(id: string, beforeSequence: number, signal?: AbortSignal): Promise<CodeHistoryPage>;
     createSession(input: CodeCreateSessionRequest): Promise<CodeSessionInfo>;
     patchSession(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo>;
+    patchSettings(id: string, input: CodePatchSessionRequest): Promise<CodePatchSessionResult>;
+    readMutation(id: string, mutationId: string): Promise<CodeSessionMutation>;
+    fenceMutation(id: string, mutationId: string): Promise<CodeSessionMutation>;
     sendPrompt(id: string, input: CodePromptRequest): Promise<CodePromptReceipt>;
     /** A Claude follow-up for the captured running turn; never retried. */
     steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
@@ -60,6 +63,11 @@ const ERROR_COPY: Record<string, string> = {
     request_not_current: 'This approval is no longer current. Refreshing its status.',
     invalid_option: 'This approval option is no longer available. Refreshing its status.',
     revision_conflict: 'Session settings changed elsewhere. Review the updated values and try again.',
+    mutation_fenced: 'This settings change was fenced before it applied.',
+    mutation_outcome_expired: 'The settings outcome has expired. Choose Re-apply or Discard.',
+    mutation_not_found: 'The settings outcome is not recorded yet.',
+    mutation_id_conflict: 'This settings mutation identity belongs to another request.',
+    invalid_mutation_id: 'The settings mutation identity is invalid.',
     invalid_sequence: 'Conversation history needs to be refreshed.',
     snapshot_limit: 'This conversation exceeds the snapshot limit. Stop and recovery controls remain available.',
     transcript_limit: 'The conversation has reached its storage limit.',
@@ -85,7 +93,8 @@ const ERROR_COPY: Record<string, string> = {
 };
 
 export class CodeClientError extends Error {
-    constructor(readonly code: string, readonly status: number, readonly session?: CodeSessionInfo) {
+    constructor(readonly code: string, readonly status: number, readonly session?: CodeSessionInfo,
+        readonly mutation?: CodeSessionMutation, readonly watermark?: string | null) {
         super(ERROR_COPY[code] ?? 'The request could not be completed. Refresh the session and try again.');
         this.name = 'CodeClientError';
     }
@@ -105,7 +114,7 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         });
         const data = await response.json();
         if (!response.ok || data.ok !== true) {
-            throw new CodeClientError(typeof data.error === 'string' ? data.error : 'code_request_failed', response.status, data.session);
+            throw new CodeClientError(typeof data.error === 'string' ? data.error : 'code_request_failed', response.status, data.session, data.mutation, data.watermark);
         }
         return data as T;
     }
@@ -124,6 +133,9 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         history: (id, beforeSequence, signal) => request('GET', `${sessionPath(id)}/items?beforeSequence=${beforeSequence}&limit=200`, undefined, signal),
         createSession: input => sessionRequest('POST', '/sessions', input),
         patchSession: (id, input) => sessionRequest('PATCH', sessionPath(id), input),
+        patchSettings: (id, input) => request('PATCH', sessionPath(id), input),
+        readMutation: async (id, mutationId) => (await request<{ mutation: CodeSessionMutation }>('GET', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}`)).mutation,
+        fenceMutation: async (id, mutationId) => (await request<{ mutation: CodeSessionMutation }>('POST', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}/fence`, {})).mutation,
         sendPrompt: (id, input) => request('POST', `${sessionPath(id)}/prompt`, input),
         steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),

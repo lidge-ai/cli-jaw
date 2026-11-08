@@ -1,5 +1,5 @@
 import type { CodeCreateSessionRequest } from '../../../../src/code-mode/wire';
-import type { CodeDraft, CodeDraftBook } from './code-controller-drafts';
+import type { CodeDraft, CodeDraftBook, CodePendingSettings } from './code-controller-drafts';
 import type { CodeResendReason } from './code-types';
 
 const STORAGE_KEY = 'cli-jaw:code-drafts:v1';
@@ -22,6 +22,7 @@ export interface StoredCodeDraft {
     selectionEdit: number;
     creating: boolean;
     creationKey?: string;
+    settings?: Omit<CodePendingSettings, 'op'> | null;
     retry: { text: string; key: string; edit: number; resend?: boolean; resendReason?: CodeResendReason } | null;
     stop: { turnId: string | null; operationId?: string; epoch: number } | null;
 }
@@ -35,10 +36,41 @@ type StoredEnvelope = { version: number; endpoints: StoredCodeEndpoint[] };
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, limit: number): value is string => typeof value === 'string' && value.length <= limit;
 const count = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+const mutationId = (value: unknown): boolean => value === null || (typeof value === 'string' && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value));
+function parseSettings(value: unknown): Omit<CodePendingSettings, 'op'> | null | undefined {
+    if (value === undefined || value === null) return null;
+    if (!object(value) || !Array.isArray(value['fields']) || !value['fields'].length || value['fields'].length > 4
+        || !['pending', 'sent', 'unknown', 'conflict', 'rejected'].includes(String(value['state']))
+        || !mutationId(value['mutationId']) || !mutationId(value['watermark'])
+        || !(value['expectedRevision'] === null || count(value['expectedRevision']))
+        || typeof value['expired'] !== 'boolean' || typeof value['autoRetried'] !== 'boolean'
+        || !(value['error'] === null || text(value['error'], 4096))) return undefined;
+    const fields: CodePendingSettings['fields'] = [];
+    for (const field of value['fields']) {
+        if (!object(field) || !['model', 'effort', 'permissionMode', 'thinking'].includes(String(field['field']))
+            || fields.some(row => row.field === field['field'])) return undefined;
+        const valid = (item: unknown) => field['field'] === 'thinking' ? item === null || typeof item === 'boolean'
+            : item === null || text(item, field['field'] === 'model' ? 1024 : 80);
+        if (!valid(field['baseline']) || !valid(field['value'])) return undefined;
+        const conflict = field['conflict'];
+        if (conflict !== undefined && (!object(conflict) || !valid(conflict['theirs'])
+            || !(conflict['resolution'] === undefined || conflict['resolution'] === 'mine' || conflict['resolution'] === 'theirs'))) return undefined;
+        fields.push({ field: field['field'] as CodePendingSettings['fields'][number]['field'], baseline: field['baseline'] as string | boolean | null,
+            value: field['value'] as string | boolean | null,
+            ...(conflict === undefined ? {} : { conflict: { theirs: (conflict as Record<string, unknown>)['theirs'] as string | boolean | null,
+                ...((conflict as Record<string, unknown>)['resolution'] ? { resolution: (conflict as Record<string, unknown>)['resolution'] as 'mine' | 'theirs' } : {}) } }) });
+    }
+    if (value['state'] !== 'pending' && value['mutationId'] === null && value['state'] !== 'conflict') return undefined;
+    return { fields, state: value['state'] as CodePendingSettings['state'], mutationId: value['mutationId'] as string | null,
+        expectedRevision: value['expectedRevision'] as number | null, watermark: value['watermark'] as string | null,
+        expired: value['expired'], autoRetried: value['autoRetried'], error: value['error'] as string | null };
+}
 
 function parseDraft(value: unknown): StoredCodeDraft | null {
     if (!object(value) || !text(value['input'], MAX_TEXT_CHARS) || !count(value['edit'])
         || !count(value['selectionEdit']) || typeof value['creating'] !== 'boolean') return null;
+    const settings = parseSettings(value['settings']);
+    if (settings === undefined) return null;
     const selection = value['selection'];
     if (!object(selection) || !['codex-app', 'claude', 'cursor', 'grok'].includes(String(selection['provider']))
         || !text(selection['cwd'], 4096) || !text(selection['model'], 1024)
@@ -52,6 +84,7 @@ function parseDraft(value: unknown): StoredCodeDraft | null {
         || !text(retry['key'], 240) || !retry['key'] || !count(retry['edit']) || retry['edit'] > value['edit'])) return null;
     if (stop !== null && (!object(stop) || !count(stop['epoch']) || !((text(stop['turnId'], 240) && !!stop['turnId'] && stop['operationId'] === undefined) || (stop['turnId'] === null && text(stop['operationId'], 240) && !!stop['operationId'])))) return null;
     return {
+        settings,
         ...(typeof creationKey === 'string' ? { creationKey } : {}),
         input: value['input'], edit: value['edit'], selectionEdit: value['selectionEdit'], creating: value['creating'],
         selection: { provider: selection['provider'] as DraftSelection['provider'], cwd: selection['cwd'], model: selection['model'], effort: selection['effort'], permissionMode: selection['permissionMode'] as DraftSelection['permissionMode'],
@@ -131,6 +164,9 @@ function pack(draft: CodeDraft): StoredCodeDraft | null {
         ...(thinking === undefined ? {} : { thinking }) }, selectionEdit: draft.selectionEdit,
         creating: draft.createUnknown || draft.operation.kind === 'creating',
         ...(draft.creationKey ? { creationKey: draft.creationKey } : {}),
+        settings: draft.settings ? { fields: draft.settings.fields, state: draft.settings.state, mutationId: draft.settings.mutationId,
+            expectedRevision: draft.settings.expectedRevision, watermark: draft.settings.watermark, expired: draft.settings.expired,
+            autoRetried: draft.settings.autoRetried, error: draft.settings.error } : null,
         retry: draft.retry ? { text: draft.retry.text, key: draft.retry.key, edit: draft.retry.edit,
             ...(draft.retry.resend ? { resend: true } : {}),
             ...(draft.retry.resend && draft.retry.resendReason ? { resendReason: draft.retry.resendReason } : {}) } : null,
@@ -142,14 +178,14 @@ export function saveCodeDraftStorage(storage: Storage, endpoint: string, book: C
         if (!fresh) { markIncomplete(storage, endpoint, true); return LIMIT_WARNING; }
         const entry: StoredCodeEndpoint = { endpoint, selectedId: null, fresh, sessions: [] };
         let limited = false;
-        const rows = [...book.sessions].sort(([a], [b]) => Number(b === book.selectedId) - Number(a === book.selectedId));
+        const rows = [...book.sessions].sort(([a, ad], [b, bd]) => Number(b === book.selectedId) - Number(a === book.selectedId) || Number(!!bd.settings) - Number(!!ad.settings));
         for (const [id, draft] of rows) {
-            if (id !== book.selectedId && !draft.input && !draft.retry && !draft.stopTarget) continue;
+            if (id !== book.selectedId && !draft.input && !draft.retry && !draft.stopTarget && !draft.settings) continue;
             const packed = pack(draft);
             if (!packed) { markIncomplete(storage, endpoint, true); return LIMIT_WARNING; }
-            if (entry.sessions.length >= MAX_SESSIONS) { limited = true; continue; }
+            if (entry.sessions.length >= MAX_SESSIONS) { if (draft.settings) { markIncomplete(storage, endpoint, true); return LIMIT_WARNING; } limited = true; continue; }
             const candidate = { ...entry, selectedId: id === book.selectedId ? id : entry.selectedId, sessions: [...entry.sessions, { id, draft: packed }] };
-            if (JSON.stringify(candidate).length > MAX_ENDPOINT_CHARS) { limited = true; continue; }
+            if (JSON.stringify(candidate).length > MAX_ENDPOINT_CHARS) { if (draft.settings) { markIncomplete(storage, endpoint, true); return LIMIT_WARNING; } limited = true; continue; }
             entry.sessions = candidate.sessions; entry.selectedId = candidate.selectedId;
         }
         // Do not replace an older checkpoint with a partial version of the selected draft.
@@ -160,7 +196,9 @@ export function saveCodeDraftStorage(storage: Storage, endpoint: string, book: C
         const endpoints = [...envelope.endpoints.filter(row => row.endpoint !== endpoint), entry];
         let serialized = JSON.stringify({ version: VERSION, endpoints });
         while (endpoints.length > MAX_ENDPOINTS || serialized.length > MAX_STORAGE_CHARS) {
-            const removed = endpoints.shift();
+            const removable = endpoints.findIndex(row => row.endpoint !== endpoint && !row.fresh.settings && !row.sessions.some(session => session.draft.settings));
+            if (removable < 0) { markIncomplete(storage, endpoint, true); return LIMIT_WARNING; }
+            const [removed] = endpoints.splice(removable, 1);
             if (removed) markIncomplete(storage, removed.endpoint, true);
             serialized = JSON.stringify({ version: VERSION, endpoints });
         }
