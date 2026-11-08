@@ -2385,3 +2385,36 @@ test('after the one automatic retry, refresh and remount never send again withou
     assert.equal(f.controller.getModel().settings?.state, 'pending');
     await f.controller.reapplySettings(); assert.equal(patches(), 3, 'explicit Apply sends once');
 });
+
+test('an automatic retry interrupted before dispatch still runs once after reload, then holds', async t => {
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh(); await f.controller.selectSession('a');
+    const storage = (globalThis as unknown as { window: { sessionStorage: Storage } }).window.sessionStorage;
+    const saved: Array<ReturnType<typeof browser.checkpoint>> = []; const setItem = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => { setItem(key, value); saved.push(browser.checkpoint()); };
+    let revision = 2;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        revision++; const remote = session('a', { revision, title: 'renamed ' + revision }); f.snapshots.set('a', snap(remote));
+        return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: call.body['clientMutationId'], status: 'rejected_conflict', revision, at: 1 }, watermark: null }, 409);
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const patches = () => f.calls.filter(call => call.method === 'PATCH').length;
+    assert.equal(patches(), 2);
+    storage.setItem = setItem;
+    type Saved = { endpoints: Array<{ sessions: Array<{ id: string; draft: { settings?: { state: string; mutationId: string | null; watermark: string | null } | null } }> }> };
+    const between = saved.find(checkpoint => {
+        const raw = checkpoint.get('cli-jaw:code-drafts:v1'); if (!raw) return false;
+        const settings = (JSON.parse(raw) as Saved).endpoints[0]?.sessions.find(row => row.id === 'a')?.draft.settings;
+        return settings?.state === 'pending' && settings.mutationId === null && settings.watermark !== null;
+    });
+    assert.ok(between, 'a checkpoint exists between the first conflict and the retry dispatch');
+    f.cleanups[0]!(); browser.reload(between!);
+    const before = patches();
+    const restored = new CodeController(f.options); f.cleanups.push(restored.mount());
+    await Promise.race([until(restored, () => patches() === before + 1 && restored.getModel().settings?.busy === false),
+        new Promise(resolve => setTimeout(resolve, 500))]);
+    assert.equal(patches() - before, 1, 'the interrupted automatic retry runs once');
+    assert.equal(restored.getModel().settings?.state, 'pending');
+    await restored.refresh(); await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(patches() - before, 1, 'after it conflicts again the batch waits for Apply');
+});

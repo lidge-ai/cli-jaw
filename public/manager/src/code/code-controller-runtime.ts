@@ -790,7 +790,7 @@ export class CodeController {
     };
     private editSettings(draft: CodeDraft, baseline: CodeCreateSessionRequest | CodeSessionInfo, patch: Partial<CodeCreateSessionRequest>): void {
         const batch = draft.settings ?? { fields: [], state: 'pending', mutationId: null, expectedRevision: null, watermark: null,
-            expired: false, autoRetried: false, error: null, op: null } satisfies CodePendingSettings;
+            expired: false, autoRetried: false, retryReady: false, error: null, op: null } satisfies CodePendingSettings;
         for (const field of settingFields) {
             if (patch[field] === undefined) continue;
             const value = patch[field] ?? null;
@@ -831,7 +831,9 @@ export class CodeController {
         if (!batch.fields.length) { draft.settings = null; return false; }
         for (const row of batch.fields) row.baseline = settingValue(session, row.field);
         batch.state = 'pending'; batch.mutationId = null;
-        if (!batch.autoRetried) { batch.autoRetried = true; batch.error = null; return true; }
+        // The retry counts as used only when it is dispatched (applySettings), so an interruption
+        // before then leaves it ready to resume rather than spent.
+        if (!batch.autoRetried) { batch.retryReady = true; batch.error = null; return true; }
         batch.error = 'Session settings changed again elsewhere. Apply your settings again or discard them.';
         return false;
     }
@@ -859,11 +861,14 @@ export class CodeController {
         try { batch.mutationId = ulid(Date.now(), batch.watermark); }
         catch (error) { batch.error = error instanceof Error ? error.message : 'Could not create a settings identity.'; this.notify(); return; }
         batch.expectedRevision = session.revision; batch.state = 'sent'; batch.error = null;
+        // A ready automatic retry is spent in the same checkpoint that records it as sent.
+        const wasReady = batch.retryReady, wasRetried = batch.autoRetried;
+        if (wasReady) { batch.autoRetried = true; batch.retryReady = false; }
         const mutationId = batch.mutationId, token = ++this.settingsToken, life = this.lifetime;
         batch.op = { token, kind: 'send' }; this.notify();
         const saved = this.book.storage && loadCodeDraftStorage(this.book.storage, this.book.endpoint).data?.sessions.find(row => row.id === id)?.draft.settings;
         if (!saved || saved.state !== 'sent' || saved.mutationId !== mutationId) {
-            batch.state = 'pending'; batch.mutationId = null; batch.op = null;
+            batch.state = 'pending'; batch.mutationId = null; batch.op = null; batch.retryReady = wasReady; batch.autoRetried = wasRetried;
             batch.error = 'Draft recovery could not save the settings change, so it was not sent.'; this.notify(); return;
         }
         const patch: CodePatchSessionRequest = { expectedRevision: session.revision, clientMutationId: mutationId,
@@ -986,10 +991,11 @@ export class CodeController {
             if (!session) { batch.op = null; batch.error = 'Could not refresh the session to review settings.'; this.notify(); return; }
             // An explicit Re-apply earns its own automatic rebase.
             batch.autoRetried = false;
+            batch.retryReady = false;
             retry = this.reconcileRejected(draft, batch, session, mutationId);
         } else if (action === 'discard') draft.settings = null;
         else { batch.state = 'pending'; batch.watermark = maxId(batch.watermark, mutationId);
-            batch.expired = false; batch.autoRetried = false; batch.error = null; batch.mutationId = null; retry = true; }
+            batch.expired = false; batch.autoRetried = false; batch.retryReady = false; batch.error = null; batch.mutationId = null; retry = true; }
         if (draft.settings === batch) batch.op = null;
         this.notify();
         if (retry && action === 'reapply' && draft.settings === batch && batch.state === 'pending') await this.applySettings(id, draft);
@@ -1009,7 +1015,7 @@ export class CodeController {
         for (const row of batch.fields) { if (row.conflict) row.baseline = row.conflict.theirs; delete row.conflict; }
         if (!batch.fields.length) { draft.settings = null; this.notify(); return; }
         if (batch.mutationId && (!batch.watermark || batch.mutationId > batch.watermark)) batch.watermark = batch.mutationId;
-        batch.state = 'pending'; batch.mutationId = null; batch.autoRetried = false; batch.error = null; this.notify();
+        batch.state = 'pending'; batch.mutationId = null; batch.autoRetried = false; batch.retryReady = false; batch.error = null; this.notify();
         await this.applySettings(id, draft);
     };
     private async patch(id: string, input: Omit<CodePatchSessionRequest, 'expectedRevision'>, rejectFailure = false): Promise<void> {

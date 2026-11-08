@@ -44,6 +44,7 @@ function parseSettings(value: unknown): Omit<CodePendingSettings, 'op'> | null |
         || !mutationId(value['mutationId']) || !mutationId(value['watermark'])
         || !(value['expectedRevision'] === null || count(value['expectedRevision']))
         || typeof value['expired'] !== 'boolean' || typeof value['autoRetried'] !== 'boolean'
+        || !(value['retryReady'] === undefined || typeof value['retryReady'] === 'boolean')
         || !(value['error'] === null || text(value['error'], 4096))) return undefined;
     const fields: CodePendingSettings['fields'] = [];
     for (const field of value['fields']) {
@@ -63,7 +64,7 @@ function parseSettings(value: unknown): Omit<CodePendingSettings, 'op'> | null |
     if (value['state'] !== 'pending' && value['mutationId'] === null && value['state'] !== 'conflict') return undefined;
     return { fields, state: value['state'] as CodePendingSettings['state'], mutationId: value['mutationId'] as string | null,
         expectedRevision: value['expectedRevision'] as number | null, watermark: value['watermark'] as string | null,
-        expired: value['expired'], autoRetried: value['autoRetried'], error: value['error'] as string | null };
+        expired: value['expired'], autoRetried: value['autoRetried'], retryReady: value['retryReady'] === true, error: value['error'] as string | null };
 }
 
 function parseDraft(value: unknown): StoredCodeDraft | null {
@@ -166,7 +167,7 @@ function pack(draft: CodeDraft): StoredCodeDraft | null {
         ...(draft.creationKey ? { creationKey: draft.creationKey } : {}),
         settings: draft.settings ? { fields: draft.settings.fields, state: draft.settings.state, mutationId: draft.settings.mutationId,
             expectedRevision: draft.settings.expectedRevision, watermark: draft.settings.watermark, expired: draft.settings.expired,
-            autoRetried: draft.settings.autoRetried, error: draft.settings.error } : null,
+            autoRetried: draft.settings.autoRetried, retryReady: draft.settings.retryReady, error: draft.settings.error } : null,
         retry: draft.retry ? { text: draft.retry.text, key: draft.retry.key, edit: draft.retry.edit,
             ...(draft.retry.resend ? { resend: true } : {}),
             ...(draft.retry.resend && draft.retry.resendReason ? { resendReason: draft.retry.resendReason } : {}) } : null,

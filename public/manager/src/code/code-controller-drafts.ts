@@ -6,7 +6,11 @@ import { codeResendCopy, type CodeResendReason } from './code-types';
 export interface CodePendingSettings {
     fields: Array<{ field: CodeSettingsField; baseline: CodeSettingsValue; value: CodeSettingsValue; conflict?: { theirs: CodeSettingsValue; resolution?: 'mine' | 'theirs' } }>;
     state: CodeSettingsState; mutationId: string | null; expectedRevision: number | null; watermark: string | null;
-    expired: boolean; autoRetried: boolean; error: string | null;
+    /**
+     * `autoRetried`: the one automatic retry has been dispatched. `retryReady`: a rebased automatic
+     * retry waits to be sent (so a reload resumes it as that retry). Both persist with the batch.
+     */
+    expired: boolean; autoRetried: boolean; retryReady: boolean; error: string | null;
     op: { token: number; kind: 'send' | 'lookup' | 'fence' | 'check' } | null;
 }
 export interface CodeDraft {
