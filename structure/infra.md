@@ -1113,7 +1113,7 @@ top-level 채널은 현재 event ts 직전의 `conversations.history`를 세션 
 
 ### app block actions (`events.ts`, `bot.ts`)
 
-`interactive` 봉투 중 `action_id`가 `agent:`로 시작하는 `block_actions` 하나는 `slackBlockActionEvent()`가 `type: 'block_actions'` 메시지 이벤트로 바꾼다. ts는 클릭의 `action_ts`, thread는 클릭된 메시지(또는 그 부모)라서 preflight journal, `slackEventKey` 중복 제거, 게이트, 턴 수락이 메시지와 같은 경로를 탄다. 팀 불일치, ephemeral, 메시지 밖 컨테이너, 사람 아닌 클릭, 두 개 이상의 액션은 null이며 기존 `appr:`/`jaw_choice_` 경로로 그대로 간다. 게이트는 클릭을 `app_mention`처럼 이미 지목된 것으로 보아 `mentionOnly`만 건너뛰고 허용목록은 유지한다. `payload.token`, `response_url`, `trigger_id`는 읽지 않는다.
+`interactive` 봉투 중 `action_id`가 `agent:`로 시작하는 `block_actions` 하나는 `slackBlockActionEvent()`가 `type: 'block_actions'` 메시지 이벤트로 바꾼다. ts는 클릭의 `action_ts`, thread는 클릭된 메시지(또는 그 부모)라서 preflight journal, `slackEventKey` 중복 제거, 게이트, 턴 수락이 메시지와 같은 경로를 탄다. 팀 불일치, ephemeral, 메시지 밖 컨테이너, 두 개 이상의 액션은 거부한다. 클릭된 메시지의 `bot_id`는 `auth.test`로 확인한 우리 봇과 같아야 하며, 존재하는 `app_id`는 `bots.info`로 별도 확인한 앱과 같아야 한다. `bots.info` 실패 시 앱 ID가 표시된 클릭은 transport 재시작까지 거부한다. 클릭자는 journal과 ACK 전에 `users.info`(`users:read`)로 확인하고 일반 작성자 정책을 적용한다. 자신의 봇은 거부하며 Slackbot·workflow·Agentforce·sidekick 봇에는 `allowBots`가 필요하다. `is_app_user`만으로는 봇이 아니고 trusted bot trigger는 클릭에 적용하지 않는다. 확인 실패나 정책 거부는 ACK 후 저널과 dispatch 없이 버리므로 원인을 고친 뒤 다시 클릭한다. `appr:`/`aprd:`와 `jaw_choice_`는 기존 경로를 유지한다. 게이트는 클릭을 이미 지목된 것으로 보아 `mentionOnly`만 건너뛰고 허용목록은 유지한다. `payload.token`, `response_url`, `trigger_id`는 읽지 않는다.
 
 클릭 턴은 `preSendContext.jobKind = 'slack_block_action'`을 큐와 재시작 너머까지 싣고, 진행 카드와 그 queue notice 기록을 만들지 않는다(direct·queued 모두, 그래서 재시작 뒤 복원할 카드도 없다). 답 전체가 `[SILENT]`이면 direct·queued·orphan 세 경로 모두 `tg.noResponse` 대신 아무것도 게시하지 않아 카드 스레드에 흔적이 남지 않는다.
 
