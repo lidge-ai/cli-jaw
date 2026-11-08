@@ -93,7 +93,7 @@ import { handleSlackSlashCommand } from './commands.js';
 import { logErrorText, redactOutboundText } from '../messaging/redact.js';
 import { downloadAndSaveSlackFiles, type FailedSlackFile } from './inbound-file.js';
 import { admitSlackRun, claimSlackEvent, commitSlackEvent, currentIngressGeneration, enqueueSlackIngress, isIngressGenerationCurrent, resetSlackIngress, resolveSlackScopeForTarget, slackEventKey, slackIngressLaneKey, type SlackRunContext } from './ingress.js';
-import { buildSenderDisplay, buildSenderPrompt, resolveSenderIdentity } from './identity.js';
+import { buildSenderDisplay, buildSenderPrompt, resolveSenderIdentity, lookupSlackBotApp, lookupSlackClicker } from './identity.js';
 import {
     admitHistoryStart, cachedNameMap, resolveConversationInfo, resolveThreadInfo, THREAD_FETCH_LIMIT,
 } from './conversation.js';
@@ -1525,6 +1525,18 @@ function raceContextDeadline(work: Promise<string>, ms: number): Promise<string>
 export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
     if (envelope.type !== 'events_api' && envelope.type !== 'interactive') return 'committed';
 
+    if (envelope.type === 'interactive') {
+        const key = slackClickKey(envelope);
+        const prior = slackClickDecisions.get(key);
+        const mine = (async () => {
+            if (prior) await prior.catch(() => undefined);
+            return decideSlackClick(envelope);
+        })();
+        slackClickDecisions.set(key, mine);
+        try { return await mine; }
+        finally { if (slackClickDecisions.get(key) === mine) slackClickDecisions.delete(key); }
+    }
+
     const event = slackEnvelopeEvent(envelope);
     if (envelope.type === 'events_api') {
         // Before the channel/ts check: reaction events carry them under `item`.
@@ -1539,6 +1551,32 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
     // what makes a thread reply answerable at all.
     if (envelope.type === 'events_api') captureMentionWatchInbox(event);
 
+    return admitSlackEnvelope(envelope, event);
+}
+
+async function decideSlackClick(envelope: SlackEnvelope): Promise<SlackPreflightResult> {
+    const generation = lifecycleGeneration;
+    const token = getSlackSendClient().token;
+    const self = { userId: selfUserId, botId: selfBotId, appId: selfAppId };
+    let event = slackBlockActionEvent(envelope.payload, String(settings['slack']?.teamId || ''), self);
+    if (!event?.channel || !event.ts) return 'committed';
+    if (!shouldProcessSlackEvent(event, gateConfig(), 'interactive').process || !token || !event.user) return 'ignored';
+    const clicker = await lookupSlackClicker(token, event.user, { signal: AbortSignal.timeout(2000) });
+    if (generation !== lifecycleGeneration || token !== getSlackSendClient().token || self.userId !== selfUserId
+        || self.botId !== selfBotId || self.appId !== selfAppId || !clicker.ok) return 'ignored';
+    if (clicker.isBot || event.bot_id || event.bot_profile) {
+        const botId = event.bot_id || clicker.botId;
+        event = { ...event, ...(botId ? { bot_id: botId } : {}),
+            bot_profile: { user_id: event.user, ...(botId ? { id: botId } : {}) } };
+    }
+    if (!shouldProcessSlackEvent(event, gateConfig(), 'interactive').process) return 'ignored';
+    const result = admitSlackEnvelope(envelope, event);
+    if (result === 'committed') stashVerifiedSlackClick(envelope, event, generation);
+    return result;
+}
+
+function admitSlackEnvelope(envelope: SlackEnvelope, event: SlackMessageEvent): SlackPreflightResult {
+    if (!event.channel || !event.ts) return 'committed';
     const journal = getIngressJournal();
     if (!journal) return 'committed';
 
@@ -1579,11 +1617,38 @@ export async function preflightSlackEnvelope(envelope: SlackEnvelope): Promise<S
 
 const SLACK_ADMISSION_TTL_MS = 10 * 60 * 1000;
 const slackAdmissions = new Map<string, { admission: IngressAdmission; expiresAt: number }>();
+const slackClickDecisions = new Map<string, Promise<SlackPreflightResult>>();
+const verifiedSlackClicks = new Map<string, { event: SlackMessageEvent; generation: number; expiresAt: number }>();
+
+function slackClickKey(envelope: SlackEnvelope): string {
+    const payload = envelope.payload;
+    const team = (payload?.['team'] as { id?: unknown } | undefined)?.id;
+    const container = payload?.['container'] as { channel_id?: unknown } | undefined;
+    const actions = payload?.['actions'];
+    const action = Array.isArray(actions) ? actions[0] as { action_ts?: unknown } | undefined : undefined;
+    return JSON.stringify([team, container?.channel_id, action?.action_ts]);
+}
+
+function stashVerifiedSlackClick(envelope: SlackEnvelope, event: SlackMessageEvent, generation: number): void {
+    const key = slackAdmissionKey(envelope);
+    if (!key) return;
+    const now = Date.now();
+    for (const [held, row] of verifiedSlackClicks) if (row.expiresAt <= now) verifiedSlackClicks.delete(held);
+    if (verifiedSlackClicks.size >= 256) {
+        const first = verifiedSlackClicks.keys().next().value;
+        if (first) verifiedSlackClicks.delete(first);
+    }
+    verifiedSlackClicks.set(key, { event, generation, expiresAt: now + SLACK_ADMISSION_TTL_MS });
+}
+
+function takeVerifiedSlackClick(envelope: SlackEnvelope): SlackMessageEvent | undefined {
+    const key = slackAdmissionKey(envelope);
+    const row = verifiedSlackClicks.get(key);
+    verifiedSlackClicks.delete(key);
+    return row && row.expiresAt > Date.now() && row.generation === lifecycleGeneration ? row.event : undefined;
+}
 
 function slackEnvelopeEvent(envelope: SlackEnvelope): SlackMessageEvent | undefined {
-    if (envelope.type === 'interactive') {
-        return slackBlockActionEvent(envelope.payload, String(settings['slack']?.teamId || '')) ?? undefined;
-    }
     return (envelope.payload as { event?: SlackMessageEvent } | undefined)?.event;
 }
 
@@ -1595,6 +1660,7 @@ function slackEnvelopeTeamId(envelope: SlackEnvelope): string | undefined {
 
 function slackAdmissionKey(envelope: SlackEnvelope): string {
     if (envelope.envelope_id) return `eid:${envelope.envelope_id}`;
+    if (envelope.type === 'interactive') return `click:${slackClickKey(envelope)}`;
     const event = slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (event?.channel && event?.ts && team) return `ev:${team}:${event.channel}:${event.ts}`;
@@ -1621,7 +1687,15 @@ function takeSlackAdmission(envelope: SlackEnvelope): IngressAdmission | undefin
     const row = slackAdmissions.get(key);
     slackAdmissions.delete(key);
     if (row && row.expiresAt > Date.now()) return row.admission;
-    const event = slackEnvelopeEvent(envelope);
+    if (envelope.type === 'interactive' && !verifiedSlackClicks.has(key)) return undefined;
+    const payload = envelope.payload;
+    const container = payload?.['container'] as { channel_id?: unknown } | undefined;
+    const actions = payload?.['actions'];
+    const action = Array.isArray(actions) ? actions[0] as { action_ts?: unknown } | undefined : undefined;
+    const event = envelope.type === 'interactive'
+        ? { channel: typeof container?.channel_id === 'string' ? container.channel_id : undefined,
+            ts: typeof action?.action_ts === 'string' ? action.action_ts : undefined }
+        : slackEnvelopeEvent(envelope);
     const team = String(settings['slack']?.teamId || '');
     if (!event?.channel || !event.ts || !team) return undefined;
     const record = getIngressJournal()?.find('slack', team, `${team}:${event.channel}:${event.ts}`);
@@ -1676,7 +1750,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         await handleSlackSlashCommand(envelope.payload || {});
         return;
     }
-    const event = slackEnvelopeEvent(envelope);
+    const event = envelope.type === 'interactive' ? takeVerifiedSlackClick(envelope) : slackEnvelopeEvent(envelope);
     const socketTeamId = slackEnvelopeTeamId(envelope);
     if (envelope.type === 'interactive' && !event) {
         const payload = envelope.payload || {};
@@ -1692,6 +1766,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
                 await consumeSlackInteractionCallback(payload, token);
             }
             log.info('[slack:interactive] received (not an approval action)');
+            settleOk();
             return;
         }
         const result = handleApprovalCallback(
@@ -1712,6 +1787,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
         if (token && channel) {
             await sendSlackText(token, slackTargetFromId(channel), redactOutboundText(reply)).catch(() => undefined);
         }
+        settleOk();
         return;
     }
     if (!event) {
@@ -1721,7 +1797,7 @@ export async function handleSlackEnvelope(envelope: SlackEnvelope, approvalTrans
 
     const receiveGate = gateConfig();
     const workflowSelection = captureSlackWorkflow(event, receiveGate);
-    const approval = workflowSelection.kind === 'none' ? handleApprovalCommand(approvalTransport, {
+    const approval = event.type !== 'block_actions' && workflowSelection.kind === 'none' ? handleApprovalCommand(approvalTransport, {
         ...event,
         __jawSelf: Boolean(event.user && event.user === getSlackSelfUserId()),
     }, String(event.text || '')) : { handled: false };
@@ -1967,8 +2043,17 @@ async function runSlackInit(ctx?: TransportInitContext): Promise<TransportStartO
         log.error('[slack] auth.test failed:', auth.error);
         return transportNotStarted('failed', 'auth_test_failed');
     }
-    selfUserId = auth.data?.user_id || null;
-    selfBotId = auth.data?.bot_id || null;
+    const userId = auth.data?.user_id || null;
+    const botId = auth.data?.bot_id || null;
+    const appId = botId && userId ? await lookupSlackBotApp(sc.botToken, botId, userId) : null;
+    if (generation !== lifecycleGeneration) {
+        log.info('[slack] init superseded during bot lookup — aborting');
+        return transportNotStarted('superseded');
+    }
+    selfUserId = userId;
+    selfBotId = botId;
+    selfAppId = appId;
+    if (!appId) log.warn('[slack] bot app id unverified (bots.info) — app-stamped block actions are refused until transport restart');
     // The grant is whatever the app was installed with, not whatever the
     // current manifest asks for. Record it here — auth.test already ran, so
     // this costs nothing — and say the whole gap once instead of leaking one
@@ -2276,4 +2361,7 @@ async function disposeSlackRuntime(): Promise<void> {
     clearSlackClaimRecheck();
     selfUserId = null;
     selfBotId = null;
+    selfAppId = null;
+    verifiedSlackClicks.clear();
+    slackClickDecisions.clear();
 }

@@ -66,6 +66,8 @@ export type SlackGateConfig = {
     threadParticipation: (channel: string, threadTs: string) => 'owned' | 'joined' | null;
 };
 
+export type SlackSelfIdentity = { userId: string | null; botId: string | null; appId?: string | null };
+
 export type SlackGateDecision =
     | { process: true }
     | { process: false; reason: string };
@@ -123,12 +125,12 @@ function blockActionValue(action: Record<string, unknown>): string {
  *
  * The click's `action_ts` is the event ts, so Slack's redelivery of one click
  * dedupes and journals under one key exactly like a message, and the turn
- * answers in the clicked message's thread. Only a click by a person in this
- * workspace on a non-ephemeral message qualifies. `payload.token`,
+ * answers in the clicked message's thread. The non-ephemeral message must be
+ * owned by the verified bot; the clicker is verified separately. `payload.token`,
  * `response_url` and `trigger_id` are never read: they are not credentials
  * here and a turn must not reply through them.
  */
-export function slackBlockActionEvent(payload: unknown, teamId: string): SlackMessageEvent | null {
+export function slackBlockActionEvent(payload: unknown, teamId: string, self: SlackSelfIdentity): SlackMessageEvent | null {
     const p = objectOf(payload);
     const actions = p?.['actions'];
     if (!p || p['type'] !== 'block_actions' || !teamId || !Array.isArray(actions) || actions.length !== 1) return null;
@@ -138,20 +140,33 @@ export function slackBlockActionEvent(payload: unknown, teamId: string): SlackMe
     const container = objectOf(p['container']);
     const channel = container?.['channel_id'];
     const messageTs = container?.['message_ts'];
-    const user = objectOf(p['user'])?.['id'];
+    const clicker = objectOf(p['user']);
+    const user = clicker?.['id'];
     const actionTs = action['action_ts'];
     if (objectOf(p['team'])?.['id'] !== teamId || container?.['type'] !== 'message' || container['is_ephemeral'] === true
         || typeof channel !== 'string' || !/^[CDG][A-Z0-9]+$/.test(channel) || typeof messageTs !== 'string' || !SLACK_TS.test(messageTs)
         || typeof user !== 'string' || !/^[UW][A-Z0-9]+$/.test(user) || typeof actionTs !== 'string' || !SLACK_TS.test(actionTs)) return null;
     const channelId = objectOf(p['channel'])?.['id'];
-    const messageCopyTs = objectOf(p['message'])?.['ts'];
-    if ((channelId !== undefined && channelId !== channel) || (messageCopyTs !== undefined && messageCopyTs !== messageTs)) return null;
+    const message = objectOf(p['message']);
+    if ((channelId !== undefined && channelId !== channel) || !message || message['ts'] !== messageTs
+        || !self.userId || !self.botId || message['bot_id'] !== self.botId
+        || (message['user'] !== undefined && message['user'] !== self.userId)) return null;
+    const profileValue = message['bot_profile'];
+    const profile = objectOf(profileValue);
+    if (profileValue !== undefined && (!profile || profile['deleted'] === true
+        || (profile['id'] !== undefined && profile['id'] !== self.botId)
+        || (profile['user_id'] !== undefined && profile['user_id'] !== self.userId))) return null;
+    if ([message['app_id'], profile?.['app_id']].some(id => id !== undefined && (!self.appId || id !== self.appId))) return null;
     const threadTs = typeof container['thread_ts'] === 'string' && SLACK_TS.test(container['thread_ts']) ? container['thread_ts'] : messageTs;
     const blockId = typeof action['block_id'] === 'string' ? action['block_id'] : '';
     // JSON quoting keeps a value's newlines and brackets inside one line of the prompt.
     const field = (name: string, value: string) => `${name}: ${JSON.stringify(value.slice(0, 2000))}`;
+    const botId = typeof clicker?.['bot_id'] === 'string' && /^B[A-Z0-9]+$/.test(clicker['bot_id']) ? clicker['bot_id'] : undefined;
+    const botMarked = clicker?.['is_bot'] === true || !!botId;
     return {
         type: 'block_actions', channel, user, ts: actionTs, thread_ts: threadTs,
+        ...(botId ? { bot_id: botId } : {}),
+        ...(botMarked ? { bot_profile: { user_id: user, ...(botId ? { id: botId } : {}) } } : {}),
         text: ['[Slack block action]', field('action_id', actionId), field('block_id', blockId),
             field('value', blockActionValue(action)), field('message_ts', messageTs)].join('\n'),
     };
@@ -263,6 +278,7 @@ export function readTrustedBotTriggers(value: unknown): TrustedBotTrigger[] {
  * who may be answered — it only lets a named trigger past the bot refusals.
  */
 export function matchingTrustedBotTriggers(event: SlackMessageEvent, config: SlackGateConfig): TrustedBotTrigger[] {
+    if (event.type === 'block_actions') return [];
     const rules = readTrustedBotTriggers(config.trustedBotTriggers);
     if (rules.length === 0 || !config.selfUserId) return [];
     if (!mentionsUser(event.text || '', config.selfUserId)) return [];

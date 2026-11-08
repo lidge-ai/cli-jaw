@@ -485,3 +485,45 @@ test('the negative cache evicts by expiry, not by insertion accident', async () 
     await resolveSlackIdentity(TOKEN, { userId: 'UGONE' }, { teamId: TEAM, fetchImpl: impl2 });
     assert.equal(calls2.length, 0, 'the negative entry still suppresses the repeat lookup');
 });
+
+test('block action app identity verifies bots.info ownership and fails closed', async () => {
+    const { lookupSlackBotApp } = await import('../../src/slack/identity.ts');
+    for (const [body, expected] of [
+        [{ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } }, 'AAPP'],
+        [{ ok: true, bot: { user_id: 'UBOT', app_id: 'AAPP' } }, 'AAPP'],
+        [{ ok: true, bot: { id: 'BOTHER', user_id: 'UBOT', app_id: 'AAPP' } }, null],
+        [{ ok: true, bot: { id: 'BBOT', user_id: 'UOTHER', app_id: 'AAPP' } }, null],
+        [{ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP', deleted: true } }, null],
+        [{ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'invalid' } }, null],
+        [{ ok: false, error: 'missing_scope' }, null],
+    ] as const) {
+        const { impl } = makeSlackFetch([body]);
+        assert.equal(await lookupSlackBotApp(TOKEN, 'BBOT', 'UBOT', { fetchImpl: impl }), expected);
+    }
+    assert.equal(await lookupSlackBotApp(TOKEN, 'BBOT', 'UBOT', { fetchImpl: async () => { throw new Error('offline'); } }), null);
+});
+
+test('block action clicker classification uses documented bot markers and verifies the user', async () => {
+    const { lookupSlackClicker } = await import('../../src/slack/identity.ts');
+    for (const [user, expected] of [
+        [{ id: 'U1', is_bot: false }, { ok: true, isBot: false }],
+        [{ id: 'U1', is_bot: false, is_app_user: true }, { ok: true, isBot: false }],
+        [{ id: 'U1', is_bot: true }, { ok: true, isBot: true }],
+        [{ id: 'U1', is_bot: false, is_workflow_bot: true }, { ok: true, isBot: true }],
+        [{ id: 'U1', is_bot: false, is_agentforce_bot: true }, { ok: true, isBot: true }],
+        [{ id: 'U1', is_bot: false, profile: { is_sidekick_bot: true } }, { ok: true, isBot: true }],
+        [{ id: 'U1', is_bot: false, profile: { bot_id: 'BOTHER' } }, { ok: true, isBot: true, botId: 'BOTHER' }],
+        [{ id: 'U1', is_bot: false, profile: { bot_id: 'invalid' } }, { ok: true, isBot: true }],
+        [{ id: 'U1', is_bot: false, deleted: true }, { ok: false }],
+        [{ id: 'U1' }, { ok: false }],
+        [{ id: 'UOTHER', is_bot: false }, { ok: false }],
+    ] as const) {
+        const { impl } = makeSlackFetch([{ ok: true, user }]);
+        assert.deepEqual(await lookupSlackClicker(TOKEN, 'U1', { fetchImpl: impl }), expected);
+    }
+    const slackbot = makeSlackFetch([{ ok: true, user: { id: 'USLACKBOT', is_bot: false } }]);
+    assert.deepEqual(await lookupSlackClicker(TOKEN, 'USLACKBOT', { fetchImpl: slackbot.impl }), { ok: true, isBot: true });
+    const failed = makeSlackFetch([{ ok: false, error: 'user_not_found' }]);
+    assert.deepEqual(await lookupSlackClicker(TOKEN, 'U1', { fetchImpl: failed.impl }), { ok: false });
+    assert.deepEqual(await lookupSlackClicker(TOKEN, 'U1', { fetchImpl: async () => { throw new Error('offline'); } }), { ok: false });
+});

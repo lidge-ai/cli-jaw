@@ -6,6 +6,8 @@ import { settings } from '../../src/core/config.ts';
 import { SlackSocketClient, type SlackEnvelope, type SlackSocketLike } from '../../src/slack/socket.ts';
 import { matchingTrustedBotTriggers, shouldProcessSlackEvent, slackBlockActionEvent, type SlackGateConfig } from '../../src/slack/events.ts';
 
+let botLookupWait: Promise<void> | undefined;
+let botLookupStarted: (() => void) | undefined;
 let lookupWait: Promise<void> | undefined;
 let lookupStarted: (() => void) | undefined;
 let clicker: Record<string, unknown> | Error = { id: 'UCEO', is_bot: false };
@@ -17,7 +19,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
         if (clicker instanceof Error) throw clicker;
         return new Response(JSON.stringify({ ok: true, user: clicker }), { status: 200 });
     }
-    if (url.includes('bots.info')) return new Response(JSON.stringify({ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } }));
+    if (url.includes('bots.info')) { botLookupStarted?.(); await botLookupWait; return new Response(JSON.stringify({ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } })); }
     if (url.includes('auth.test')) return new Response(JSON.stringify({ ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' }));
     throw new Error('unexpected fetch ' + url);
 });
@@ -60,7 +62,7 @@ mock.module('../../src/slack/ingress.ts', { namedExports: { ...ingress,
         return admitted;
     },
 } });
-const { preflightSlackEnvelope, handleSlackEnvelope, setSlackSelfIdentityForTest, shutdownSlack } = await import('../../src/slack/bot.ts');
+const { preflightSlackEnvelope, handleSlackEnvelope, setSlackSelfIdentityForTest, shutdownSlack, initSlack, getSlackSelfUserId } = await import('../../src/slack/bot.ts');
 const { initIngressJournal, getIngressJournal, __resetIngressJournalForTests } = await import('../../src/messaging/durable-ingress.ts');
 
 const click = (patch: Record<string, unknown> = {}, action: Record<string, unknown> = {}) => ({
@@ -83,7 +85,7 @@ test.beforeEach(() => {
     submissions.length = 0; completions.length = 0;
     settings.slack = { ...settings.slack, enabled: true, botToken: 'xoxb-test', teamId: 'T1', mentionOnly: true, channelIds: [], allowBots: false, replyInThread: true };
     settings.multiSession = { ...settings.multiSession, enabled: false, channels: { ...settings.multiSession.channels, slack: false } };
-    clicker = { id: 'UCEO', is_bot: false }; lookupWait = undefined; lookupStarted = undefined;
+    clicker = { id: 'UCEO', is_bot: false }; lookupWait = undefined; lookupStarted = undefined; botLookupWait = undefined; botLookupStarted = undefined;
     setSlackSelfIdentityForTest(SELF);
     ingress.clearSlackEventDedupForTest();
     __resetIngressJournalForTests();
@@ -177,7 +179,7 @@ test('synthetic: updated card with matching app is accepted', () => {
     assert.ok(blockEvent(click({ message: message({ app_id: 'AAPP', edited: {} }) }), 'T1', SELF));
 });
 
-const clickGate: SlackGateConfig = { selfUserId: 'UBOT', selfBotId: 'BBOT', allowBots: false, mentionOnly: true, channelIds: ['C1'], threadRequireMention: false, threadParticipation: () => null };
+const clickGate: SlackGateConfig = { selfUserId: 'UBOT', allowBots: false, mentionOnly: true, channelIds: ['C1'], threadRequireMention: false, threadParticipation: () => null };
 test('control: self clicker is refused', () => {
     const event = blockEvent(click({ user: { id: 'UBOT' } }), 'T1', SELF)!;
     assert.equal(shouldProcessSlackEvent(event, clickGate, 'interactive').process, false);
@@ -291,20 +293,6 @@ test('overlap retries admission after first append throws', async () => {
     } finally { append.mock.restore(); }
 });
 
-test('queued click re-derives ownership after identity changes', async () => {
-    const wait = Promise.withResolvers<void>();
-    const started = Promise.withResolvers<void>();
-    lookupWait = wait.promise; lookupStarted = started.resolve;
-    const first = preflightSlackEnvelope(envelope(click(), 'old-1'));
-    assert.equal(await Promise.race([started.promise.then(() => true), first.then(() => false)]), true);
-    const second = preflightSlackEnvelope(envelope(click(), 'old-2'));
-    await shutdownSlack();
-    setSlackSelfIdentityForTest({ userId: 'UBOTB', botId: 'BBOTB', appId: 'AAPP' });
-    wait.resolve();
-    assert.equal(await first, 'ignored');
-    assert.equal(await second, 'committed');
-    assert.equal(getIngressJournal()!.list({}).length, 0);
-});
 
 test('socket ACK follows verified lookup and durable admission', async () => {
     const wait = Promise.withResolvers<void>();
@@ -330,4 +318,113 @@ test('socket ACK follows verified lookup and durable admission', async () => {
         assert.equal(await ack.promise, 'socket-1');
         assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'processing');
     } finally { client.stop(); }
+});
+
+test('socket ACKs a refused bot click without journal or dispatch', async () => {
+    clicker = { id: 'UCEO', is_bot: true };
+    const ack = Promise.withResolvers<void>();
+    const listeners = new Map<string, (event: unknown) => void>();
+    let dispatched = 0;
+    const socket: SlackSocketLike = {
+        send: () => { assert.equal(getIngressJournal()!.list({}).length, 0); ack.resolve(); },
+        close: () => {}, addEventListener: (type, listener) => { listeners.set(type, listener); },
+    };
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test', fetchImpl: async () => new Response(JSON.stringify({ ok: true, url: 'wss://example.invalid' })),
+        socketFactory: () => socket, preflightEnvelope: preflightSlackEnvelope, onEnvelope: () => { dispatched++; },
+    });
+    try {
+        await client.start();
+        listeners.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        listeners.get('message')!({ data: JSON.stringify(envelope(click(), 'socket-refused')) });
+        await ack.promise;
+        assert.equal(dispatched, 0);
+        assert.equal(submissions.length, 0);
+    } finally { client.stop(); }
+});
+
+test('socket overlapping deliveries each ACK only after durable admission and dispatch once', async () => {
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const bothAcked = Promise.withResolvers<void>();
+    const releaseDispatch = Promise.withResolvers<void>();
+    const completed = Promise.withResolvers<void>();
+    lookupWait = wait.promise; lookupStarted = started.resolve;
+    const listeners = new Map<string, (event: unknown) => void>();
+    let acks = 0;
+    let handled = 0;
+    const socket: SlackSocketLike = {
+        send: () => {
+            assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'processing');
+            if (++acks === 2) bothAcked.resolve();
+        },
+        close: () => {}, addEventListener: (type, listener) => { listeners.set(type, listener); },
+    };
+    const client = new SlackSocketClient({
+        appToken: 'xapp-test', fetchImpl: async () => new Response(JSON.stringify({ ok: true, url: 'wss://example.invalid' })),
+        socketFactory: () => socket, preflightEnvelope: preflightSlackEnvelope,
+        onEnvelope: async env => {
+            await releaseDispatch.promise;
+            await handleSlackEnvelope(env);
+            if (++handled === 2) completed.resolve();
+        },
+    });
+    try {
+        await client.start();
+        listeners.get('message')!({ data: JSON.stringify({ type: 'hello' }) });
+        listeners.get('message')!({ data: JSON.stringify(envelope(click(), 'socket-overlap-1')) });
+        await started.promise;
+        listeners.get('message')!({ data: JSON.stringify(envelope(click(), 'socket-overlap-2')) });
+        assert.equal(acks, 0);
+        wait.resolve();
+        await bothAcked.promise;
+        releaseDispatch.resolve();
+        await completed.promise;
+        while (completions.length) await Promise.allSettled(completions.splice(0));
+        assert.equal(submissions.length, 1);
+    } finally { client.stop(); }
+});
+
+test('payload bot evidence wins over a human lookup', async () => {
+    clicker = { id: 'UCEO', is_bot: false };
+    assert.equal(await deliver(envelope(click({ user: { id: 'UCEO', is_bot: true } }))), 'ignored');
+    assert.equal(getIngressJournal()!.list({}).length, 0);
+});
+
+test('verified click dispatch works without a journal', async () => {
+    __resetIngressJournalForTests();
+    assert.equal(await deliver(envelope(click())), 'committed');
+    assert.equal(submissions.length, 1);
+});
+
+test('queued click re-derives ownership after identity changes', async () => {
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    lookupWait = wait.promise; lookupStarted = started.resolve;
+    const first = preflightSlackEnvelope(envelope(click(), 'old-1'));
+    assert.equal(await Promise.race([started.promise.then(() => true), first.then(() => false)]), true);
+    const second = preflightSlackEnvelope(envelope(click(), 'old-2'));
+    await shutdownSlack();
+    setSlackSelfIdentityForTest({ userId: 'UBOTB', botId: 'BBOTB', appId: 'AAPP' });
+    wait.resolve();
+    assert.equal(await first, 'ignored');
+    assert.equal(await second, 'committed');
+    assert.equal(getIngressJournal()!.list({}).length, 0);
+});
+
+
+test('superseded bot lookup cannot publish old identity', async () => {
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    botLookupWait = wait.promise; botLookupStarted = started.resolve;
+    settings.port = 3459;
+    settings.slack = { ...settings.slack, enabled: true, botToken: 'xoxb-test', appToken: 'xapp-test', attachPort: '3459' };
+    const init = initSlack();
+    await started.promise;
+    assert.equal(getSlackSelfUserId(), null);
+    await shutdownSlack();
+    setSlackSelfIdentityForTest({ userId: 'UBOTB', botId: 'BBOTB', appId: 'AAPP' });
+    wait.resolve();
+    assert.deepEqual(await init, { started: false, reason: 'superseded' });
+    assert.equal(getSlackSelfUserId(), 'UBOTB');
 });
