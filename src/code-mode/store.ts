@@ -1093,13 +1093,14 @@ export class CodeStore {
                 return { ...proposed, truncation: { storedChars: acceptedChars(item, mapItem(proposed, previous?.firstSequence ?? record.sequence + 1), growth, k), sourceChars,
                     reason: familyB ? budgetReason(previous, item) : budgetReason(item) } };
             };
-            const safe = (k: number): number => value && k > 0 && k < value.length
+            // Never back below the stored length: a pair the stored value already split must stay completable.
+            const safe = (k: number, lo: number): number => value && k > lo && k < value.length
                 && value.charCodeAt(k - 1) >= 0xd800 && value.charCodeAt(k - 1) <= 0xdbff
                 && value.charCodeAt(k) >= 0xdc00 && value.charCodeAt(k) <= 0xdfff ? k - 1 : k;
             const search = (base: CodeItem, lo: number, familyB: boolean): { item: CodeItem; k: number } | undefined => {
                 let left = lo, right = value === undefined ? 0 : familyB ? value.length : Math.max(0, value.length - 1), best: { item: CodeItem; k: number } | undefined;
                 while (left <= right) {
-                    const mid = Math.floor((left + right) / 2), k = safe(mid);
+                    const mid = Math.floor((left + right) / 2), k = safe(mid, lo);
                     const next = candidate(base, k, familyB);
                     const compact = !familyB || (previous && compactUpdate(previous, mapItem(next, previous.firstSequence!), true) !== null);
                     if (k >= lo && compact && fits(next, true)) { best = { item: next, k }; left = mid + 1; }

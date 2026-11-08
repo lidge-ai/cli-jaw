@@ -1901,6 +1901,20 @@ test('file change family B preserves old diff and maximizes output despite new d
     assertPrefixReplay(bounded);
 });
 
+test('a stored half surrogate pair is completed when the new file change does not fit', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    store.commitItem(current, prefixItem(admitted.receipt.turnId, 'file_change', '\ud83d', 'old'));
+    const bounded = prefixBudget(db, 600);
+    const result = bounded.commitAcceptedPrefix(current, prefixItem(admitted.receipt.turnId, 'file_change', '\u{1F600}', 'x'.repeat(4000)));
+    assert.equal(result.truncated, true);
+    assert.equal(result.events.length, 1);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.equal(row.tool!.output, '\u{1F600}');
+    assert.equal(row.fileChange!.changes[0]!.diff, 'old');
+    assert.equal(row.truncation?.reason, 'turn_budget');
+    assertPrefixReplay(bounded);
+});
+
 test('marker and prefix storage failures roll back', t => {
     const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
     const item = message(admitted.receipt.turnId, 'prefix', 'old');
