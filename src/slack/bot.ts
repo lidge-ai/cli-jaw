@@ -120,6 +120,13 @@ let selfUserId: string | null = null;
 // bot id matters because this app's own answers post AS the bot (bot_id), not
 // as the user behind the token.
 let selfBotId: string | null = null;
+let selfAppId: string | null = null;
+
+export function setSlackSelfIdentityForTest(identity: { userId: string | null; botId: string | null; appId?: string | null }): void {
+    selfUserId = identity.userId;
+    selfBotId = identity.botId;
+    selfAppId = identity.appId ?? null;
+}
 let slackInitLock = false;
 let activeClaimArbiter: ClaimArbiter | null = null;
 let claimRecheckTimer: ReturnType<typeof setTimeout> | null = null;
