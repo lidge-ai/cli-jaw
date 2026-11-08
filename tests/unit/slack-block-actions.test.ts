@@ -17,6 +17,8 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
         lookupStarted?.();
         await lookupWait;
         if (clicker instanceof Error) throw clicker;
+        if (clicker['http429']) return new Response('{}', { status: 429 });
+        if (clicker['apiError']) return new Response(JSON.stringify({ ok: false, error: clicker['apiError'] }));
         return new Response(JSON.stringify({ ok: true, user: clicker }), { status: 200 });
     }
     if (url.includes('bots.info')) { botLookupStarted?.(); await botLookupWait; return new Response(JSON.stringify({ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } })); }
@@ -395,6 +397,45 @@ test('verified click dispatch works without a journal', async () => {
     __resetIngressJournalForTests();
     assert.equal(await deliver(envelope(click())), 'committed');
     assert.equal(submissions.length, 1);
+});
+
+test('ownership refusals never create journal rows or turns', async () => {
+    const cases = [
+        click({ message: { ts: '1700.1', user: 'UCEO' } }),
+        click({ message: message({ bot_id: 'BOTHER' }) }),
+        click({ message: message({ app_id: 'AOTHER' }) }),
+        click({ message: undefined }),
+    ];
+    for (const [index, payload] of cases.entries()) await deliver(envelope(payload, 'foreign-' + index));
+    assert.equal(submissions.length, 0);
+    assert.equal(getIngressJournal()!.list({}).length, 0);
+});
+
+for (const [name, answer] of [
+    ['user_not_found', { apiError: 'user_not_found' }],
+    ['rate limited', { http429: true }],
+    ['aborted lookup', Object.assign(new Error('aborted'), { name: 'AbortError' })],
+] as const) {
+    test('clicker refused before journal: ' + name, async () => {
+        clicker = answer;
+        assert.equal(await deliver(envelope(click())), 'ignored');
+        assert.equal(submissions.length, 0);
+        assert.equal(getIngressJournal()!.list({}).length, 0);
+    });
+}
+
+test('allowBots changes during lookup are rechecked before admission', async () => {
+    clicker = { id: 'UCEO', is_bot: true };
+    settings.slack!.allowBots = true;
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    lookupWait = wait.promise; lookupStarted = started.resolve;
+    const pending = preflightSlackEnvelope(envelope(click()));
+    await started.promise;
+    settings.slack!.allowBots = false;
+    wait.resolve();
+    assert.equal(await pending, 'ignored');
+    assert.equal(getIngressJournal()!.list({}).length, 0);
 });
 
 test('queued click re-derives ownership after identity changes', async () => {
