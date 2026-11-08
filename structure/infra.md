@@ -1117,6 +1117,8 @@ top-level 채널은 현재 event ts 직전의 `conversations.history`를 세션 
 
 설정된 팀은 확인 대기 후와 grant 준비 시 다시 검사한다. 클릭은 진행 중인 턴을 steer하지 않고 별도 턴으로 큐에 들어간다. 프롬프트의 `action_ts`가 각 클릭을 구별하므로 더블 클릭은 두 번 실행되며, 한 클릭의 재전달은 중복 제거한다.
 
+긴 큐 대기 또는 재시작으로 클릭 턴이 grant 만료 후 시작되면 Slack 도구 권한 없이 실행되므로 카드를 수정할 수 없다.
+
 클릭 턴은 `preSendContext.jobKind = 'slack_block_action'`을 큐와 재시작 너머까지 싣고, 진행 카드와 그 queue notice 기록을 만들지 않는다(direct·queued 모두, 그래서 재시작 뒤 복원할 카드도 없다). 답 전체가 `[SILENT]`이면 direct·queued·orphan 세 경로 모두 `tg.noResponse` 대신 아무것도 게시하지 않아 답변 위치에 흔적이 남지 않는다.
 
 ### mention-watch.ts (345L)
