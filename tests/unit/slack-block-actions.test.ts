@@ -5,12 +5,15 @@ import Database from 'better-sqlite3';
 import { settings } from '../../src/core/config.ts';
 import { SlackSocketClient, type SlackEnvelope, type SlackSocketLike } from '../../src/slack/socket.ts';
 import { matchingTrustedBotTriggers, shouldProcessSlackEvent, slackBlockActionEvent, type SlackGateConfig } from '../../src/slack/events.ts';
+import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
+import { activateSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, type SlackToolGrant } from '../../src/slack/tool-context.ts';
 
 let botLookupWait: Promise<void> | undefined;
 let botLookupStarted: (() => void) | undefined;
 let lookupWait: Promise<void> | undefined;
 let lookupStarted: (() => void) | undefined;
 let clicker: Record<string, unknown> | Error = { id: 'UCEO', is_bot: false };
+let authResponse: Record<string, unknown> = { ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' };
 mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes('users.info')) {
@@ -22,15 +25,24 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
         return new Response(JSON.stringify({ ok: true, user: clicker }), { status: 200 });
     }
     if (url.includes('bots.info')) { botLookupStarted?.(); await botLookupWait; return new Response(JSON.stringify({ ok: true, bot: { id: 'BBOT', user_id: 'UBOT', app_id: 'AAPP' } })); }
-    if (url.includes('auth.test')) return new Response(JSON.stringify({ ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' }));
+    if (url.includes('auth.test')) return new Response(JSON.stringify(authResponse));
     throw new Error('unexpected fetch ' + url);
 });
 const SELF = { userId: 'UBOT', botId: 'BBOT', appId: 'AAPP' };
 const blockEvent = slackBlockActionEvent as unknown as (payload: unknown, teamId: string, self: { userId: string | null; botId: string | null; appId: string | null }) => ReturnType<typeof slackBlockActionEvent>;
 const submissions: Array<{ prompt: string; meta: Record<string, unknown> }> = [];
+let inspectGrant = false;
+let capturedGrant: SlackToolGrant | null = null;
 mock.module('../../src/orchestrator/gateway.ts', { namedExports: {
     submitMessage: (prompt: string, meta: Record<string, unknown>) => {
         submissions.push({ prompt, meta });
+        if (inspectGrant && typeof meta['onAdmitted'] === 'function') {
+            const binding = { requestId: 'control-grant', scope: 'control', chatSessionId: 'control' };
+            (meta['onAdmitted'] as (binding: typeof binding) => void)(binding);
+            const secret = activateSlackToolGrant(binding.requestId, binding.scope, binding.chatSessionId);
+            capturedGrant = secret ? resolveSlackToolGrant(secret) : null;
+            revokeSlackToolGrant(binding.requestId);
+        }
         return { action: 'started', disposition: 'new_run', requestId: `click-${submissions.length}` };
     },
     dedupKey: () => 'fixture',
@@ -85,13 +97,49 @@ async function deliver(env: SlackEnvelope): Promise<string> {
 
 test.beforeEach(() => {
     submissions.length = 0; completions.length = 0;
+    inspectGrant = false; capturedGrant = null;
     settings.slack = { ...settings.slack, enabled: true, botToken: 'xoxb-test', teamId: 'T1', mentionOnly: true, channelIds: [], allowBots: false, replyInThread: true };
     settings.multiSession = { ...settings.multiSession, enabled: false, channels: { ...settings.multiSession.channels, slack: false } };
     clicker = { id: 'UCEO', is_bot: false }; lookupWait = undefined; lookupStarted = undefined; botLookupWait = undefined; botLookupStarted = undefined;
+    authResponse = { ok: true, team_id: 'T1', user_id: 'UBOT', bot_id: 'BBOT' };
+    resetVerifiedSlackWorkspace();
     setSlackSelfIdentityForTest(SELF);
     ingress.clearSlackEventDedupForTest();
     __resetIngressJournalForTests();
     initIngressJournal(new Database(':memory:') as never, { now: () => 1_700_000_000_000, bootId: 'block-actions' });
+});
+
+for (const [name, response] of [
+    ['different team', { ok: true, team_id: 'T2', user_id: 'UBOT' }],
+    ['different bot user', { ok: true, team_id: 'T1', user_id: 'UOTHER' }],
+    ['auth failure', { ok: false, error: 'invalid_auth' }],
+] as const) {
+    test('workspace refused before journal: ' + name, async () => {
+        authResponse = response;
+        assert.equal(await deliver(envelope(click())), 'ignored');
+        assert.equal(getIngressJournal()!.list({}).length, 0);
+        assert.equal(submissions.length, 0);
+    });
+}
+
+test('verified click cannot start a turn when its grant becomes unavailable', async () => {
+    const env = envelope(click());
+    assert.equal(await preflightSlackEnvelope(env), 'committed');
+    resetVerifiedSlackWorkspace();
+    authResponse = { ok: false, error: 'invalid_auth' };
+    await handleSlackEnvelope(env);
+    while (completions.length) await Promise.allSettled(completions.splice(0));
+    assert.equal(submissions.length, 0);
+    assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
+});
+
+test('control: verified click submits the workspace and clicker grant', async () => {
+    inspectGrant = true;
+    assert.equal(await deliver(envelope(click())), 'committed');
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0]!.meta['ownedExecution'], true);
+    assert.equal(capturedGrant?.actorId, 'UCEO');
+    assert.equal(capturedGrant?.teamId, 'T1');
 });
 
 test('an agent: click becomes one journaled turn answering in the card thread', { timeout: 5000 }, async () => {
