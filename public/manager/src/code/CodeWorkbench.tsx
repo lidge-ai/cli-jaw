@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { CodeControllerModel } from './code-controller-types';
+import type { CodeControllerModel, CodeSettingsField, CodeSettingsValue } from './code-controller-types';
 import { CodeComposer } from './CodeComposer';
 import { ComposerFooter } from './ComposerFooter';
 import { CodeDraftEmptyState } from './CodeDraftEmptyState';
@@ -11,6 +11,10 @@ import { CodeWorkspaceHeader } from './CodeWorkspaceHeader';
 import { codeCanResume, codeCanRollback, codeCanStop, codeResendCopy, codeRollbackRows } from './code-types';
 
 type Props = { controller: CodeControllerModel; endpointKey: string; onOpenLocalFile?: ((path: string) => void) | undefined };
+const settingsLabels: Record<CodeSettingsField, string> = { model: 'Model', effort: 'Effort', permissionMode: 'Permission', thinking: 'Thinking' };
+function settingsValue(value: CodeSettingsValue | undefined): string {
+    return value == null ? 'Default' : typeof value === 'boolean' ? (value ? 'On' : 'Off') : value;
+}
 export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: Props) {
     const sessionKey = `${endpointKey}:${c.selectedId ?? 'new'}`;
     const [actionError, setActionError] = useState<{ key: string; message: string } | null>(null);
@@ -31,7 +35,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
     const provider = c.catalog?.providers.find(p => p.id === c.selection.provider);
     const unknownSend = c.operation.kind === 'unknown-send';
     // A streaming Claude turn takes one follow-up beside Stop; any other busy session offers Stop only.
-    const canSend = !c.steering && (c.followUp ? !c.followUpSent && !stopping && !c.pending && !archived && c.operation.kind === 'idle'
+    const canSend = c.settings === null && !c.steering && (c.followUp ? !c.followUpSent && !stopping && !c.pending && !archived && c.operation.kind === 'idle'
         : !busy && !c.pending && !c.creationUnknown && !archived && c.operation.kind === 'idle' && !!provider?.available
         && !!c.selection.cwd.trim() && !!c.selection.model.trim()
         // A suspended or recoverably failed session can be sent to: send attaches it first.
@@ -50,7 +54,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
         void action().catch(err => setActionError({ key: sessionKey, message: err instanceof Error ? err.message : String(err) }));
     }
     async function retry() {
-        if (!c.canRetrySameSend || retryGuard.current.has(sessionKey)) return;
+        if (c.settings !== null || !c.canRetrySameSend || retryGuard.current.has(sessionKey)) return;
         retryGuard.current.add(sessionKey); setRetrying(sessionKey); setActionError(null);
         try { await c.retrySameSend(); }
         catch (err) { setActionError({ key: sessionKey, message: err instanceof Error ? err.message : String(err) }); }
@@ -82,7 +86,7 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
                 ? codeResendCopy(c.resendReason ?? undefined).detail
                 : 'Retry uses the original request. It may submit it if the server has not already accepted it.'}</p>
             <pre className="code-retry-preview" aria-label="Original prompt">{c.retryText}</pre>
-            <button type="button" disabled={!c.canRetrySameSend || retrying === sessionKey} onClick={() => void retry()}>
+            <button type="button" disabled={c.settings !== null || !c.canRetrySameSend || retrying === sessionKey} onClick={() => void retry()}>
                 {retrying === sessionKey
                     ? (c.resendRequired ? 'Sending as a new message…' : 'Retrying original send…')
                     : (c.resendRequired ? 'Send as a new message' : 'Retry same send')}</button>
@@ -110,6 +114,46 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
                     onClick={() => c.setInput(failedInput)}>Restore submitted prompt</button>
                 <span>Restores text for editing without sending.</span>
             </div>}
+            {c.settings && <section className="code-recovery-strip code-settings-strip" aria-label="Settings changes"
+                role={c.settings.state === 'unknown' || c.settings.state === 'rejected' || c.settings.state === 'conflict' ? 'alert' : 'status'}>
+                {c.settings.state === 'pending' && c.settings.waitingForSession && <p>Settings will apply when the session is confirmed</p>}
+                {(c.settings.state === 'sent' || (c.settings.state === 'pending' && !c.settings.waitingForSession && c.settings.busy)) && <p>Applying settings…</p>}
+                {/* A pending batch that stopped before sending (no checkpoint, no refresh, or a second
+                    change elsewhere) waits for the reader; Send stays closed until it is applied or dropped. */}
+                {c.settings.state === 'pending' && !c.settings.waitingForSession && !c.settings.busy && <>
+                    <p>These settings are not applied yet. Your messages wait until they are.</p>
+                    <button type="button" onClick={() => perform(c.reapplySettings)}>Apply settings</button>
+                    <button type="button" onClick={() => perform(c.discardSettings)}>Discard</button>
+                </>}
+                {c.settings.state === 'unknown' && <>
+                    <p>The settings change may or may not have applied. It will never be resent automatically.</p>
+                    {c.settings.expired && <p>The recorded outcome has expired.</p>}
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.checkSettings)}>Check again</button>
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.reapplySettings)}>Re-apply</button>
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.discardSettings)}>Discard</button>
+                </>}
+                {c.settings.state === 'rejected' && <>
+                    <p>{c.settings.error ?? 'The settings change was rejected.'}</p>
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.reapplySettings)}>Re-apply</button>
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.discardSettings)}>Discard</button>
+                </>}
+                {c.settings.state === 'conflict' && <>
+                    <strong>Settings conflict</strong>
+                    {c.settings.fields.filter(field => field.theirs !== undefined).map(field => <div className="code-settings-conflict" key={field.field}>
+                        <p>{settingsLabels[field.field]}: yours {settingsValue(field.value)}, now {settingsValue(field.theirs)}</p>
+                        <div role="group" aria-label={`${settingsLabels[field.field]} conflict`}>
+                            <button type="button" disabled={c.settings!.busy} aria-pressed={field.resolution === 'mine'}
+                                onClick={() => c.resolveSettingsConflict(field.field, 'mine')}>Keep mine</button>
+                            <button type="button" disabled={c.settings!.busy} aria-pressed={field.resolution === 'theirs'}
+                                onClick={() => c.resolveSettingsConflict(field.field, 'theirs')}>Take theirs</button>
+                        </div>
+                    </div>)}
+                    <button type="button" disabled={c.settings.busy || c.settings.fields.some(field => field.theirs !== undefined && !field.resolution)}
+                        onClick={() => perform(c.applyResolvedSettings)}>Apply</button>
+                    <button type="button" disabled={c.settings.busy} onClick={() => perform(c.discardSettings)}>Discard</button>
+                </>}
+                {c.settings.error && c.settings.state !== 'rejected' && <p>{c.settings.error}</p>}
+            </section>}
             <div className="code-composer-surface" aria-label="Code composer controls">
                 <CodeComposer key={`composer:${sessionKey}`} inputText={c.input} canSend={canSend} busy={busy} canStop={canStop} stopping={stopping}
                     pending={c.pending} followUp={c.followUp} followUpSent={c.followUpSent} steering={c.steering} readOnly={archived} autoFocus={c.selectedId === null} onInputChange={c.setInput} onSubmit={c.send} onStop={c.stop}

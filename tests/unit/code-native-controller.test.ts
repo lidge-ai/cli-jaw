@@ -68,6 +68,272 @@ function until(controller: CodeController, predicate: () => boolean): Promise<vo
     return new Promise(resolve => { const unsubscribe = controller.subscribe(() => { if (predicate()) { unsubscribe(); resolve(); } }); });
 }
 
+test('creation settings are patched before the captured prompt', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    const creating = deferred<Response>();
+    const created = session('created', { cwd: '/workspace/new' });
+    f.snapshots.set('created', snap(created));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') return creating.promise;
+        if (call.method === 'PATCH') return response({ ok: true, session: { ...created, effort: 'high', revision: 3 }, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } });
+        if (call.path.endsWith('/prompt')) return response({ ok: true, turnId: 't', clientTurnKey: call.body['clientTurnKey'], sequence: 3, status: 'completed' });
+        return undefined;
+    });
+    f.controller.setInput('hello'); const sending = f.controller.send();
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
+    creating.resolve(response({ ok: true, session: created }, 201)); await sending;
+    const patch = f.calls.find(call => call.method === 'PATCH');
+    assert.match(String(patch?.body['clientMutationId']), /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    assert.ok(f.calls.indexOf(patch!) < f.calls.findIndex(call => call.path.endsWith('/prompt')));
+});
+
+test('lost settings response is checked by mutation id and gates prompt delivery', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return Promise.reject(new TypeError('lost')); }
+        if (call.path.endsWith(`/mutations/${mutationId}`)) return response({ ok: true, mutation: { mutationId, status: 'applied', revision: 3, at: 1 } });
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    f.controller.setInput('held'); await f.controller.send(); await f.controller.retrySameSend();
+    assert.equal(f.posts().filter(call => call.path.endsWith('/prompt')).length, 0);
+    f.snapshots.set('a', snap(session('a', { effort: 'high', revision: 3 })));
+    await f.controller.checkSettings();
+    assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('non-overlapping conflict retries once with a new mutation identity', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const remote = session('a', { model: 'other-model', revision: 3 });
+    let attempts = 0;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        attempts++;
+        if (attempts === 1) { f.snapshots.set('a', snap(remote)); return response({ ok: false, error: 'revision_conflict', session: remote }, 409); }
+        const saved = { ...remote, effort: 'high', revision: 4 }; f.snapshots.set('a', snap(saved));
+        return response({ ok: true, session: saved, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } });
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const patches = f.calls.filter(call => call.method === 'PATCH');
+    assert.equal(patches.length, 2); assert.notEqual(patches[0]!.body['clientMutationId'], patches[1]!.body['clientMutationId']);
+    assert.equal(patches[1]!.body['model'], 'other-model'); assert.equal(f.controller.getModel().settings, null);
+});
+
+test('rejected settings fence before discard, and a committed fence outcome settles without a resend', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return response({ ok: false, error: 'session_busy' }, 409); }
+        if (call.path.endsWith('/fence')) { f.snapshots.set('a', snap(session('a', { effort: 'high', revision: 3 })));
+            return response({ ok: true, mutation: { mutationId, status: 'applied', revision: 3, at: 1 } }); }
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' }); assert.equal(f.controller.getModel().settings?.state, 'rejected');
+    await f.controller.discardSettings(); assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.calls.filter(call => call.path.endsWith('/fence')).length, 1);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('lost fence is retried explicitly and rapid reapply clicks have one owner', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    let mutationId = '', fences = 0, patches = 0; const gate = deferred<Response>();
+    f.intercept(call => {
+        if (call.method === 'PATCH') { patches++; if (patches === 1) { mutationId = String(call.body['clientMutationId']); return Promise.reject(new TypeError('lost')); }
+            return response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } }); }
+        if (call.path.endsWith('/fence')) { fences++; return fences === 1 ? Promise.reject(new TypeError('lost fence')) : gate.promise; }
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' }); await f.controller.reapplySettings();
+    assert.equal(f.controller.getModel().settings?.state, 'unknown'); assert.equal(patches, 1);
+    const first = f.controller.reapplySettings(), second = f.controller.reapplySettings();
+    gate.resolve(response({ ok: true, mutation: { mutationId, status: 'fenced', revision: 2, at: 1 } }));
+    await Promise.all([first, second]);
+    assert.equal(fences, 2); assert.equal(patches, 2); assert.equal(f.controller.getModel().settings, null);
+});
+
+test('expired settings reapply after the watermark with a new identity', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const watermark = '7ZZZZZZZZY0000000000000000'; let patches = 0;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        patches++;
+        if (patches === 1) return response({ ok: false, error: 'mutation_outcome_expired', watermark }, 410);
+        return response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } });
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.expired, true);
+    await f.controller.reapplySettings();
+    assert.ok(String(f.calls.filter(call => call.method === 'PATCH')[1]!.body['clientMutationId']) > watermark);
+    assert.equal(f.calls.filter(call => call.path.endsWith('/fence')).length, 0);
+});
+
+test('unmount retires an in-flight settings PATCH and remount checks its outcome', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(); let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return gate.promise; }
+        if (call.path.endsWith(`/mutations/${mutationId}`)) return response({ ok: true, mutation: { mutationId, status: 'applied', revision: 3, at: 1 } });
+        return undefined;
+    });
+    const changing = f.controller.setSelection({ effort: 'high' }); f.cleanups[0]!();
+    f.snapshots.set('a', snap(session('a', { effort: 'high', revision: 3 })));
+    const remounted = new CodeController(f.options); f.cleanups.push(remounted.mount()); await remounted.refresh();
+    await remounted.checkSettings();
+    gate.resolve(response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId, status: 'applied', revision: 3, at: 1 } }));
+    await changing; await until(remounted, () => remounted.getModel().settings === null);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('reconnected creation applies pending edits without sending or stealing the selected session', async t => {
+    const f = fixture(t); await f.controller.refresh(); let key = '';
+    const created = session('created', { cwd: '/workspace/new' }); f.snapshots.set('created', snap(created));
+    const lookup = deferred<Response>();
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') { key = String(call.body['clientCreationKey']); return Promise.reject(new TypeError('lost')); }
+        if (call.path === `/creations/${key}`) return lookup.promise;
+        if (call.method === 'PATCH') { const updated = { ...created, effort: 'high', revision: 3 }; f.snapshots.set('created', snap(updated));
+            return response({ ok: true, session: updated, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } }); }
+        return undefined;
+    });
+    f.controller.setInput('held'); await f.controller.send(); await f.controller.setSelection({ effort: 'high' });
+    const refreshing = f.controller.refresh(); await f.controller.selectSession('b');
+    lookup.resolve(response({ ok: true, session: created })); await refreshing;
+    assert.equal(f.controller.getModel().selectedId, 'b');
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+    assert.equal(f.posts().filter(call => call.path.endsWith('/prompt')).length, 0);
+    await f.controller.selectSession('created'); assert.equal(f.controller.getModel().selection.effort, 'high');
+    assert.equal(f.controller.getModel().input, 'held');
+});
+
+test('settings conflict choices take theirs or apply mine against the shown baseline', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a'); let attempts = 0;
+    const remote = session('a', { effort: 'medium', revision: 3 });
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        attempts++;
+        if (attempts === 1) { f.snapshots.set('a', snap(remote)); return response({ ok: false, error: 'revision_conflict', session: remote }, 409); }
+        const next = { ...remote, effort: 'high', revision: 4 }; f.snapshots.set('a', snap(next));
+        return response({ ok: true, session: next, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } });
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.fields[0]?.theirs, 'medium');
+    f.controller.resolveSettingsConflict('effort', 'mine'); await f.controller.applyResolvedSettings();
+    assert.equal(f.controller.getModel().settings, null); assert.equal(attempts, 2);
+    assert.equal(f.controller.getModel().selection.effort, 'high');
+});
+
+test('settings checkpoint failure refuses PATCH and keeps the edit in memory', async t => {
+    const browser = browserDraftStorage(t);
+    Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new Error('blocked'); } });
+    const f = fixture(t, browser); await f.controller.refresh(); await f.controller.selectSession('a');
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
+    assert.equal(f.controller.getModel().selection.effort, 'high');
+    assert.match(f.controller.getModel().settings?.error ?? '', /not sent/);
+});
+
+test('delayed fence after unmount cannot dispatch a replacement PATCH', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(); let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return Promise.reject(new TypeError('lost')); }
+        if (call.path.endsWith('/fence')) return gate.promise;
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' }); const reapply = f.controller.reapplySettings();
+    f.cleanups[0]!(); gate.resolve(response({ ok: true, mutation: { mutationId, status: 'fenced', revision: 2, at: 1 } }));
+    await reapply;
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+    const saved = loadCodeDraftStorage(window.sessionStorage, `http://127.0.0.1:${f.options.port}`).data!;
+    assert.equal(saved.sessions.find(row => row.id === 'a')?.draft.settings?.state, 'unknown');
+});
+
+test('taking theirs ends a same-field conflict without another PATCH', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const remote = session('a', { effort: 'medium', revision: 3 });
+    f.intercept(call => call.method === 'PATCH' ? response({ ok: false, error: 'revision_conflict', session: remote }, 409) : undefined);
+    await f.controller.setSelection({ effort: 'high' });
+    f.controller.resolveSettingsConflict('effort', 'theirs'); await f.controller.applyResolvedSettings();
+    assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.controller.getModel().selection.effort, 'medium');
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('pending create settings survive reload and start another session keeps the choices', async t => {
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh();
+    f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? Promise.reject(new TypeError('lost')) : undefined);
+    f.controller.setInput('retained'); await f.controller.send(); await f.controller.setSelection({ effort: 'high' });
+    f.cleanups[0]!(); browser.reload();
+    const restored = new CodeController(f.options); f.cleanups.push(restored.mount()); await restored.refresh();
+    assert.equal(restored.getModel().settings?.state, 'pending'); assert.equal(restored.getModel().selection.effort, 'high');
+    restored.startAnotherSession();
+    assert.equal(restored.getModel().settings, null); assert.equal(restored.getModel().selection.effort, 'high');
+    assert.equal(restored.getModel().input, 'retained');
+});
+
+test('create collision retains pending choices in fresh draft without patching or sending', async t => {
+    const f = fixture(t); await f.controller.refresh(); const gate = deferred<Response>();
+    const created = session('created', { cwd: '/workspace/new' }); f.snapshots.set('created', snap(created));
+    f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? gate.promise : undefined);
+    f.controller.setInput('fresh'); const sending = f.controller.send(); await f.controller.setSelection({ effort: 'high' });
+    await f.controller.selectSession('created'); f.controller.setInput('existing'); f.controller.newSession();
+    gate.resolve(response({ ok: true, session: created }, 201)); await sending;
+    assert.equal(f.controller.getModel().selection.effort, 'high'); assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.controller.getModel().input, 'fresh');
+    assert.equal(f.calls.filter(call => call.method === 'PATCH' || call.path.endsWith('/prompt')).length, 0);
+    await f.controller.selectSession('created'); assert.equal(f.controller.getModel().input, 'existing');
+});
+
+test('unknown discard fences before clearing, and a late lookup after remount is ignored', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const lookup = deferred<Response>(); let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return Promise.reject(new TypeError('lost')); }
+        if (call.path.endsWith(`/mutations/${mutationId}`)) return lookup.promise;
+        if (call.path.endsWith('/fence')) return response({ ok: true, mutation: { mutationId, status: 'fenced', revision: 2, at: 1 } });
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const checking = f.controller.checkSettings(); f.cleanups[0]!();
+    const remounted = new CodeController(f.options); f.cleanups.push(remounted.mount());
+    await remounted.discardSettings();
+    lookup.resolve(response({ ok: true, mutation: { mutationId, status: 'applied', revision: 3, at: 1 } }));
+    await checking;
+    assert.equal(f.calls.filter(call => call.path.endsWith('/fence')).length, 1);
+    assert.equal(remounted.getModel().settings, null);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('mutation in flight is unknown and never treated as a definite rejection', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.method === 'PATCH' ? response({ ok: false, error: 'mutation_in_flight' }, 409) : undefined);
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
+test('a sent settings checkpoint reloads as unknown without another PATCH', async t => {
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh(); await f.controller.selectSession('a');
+    const gate = deferred<Response>(); let mutationId = '';
+    f.intercept(call => {
+        if (call.method === 'PATCH') { mutationId = String(call.body['clientMutationId']); return gate.promise; }
+        if (call.path.endsWith(`/mutations/${mutationId}`)) return response({ ok: false, error: 'mutation_not_found', watermark: null }, 404);
+        return undefined;
+    });
+    const changing = f.controller.setSelection({ effort: 'high' }); const checkpoint = browser.checkpoint();
+    f.cleanups[0]!(); browser.reload(checkpoint);
+    const restored = new CodeController(f.options); f.cleanups.push(restored.mount());
+    assert.equal(restored.getModel().settings?.state, 'unknown');
+    gate.resolve(response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId, status: 'applied', revision: 3, at: 1 } }));
+    await changing;
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+});
+
 test('catalog defaults use native model, nullable effort and explicit capability-backed policy', async t => {
     const f = fixture(t); await f.controller.refresh();
     assert.equal(f.controller.getModel().selection.model, 'native-model');
@@ -197,17 +463,20 @@ test('idle PATCH carries expectedRevision and accepted tuple; conflict cannot af
     const pending = deferred<Response>();
     f.intercept(call => call.method === 'PATCH' ? pending.promise : undefined);
     const changing = f.controller.setSelection({ effort: 'high' });
-    assert.deepEqual(f.calls.find(call => call.method === 'PATCH')!.body,
-        { expectedRevision: 2, model: 'native-model', effort: 'high', permissionMode: 'ask' });
+    const request = f.calls.find(call => call.method === 'PATCH')!.body;
+    assert.match(String(request['clientMutationId']), /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    assert.deepEqual({ ...request, clientMutationId: undefined },
+        { expectedRevision: 2, model: 'native-model', effort: 'high', permissionMode: 'ask', clientMutationId: undefined });
     await f.controller.selectSession('b'); f.controller.setInput('B edit');
-    const revised = session('a', { revision: 9, model: 'remote-model' }); f.snapshots.set('a', snap(revised));
+    const revised = session('a', { revision: 9, model: 'remote-model', effort: 'medium' }); f.snapshots.set('a', snap(revised));
     pending.resolve(response({ ok: false, error: 'revision_conflict', session: revised }, 409)); await changing;
     assert.equal(f.controller.getModel().selectedId, 'b');
     assert.equal(f.controller.getModel().error, null);
     assert.equal(f.controller.getModel().input, 'B edit');
     await f.controller.selectSession('a');
     assert.equal(f.controller.getModel().selection.model, 'remote-model');
-    assert.match(f.controller.getModel().operation.error!, /changed elsewhere/);
+    assert.equal(f.controller.getModel().settings?.state, 'conflict');
+    assert.equal(f.controller.getModel().settings?.fields[0]?.theirs, 'medium');
 });
 
 test('permission requests have independent pending/error state and real stale-option recovery', async t => {
@@ -314,7 +583,7 @@ test('pin and mark-unread share the mutation slot: they wait out an in-flight re
     assert.deepEqual(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body, { expectedRevision: 3, pinned: true });
 });
 
-test('unknown creation remains frozen and is never automatically retried', async t => {
+test('unknown creation retains settings edits and is never automatically retried', async t => {
     const f = fixture(t); await f.controller.refresh();
     f.intercept(call => call.path === '/sessions' && call.method === 'POST' ? Promise.reject(new TypeError('lost create response')) : undefined);
     f.controller.setInput('keep this'); await f.controller.send();
@@ -323,7 +592,8 @@ test('unknown creation remains frozen and is never automatically retried', async
     await f.controller.setSelection({ cwd: '/changed' });
     await f.controller.setSelection({ model: 'other-model' });
     assert.equal(f.controller.getModel().selection.cwd, '/workspace/new');
-    assert.equal(f.controller.getModel().selection.model, 'native-model');
+    assert.equal(f.controller.getModel().selection.model, 'other-model');
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
     await f.controller.refresh(); f.controller.newSession(); await f.controller.send();
     assert.equal(f.posts().length, 1);
 });
@@ -434,8 +704,10 @@ test('idle model and effort PATCH remain available when hot switching is unsuppo
         return response({ ok: true, session: revised });
     });
     await f.controller.setSelection({ model: 'other-model', effort: 'high' });
-    assert.deepEqual(f.calls.find(call => call.method === 'PATCH')!.body,
-        { expectedRevision: 2, model: 'other-model', effort: 'high', permissionMode: 'ask' });
+    const request = f.calls.find(call => call.method === 'PATCH')!.body;
+    assert.match(String(request['clientMutationId']), /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    assert.deepEqual({ ...request, clientMutationId: undefined },
+        { expectedRevision: 2, model: 'other-model', effort: 'high', permissionMode: 'ask', clientMutationId: undefined });
     assert.equal(f.controller.getModel().selection.model, 'other-model');
     assert.equal(f.controller.getModel().selection.effort, 'high');
     f.snapshots.set('a', snap(session('a', { sequence: 5, status: 'streaming', turnId: 't' })));
@@ -1063,8 +1335,10 @@ test('a Claude session PATCHes its thinking switch; a draft leaving Claude drops
     f.intercept(call => call.method === 'PATCH'
         ? response({ ok: true, session: session('a', { provider: 'claude', thinking: false, revision: 3 }) }) : undefined);
     await f.controller.setSelection({ thinking: false });
-    assert.deepEqual(f.calls.find(call => call.method === 'PATCH')!.body,
-        { expectedRevision: 2, model: 'native-model', effort: null, permissionMode: 'ask', thinking: false });
+    const request = f.calls.find(call => call.method === 'PATCH')!.body;
+    assert.match(String(request['clientMutationId']), /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    assert.deepEqual({ ...request, clientMutationId: undefined },
+        { expectedRevision: 2, model: 'native-model', effort: null, permissionMode: 'ask', thinking: false, clientMutationId: undefined });
     await f.controller.setSelection({ effort: 'high' });
     assert.equal(f.calls.filter(call => call.method === 'PATCH').at(-1)!.body['thinking'], false, 'an effort change keeps the stored switch');
     f.controller.newSession();
@@ -1985,4 +2259,162 @@ test('a late resume response cannot overwrite an in-flight Stop', async t => {
     assert.equal(f.controller.getModel().operation.kind, 'idle');
     f.snapshots.set('a', snap(idle)); cancel.resolve(response({ ok: true, session: idle })); await stopping;
     assert.deepEqual(f.posts()[1]!.body, { operationId, epoch: 2 });
+});
+
+test('claude thinking edit during a pending create is not a false conflict', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    await f.controller.setSelection({ provider: 'claude' });
+    assert.equal(f.controller.getModel().selection.thinking, undefined);
+    const creating = deferred<Response>();
+    const created = session('claude-created', { provider: 'claude', cwd: '/workspace/new', thinking: true });
+    f.snapshots.set('claude-created', snap(created));
+    f.intercept(call => {
+        if (call.path === '/sessions' && call.method === 'POST') return creating.promise;
+        if (call.method === 'PATCH') return response({ ok: true, session: { ...created, thinking: false, revision: 3 }, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } });
+        if (call.path.endsWith('/prompt')) return response({ ok: true, turnId: 't', clientTurnKey: call.body['clientTurnKey'], sequence: 3, status: 'completed' });
+        return undefined;
+    });
+    f.controller.setInput('hello'); const sending = f.controller.send();
+    await f.controller.setSelection({ thinking: false });
+    creating.resolve(response({ ok: true, session: created }, 201)); await sending;
+    const patch = f.calls.find(call => call.method === 'PATCH');
+    assert.equal(patch?.body['thinking'], false);
+    assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.posts().filter(call => call.path.endsWith('/prompt')).length, 1);
+});
+
+test('a definitely rejected create folds pending settings back into the draft choices', async t => {
+    const f = fixture(t); await f.controller.refresh();
+    const creating = deferred<Response>();
+    f.intercept(call => (call.path === '/sessions' && call.method === 'POST') ? creating.promise : undefined);
+    f.controller.setInput('hello'); const sending = f.controller.send();
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
+    creating.resolve(response({ ok: false, error: 'unsupported_model' }, 400)); await sending;
+    assert.equal(f.controller.getModel().settings, null);
+    assert.equal(f.controller.getModel().selection.effort, 'high');
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
+});
+
+test('re-apply after a fence mints an id above the watermark the fence reported', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const high = '10000000000000000000000000'; const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method === 'PATCH') { ids.push(String(call.body['clientMutationId']));
+            if (ids.length === 1) return Promise.reject(new TypeError('lost'));
+            return response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } }); }
+        if (call.path.endsWith('/fence')) return response({ ok: true, mutation: { mutationId: ids[0], status: 'fenced', revision: 2, at: 1 }, watermark: high });
+        if (call.path.includes('/mutations/')) return response({ ok: false, error: 'mutation_not_found', watermark: null }, 404);
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    await f.controller.reapplySettings();
+    assert.equal(ids.length, 2); assert.ok(ids[1]! > high, ids[1] + ' must exceed ' + high);
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('a lost conflict response found by lookup still gets its one automatic retry', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const remote = session('a', { model: 'other-model', revision: 3 }); const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method === 'PATCH') { ids.push(String(call.body['clientMutationId']));
+            if (ids.length === 1) { f.snapshots.set('a', snap(remote)); return Promise.reject(new TypeError('lost')); }
+            const saved = { ...remote, effort: 'high', revision: 4 }; f.snapshots.set('a', snap(saved));
+            return response({ ok: true, session: saved, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } }); }
+        if (call.path.endsWith('/mutations/' + ids[0])) return response({ ok: true, mutation: { mutationId: ids[0], status: 'rejected_conflict', revision: 3, at: 1 }, watermark: null });
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    await f.controller.checkSettings();
+    assert.equal(ids.length, 2); assert.notEqual(ids[0], ids[1]);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH')[1]!.body['model'], 'other-model');
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('a pending batch whose checkpoint failed can be applied or discarded explicitly', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.method === 'PATCH'
+        ? response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } })
+        : undefined);
+    const storage = (globalThis as unknown as { window: { sessionStorage: Storage } }).window.sessionStorage;
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = () => { throw new Error('quota'); };
+    await f.controller.setSelection({ effort: 'high' });
+    const stuck = f.controller.getModel().settings;
+    assert.equal(stuck?.state, 'pending'); assert.equal(stuck?.waitingForSession, false); assert.equal(stuck?.busy, false);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
+    storage.setItem = setItem;
+    await f.controller.reapplySettings();
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+    assert.equal(f.controller.getModel().settings, null);
+    await f.controller.setSelection({ effort: 'medium' });
+});
+
+test('a conflict retry mints above the watermark the 409 reported', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const high = '10000000000000000000000000'; const remote = session('a', { model: 'other-model', revision: 3 }); const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        ids.push(String(call.body['clientMutationId']));
+        if (ids.length === 1) { f.snapshots.set('a', snap(remote));
+            return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: ids[0], status: 'rejected_conflict', revision: 3, at: 1 }, watermark: high }, 409); }
+        return response({ ok: true, session: { ...remote, effort: 'high', revision: 4 }, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } });
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(ids.length, 2); assert.ok(ids[1]! > high, ids[1] + ' must exceed ' + high);
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('after the one automatic retry, refresh and remount never send again without Apply', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    let revision = 2;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        // Every send loses to an unrelated title change elsewhere: no field conflicts, but the revision moves.
+        revision++; const remote = session('a', { revision, title: 'renamed ' + revision }); f.snapshots.set('a', snap(remote));
+        return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: call.body['clientMutationId'], status: 'rejected_conflict', revision, at: 1 }, watermark: null }, 409);
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const patches = () => f.calls.filter(call => call.method === 'PATCH').length;
+    assert.equal(patches(), 2); assert.equal(f.controller.getModel().settings?.state, 'pending');
+    await f.controller.refresh(); assert.equal(patches(), 2, 'refresh must not resend');
+    f.cleanups.pop()!(); f.cleanups.push(f.controller.mount()); await f.controller.refresh();
+    assert.equal(patches(), 2, 'remount must not resend');
+    assert.equal(f.controller.getModel().settings?.state, 'pending');
+    await f.controller.reapplySettings(); assert.equal(patches(), 3, 'explicit Apply sends once');
+});
+
+test('an automatic retry interrupted before dispatch still runs once after reload, then holds', async t => {
+    const browser = browserDraftStorage(t), f = fixture(t, browser); await f.controller.refresh(); await f.controller.selectSession('a');
+    const storage = (globalThis as unknown as { window: { sessionStorage: Storage } }).window.sessionStorage;
+    const saved: Array<ReturnType<typeof browser.checkpoint>> = []; const setItem = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => { setItem(key, value); saved.push(browser.checkpoint()); };
+    let revision = 2;
+    f.intercept(call => {
+        if (call.method !== 'PATCH') return undefined;
+        revision++; const remote = session('a', { revision, title: 'renamed ' + revision }); f.snapshots.set('a', snap(remote));
+        return response({ ok: false, error: 'revision_conflict', session: remote, mutation: { mutationId: call.body['clientMutationId'], status: 'rejected_conflict', revision, at: 1 }, watermark: null }, 409);
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    const patches = () => f.calls.filter(call => call.method === 'PATCH').length;
+    assert.equal(patches(), 2);
+    storage.setItem = setItem;
+    type Saved = { endpoints: Array<{ sessions: Array<{ id: string; draft: { settings?: { state: string; mutationId: string | null; watermark: string | null } | null } }> }> };
+    const between = saved.find(checkpoint => {
+        const raw = checkpoint.get('cli-jaw:code-drafts:v1'); if (!raw) return false;
+        const settings = (JSON.parse(raw) as Saved).endpoints[0]?.sessions.find(row => row.id === 'a')?.draft.settings;
+        return settings?.state === 'pending' && settings.mutationId === null && settings.watermark !== null;
+    });
+    assert.ok(between, 'a checkpoint exists between the first conflict and the retry dispatch');
+    f.cleanups[0]!(); browser.reload(between!);
+    const before = patches();
+    const restored = new CodeController(f.options); f.cleanups.push(restored.mount());
+    await Promise.race([until(restored, () => patches() === before + 1 && restored.getModel().settings?.busy === false),
+        new Promise(resolve => setTimeout(resolve, 500))]);
+    assert.equal(patches() - before, 1, 'the interrupted automatic retry runs once');
+    assert.equal(restored.getModel().settings?.state, 'pending');
+    await restored.refresh(); await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(patches() - before, 1, 'after it conflicts again the batch waits for Apply');
 });

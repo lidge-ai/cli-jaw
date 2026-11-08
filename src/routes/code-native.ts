@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { realpathSync, statSync } from 'node:fs';
 import type { CodeSessionManager } from '../code-mode/manager.js';
 import { CodeStoreError } from '../code-mode/store.js';
+import { CODE_MUTATION_ID_PATTERN } from '../code-mode/wire.js';
 import type {
     CodeCreateSessionRequest, CodePatchSessionRequest, CodePermissionMode, CodeProviderId, CodeRollbackRequest, CodeSessionCursor,
 } from '../code-mode/wire.js';
@@ -12,7 +13,7 @@ import { httpCode, httpStatus } from './_http-error.js';
 import { CODE_PROMPT_MAX_BYTES } from './code-body-parser.js';
 
 export type CodeRouteService = Pick<CodeSessionManager, 'create' | 'creation' | 'list' | 'snapshot' | 'readEvents' | 'history'
-    | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'rollback' | 'answerPermission' | 'models'>;
+    | 'prompt' | 'steer' | 'cancel' | 'attach' | 'visit' | 'patch' | 'patchWithMutation' | 'mutation' | 'fenceMutation' | 'rollback' | 'answerPermission' | 'models'>;
 const CREATION_KEY = /^[A-Za-z0-9_-]{1,128}$/;
 function creationKey(value: unknown): string {
     if (typeof value !== 'string' || !CREATION_KEY.test(value)) return invalid('invalid_client_creation_key');
@@ -41,6 +42,10 @@ function string(value: unknown, field: string, max = 1024): string {
 }
 
 function id(value: unknown): string { return string(value, 'id', 240); }
+function mutationId(value: unknown): string {
+    if (typeof value !== 'string' || !CODE_MUTATION_ID_PATTERN.test(value)) return invalid('invalid_mutation_id');
+    return value;
+}
 
 function integer(value: unknown, field: string, minimum = 0): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) return invalid(`invalid_${field}`);
@@ -111,7 +116,7 @@ function bool(value: unknown, code: string): boolean {
 
 function patchInput(value: unknown): CodePatchSessionRequest {
     const input = body(value, ['expectedRevision', 'title', 'model', 'effort', 'permissionMode', 'thinking', 'archived',
-        'pinned', 'unread']);
+        'pinned', 'unread', 'clientMutationId']);
     const patch: CodePatchSessionRequest = { expectedRevision: integer(input['expectedRevision'], 'revision') };
     if ('title' in input) {
         if (input['title'] !== null && (typeof input['title'] !== 'string' || input['title'].length > 240 || input['title'].includes('\0'))) return invalid('invalid_title');
@@ -127,7 +132,8 @@ function patchInput(value: unknown): CodePatchSessionRequest {
     }
     if ('pinned' in input) patch.pinned = bool(input['pinned'], 'invalid_pinned');
     if ('unread' in input) patch.unread = bool(input['unread'], 'invalid_unread');
-    if (Object.keys(patch).length === 1) return invalid('empty_patch');
+    if ('clientMutationId' in input) patch.clientMutationId = mutationId(input['clientMutationId']);
+    if (Object.keys(patch).every(key => key === 'expectedRevision' || key === 'clientMutationId')) return invalid('empty_patch');
     return patch;
 }
 
@@ -210,10 +216,43 @@ export function registerNativeCodeRoutes(
         const sessionId = id(req.params['id']);
         const input = patchInput(req.body);
         const service = getService();
-        try { res.json({ ok: true, session: await service.patch(sessionId, input) }); }
+        try {
+            if (input.clientMutationId) res.json({ ok: true, ...await service.patchWithMutation(sessionId, input) });
+            else res.json({ ok: true, session: await service.patch(sessionId, input) });
+        }
         catch (error) {
-            if (httpCode(error) !== 'revision_conflict') throw error;
-            fail(res, 409, 'revision_conflict', { session: service.snapshot(sessionId).session });
+            const code = httpCode(error);
+            if (code === 'revision_conflict') {
+                const mutation = error instanceof CodeStoreError ? error.mutation : undefined;
+                // Recording the conflict may evict and raise the watermark; a retry must mint above it.
+                fail(res, 409, code, { session: service.snapshot(sessionId).session,
+                    ...(mutation ? { mutation, watermark: service.mutation(sessionId, mutation.mutationId).watermark } : {}) });
+            } else if (code === 'mutation_fenced' && error instanceof CodeStoreError) fail(res, 409, code, { mutation: error.mutation });
+            else if (code === 'mutation_outcome_expired' && error instanceof CodeStoreError) fail(res, 410, code, { watermark: error.watermark });
+            else throw error;
+        }
+    }));
+    router.get('/sessions/:id/mutations/:mutationId', asyncHandler(async (req, res) => {
+        const sessionId = id(req.params['id']); const key = mutationId(req.params['mutationId']);
+        const result = getService().mutation(sessionId, key);
+        // The watermark rides along so a client re-applying later can mint above it.
+        if (result.mutation) res.json({ ok: true, mutation: result.mutation, watermark: result.watermark });
+        else if (result.expired) fail(res, 410, 'mutation_outcome_expired', { watermark: result.watermark });
+        else fail(res, 404, 'mutation_not_found', { watermark: result.watermark });
+    }));
+    router.post('/sessions/:id/mutations/:mutationId/fence', asyncHandler(async (req, res) => {
+        const sessionId = id(req.params['id']); const key = mutationId(req.params['mutationId']);
+        body(req.body ?? {}, []);
+        try {
+            const service = getService();
+            const mutation = service.fenceMutation(sessionId, key);
+            // The fence itself may evict and raise the watermark; it only ever grows, so a read
+            // after the fence is at least what the fence produced.
+            res.json({ ok: true, mutation, watermark: service.mutation(sessionId, key).watermark });
+        }
+        catch (error) {
+            if (error instanceof CodeStoreError && error.code === 'mutation_outcome_expired') fail(res, 410, error.code, { watermark: error.watermark });
+            else throw error;
         }
     }));
     router.post('/sessions/:id/prompt', asyncHandler(async (req, res) => {

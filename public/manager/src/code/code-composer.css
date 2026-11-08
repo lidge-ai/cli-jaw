@@ -151,6 +151,7 @@
 }
 .code-footer-menu-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .code-footer-menu-trigger:disabled { cursor: not-allowed; opacity: 0.5; }
+.code-footer-pending-badge { font-size: 10px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
 .code-footer-menu-trigger strong {
     min-width: 0;
     overflow: hidden;

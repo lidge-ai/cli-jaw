@@ -4,8 +4,9 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
 import type {
     CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage, CodeItem, CodeItemUpdate,
     CodePatchSessionRequest, CodePermissionRequest, CodePromptReceipt, CodePromptRequest, CodeSessionCursor,
-    CodeSessionError, CodeSessionInfo, CodeSessionStatus, CodeSnapshot, CodeSteerRequest, CodeWireEvent,
+    CodeSessionError, CodeSessionInfo, CodeSessionMutation, CodeSessionMutationStatus, CodeSessionStatus, CodeSnapshot, CodeSteerRequest, CodeWireEvent,
 } from './wire.js';
+import { CODE_MUTATION_RETENTION } from './wire.js';
 
 export const CODE_EVENT_PAGE_MAX = 500;
 export const CODE_SNAPSHOT_ITEM_MAX = 1000;
@@ -60,6 +61,14 @@ CREATE TABLE IF NOT EXISTS code_sessions (
 );
 CREATE TABLE IF NOT EXISTS code_session_creations (
     client_creation_key TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, request_json TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS code_session_mutations (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, mutation_id TEXT NOT NULL,
+    status TEXT NOT NULL, revision INTEGER NOT NULL, request_hash TEXT, at INTEGER NOT NULL,
+    UNIQUE(session_id, mutation_id)
+);
+CREATE TABLE IF NOT EXISTS code_session_mutation_watermarks (
+    session_id TEXT PRIMARY KEY, watermark TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS code_turns (
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, client_turn_key TEXT NOT NULL,
@@ -120,7 +129,7 @@ export interface CodeTurnAdmission extends CodeStoreMutation {
     promptUuid: string | null;
 }
 export interface CodeTurnSettlement extends CodeStoreMutation { receipt: CodePromptReceipt }
-export interface CodeStoreOptions { now?: () => number; newId?: () => string; limits?: Partial<CodeStoreLimits> }
+export interface CodeStoreOptions { now?: () => number; newId?: () => string; limits?: Partial<CodeStoreLimits>; mutationRetention?: number }
 export interface CodeSessionCreate extends CodeCreateSessionRequest {
     capabilities: CodeCapabilities;
     submittedCwd?: string;
@@ -174,7 +183,8 @@ export interface CodeSessionListOptions {
 }
 
 export class CodeStoreError extends Error {
-    constructor(public readonly code: string, message: string, public readonly statusCode: 400 | 404 | 409 | 503) {
+    constructor(public readonly code: string, message: string, public readonly statusCode: 400 | 404 | 409 | 410 | 503,
+        public readonly mutation?: CodeSessionMutation, public readonly watermark?: string | null) {
         super(message);
         this.name = 'CodeStoreError';
     }
@@ -398,11 +408,16 @@ export class CodeStore {
     private readonly now: () => number;
     private readonly newId: () => string;
     private readonly limits: CodeStoreLimits;
+    private readonly mutationRetention: number;
 
     constructor(private readonly database: SqliteDatabase, options: CodeStoreOptions = {}) {
         this.now = options.now ?? Date.now;
         this.newId = options.newId ?? randomUUID;
         this.limits = { ...CODE_STORE_LIMITS, ...options.limits };
+        this.mutationRetention = options.mutationRetention ?? CODE_MUTATION_RETENTION;
+        if (!Number.isSafeInteger(this.mutationRetention) || this.mutationRetention < 1 || this.mutationRetention > CODE_MUTATION_RETENTION) {
+            throw new CodeStoreError('invalid_limit', 'Invalid mutation retention', 400);
+        }
         for (const key of Object.keys(CODE_STORE_LIMITS) as Array<keyof CodeStoreLimits>) {
             if (!Number.isSafeInteger(this.limits[key]) || this.limits[key] < 1 || this.limits[key] > CODE_STORE_LIMITS[key]) {
                 throw new CodeStoreError('invalid_limit', `${key} must be a positive integer within its hard limit`, 400);
@@ -1313,10 +1328,71 @@ export class CodeStore {
         });
     }
 
-    patchSession(sessionId: string, patch: CodePatchSessionRequest): CodeStoreMutation {
+    private mutationRow(sessionId: string, mutationId: string): { mutation: CodeSessionMutation; hash: string | null } | null {
+        const row = this.database.prepare('SELECT status, revision, request_hash, at FROM code_session_mutations WHERE session_id = ? AND mutation_id = ?')
+            .get(sessionId, mutationId) as { status: CodeSessionMutationStatus; revision: number; request_hash: string | null; at: number } | undefined;
+        return row ? { mutation: { mutationId, status: row.status, revision: row.revision, at: row.at }, hash: row.request_hash } : null;
+    }
+
+    private mutationWatermark(sessionId: string): string | null {
+        return (this.database.prepare('SELECT watermark FROM code_session_mutation_watermarks WHERE session_id = ?')
+            .get(sessionId) as { watermark: string } | undefined)?.watermark ?? null;
+    }
+
+    readMutation(sessionId: string, mutationId: string): { mutation: CodeSessionMutation | null; watermark: string | null; expired: boolean } {
+        this.requireRecord(sessionId);
+        const mutation = this.mutationRow(sessionId, mutationId)?.mutation ?? null;
+        const watermark = this.mutationWatermark(sessionId);
+        return { mutation, watermark, expired: !mutation && watermark !== null && mutationId <= watermark };
+    }
+
+    private recordMutation(sessionId: string, mutationId: string, status: CodeSessionMutationStatus, revision: number, hash: string | null): CodeSessionMutation {
+        const at = this.now();
+        this.database.prepare('INSERT INTO code_session_mutations (session_id, mutation_id, status, revision, request_hash, at) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(sessionId, mutationId, status, revision, hash, at);
+        const evicted = this.database.prepare('SELECT seq, mutation_id FROM code_session_mutations WHERE session_id = ? ORDER BY seq DESC LIMIT -1 OFFSET ?')
+            .all(sessionId, this.mutationRetention) as Array<{ seq: number; mutation_id: string }>;
+        if (evicted.length) {
+            const watermark = evicted.reduce((max, row) => row.mutation_id > max ? row.mutation_id : max, this.mutationWatermark(sessionId) ?? '');
+            this.database.prepare('INSERT INTO code_session_mutation_watermarks (session_id, watermark) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET watermark = excluded.watermark')
+                .run(sessionId, watermark);
+            const remove = this.database.prepare('DELETE FROM code_session_mutations WHERE seq = ?');
+            for (const row of evicted) remove.run(row.seq);
+        }
+        return { mutationId, status, revision, at };
+    }
+
+    fenceMutation(sessionId: string, mutationId: string): CodeSessionMutation {
         return this.write(() => {
             const record = this.requireRecord(sessionId);
-            if (record.revision !== patch.expectedRevision) throw new CodeStoreError('revision_conflict', 'Code metadata changed', 409);
+            const existing = this.mutationRow(sessionId, mutationId);
+            if (existing) return existing.mutation;
+            const watermark = this.mutationWatermark(sessionId);
+            if (watermark !== null && mutationId <= watermark) throw new CodeStoreError('mutation_outcome_expired', 'Mutation outcome expired', 410, undefined, watermark);
+            return this.recordMutation(sessionId, mutationId, 'fenced', record.revision, null);
+        });
+    }
+
+    patchSession(sessionId: string, patch: CodePatchSessionRequest): CodeStoreMutation & { mutation: CodeSessionMutation | null; duplicate: boolean } {
+        const { clientMutationId, ...payload } = patch;
+        const hash = clientMutationId ? createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(payload).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)))).digest('hex') : null;
+        const result = this.write(() => {
+            const record = this.requireRecord(sessionId);
+            if (clientMutationId) {
+                const existing = this.mutationRow(sessionId, clientMutationId);
+                if (existing) {
+                    if (existing.mutation.status === 'fenced') return { error: new CodeStoreError('mutation_fenced', 'Mutation is fenced', 409, existing.mutation) };
+                    if (existing.hash !== hash) return { error: new CodeStoreError('mutation_id_conflict', 'Mutation id reused with different input', 409) };
+                    if (existing.mutation.status === 'rejected_conflict') return { error: new CodeStoreError('revision_conflict', 'Code metadata changed', 409, existing.mutation) };
+                    return { session: toCodeSessionInfo(record), events: [], mutation: existing.mutation, duplicate: true };
+                }
+                const watermark = this.mutationWatermark(sessionId);
+                if (watermark !== null && clientMutationId <= watermark) return { error: new CodeStoreError('mutation_outcome_expired', 'Mutation outcome expired', 410, undefined, watermark) };
+            }
+            if (record.revision !== patch.expectedRevision) {
+                const mutation = clientMutationId ? this.recordMutation(sessionId, clientMutationId, 'rejected_conflict', record.revision, hash) : undefined;
+                return { error: new CodeStoreError('revision_conflict', 'Code metadata changed', 409, mutation) };
+            }
             const policyChange = patch.model !== undefined || patch.effort !== undefined || patch.permissionMode !== undefined
                 || patch.thinking !== undefined;
             if (isBusy(record.status) && (policyChange || patch.archived !== undefined)) {
@@ -1340,8 +1416,11 @@ export class CodeStore {
             record.revision += 1;
             record.lastUsedAt = this.now();
             const events = [this.event(record)];
-            return { session: toCodeSessionInfo(record), events };
+            const mutation = clientMutationId ? this.recordMutation(sessionId, clientMutationId, 'applied', record.revision, hash) : null;
+            return { session: toCodeSessionInfo(record), events, mutation, duplicate: false };
         });
+        if ('error' in result && result.error) throw result.error;
+        return result as CodeStoreMutation & { mutation: CodeSessionMutation | null; duplicate: boolean };
     }
 
     /** Kept and later turns around a settled `${turnId}:user` target; removed turns are not part of the conversation. */

@@ -644,6 +644,19 @@ request uncertainty; it stores no transcript, native cursor or permission answer
 Uncertain creation/send recovery requires explicit action and never auto-submits. Auto (YOLO) is an explicit
 provider capability, and opening the catalog never launches a process.
 
+Model, effort, permission and Claude thinking edits are a persisted settings batch
+(per-field baseline and chosen value, one ULID `clientMutationId` per PATCH). While a
+create is in flight or unconfirmed the footer stays editable and the batch waits as
+pending; runtime and workspace stay fixed. Once the session is identified the batch is
+checkpointed as `sent` (readback required, or nothing is sent) and PATCHed before any
+captured prompt; reconnect applies it without sending the prompt or moving selection.
+A lost response is `unknown`, resolved only by the read-only mutation lookup with
+backoff; Discard and Re-apply fence the id first, and Re-apply mints a new id above the
+server watermark. A revision conflict where another client changed the same field asks
+Keep mine / Take theirs per field; other fields retry once automatically. Send, Retry
+same send and further footer edits wait while any batch exists, and a checkpoint that
+would drop a draft holding a batch is refused rather than written.
+
 The composer dock groups its controls by how often each is touched:
 `[runtime glyph] [permission] ····· [model] [effort] [thinking (Claude only)]` on one row, with dictation
 and send trailing the input. Runtime is icon-only and carries its name on the

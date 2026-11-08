@@ -52,6 +52,63 @@ function expectError(fn: () => unknown, code: string, statusCode = 409) {
     assert.throws(fn, (error: unknown) => error instanceof CodeStoreError && error.code === code && error.statusCode === statusCode);
 }
 
+const mutationId = (n: number) => n.toString().padStart(26, '0');
+
+test('mutation ledger records applied and conflict outcomes and fences late writes', t => {
+    const { store } = fixture(t);
+    const first = { expectedRevision: 0, title: 'one', clientMutationId: mutationId(1) };
+    const applied = store.patchSession('session-a', first);
+    assert.equal(applied.mutation?.status, 'applied');
+    assert.equal(applied.mutation?.revision, 1);
+    assert.deepEqual(store.patchSession('session-a', first).events, []);
+    assert.equal(store.patchSession('session-a', { clientMutationId: mutationId(1), title: 'one', expectedRevision: 0 }).mutation?.status, 'applied');
+    assert.equal(store.fenceMutation('session-a', mutationId(1)).status, 'applied');
+    expectError(() => store.patchSession('session-a', { ...first, title: 'other' }), 'mutation_id_conflict');
+    const conflict = { expectedRevision: 0, title: 'stale', clientMutationId: mutationId(2) };
+    expectError(() => store.patchSession('session-a', conflict), 'revision_conflict');
+    assert.equal(store.readMutation('session-a', mutationId(2)).mutation?.status, 'rejected_conflict');
+    assert.equal(store.read('session-a')?.title, 'one');
+    assert.equal(store.fenceMutation('session-a', mutationId(3)).status, 'fenced');
+    expectError(() => store.patchSession('session-a', { expectedRevision: 1, title: 'late', clientMutationId: mutationId(3) }), 'mutation_fenced');
+    assert.equal(store.read('session-a')?.title, 'one');
+    expectError(() => store.readMutation('missing', mutationId(1)), 'session_not_found', 404);
+    expectError(() => store.fenceMutation('missing', mutationId(1)), 'session_not_found', 404);
+});
+
+test('failed ledger insertion rolls back the session edit and event', t => {
+    const { store, db } = fixture(t);
+    const before = store.snapshot('session-a');
+    db.exec("CREATE TRIGGER reject_mutation BEFORE INSERT ON code_session_mutations BEGIN SELECT RAISE(ABORT, 'ledger failure'); END");
+    assert.throws(() => store.patchSession('session-a', { expectedRevision: 0, title: 'not committed', clientMutationId: mutationId(1) }), /ledger failure/);
+    assert.deepEqual(store.snapshot('session-a'), before);
+    assert.equal(store.readMutation('session-a', mutationId(1)).mutation, null);
+});
+
+test('mutation retention advances watermark while retained older ids remain readable', t => {
+    const { store } = fixture(t, { mutationRetention: 3 });
+    store.fenceMutation('session-a', mutationId(8));
+    store.fenceMutation('session-a', mutationId(2));
+    store.fenceMutation('session-a', mutationId(9));
+    store.fenceMutation('session-a', mutationId(10));
+    assert.equal(store.readMutation('session-a', mutationId(8)).watermark, mutationId(8));
+    assert.equal(store.readMutation('session-a', mutationId(8)).expired, true);
+    assert.equal(store.readMutation('session-a', mutationId(2)).mutation?.status, 'fenced');
+    for (const n of [1, 8]) {
+        expectError(() => store.fenceMutation('session-a', mutationId(n)), 'mutation_outcome_expired', 410);
+        expectError(() => store.patchSession('session-a', { expectedRevision: 0, title: 'late', clientMutationId: mutationId(n) }), 'mutation_outcome_expired', 410);
+    }
+    assert.equal(store.read('session-a')?.title, null);
+});
+
+test('opening an existing database adds mutation tables without changing sessions', t => {
+    const { db, store } = fixture(t);
+    const before = store.read('session-a');
+    db.exec('DROP TABLE code_session_mutations; DROP TABLE code_session_mutation_watermarks');
+    const reopened = new CodeStore(db);
+    assert.deepEqual(reopened.read('session-a'), before);
+    assert.equal(reopened.fenceMutation('session-a', mutationId(1)).status, 'fenced');
+});
+
 // Independent client reducer: expected content below comes from literal fixtures,
 // not the store's compact-update detector or materialized-row mapper.
 function replayItems(events: CodeWireEvent[]): CodeItem[] {

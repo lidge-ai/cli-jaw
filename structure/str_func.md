@@ -600,6 +600,7 @@ cli-jaw/
 │   │   └── activity.css      ← scoped live Activity disclosure and reversible Legacy visibility
 │   ├── manager/src/components/instance-overview.css ← bounded instance summary and responsive property lists
 │   ├── manager/src/code/transcript-view-memory.ts ← bounded endpoint/session transcript view memory
+│   ├── manager/src/code/code-ulid.ts ← canonical ULID settings mutation ids above a server watermark
 │   ├── manager/src/components/process-control.css ← manager-wide process table, feedback and recovery disclosure
 │   ├── manager/src/settings-standalone.tsx ← shared instance settings root
 │   ├── manager/src/notes/rendering/MarkdownTableActions.tsx ← opt-in table Copy Markdown / Download CSV / Preview frame and dialog

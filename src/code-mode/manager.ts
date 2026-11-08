@@ -4,7 +4,7 @@ import type { CodeProviders } from './provider.js';
 import { DEFAULT_CODE_SETTINGS } from './types.js';
 import type {
     CodeAttachResult, CodeCancelRequest, CodeCapabilities, CodeCreateSessionRequest, CodeEventsPage, CodeHistoryPage,
-    CodeModelCatalog, CodePatchSessionRequest, CodePermissionAnswer, CodePromptReceipt,
+    CodeModelCatalog, CodePatchSessionRequest, CodePatchSessionResult, CodePermissionAnswer, CodePromptReceipt, CodeSessionMutation,
     CodePromptRequest, CodeProviderCatalog, CodeProviderId, CodeRollbackRequest, CodeSessionInfo, CodeSnapshot, CodeSteerRequest,
     CodeWireEvent,
 } from './wire.js';
@@ -26,6 +26,7 @@ export interface CodeSessionManagerOptions {
 /** Injectable composition owner. Construction neither reads storage nor starts runtimes. */
 export class CodeSessionManager {
     private readonly sessions = new Map<string, CodeSession>();
+    private readonly mutationInFlight = new Set<string>();
     private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
     /** Sessions with a rollback in flight; set before its first await, awaited by dispose(). */
     private readonly rollbacks = new Map<string, Promise<void>>();
@@ -392,8 +393,37 @@ export class CodeSessionManager {
     }
 
     async patch(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo> {
+        return (await this.patchWithMutation(id, input)).session;
+    }
+
+    mutation(id: string, mutationId: string): ReturnType<CodeStore['readMutation']> {
+        this.ready(); this.record(id);
+        return this.storage(() => this.options.store.readMutation(id, mutationId));
+    }
+
+    fenceMutation(id: string, mutationId: string): CodeSessionMutation {
+        this.ready(); this.record(id);
+        return this.storage(() => this.options.store.fenceMutation(id, mutationId));
+    }
+
+    async patchWithMutation(id: string, input: CodePatchSessionRequest): Promise<CodePatchSessionResult> {
+        const key = input.clientMutationId ? `${id}\0${input.clientMutationId}` : null;
+        if (key && this.mutationInFlight.has(key)) throw new CodeStoreError('mutation_in_flight', 'Mutation is already in flight', 409);
+        if (key) this.mutationInFlight.add(key);
+        try { return await this.patchWithMutationOwned(id, input); }
+        finally { if (key) this.mutationInFlight.delete(key); }
+    }
+
+    private async patchWithMutationOwned(id: string, input: CodePatchSessionRequest): Promise<CodePatchSessionResult> {
         this.ready();
         const record = this.record(id);
+        if (input.clientMutationId) {
+            const found = this.storage(() => this.options.store.readMutation(id, input.clientMutationId!));
+            if (found.mutation || found.expired) {
+                const result = this.storage(() => this.options.store.patchSession(id, input));
+                return { session: result.session, mutation: result.mutation };
+            }
+        }
         this.fenced(id);
         const session = this.sessions.get(id);
         session?.assertHealthy();
@@ -421,12 +451,12 @@ export class CodeSessionManager {
             return session.exclusive(() => this.patchLive(record, session, input, permissionOnly));
         }
         const result = this.storage(() => this.options.store.patchSession(id, input));
-        return this.patched(id, session, result, policyChanged || input.archived === true);
+        return { session: await this.patched(id, session, result, policyChanged || input.archived === true), mutation: result.mutation };
     }
 
     /** Runs inside the session's exclusive section, from the SDK switch through any rollback. */
     private async patchLive(record: CodeSessionRecord, session: CodeSession, input: CodePatchSessionRequest,
-        permissionOnly: boolean): Promise<CodeSessionInfo> {
+        permissionOnly: boolean): Promise<CodePatchSessionResult> {
         const apply = (target: Pick<CodeSessionRecord, 'model' | 'effort' | 'permissionMode'>) => permissionOnly
             ? session.applyPermissionMode(target.permissionMode) : session.reconfigure({ model: target.model, effort: target.effort });
         const outcome = await apply({ model: input.model ?? record.model,
@@ -434,15 +464,22 @@ export class CodeSessionManager {
         let result: ReturnType<CodeStore['patchSession']>;
         try { result = this.storage(() => this.options.store.patchSession(record.sessionId, input)); }
         catch (error) {
-            // Put the runtime back where the stored row still is; if that fails, retire it.
+            // Id-bearing writes retire the switched runtime; legacy writes retain their revert path.
             if (outcome === 'applied') {
-                try { await apply(record); }
-                catch { await session.dispose(); }
+                if (input.clientMutationId) await session.dispose();
+                else {
+                    try { await apply(record); }
+                    catch { await session.dispose(); }
+                }
             }
             throw error;
         }
         // A live handle that cannot switch in place is retired like any other policy change.
-        return this.patched(record.sessionId, session, result, outcome === 'unsupported');
+        if (result.duplicate) {
+            if (outcome === 'applied') await session.dispose();
+            return { session: result.session, mutation: result.mutation };
+        }
+        return { session: await this.patched(record.sessionId, session, result, outcome === 'unsupported'), mutation: result.mutation };
     }
 
     private async patched(id: string, session: CodeSession | undefined, result: ReturnType<CodeStore['patchSession']>,

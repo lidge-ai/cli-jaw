@@ -13,6 +13,24 @@ const session: CodeSessionInfo = {
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+test('settings mutation endpoints preserve ledger results and watermark errors', async () => {
+    const original = globalThis.fetch;
+    const calls: string[] = [];
+    const mutation = { mutationId: '00000000000000000000000001', status: 'applied', revision: 4, at: 1 };
+    globalThis.fetch = async (url, init = {}) => {
+        calls.push(`${init.method} ${new URL(String(url)).pathname}`);
+        if (init.method === 'GET') return reply({ ok: false, error: 'mutation_outcome_expired', watermark: mutation.mutationId }, 410);
+        return reply({ ok: true, session, mutation });
+    };
+    try {
+        const client = createCodeSessionClient(4567);
+        assert.equal((await client.patchSettings('s', { expectedRevision: 3, clientMutationId: mutation.mutationId, model: 'm' })).mutation?.status, 'applied');
+        await assert.rejects(client.readMutation('s', mutation.mutationId), (error: unknown) => error instanceof CodeClientError && error.watermark === mutation.mutationId);
+        const fenced = await client.fenceMutation('s', mutation.mutationId); assert.equal(fenced.mutation.status, 'applied'); assert.equal(fenced.watermark, null);
+        assert.deepEqual(calls, ['PATCH /api/code/sessions/s', `GET /api/code/sessions/s/mutations/${mutation.mutationId}`, `POST /api/code/sessions/s/mutations/${mutation.mutationId}/fence`]);
+    } finally { globalThis.fetch = original; }
+});
+
 test('attach sends its chosen identity and retries only unknown_field without it', async () => {
     const original = globalThis.fetch;
     const bodies: unknown[] = [];

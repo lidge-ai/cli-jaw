@@ -14,6 +14,47 @@ function book(store: Storage, endpoint = 'http://127.0.0.1:3457'): CodeDraftBook
         sessions: new Map(), listeners: new Set() };
 }
 
+test('pending settings survive storage and remain protected under draft pressure', () => {
+    const store = storage(), b = book(store);
+    const draft = createCodeDraft(b.fresh.selection);
+    Object.assign(draft, { settings: { fields: [{ field: 'effort', baseline: 'high', value: null }], state: 'sent', mutationId: '00000000000000000000000001', expectedRevision: 2, watermark: null, expired: false, autoRetried: false, error: null, op: null } });
+    b.sessions.set('protected', draft);
+    for (let i = 0; i < 40; i++) { const other = createCodeDraft(b.fresh.selection); other.input = 'draft'; b.sessions.set(String(i), other); }
+    assert.ok(saveCodeDraftStorage(store, b.endpoint, b));
+    const saved = loadCodeDraftStorage(store, b.endpoint).data!.sessions.find(row => row.id === 'protected');
+    assert.equal(saved?.draft.settings?.state, 'sent');
+    assert.equal(saved?.draft.settings?.fields[0]?.value, null);
+});
+
+test('settings checkpoints refuse endpoint eviction and malformed settings do not restore', () => {
+    const store = storage();
+    for (let i = 0; i < 4; i++) {
+        const b = book(store, `http://127.0.0.1:${5000 + i}`);
+        Object.assign(b.fresh, { settings: { fields: [{ field: 'model', baseline: 'model', value: 'next' }], state: 'pending', mutationId: null,
+            expectedRevision: null, watermark: null, expired: false, autoRetried: false, error: null, op: null } });
+        assert.equal(saveCodeDraftStorage(store, b.endpoint, b), null);
+    }
+    const checkpoint = store.getItem('cli-jaw:code-drafts:v1');
+    const extra = book(store, 'http://127.0.0.1:6000');
+    assert.match(saveCodeDraftStorage(store, extra.endpoint, extra)!, /incomplete/);
+    assert.equal(store.getItem('cli-jaw:code-drafts:v1'), checkpoint);
+    const raw = JSON.parse(checkpoint!); raw.endpoints[0].fresh.settings.fields[0].value = { invalid: true };
+    store.setItem('cli-jaw:code-drafts:v1', JSON.stringify(raw));
+    assert.equal(loadCodeDraftStorage(store, 'http://127.0.0.1:5000').data, null);
+});
+
+test('pending settings transferred to a session survive pressure and reload', () => {
+    const store = storage(), b = book(store), draft = createCodeDraft(b.fresh.selection);
+    Object.assign(draft, { settings: { fields: [{ field: 'effort', baseline: 'high', value: null }], state: 'pending', mutationId: null,
+        expectedRevision: null, watermark: null, expired: false, autoRetried: false, error: null, op: null } });
+    b.sessions.set('created', draft);
+    for (let i = 0; i < 40; i++) { const other = createCodeDraft(b.fresh.selection); other.input = 'other'; b.sessions.set(String(i), other); }
+    saveCodeDraftStorage(store, b.endpoint, b);
+    const restored = loadCodeDraftStorage(store, b.endpoint).data!.sessions.find(row => row.id === 'created');
+    assert.equal(restored?.draft.settings?.state, 'pending');
+    assert.equal(restored?.draft.settings?.fields[0]?.value, null);
+});
+
 test('storage allowlist retains draft intent and request identity, excluding authority and permission choices', () => {
     const store = storage(), draftBook = book(store);
     const draft = createCodeDraft(draftBook.fresh.selection);
