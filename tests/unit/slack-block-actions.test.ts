@@ -194,6 +194,30 @@ test('an agent: click becomes one journaled turn answering in the card thread', 
     assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
 });
 
+test('a click on a threaded card answers in the message parent thread', { timeout: 5000 }, async () => {
+    const message = { ...click().message, thread_ts: '1600.1' };
+    assert.equal(await deliver(envelope(click({ message }))), 'committed');
+    assert.equal(submissions.length, 1);
+    assert.equal((submissions[0]!.meta['target'] as { threadId: string }).threadId, '1600.1');
+});
+
+test('a click with conflicting parent threads is refused before admission', { timeout: 5000 }, async () => {
+    const container = { ...click().container, thread_ts: '1500.1' };
+    const message = { ...click().message, thread_ts: '1600.1' };
+    assert.equal(await deliver(envelope(click({ container, message }))), 'ignored');
+    assert.equal(submissions.length, 0);
+    assert.equal(getIngressJournal()!.list({}).length, 0);
+});
+
+test('matching parent threads are accepted and invalid single parents fall back', () => {
+    const parent = '1600.1';
+    const container = { ...click().container, thread_ts: parent };
+    const message = { ...click().message, thread_ts: parent };
+    assert.equal(blockEvent(click({ container, message }), 'T1', SELF)!.thread_ts, parent);
+    assert.equal(blockEvent(click({ container: { ...container, thread_ts: 'invalid' } }), 'T1', SELF)!.thread_ts, '1700.1');
+    assert.equal(blockEvent(click({ message: { ...message, thread_ts: 'invalid' } }), 'T1', SELF)!.thread_ts, '1700.1');
+});
+
 test('a redelivered click under a new envelope id runs once', { timeout: 5000 }, async () => {
     await deliver(envelope(click(), 'E-first'));
     assert.equal(await deliver(envelope(click(), 'E-redelivered')), 'duplicate');
