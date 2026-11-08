@@ -1093,20 +1093,27 @@ export class CodeStore {
                 return { ...proposed, truncation: { storedChars: acceptedChars(item, mapItem(proposed, previous?.firstSequence ?? record.sequence + 1), growth, k), sourceChars,
                     reason: familyB ? budgetReason(previous, item) : budgetReason(item) } };
             };
-            // Never back below the stored length: a pair the stored value already split must stay completable.
-            const safe = (k: number, lo: number): number => value && k > lo && k < value.length
+            const splits = (k: number): boolean => value !== undefined && k > 0 && k < value.length
                 && value.charCodeAt(k - 1) >= 0xd800 && value.charCodeAt(k - 1) <= 0xdbff
-                && value.charCodeAt(k) >= 0xdc00 && value.charCodeAt(k) <= 0xdfff ? k - 1 : k;
+                && value.charCodeAt(k) >= 0xdc00 && value.charCodeAt(k) <= 0xdfff;
             const search = (base: CodeItem, lo: number, familyB: boolean): { item: CodeItem; k: number } | undefined => {
-                let left = lo, right = value === undefined ? 0 : familyB ? value.length : Math.max(0, value.length - 1), best: { item: CodeItem; k: number } | undefined;
-                while (left <= right) {
-                    const mid = Math.floor((left + right) / 2), k = safe(mid, lo);
+                // Event bytes grow monotonically only across whole-character boundaries: a split pair is a
+                // six-byte escape, its completed form four bytes. A stored value ending inside a pair is
+                // therefore searched from the completing boundary, with the stored boundary as the fallback.
+                const start = splits(lo) ? lo + 1 : lo;
+                let left = start, right = value === undefined ? 0 : familyB ? value.length : Math.max(0, value.length - 1), best: { item: CodeItem; k: number } | undefined;
+                const accept = (k: number): { item: CodeItem; k: number } | undefined => {
                     const next = candidate(base, k, familyB);
                     const compact = !familyB || (previous && compactUpdate(previous, mapItem(next, previous.firstSequence!), true) !== null);
-                    if (k >= lo && compact && fits(next, true)) { best = { item: next, k }; left = mid + 1; }
+                    return compact && fits(next, true) ? { item: next, k } : undefined;
+                };
+                while (left <= right) {
+                    const mid = Math.floor((left + right) / 2);
+                    const found = accept(splits(mid) ? mid - 1 : mid);
+                    if (found) { best = found; left = mid + 1; }
                     else right = mid - 1;
                 }
-                return best;
+                return best ?? (start !== lo ? accept(lo) : undefined);
             };
             const a = search(item, prefix ? (oldValue?.length ?? 0) : 0, false);
             const bBase = previous && { ...previous, status: item.status, ...(item.phase !== undefined ? { phase: item.phase } : {}), updatedAt: item.updatedAt };

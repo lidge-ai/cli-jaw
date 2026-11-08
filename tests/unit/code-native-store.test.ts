@@ -1915,6 +1915,27 @@ test('a stored half surrogate pair is completed when the new file change does no
     assertPrefixReplay(bounded);
 });
 
+test('a split stored pair is searched past its larger escaped boundary', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const stored: CodeItem = { ...prefixItem(admitted.receipt.turnId, 'file_change', '\ud83d', 'o'.repeat(10)),
+        truncation: { storedChars: 10, sourceChars: 20, reason: 'field_limit,total_limit,structured_incomplete,file_change_limit' } };
+    store.commitItem(current, stored);
+    const { fileChange: _fileChange, truncation: _truncation, ...rest } = stored;
+    const accepted: CodeItem = { ...rest, tool: { name: 'edit', output: '\u{1F600}' + 'x'.repeat(253) } };
+    // Exact size of the event that stores the completed pair; the split boundary costs two bytes more.
+    const witness = new CodeStore(new Database(db.serialize()), { now: () => 2000 });
+    const completed = witness.commitItem(current, { ...accepted, tool: { name: 'edit', output: '\u{1F600}' },
+        truncation: { storedChars: 6, sourceChars: 259, reason: 'turn_budget' } }).events[0]!;
+    const bounded = prefixBudget(db, Buffer.byteLength(JSON.stringify(completed)));
+    const result = bounded.commitAcceptedPrefix(current, accepted);
+    assert.equal(result.truncated, true);
+    assert.equal(result.events.length, 1);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.equal(row.tool!.output, '\u{1F600}');
+    assert.deepEqual(row.truncation, { storedChars: 6, sourceChars: 259, reason: 'turn_budget' });
+    assertPrefixReplay(bounded);
+});
+
 test('marker and prefix storage failures roll back', t => {
     const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
     const item = message(admitted.receipt.turnId, 'prefix', 'old');
