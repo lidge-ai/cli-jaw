@@ -133,6 +133,29 @@ test('verified click cannot start a turn when its grant becomes unavailable', as
     assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
 });
 
+test('team changed while clicker lookup is pending refuses before journal', async () => {
+    const wait = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    lookupWait = wait.promise; lookupStarted = started.resolve;
+    const pending = preflightSlackEnvelope(envelope(click()));
+    await started.promise;
+    settings.slack!.teamId = 'T2';
+    wait.resolve();
+    assert.equal(await pending, 'ignored');
+    assert.equal(getIngressJournal()!.list({}).length, 0);
+    assert.equal(submissions.length, 0);
+});
+
+test('team changed after preflight cannot authorize the click grant', async () => {
+    const env = envelope(click());
+    assert.equal(await preflightSlackEnvelope(env), 'committed');
+    settings.slack!.teamId = 'T2';
+    await handleSlackEnvelope(env);
+    while (completions.length) await Promise.allSettled(completions.splice(0));
+    assert.equal(submissions.length, 0);
+    assert.equal(getIngressJournal()!.find('slack', 'T1', 'T1:C1:1730000000.123456')?.state, 'completed');
+});
+
 test('control: verified click submits the workspace and clicker grant', async () => {
     inspectGrant = true;
     assert.equal(await deliver(envelope(click())), 'committed');
@@ -140,6 +163,23 @@ test('control: verified click submits the workspace and clicker grant', async ()
     assert.equal(submissions[0]!.meta['ownedExecution'], true);
     assert.equal(capturedGrant?.actorId, 'UCEO');
     assert.equal(capturedGrant?.teamId, 'T1');
+});
+
+test('click admission uses followup policy', async () => {
+    await deliver(envelope(click()));
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0]!.meta['midRunPolicy'], 'followup');
+});
+
+test('control: ordinary message admission keeps the default policy', async () => {
+    const result = ingress.admitSlackRun({
+        target: { channel: 'slack', targetKind: 'channel', peerKind: 'direct', targetId: 'D1' },
+        prompt: 'ordinary message', displayText: 'ordinary message', chatId: 'D1',
+        preSendContext: { requester: 'UCEO', jobKind: 'slack_turn' }, runReply: async () => {},
+    });
+    await result.laneTail;
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0]!.meta['midRunPolicy'], undefined);
 });
 
 test('an agent: click becomes one journaled turn answering in the card thread', { timeout: 5000 }, async () => {

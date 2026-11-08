@@ -3,11 +3,28 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { dedupKey } from '../../src/orchestrator/gateway.ts';
+import { slackBlockActionEvent } from '../../src/slack/events.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const gatewaySrc = fs.readFileSync(join(__dirname, '../../src/orchestrator/gateway.ts'), 'utf8');
+
+test('distinct clicks carry action_ts into the real gateway dedup key', () => {
+    const click = (actionTs: string) => slackBlockActionEvent({
+        type: 'block_actions', team: { id: 'T1' }, user: { id: 'UCEO' }, channel: { id: 'C1' },
+        container: { type: 'message', channel_id: 'C1', message_ts: '1700.1' },
+        message: { ts: '1700.1', user: 'UBOT', bot_id: 'BBOT' },
+        actions: [{ action_id: 'agent:approve', action_ts: actionTs, value: 'yes' }],
+    }, 'T1', { userId: 'UBOT', botId: 'BBOT', appId: null });
+    const first = click('1730000000.123456')!;
+    const second = click('1730000000.123457')!;
+    assert.notEqual(dedupKey('scope', 'slack', first.text!, 'C1', first.thread_ts),
+        dedupKey('scope', 'slack', second.text!, 'C1', second.thread_ts));
+    assert.match(first.text!, /action_ts: "1730000000\.123456"/);
+    assert.match(second.text!, /action_ts: "1730000000\.123457"/);
+});
 
 // ─── SM-001: empty text → rejected/empty ───
 
