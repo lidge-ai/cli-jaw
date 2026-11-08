@@ -2295,3 +2295,59 @@ test('a definitely rejected create folds pending settings back into the draft ch
     assert.equal(f.controller.getModel().selection.effort, 'high');
     assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
 });
+
+test('re-apply after a fence mints an id above the watermark the fence reported', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const high = '10000000000000000000000000'; const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method === 'PATCH') { ids.push(String(call.body['clientMutationId']));
+            if (ids.length === 1) return Promise.reject(new TypeError('lost'));
+            return response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } }); }
+        if (call.path.endsWith('/fence')) return response({ ok: true, mutation: { mutationId: ids[0], status: 'fenced', revision: 2, at: 1 }, watermark: high });
+        if (call.path.includes('/mutations/')) return response({ ok: false, error: 'mutation_not_found', watermark: null }, 404);
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    await f.controller.reapplySettings();
+    assert.equal(ids.length, 2); assert.ok(ids[1]! > high, ids[1] + ' must exceed ' + high);
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('a lost conflict response found by lookup still gets its one automatic retry', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    const remote = session('a', { model: 'other-model', revision: 3 }); const ids: string[] = [];
+    f.intercept(call => {
+        if (call.method === 'PATCH') { ids.push(String(call.body['clientMutationId']));
+            if (ids.length === 1) { f.snapshots.set('a', snap(remote)); return Promise.reject(new TypeError('lost')); }
+            const saved = { ...remote, effort: 'high', revision: 4 }; f.snapshots.set('a', snap(saved));
+            return response({ ok: true, session: saved, mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 4, at: 1 } }); }
+        if (call.path.endsWith('/mutations/' + ids[0])) return response({ ok: true, mutation: { mutationId: ids[0], status: 'rejected_conflict', revision: 3, at: 1 }, watermark: null });
+        return undefined;
+    });
+    await f.controller.setSelection({ effort: 'high' });
+    assert.equal(f.controller.getModel().settings?.state, 'unknown');
+    await f.controller.checkSettings();
+    assert.equal(ids.length, 2); assert.notEqual(ids[0], ids[1]);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH')[1]!.body['model'], 'other-model');
+    assert.equal(f.controller.getModel().settings, null);
+});
+
+test('a pending batch whose checkpoint failed can be applied or discarded explicitly', async t => {
+    const f = fixture(t); await f.controller.refresh(); await f.controller.selectSession('a');
+    f.intercept(call => call.method === 'PATCH'
+        ? response({ ok: true, session: session('a', { effort: 'high', revision: 3 }), mutation: { mutationId: call.body['clientMutationId'], status: 'applied', revision: 3, at: 1 } })
+        : undefined);
+    const storage = (globalThis as unknown as { window: { sessionStorage: Storage } }).window.sessionStorage;
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = () => { throw new Error('quota'); };
+    await f.controller.setSelection({ effort: 'high' });
+    const stuck = f.controller.getModel().settings;
+    assert.equal(stuck?.state, 'pending'); assert.equal(stuck?.waitingForSession, false); assert.equal(stuck?.busy, false);
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
+    storage.setItem = setItem;
+    await f.controller.reapplySettings();
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1);
+    assert.equal(f.controller.getModel().settings, null);
+    await f.controller.setSelection({ effort: 'medium' });
+});

@@ -228,14 +228,27 @@ test('settings states describe progress and rejection and block sending', bounde
     const h = await surface(t); const calls: string[] = [];
     const base = { fields: [{ field: 'model' as const, baseline: 'old', value: 'native-model' }], expired: false, busy: false, waitingForSession: false, error: null };
     const c = model({ async reapplySettings() { calls.push('reapply'); }, async discardSettings() { calls.push('discard'); } });
-    for (const [state, waitingForSession, copy] of [['pending', true, /Settings will apply when the session is confirmed/],
-        ['pending', false, /Applying settings…/], ['sent', false, /Applying settings…/], ['rejected', false, /Cannot change model/]] as const) {
-        const settings = { ...base, state, waitingForSession, error: state === 'rejected' ? 'Cannot change model' : null };
+    for (const [state, waitingForSession, busy, copy] of [['pending', true, false, /Settings will apply when the session is confirmed/],
+        ['pending', false, true, /Applying settings…/], ['sent', false, true, /Applying settings…/], ['rejected', false, false, /Cannot change model/]] as const) {
+        const settings = { ...base, state, waitingForSession, busy, error: state === 'rejected' ? 'Cannot change model' : null };
         await h.render(createElement(CodeWorkbench, { controller: { ...c, settings }, endpointKey: 'local' }));
         assert.match(h.container.textContent ?? '', copy); assert.equal(button(h.container, 'Send prompt').disabled, true);
     }
     await click(button(h.container, 'Re-apply')); await click(button(h.container, 'Discard'));
     assert.deepEqual(calls, ['reapply', 'discard']);
+});
+
+test('a pending batch that stopped before sending offers Apply settings and Discard and keeps Send closed', bounded, async t => {
+    const h = await surface(t); const calls: string[] = [];
+    const settings = { state: 'pending' as const, fields: [{ field: 'effort' as const, baseline: 'medium', value: 'high' }], expired: false, busy: false,
+        waitingForSession: false, error: 'Draft recovery could not save the settings change, so it was not sent.' };
+    const c = model({ async reapplySettings() { calls.push('apply'); }, async discardSettings() { calls.push('discard'); } });
+    await h.render(createElement(CodeWorkbench, { controller: { ...c, settings }, endpointKey: 'local' }));
+    assert.match(h.container.textContent ?? '', /not applied yet/);
+    assert.match(h.container.textContent ?? '', /could not save the settings change/);
+    assert.equal(button(h.container, 'Send prompt').disabled, true);
+    await click(button(h.container, 'Apply settings')); await click(button(h.container, 'Discard'));
+    assert.deepEqual(calls, ['apply', 'discard']);
 });
 
 test('icon-only controls keep an accessible name that names the current value', bounded, async t => {

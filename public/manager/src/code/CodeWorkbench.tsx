@@ -116,8 +116,15 @@ export function CodeWorkbench({ controller: c, endpointKey, onOpenLocalFile }: P
             </div>}
             {c.settings && <section className="code-recovery-strip code-settings-strip" aria-label="Settings changes"
                 role={c.settings.state === 'unknown' || c.settings.state === 'rejected' || c.settings.state === 'conflict' ? 'alert' : 'status'}>
-                {(c.settings.state === 'pending' || c.settings.state === 'sent') && <p>{c.settings.state === 'pending' && c.settings.waitingForSession
-                    ? 'Settings will apply when the session is confirmed' : 'Applying settings…'}</p>}
+                {c.settings.state === 'pending' && c.settings.waitingForSession && <p>Settings will apply when the session is confirmed</p>}
+                {(c.settings.state === 'sent' || (c.settings.state === 'pending' && !c.settings.waitingForSession && c.settings.busy)) && <p>Applying settings…</p>}
+                {/* A pending batch that stopped before sending (no checkpoint, no refresh, or a second
+                    change elsewhere) waits for the reader; Send stays closed until it is applied or dropped. */}
+                {c.settings.state === 'pending' && !c.settings.waitingForSession && !c.settings.busy && <>
+                    <p>These settings are not applied yet. Your messages wait until they are.</p>
+                    <button type="button" onClick={() => perform(c.reapplySettings)}>Apply settings</button>
+                    <button type="button" onClick={() => perform(c.discardSettings)}>Discard</button>
+                </>}
                 {c.settings.state === 'unknown' && <>
                     <p>The settings change may or may not have applied. It will never be resent automatically.</p>
                     {c.settings.expired && <p>The recorded outcome has expired.</p>}

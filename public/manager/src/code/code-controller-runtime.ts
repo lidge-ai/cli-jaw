@@ -67,6 +67,8 @@ function overlay(selection: CodeCreateSessionRequest, settings: CodePendingSetti
     }
     return result;
 }
+/** The higher of two mutation ids; ULIDs order as strings. */
+const maxId = (a: string | null, b: string | null): string | null => a === null ? b : b === null ? a : a > b ? a : b;
 
 /**
  * Did the transcript already settle the turn this send belongs to?
@@ -816,6 +818,22 @@ export class CodeController {
         }
         return conflict;
     }
+    /**
+     * The server recorded this batch's id as `rejected_conflict`, however the client learned it
+     * (a 409, a lookup, a fence). A field another client changed asks for a choice; otherwise the
+     * batch rebases on the current values and retries once on its own, then waits for Apply.
+     * Returns true when the caller should send now. The rejected id is ledgered, so no fence is needed.
+     */
+    private reconcileRejected(draft: CodeDraft, batch: CodePendingSettings, session: CodeSessionInfo, mutationId: string): boolean {
+        batch.watermark = maxId(batch.watermark, mutationId);
+        if (this.compareSettings(batch, session)) { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; return false; }
+        if (!batch.fields.length) { draft.settings = null; return false; }
+        for (const row of batch.fields) row.baseline = settingValue(session, row.field);
+        batch.state = 'pending'; batch.mutationId = null;
+        if (!batch.autoRetried) { batch.autoRetried = true; batch.error = null; return true; }
+        batch.error = 'Session settings changed again elsewhere. Apply your settings again or discard them.';
+        return false;
+    }
     private async syncSettings(id: string, current: () => boolean): Promise<void> {
         const existing = this.syncing.get(id);
         if (existing) { await existing; if (!current()) return; }
@@ -865,12 +883,7 @@ export class CodeController {
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
             if (error instanceof CodeClientError && error.code === 'revision_conflict' && error.session?.sessionId === id) {
                 this.observe(error.session); this.accept(error.session);
-                if (this.compareSettings(batch, error.session)) { batch.state = 'conflict'; batch.error = error.message; }
-                else if (!batch.fields.length) draft.settings = null;
-                else if (!batch.autoRetried) {
-                    batch.autoRetried = true; for (const row of batch.fields) row.baseline = settingValue(error.session, row.field);
-                    batch.state = 'pending'; batch.watermark = mutationId; retry = true;
-                } else { batch.state = 'conflict'; batch.error = error.message; }
+                retry = this.reconcileRejected(draft, batch, error.session, mutationId);
             } else if (error instanceof CodeClientError && error.code === 'mutation_fenced') {
                 batch.state = 'rejected'; batch.error = error.message;
             } else if (error instanceof CodeClientError && error.status === 410 && error.code === 'mutation_outcome_expired') {
@@ -899,9 +912,11 @@ export class CodeController {
         if (!this.active || !batch || batch.state !== 'unknown' || batch.expired || !batch.mutationId || batch.op) return;
         const mutationId = batch.mutationId, token = ++this.settingsToken, life = this.lifetime;
         batch.op = { token, kind }; this.notify();
+        let retry = false;
         try {
-            const mutation = await this.client.readMutation(id, mutationId);
+            const { mutation, watermark } = await this.client.readMutation(id, mutationId);
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
+            batch.watermark = maxId(batch.watermark, watermark);
             if (mutation.status === 'applied' || mutation.status === 'rejected_conflict') {
                 await this.syncSettings(id, () => this.settingsOwner(id, draft, batch, token, mutationId, life));
                 if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
@@ -910,8 +925,7 @@ export class CodeController {
             if (mutation.status === 'applied') { draft.settings = null; this.clearSettingsTimer(draft); }
             else if (mutation.status === 'rejected_conflict') {
                 const session = this.info(id);
-                if (session) { this.compareSettings(batch, session); if (!batch.fields.length) draft.settings = null;
-                    else { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; } }
+                if (session) retry = this.reconcileRejected(draft, batch, session, mutationId);
                 else { batch.state = 'unknown'; batch.error = 'Could not refresh the session to review settings.'; }
             } else { batch.state = 'rejected'; batch.error = 'This settings change was fenced before it applied.'; }
         } catch (error) {
@@ -921,7 +935,8 @@ export class CodeController {
         }
         if (draft.settings === batch) batch.op = null;
         this.notify();
-        if (draft.settings === batch && batch.state === 'unknown' && !batch.expired) this.scheduleSettingsLookup(id, draft);
+        if (retry && draft.settings === batch) await this.applySettings(id, draft);
+        else if (draft.settings === batch && batch.state === 'unknown' && !batch.expired) this.scheduleSettingsLookup(id, draft);
     }
     checkSettings = async (): Promise<void> => {
         const id = this.book.selectedId; if (!id) return;
@@ -930,7 +945,13 @@ export class CodeController {
     private async settleSettings(action: 'discard' | 'reapply'): Promise<void> {
         const id = this.book.selectedId, draft = this.draft(id), batch = draft.settings;
         if (!batch || batch.op) return;
-        if (!id || batch.state === 'pending' || batch.state === 'conflict') {
+        // Nothing of a pending batch reached the server (or it was rejected and recorded), so no fence.
+        if (batch.state === 'pending') {
+            if (action === 'discard') { draft.settings = null; this.notify(); }
+            else if (id) { batch.error = null; await this.resumePendingSettings(id, draft); }
+            return;
+        }
+        if (!id || batch.state === 'conflict') {
             if (action === 'discard') { draft.settings = null; this.notify(); }
             return;
         }
@@ -940,7 +961,11 @@ export class CodeController {
         batch.op = { token, kind: 'fence' }; this.notify();
         let outcome: 'fenced' | 'applied' | 'rejected_conflict' = 'fenced';
         try {
-            if (!batch.expired) outcome = (await this.client.fenceMutation(id, mutationId)).status;
+            if (!batch.expired) {
+                const fenced = await this.client.fenceMutation(id, mutationId);
+                outcome = fenced.mutation.status;
+                if (this.settingsOwner(id, draft, batch, token, mutationId, life)) batch.watermark = maxId(batch.watermark, fenced.watermark);
+            }
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
         } catch (error) {
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
@@ -952,19 +977,20 @@ export class CodeController {
             if (!this.settingsOwner(id, draft, batch, token, mutationId, life)) return;
             if (!this.details.get(id)?.synced || this.details.get(id)?.error) { batch.op = null; batch.error = 'Could not refresh the session to review settings.'; this.notify(); return; }
         }
-        if (outcome === 'applied') draft.settings = null;
+        let retry = false;
+        if (outcome === 'applied' || (outcome === 'rejected_conflict' && action === 'discard')) draft.settings = null;
         else if (outcome === 'rejected_conflict') {
             const session = this.info(id);
             if (!session) { batch.op = null; batch.error = 'Could not refresh the session to review settings.'; this.notify(); return; }
-            this.compareSettings(batch, session);
-            if (!batch.fields.length) draft.settings = null;
-            else { batch.state = 'conflict'; batch.error = 'Session settings changed elsewhere.'; }
+            // An explicit Re-apply earns its own automatic rebase.
+            batch.autoRetried = false;
+            retry = this.reconcileRejected(draft, batch, session, mutationId);
         } else if (action === 'discard') draft.settings = null;
-        else { batch.state = 'pending'; batch.watermark = batch.watermark && batch.watermark > mutationId ? batch.watermark : mutationId;
-            batch.expired = false; batch.autoRetried = false; batch.error = null; batch.mutationId = null; }
+        else { batch.state = 'pending'; batch.watermark = maxId(batch.watermark, mutationId);
+            batch.expired = false; batch.autoRetried = false; batch.error = null; batch.mutationId = null; retry = true; }
         if (draft.settings === batch) batch.op = null;
         this.notify();
-        if (action === 'reapply' && draft.settings === batch && batch.state === 'pending') await this.applySettings(id, draft);
+        if (retry && action === 'reapply' && draft.settings === batch && batch.state === 'pending') await this.applySettings(id, draft);
     }
     reapplySettings = async (): Promise<void> => { await this.settleSettings('reapply'); };
     discardSettings = async (): Promise<void> => { await this.settleSettings('discard'); };

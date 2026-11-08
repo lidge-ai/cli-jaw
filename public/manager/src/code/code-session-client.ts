@@ -28,6 +28,12 @@ export interface CodeGitInfo {
     };
 }
 
+export interface CodeMutationOutcome { mutation: CodeSessionMutation; watermark: string | null }
+/** Older servers omit the watermark on success; absence reads as none known. */
+function outcome(data: { mutation: CodeSessionMutation; watermark?: string | null }): CodeMutationOutcome {
+    return { mutation: data.mutation, watermark: typeof data.watermark === 'string' ? data.watermark : null };
+}
+
 export interface CodeListOptions {
     scope?: 'all' | 'cwd'; cwd?: string; archived?: boolean; pinned?: boolean; cursor?: string; limit?: number;
 }
@@ -40,8 +46,9 @@ export interface CodeSessionClient {
     createSession(input: CodeCreateSessionRequest): Promise<CodeSessionInfo>;
     patchSession(id: string, input: CodePatchSessionRequest): Promise<CodeSessionInfo>;
     patchSettings(id: string, input: CodePatchSessionRequest): Promise<CodePatchSessionResult>;
-    readMutation(id: string, mutationId: string): Promise<CodeSessionMutation>;
-    fenceMutation(id: string, mutationId: string): Promise<CodeSessionMutation>;
+    /** The recorded outcome plus the session watermark (null when nothing was evicted yet). */
+    readMutation(id: string, mutationId: string): Promise<CodeMutationOutcome>;
+    fenceMutation(id: string, mutationId: string): Promise<CodeMutationOutcome>;
     sendPrompt(id: string, input: CodePromptRequest): Promise<CodePromptReceipt>;
     /** A Claude follow-up for the captured running turn; never retried. */
     steerSession(id: string, input: CodeSteerRequest): Promise<CodePromptReceipt>;
@@ -134,8 +141,8 @@ export function createCodeSessionClient(port: number): CodeSessionClient {
         createSession: input => sessionRequest('POST', '/sessions', input),
         patchSession: (id, input) => sessionRequest('PATCH', sessionPath(id), input),
         patchSettings: (id, input) => request('PATCH', sessionPath(id), input),
-        readMutation: async (id, mutationId) => (await request<{ mutation: CodeSessionMutation }>('GET', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}`)).mutation,
-        fenceMutation: async (id, mutationId) => (await request<{ mutation: CodeSessionMutation }>('POST', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}/fence`, {})).mutation,
+        readMutation: async (id, mutationId) => outcome(await request('GET', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}`)),
+        fenceMutation: async (id, mutationId) => outcome(await request('POST', `${sessionPath(id)}/mutations/${encodeURIComponent(mutationId)}/fence`, {})),
         sendPrompt: (id, input) => request('POST', `${sessionPath(id)}/prompt`, input),
         steerSession: (id, input) => request('POST', `${sessionPath(id)}/steer`, input),
         cancelPrompt: (id, input) => sessionRequest('POST', `${sessionPath(id)}/cancel`, input),

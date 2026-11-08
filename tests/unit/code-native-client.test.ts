@@ -26,7 +26,7 @@ test('settings mutation endpoints preserve ledger results and watermark errors',
         const client = createCodeSessionClient(4567);
         assert.equal((await client.patchSettings('s', { expectedRevision: 3, clientMutationId: mutation.mutationId, model: 'm' })).mutation?.status, 'applied');
         await assert.rejects(client.readMutation('s', mutation.mutationId), (error: unknown) => error instanceof CodeClientError && error.watermark === mutation.mutationId);
-        assert.equal((await client.fenceMutation('s', mutation.mutationId)).status, 'applied');
+        const fenced = await client.fenceMutation('s', mutation.mutationId); assert.equal(fenced.mutation.status, 'applied'); assert.equal(fenced.watermark, null);
         assert.deepEqual(calls, ['PATCH /api/code/sessions/s', `GET /api/code/sessions/s/mutations/${mutation.mutationId}`, `POST /api/code/sessions/s/mutations/${mutation.mutationId}/fence`]);
     } finally { globalThis.fetch = original; }
 });

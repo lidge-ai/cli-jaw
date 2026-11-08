@@ -233,14 +233,21 @@ export function registerNativeCodeRoutes(
     router.get('/sessions/:id/mutations/:mutationId', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']); const key = mutationId(req.params['mutationId']);
         const result = getService().mutation(sessionId, key);
-        if (result.mutation) res.json({ ok: true, mutation: result.mutation });
+        // The watermark rides along so a client re-applying later can mint above it.
+        if (result.mutation) res.json({ ok: true, mutation: result.mutation, watermark: result.watermark });
         else if (result.expired) fail(res, 410, 'mutation_outcome_expired', { watermark: result.watermark });
         else fail(res, 404, 'mutation_not_found', { watermark: result.watermark });
     }));
     router.post('/sessions/:id/mutations/:mutationId/fence', asyncHandler(async (req, res) => {
         const sessionId = id(req.params['id']); const key = mutationId(req.params['mutationId']);
         body(req.body ?? {}, []);
-        try { res.json({ ok: true, mutation: getService().fenceMutation(sessionId, key) }); }
+        try {
+            const service = getService();
+            const mutation = service.fenceMutation(sessionId, key);
+            // The fence itself may evict and raise the watermark; it only ever grows, so a read
+            // after the fence is at least what the fence produced.
+            res.json({ ok: true, mutation, watermark: service.mutation(sessionId, key).watermark });
+        }
         catch (error) {
             if (error instanceof CodeStoreError && error.code === 'mutation_outcome_expired') fail(res, 410, error.code, { watermark: error.watermark });
             else throw error;
