@@ -117,6 +117,8 @@ and the clicker is the turn's requester, so the turn can record the decision and
 
 긴 큐 대기 또는 재시작으로 클릭 턴이 grant 만료 후 시작되면 Slack 도구 권한 없이 실행되므로 카드를 수정할 수 없다.
 
+At grant preparation, the credential, bot identity, runtime generation and team must still match the values verified for the click; otherwise no turn starts. Redeliveries of the same click can share the verified lookup for up to 10 seconds, but each delivery still passes the current gates and durable admission before its ACK.
+
 `rts.reconcile` sends no message and returns no source text. It can release only a terminal publication hold with matching ownership and exact scope after a complete scan proves the expected output count. Active publishers, incomplete scans, legacy holds, and crash records without terminal evidence remain protected. New RTS publication uses one payload and one POST attempt.
 
 Source tools retain their separate shapes: `message`, `permalink`, and `quote` use `source:{channel,ts,threadTs?}`. `quote` requires `invocationId`; a direct `excerpt` must occur in the fresh source, while `summary` is labelled separately. `search.quote` requires the current inbound action token and publishes approved source excerpts in Slack, returning only output receipts. Search response bodies remain excluded from subsequent agent history.
