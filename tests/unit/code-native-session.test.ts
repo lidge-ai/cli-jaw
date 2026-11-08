@@ -7,7 +7,7 @@ import { setImmediate as yieldEventLoop } from 'node:timers/promises';
 import Database from 'better-sqlite3';
 import { CodeSessionManager, CodeServiceError } from '../../src/code-mode/manager.js';
 import { CodeSession } from '../../src/code-mode/session.js';
-import { CodeStore, CodeStoreError, type CodeStoreLimits } from '../../src/code-mode/store.js';
+import { CODE_TERMINAL_RESERVE_BYTES, CodeStore, CodeStoreError, type CodeStoreLimits } from '../../src/code-mode/store.js';
 import type { CodeOpenOptions, CodeProvider, CodeProviderSession, CodeRuntimeResource } from '../../src/code-mode/provider.js';
 import { forkClaudeHistory } from '../../src/code-mode/providers/claude-history.js';
 import type { RuntimeEventContext } from '../../src/agent/runtime/events.js';
@@ -1571,8 +1571,8 @@ for (const fault of ['first-write', 'later-write', 'later-read'] as const) {
             WHEN json_extract(NEW.event_json, '$.update.appendText') IS NOT NULL
             BEGIN SELECT RAISE(ABORT, 'drain storage failure'); END`);
         const read = f.store.readRecord.bind(f.store);
-        const commit = f.store.commitItem.bind(f.store);
-        const attempts = t.mock.method(f.store, 'commitItem', (...args: Parameters<CodeStore['commitItem']>) => commit(...args));
+        const commit = f.store.commitAcceptedPrefix.bind(f.store);
+        const attempts = t.mock.method(f.store, 'commitAcceptedPrefix', (...args: Parameters<CodeStore['commitAcceptedPrefix']>) => commit(...args));
         let failRead = false, failures = 0;
         const faultRead = t.mock.method(f.store, 'readRecord', (id: string) => {
             if (failRead) { failRead = false; failures++; throw new Error('owner read failed'); }
@@ -1601,38 +1601,110 @@ for (const fault of ['first-write', 'later-write', 'later-read'] as const) {
     });
 }
 
-for (const budget of ['event', 'turn'] as const) {
-    test(`RT01: drain ${budget} quota failure uses no terminal reserve for pending content`, async t => {
+for (const kind of ['message', 'tool_call', 'file_change'] as const) {
+    test(`L905: Stop retains the accepted ${kind} prefix within ordinary budget`, async t => {
         t.mock.timers.enable({ apis: ['setTimeout'] });
-        const f = await streamingFixture(t, { storeLimits: budget === 'event'
-            ? { maxEventBytes: 4096, maxTurnEventBytes: 65536 }
-            : { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
-        f.observer.text('message', 'large', 'A', 'replace', 'final');
-        f.observer.text('message', 'large', 'z'.repeat(12000), 'replace', 'final');
-        f.observer.text('message', 'remaining', 'X', 'replace', 'final');
-        f.observer.text('message', 'remaining', 'Y', 'append', 'final');
-        const commit = f.store.commitItem.bind(f.store);
-        const writes = t.mock.method(f.store, 'commitItem', (...args: Parameters<CodeStore['commitItem']>) => commit(...args));
+        const f = await streamingFixture(t, { storeLimits: { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
+        if (kind === 'message') f.observer.text('message', 'entry', 'A', 'replace', 'final');
+        else f.observer.tool('entry', { name: 'edit', output: 'A', ...(kind === 'file_change'
+            ? { semantic: 'file_change' as const, fileChanges: [{ path: 'a', kind: { type: 'update' }, diff: '+old' }] } : {}) }, {});
+        const before = f.store.snapshot(f.row.sessionId).items.find(item => item.kind === (kind === 'message' ? 'assistant_message' : kind))!;
+        const accepted = 'A' + 'z'.repeat(12000);
+        if (kind === 'message') f.observer.text('message', 'entry', 'z'.repeat(12000), 'append', 'final');
+        else f.observer.tool('entry', { delta: 'z'.repeat(12000) }, {});
         await f.manager.cancel(f.row.sessionId, { turnId: f.receipt.turnId, epoch: 1 });
-        assert.equal(writes.mock.callCount(), 1, 'failed pending content is never retried by interrupt/finish');
-        writes.mock.restore();
-        const failed = f.store.snapshot(f.row.sessionId);
-        assert.equal(failed.session.error?.code, 'transcript_limit');
-        assert.equal(f.store.readTurn(f.row.sessionId, prompt.clientTurnKey)?.status, 'failed');
-        assert.deepEqual(failed.items.filter(item => item.kind === 'assistant_message').map(item => item.text), ['A', 'X']);
+        const snapshot = f.store.snapshot(f.row.sessionId);
+        const item = snapshot.items.find(row => row.itemId === before.itemId)!;
+        const retained = kind === 'message' ? item.text! : item.tool!.output!;
+        assert.ok(accepted.startsWith(retained) && retained.length > 1 && retained.length < accepted.length);
+        assert.equal(item.truncation?.reason, 'turn_budget');
+        if (kind === 'message') assert.equal(item.truncation?.storedChars, retained.length);
+        assert.equal(snapshot.session.status, 'failed');
+        assert.equal(snapshot.session.error?.code, 'transcript_limit');
         assert.equal(f.events.filter(event => event.item?.kind === 'turn_failed').length, 1);
+        if (kind === 'file_change') assert.equal(item.fileChange?.changes[0]?.diff, '+old');
+        const budget = f.db.prepare('SELECT event_bytes, control_event_bytes, settlement_bytes FROM code_turns WHERE session_id = ? AND turn_id = ?')
+            .get(f.row.sessionId, f.receipt.turnId) as { event_bytes: number; control_event_bytes: number; settlement_bytes: number };
+        assert.ok(budget.event_bytes - budget.control_event_bytes <= 8192, 'retained content stays inside the ordinary budget');
+        assert.ok(budget.control_event_bytes <= CODE_TERMINAL_RESERVE_BYTES);
+        assert.equal(budget.settlement_bytes, 0);
+        if (kind !== 'message') return;
         f.manager.prompt(f.row.sessionId, { text: 'small follow-up', clientTurnKey: 'after-drain-quota' });
         const options = await f.providers['codex-app'].opened(1);
         const next = f.providers['codex-app'].handles[1]!;
         await next.sent.promise;
         assert.equal(options.nativeCursor, 'private-native-cursor');
-        f.observer.text('message', 'large', 'LATE', 'append', 'final');
+        f.observer.text('message', 'entry', 'LATE', 'append', 'final');
         next.outcome.resolve(done);
         await f.terminal(f.row.sessionId, 2);
         assert.equal(f.store.readTurn(f.row.sessionId, 'after-drain-quota')?.status, 'completed');
         assert.equal(JSON.stringify(f.store.snapshot(f.row.sessionId)).includes('LATE'), false);
     });
 }
+
+test('L905: timer failure reentrant drain writes each accepted item once', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = await streamingFixture(t, { storeLimits: { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
+    f.observer.text('message', 'one', 'A', 'replace', 'final');
+    f.observer.text('message', 'two', 'X', 'replace', 'final');
+    const ids = f.store.snapshot(f.row.sessionId).items.filter(item => item.kind === 'assistant_message').map(item => item.itemId);
+    f.observer.text('message', 'one', 'z'.repeat(12000), 'append', 'final');
+    f.observer.text('message', 'two', 'Y', 'append', 'final');
+    const commit = f.store.commitAcceptedPrefix.bind(f.store);
+    const calls = t.mock.method(f.store, 'commitAcceptedPrefix', (...args: Parameters<CodeStore['commitAcceptedPrefix']>) => commit(...args));
+    t.mock.timers.tick(50);
+    await f.terminal(f.row.sessionId, 1);
+    assert.deepEqual(calls.mock.calls.map(call => call.arguments[1].itemId), ids);
+    for (const id of ids) {
+        const rows = f.db.prepare(`SELECT COUNT(*) AS count FROM code_events
+            WHERE session_id = ? AND json_extract(event_json, '$.update.itemId') = ?
+            AND json_extract(event_json, '$.update.truncation.reason') = 'turn_budget'`)
+            .get(f.row.sessionId, id) as { count: number };
+        assert.equal(rows.count, 1);
+    }
+    const item = f.store.snapshot(f.row.sessionId).items.find(row => row.itemId === ids[0])!;
+    assert.ok(item.text!.length > 1 && item.text!.length < 12001);
+    assert.equal(f.store.snapshot(f.row.sessionId).session.error?.code, 'transcript_limit');
+});
+
+test('L905: first failed commit is drained under captured ownership', async t => {
+    const f = await streamingFixture(t, { storeLimits: { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
+    f.observer.text('message', 'new', 'z'.repeat(12000), 'replace', 'final');
+    await f.terminal(f.row.sessionId, 1);
+    const snapshot = f.store.snapshot(f.row.sessionId);
+    const item = snapshot.items.find(row => row.kind === 'assistant_message')!;
+    assert.ok(item.text!.length > 0 && item.text!.length < 12000);
+    assert.equal(item.truncation?.reason, 'turn_budget');
+    assert.equal(snapshot.session.error?.code, 'transcript_limit');
+});
+
+test('L905: real storage failure during prefix drain fails closed', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = await streamingFixture(t, { storeLimits: { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
+    f.observer.text('message', 'entry', 'A', 'replace', 'final');
+    f.observer.text('message', 'entry', 'z'.repeat(12000), 'append', 'final');
+    f.db.exec(`CREATE TEMP TRIGGER fail_prefix BEFORE INSERT ON code_events WHEN NEW.event_json LIKE '%turn_budget%'
+        BEGIN SELECT RAISE(ABORT, 'prefix storage failure'); END`);
+    await f.manager.cancel(f.row.sessionId, { turnId: f.receipt.turnId, epoch: 1 });
+    const snapshot = f.store.snapshot(f.row.sessionId);
+    assert.equal(snapshot.session.error?.code, 'persistence_failed');
+    assert.equal(snapshot.items.find(row => row.kind === 'assistant_message')?.text, 'A');
+});
+
+test('L905: native exit preserves its code and prefixes the transcript loss note', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = await streamingFixture(t, { storeLimits: { maxEventBytes: 16384, maxTurnEventBytes: 8192 } });
+    f.observer.text('message', 'entry', 'A', 'replace', 'final');
+    f.observer.text('message', 'other', 'X', 'replace', 'final');
+    f.observer.text('message', 'entry', 'z'.repeat(12000), 'append', 'final');
+    f.observer.text('message', 'other', 'Y', 'append', 'final');
+    f.options.onExit(new Error('native exit'));
+    await f.terminal(f.row.sessionId, 1);
+    const error = f.store.snapshot(f.row.sessionId).session.error!;
+    assert.equal(error.code, 'native_exit');
+    assert.ok(error.message.startsWith('Transcript limit reached; some accepted content was not stored. '));
+    assert.equal(error.message.match(/Transcript limit reached/g)?.length, 1);
+});
 
 test('RT01: session dispose caches its promise before a drain subscriber disposes again', async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -2483,6 +2555,7 @@ test('Stop drains file change and replay reconstructs its cancelled item', async
         if (event.item?.itemId === item.itemId) replay = structuredClone(event.item);
         if (event.update?.itemId === item.itemId && replay) {
             if (event.update.status) replay.status = event.update.status;
+            if (event.update.truncation) replay.truncation = event.update.truncation;
             if (event.update.appendToolOutput !== undefined && replay.tool) replay.tool.output = (replay.tool.output ?? '') + event.update.appendToolOutput;
         }
     }

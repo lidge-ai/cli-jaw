@@ -282,9 +282,10 @@ const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(v
 type EventBudgetMode = 'ordinary' | 'control' | 'settlement';
 type ItemRow = { first_sequence: number; item_json: string };
 
-function compactUpdate(before: CodeItem, after: CodeItem): CodeItemUpdate | null {
-    const { text: oldText, tool: oldTool, status: oldStatus, phase: oldPhase, updatedAt: _oldTime, ...oldMetadata } = before;
-    const { text, tool, status, phase, updatedAt, ...metadata } = after;
+function compactUpdate(before: CodeItem, after: CodeItem, allowTruncation = false): CodeItemUpdate | null {
+    const { text: oldText, tool: oldTool, status: oldStatus, phase: oldPhase, updatedAt: _oldTime, truncation: oldTruncation, ...oldMetadata } = before;
+    const { text, tool, status, phase, updatedAt, truncation, ...metadata } = after;
+    if ((!allowTruncation || truncation === undefined) && !isDeepStrictEqual(oldTruncation, truncation)) return null;
     if (!isDeepStrictEqual(oldMetadata, metadata) || (oldPhase !== undefined && phase === undefined)) return null;
     if ((oldTool === undefined) !== (tool === undefined)) return null;
     const { output: oldOutput, ...oldToolMetadata } = oldTool ?? { name: '' };
@@ -298,7 +299,38 @@ function compactUpdate(before: CodeItem, after: CodeItem): CodeItemUpdate | null
         ...(oldOutput !== output ? { appendToolOutput: output!.slice((oldOutput ?? '').length) } : {}),
         ...(oldStatus !== status ? { status } : {}),
         ...(oldPhase !== phase && phase !== undefined ? { phase } : {}),
+        ...(allowTruncation && truncation !== undefined && !isDeepStrictEqual(oldTruncation, truncation) ? { truncation } : {}),
     };
+}
+
+function fileChangeChars(item: CodeItem): number {
+    return item.fileChange?.changes.reduce((n, change) => n + change.path.length + (change.movePath?.length ?? 0) + (change.diff?.length ?? 0), 0) ?? 0;
+}
+
+function contentChars(item: CodeItem): number {
+    return (item.text?.length ?? 0) + (item.tool?.name.length ?? 0) + (item.tool?.input?.length ?? 0)
+        + (item.tool?.detail?.length ?? 0) + (item.tool?.output?.length ?? 0) + fileChangeChars(item);
+}
+
+function acceptedChars(accepted: CodeItem, stored: CodeItem, growth: 'text' | 'output', k: number): number {
+    let n = k;
+    if (growth !== 'text' && accepted.text === stored.text) n += accepted.text?.length ?? 0;
+    for (const field of ['name', 'input', 'detail'] as const) {
+        if (accepted.tool?.[field] === stored.tool?.[field]) n += accepted.tool?.[field]?.length ?? 0;
+    }
+    if (growth !== 'output' && accepted.tool?.output === stored.tool?.output) n += accepted.tool?.output?.length ?? 0;
+    if (isDeepStrictEqual(accepted.fileChange, stored.fileChange)) n += fileChangeChars(accepted);
+    return n;
+}
+
+function budgetReason(...items: Array<CodeItem | undefined>): string {
+    const reasons = new Set<string>();
+    for (const item of items) for (const reason of (item?.truncation?.reason ?? '').split(',')) {
+        if (/^[a-z_]{1,32}$/.test(reason)) reasons.add(reason);
+    }
+    reasons.add('turn_budget');
+    const joined = [...reasons].join(',');
+    return joined.length <= 128 ? joined : 'turn_budget';
 }
 
 // Upper bound for a terminal status-only frame, including maximum safe integer
@@ -739,38 +771,44 @@ export class CodeStore {
         return event;
     }
 
-    /** `reserve` holds extra settlement bytes for a frame this item may need at settlement. */
-    private event(record: CodeSessionRecord, item?: CodeItem, mode: EventBudgetMode = 'ordinary', budgetTurnId = record.turnId,
-        reserve = 0): CodeWireEvent {
-        if (!isBusy(record.status) || record.turnId !== null) record.operationId = null;
-        record.sequence += 1;
+    private prepareItemEvent(record: CodeSessionRecord, item?: CodeItem, allowTruncation = false) {
+        const sequence = record.sequence + 1;
         let retainedItem: CodeItem | undefined;
         let previousItem: CodeItem | undefined;
         let update: CodeItemUpdate | null = null;
         if (item) {
             const previous = this.database.prepare('SELECT first_sequence, item_json FROM code_items WHERE session_id = ? AND item_id = ?')
                 .get(record.sessionId, item.itemId) as ItemRow | undefined;
-            retainedItem = mapItem(item, previous?.first_sequence ?? record.sequence);
+            retainedItem = mapItem(item, previous?.first_sequence ?? sequence);
             if (settlementCost(record.sessionId, retainedItem) > Math.min(this.limits.maxEventBytes, CODE_CONTROL_FRAME_BYTES)) {
                 throw new CodeStoreError('event_too_large', 'Code item identity cannot fit a terminal control event', 409);
             }
             if (previous) {
                 previousItem = mapItem(JSON.parse(previous.item_json) as CodeItem, previous.first_sequence);
                 const knownFields = isDeepStrictEqual({ ...item, firstSequence: retainedItem.firstSequence }, retainedItem);
-                if (knownFields) update = compactUpdate(previousItem, retainedItem);
+                if (knownFields) update = compactUpdate(previousItem, retainedItem, allowTruncation);
             }
         }
+        const projected = { ...record, sequence, ...(!isBusy(record.status) || record.turnId !== null ? { operationId: null } : {}) };
         const event: CodeWireEvent = {
             topic: 'code', event: update ? 'code_item_update' : item ? 'code_item' : 'code_session', sessionId: record.sessionId,
-            sequence: record.sequence, epoch: record.epoch,
-            ...(update ? { update } : retainedItem ? { item: retainedItem } : { session: toCodeSessionInfo(record) }),
+            sequence, epoch: record.epoch,
+            ...(update ? { update } : retainedItem ? { item: retainedItem } : { session: toCodeSessionInfo(projected) }),
         };
-        this.persistEvent(record, event, mode, settlementCost(record.sessionId, retainedItem) - settlementCost(record.sessionId, previousItem) + reserve,
-            budgetTurnId);
+        return { event, retainedItem, delta: settlementCost(record.sessionId, retainedItem) - settlementCost(record.sessionId, previousItem) };
+    }
+
+    /** `reserve` holds extra settlement bytes for a frame this item may need at settlement. */
+    private event(record: CodeSessionRecord, item?: CodeItem, mode: EventBudgetMode = 'ordinary', budgetTurnId = record.turnId,
+        reserve = 0, allowTruncation = false): CodeWireEvent {
+        const prepared = this.prepareItemEvent(record, item, allowTruncation);
+        if (!isBusy(record.status) || record.turnId !== null) record.operationId = null;
+        record.sequence += 1;
+        this.persistEvent(record, prepared.event, mode, prepared.delta + reserve, budgetTurnId);
         if (item) this.database.prepare(`INSERT INTO code_items (session_id, item_id, first_sequence, item_json)
             VALUES (?, ?, ?, ?) ON CONFLICT(session_id, item_id) DO UPDATE SET item_json = excluded.item_json`)
-                .run(record.sessionId, item.itemId, retainedItem!.firstSequence, JSON.stringify(retainedItem));
-        return event;
+                .run(record.sessionId, item.itemId, prepared.retainedItem!.firstSequence, JSON.stringify(prepared.retainedItem));
+        return prepared.event;
     }
 
     readCreation(key: string): { session: CodeSessionInfo; request: CodeCreationRequest } | null {
@@ -1004,6 +1042,97 @@ export class CodeStore {
         });
     }
 
+    commitAcceptedPrefix(owner: CodeStoreOwner, item: CodeItem): CodeStoreMutation & { truncated: boolean } {
+        return this.write(() => {
+            const record = this.checkOwner(owner);
+            if (!isBusy(record.status) || owner.turnId === null || item.turnId !== owner.turnId) {
+                throw new CodeStoreError('stale_owner', 'Item does not belong to an active Code turn', 409);
+            }
+            if (item.kind === 'turn_completed' || item.kind === 'turn_failed' || item.kind === 'turn_cancelled') {
+                throw new CodeStoreError('terminal_item_owned', 'Turn terminal items must be committed by settleTurn', 409);
+            }
+            const row = this.database.prepare('SELECT first_sequence, item_json FROM code_items WHERE session_id = ? AND item_id = ?')
+                .get(owner.sessionId, item.itemId) as ItemRow | undefined;
+            const raw = row ? JSON.parse(row.item_json) as CodeItem & { pendingTruncation?: { truncation: NonNullable<CodeItem['truncation']>; reserveBytes: number } } : undefined;
+            if (raw && raw.turnId !== item.turnId) throw new CodeStoreError('item_owner_conflict', 'Item identity belongs to another turn', 409);
+            if (item.permission && (item.permission.sessionId !== owner.sessionId || item.permission.turnId !== owner.turnId || item.permission.epoch !== owner.epoch)) {
+                throw new CodeStoreError('stale_owner', 'Permission does not belong to this Code turn', 409);
+            }
+            const previous = raw && row ? mapItem(raw, row.first_sequence) : undefined;
+            const budget = this.database.prepare(`SELECT event_bytes, control_event_bytes, settlement_bytes FROM code_turns
+                WHERE session_id = ? AND turn_id = ?`).get(record.sessionId, owner.turnId) as {
+                    event_bytes: number; control_event_bytes: number; settlement_bytes: number;
+                };
+            const fits = (candidate: CodeItem, allow = false): boolean => {
+                let prepared: ReturnType<CodeStore['prepareItemEvent']>;
+                try { prepared = this.prepareItemEvent(record, candidate, allow); }
+                catch (error) {
+                    if (error instanceof CodeStoreError && error.code === 'event_too_large') return false;
+                    throw error;
+                }
+                const bytes = jsonBytes(prepared.event);
+                return bytes <= this.limits.maxEventBytes
+                    && budget.event_bytes - budget.control_event_bytes + bytes <= this.limits.maxTurnEventBytes
+                    && budget.control_event_bytes + Math.max(0, budget.settlement_bytes + prepared.delta) + CODE_SETTLEMENT_TAIL_BYTES <= CODE_TERMINAL_RESERVE_BYTES;
+            };
+            if (fits(item)) {
+                const events = [this.event(record, item)];
+                return { session: toCodeSessionInfo(record), events, truncated: false };
+            }
+            const growth = item.kind === 'assistant_message' || item.kind === 'reasoning' ? 'text' : 'output';
+            const value = growth === 'text' ? item.text : item.tool?.output;
+            const oldValue = growth === 'text' ? previous?.text : previous?.tool?.output;
+            const prefix = value !== undefined && value.startsWith(oldValue ?? '');
+            const sourceChars = Math.max(item.truncation?.sourceChars ?? 0, contentChars(item));
+            const withGrowth = (base: CodeItem, k: number): CodeItem => {
+                if (growth === 'text') return value === undefined ? base : { ...base, text: value.slice(0, k) };
+                return value === undefined || !base.tool ? base : { ...base, tool: { ...base.tool, output: value.slice(0, k) } };
+            };
+            const candidate = (base: CodeItem, k: number, familyB: boolean): CodeItem => {
+                const proposed = withGrowth(base, k);
+                return { ...proposed, truncation: { storedChars: acceptedChars(item, mapItem(proposed, previous?.firstSequence ?? record.sequence + 1), growth, k), sourceChars,
+                    reason: familyB ? budgetReason(previous, item) : budgetReason(item) } };
+            };
+            const safe = (k: number): number => value && k > 0 && k < value.length
+                && value.charCodeAt(k - 1) >= 0xd800 && value.charCodeAt(k - 1) <= 0xdbff
+                && value.charCodeAt(k) >= 0xdc00 && value.charCodeAt(k) <= 0xdfff ? k - 1 : k;
+            const search = (base: CodeItem, lo: number, familyB: boolean): { item: CodeItem; k: number } | undefined => {
+                let left = lo, right = value === undefined ? 0 : familyB ? value.length : Math.max(0, value.length - 1), best: { item: CodeItem; k: number } | undefined;
+                while (left <= right) {
+                    const mid = Math.floor((left + right) / 2), k = safe(mid);
+                    const next = candidate(base, k, familyB);
+                    const compact = !familyB || (previous && compactUpdate(previous, mapItem(next, previous.firstSequence!), true) !== null);
+                    if (k >= lo && compact && fits(next, true)) { best = { item: next, k }; left = mid + 1; }
+                    else right = mid - 1;
+                }
+                return best;
+            };
+            const a = search(item, prefix ? (oldValue?.length ?? 0) : 0, false);
+            const bBase = previous && { ...previous, status: item.status, ...(item.phase !== undefined ? { phase: item.phase } : {}), updatedAt: item.updatedAt };
+            const b = bBase && (prefix || (value === undefined && oldValue === undefined))
+                ? search(bBase, oldValue?.length ?? 0, true) : undefined;
+            const best = b && (!a || b.k > a.k) ? b : a;
+            if (best) {
+                const events = [this.event(record, best.item, 'ordinary', record.turnId, 0, true)];
+                return { session: toCodeSessionInfo(record), events, truncated: true };
+            }
+            if (previous && row) {
+                const k = prefix ? oldValue?.length ?? 0 : 0;
+                const truncation = { storedChars: acceptedChars(item, previous, growth, k), sourceChars, reason: budgetReason(previous, item) };
+                const unresolved = previous.status === 'pending' || previous.status === 'running';
+                const reserveBytes = raw?.pendingTruncation?.reserveBytes ?? (unresolved ? 0 : settlementCost(record.sessionId, { ...previous, status: 'pending' }));
+                if (raw?.pendingTruncation || (reserveBytes <= Math.min(this.limits.maxEventBytes, CODE_CONTROL_FRAME_BYTES)
+                    && budget.control_event_bytes + budget.settlement_bytes + reserveBytes + CODE_SETTLEMENT_TAIL_BYTES <= CODE_TERMINAL_RESERVE_BYTES)) {
+                    this.database.prepare(`UPDATE code_items SET item_json = json_set(item_json, '$.pendingTruncation', json(?))
+                        WHERE session_id = ? AND item_id = ?`).run(JSON.stringify({ truncation, reserveBytes }), record.sessionId, item.itemId);
+                    if (!raw?.pendingTruncation && reserveBytes) this.database.prepare(`UPDATE code_turns SET settlement_bytes = settlement_bytes + ?
+                        WHERE session_id = ? AND turn_id = ?`).run(reserveBytes, record.sessionId, owner.turnId);
+                }
+            }
+            return { session: toCodeSessionInfo(record), events: [], truncated: true };
+        });
+    }
+
     /** The Manager opened this session. A read receipt: the metadata revision does not move. */
     markVisited(sessionId: string): CodeStoreMutation {
         return this.write(() => {
@@ -1090,23 +1219,29 @@ export class CodeStore {
             // Fetch only control metadata; a large materialized answer is never
             // loaded or copied into its terminal status event.
             const item = this.database.prepare(`SELECT item_id, first_sequence,
-                json_extract(item_json, '$.kind') AS kind, json_extract(item_json, '$.status') AS status
+                json_extract(item_json, '$.kind') AS kind, json_extract(item_json, '$.status') AS status,
+                json_extract(item_json, '$.pendingTruncation') AS pending_truncation
                 FROM code_items WHERE session_id = ? AND first_sequence > ?
                 AND json_extract(item_json, '$.turnId') = ?
-                AND json_extract(item_json, '$.status') IN ('pending', 'running') ORDER BY first_sequence LIMIT 1`)
-                .get(record.sessionId, after, turnId) as { item_id: string; first_sequence: number; kind: CodeItem['kind']; status: CodeItem['status'] } | undefined;
+                AND (json_extract(item_json, '$.status') IN ('pending', 'running') OR json_type(item_json, '$.pendingTruncation') IS NOT NULL) ORDER BY first_sequence LIMIT 1`)
+                .get(record.sessionId, after, turnId) as { item_id: string; first_sequence: number; kind: CodeItem['kind']; status: CodeItem['status']; pending_truncation: string | null } | undefined;
             if (!item) break;
             const status = item.kind === 'permission_request' ? 'cancelled'
                 : result.status === 'failed' ? 'error' : result.status === 'cancelled' ? 'cancelled'
                     : item.kind === 'tool_call' || item.kind === 'file_change' ? 'cancelled' : 'done';
+            const unresolved = item.status === 'pending' || item.status === 'running';
+            const marker = item.pending_truncation ? JSON.parse(item.pending_truncation) as { truncation: NonNullable<CodeItem['truncation']>; reserveBytes: number } : undefined;
             record.sequence += 1;
             events.push(this.persistEvent(record, {
                 topic: 'code', event: 'code_item_update', sessionId: record.sessionId, sequence: record.sequence, epoch: record.epoch,
-                update: { itemId: item.item_id, turnId, firstSequence: item.first_sequence, status, updatedAt: now },
-            }, 'settlement', -settlementCost(record.sessionId, { itemId: item.item_id, turnId, status: item.status }), turnId));
-            this.database.prepare(`UPDATE code_items SET item_json = json_set(item_json,
-                '$.status', ?, '$.updatedAt', ?, '$.firstSequence', first_sequence) WHERE session_id = ? AND item_id = ?`)
-                .run(status, now, record.sessionId, item.item_id);
+                update: { itemId: item.item_id, turnId, firstSequence: item.first_sequence, ...(unresolved ? { status } : {}),
+                    ...(marker ? { truncation: marker.truncation } : {}), updatedAt: now },
+            }, 'settlement', -settlementCost(record.sessionId, { itemId: item.item_id, turnId, status: item.status }) - (marker?.reserveBytes ?? 0), turnId));
+            this.database.prepare(`UPDATE code_items SET item_json = json_remove(json_set(item_json,
+                '$.status', ?, '$.updatedAt', ?, '$.firstSequence', first_sequence), '$.pendingTruncation') WHERE session_id = ? AND item_id = ?`)
+                .run(unresolved ? status : item.status, now, record.sessionId, item.item_id);
+            if (marker) this.database.prepare(`UPDATE code_items SET item_json = json_set(item_json, '$.truncation', json(?))
+                WHERE session_id = ? AND item_id = ?`).run(JSON.stringify(marker.truncation), record.sessionId, item.item_id);
             after = item.first_sequence;
         }
         // A follow-up no native result consumed may never have reached Claude; say so on its item.

@@ -4,6 +4,7 @@ import { CodeTurnNormalizer, CODE_ITEM_MAX_CHARS, normalizeFileChanges, redactCo
 import type { CodeTurnNormalizerOptions } from '../../src/code-mode/normalize.ts';
 import type { CodeTurnContext } from '../../src/code-mode/provider.ts';
 import type { CodeItem } from '../../src/code-mode/wire.ts';
+import { CodeStoreError } from '../../src/code-mode/store.ts';
 import type { RuntimeEventContext } from '../../src/agent/runtime/events.ts';
 import type { RuntimeEnd, RuntimeToolPatch } from '../../src/agent/runtime/projection.ts';
 import type { RuntimeEventBody, RuntimeTurnOutcome } from '../../src/shared/runtime-contract.ts';
@@ -1183,4 +1184,19 @@ test('file change replacement burst coalesces and commits only its latest value'
     t.mock.timers.tick(50);
     assert.equal(f.writes.length, 2);
     assert.equal(f.rows('file_change')[0]?.fileChange?.changes[0]?.diff, '19');
+});
+
+for (const firstCommit of [false, true]) test(`reentrant seal retains ${firstCommit ? 'first-commit' : 'committed append'} after a rejected save`, () => {
+    let calls = 0, batch: readonly CodeItem[] = [];
+    let normalizer: CodeTurnNormalizer;
+    const f = fixture({ commitItem() {
+        if (!firstCommit && calls++ === 0) return { publish() {} };
+        batch = normalizer.sealAccepted();
+        throw new CodeStoreError('transcript_limit', 'limit', 409);
+    } });
+    normalizer = f.normalizer;
+    if (!firstCommit) f.observer.text('message', 'entry', 'A', 'replace', 'final');
+    assert.throws(() => f.observer.text('message', 'entry', firstCommit ? 'first' : 'B', 'append', 'final'), /limit/);
+    assert.equal(batch.length, 1);
+    assert.equal(batch[0]?.text, firstCommit ? 'first' : 'AB');
 });

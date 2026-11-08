@@ -72,6 +72,7 @@ function replayItems(events: CodeWireEvent[]): CodeItem[] {
             }
             if (event.update.status !== undefined) item.status = event.update.status;
             if (event.update.phase !== undefined) item.phase = event.update.phase;
+            if (event.update.truncation !== undefined) item.truncation = event.update.truncation;
             item.updatedAt = event.update.updatedAt;
         }
     }
@@ -1801,4 +1802,234 @@ test('recovery of an active turn clears any stale operation id in event and row'
     const terminal = events.filter(event => event.sessionId === turn.session.sessionId && event.session).at(-1);
     assert.equal(terminal?.session?.operationId, null);
     assert.equal(store.snapshot(turn.session.sessionId).session.status, 'failed');
+});
+
+
+function prefixBudget(db: Database.Database, extra: number): CodeStore {
+    const budget = db.prepare('SELECT event_bytes, control_event_bytes FROM code_turns').get() as { event_bytes: number; control_event_bytes: number };
+    return new CodeStore(db, { now: () => 2000, limits: { maxTurnEventBytes: budget.event_bytes - budget.control_event_bytes + extra } });
+}
+function assertPrefixReplay(store: CodeStore) {
+    assert.deepEqual(replayItems(store.readEvents('session-a', 0).events), store.snapshot('session-a').items);
+}
+function prefixItem(turnId: string, kind: 'assistant_message' | 'tool_call' | 'file_change', value: string, diff = 'patch'): CodeItem {
+    if (kind === 'assistant_message') return message(turnId, 'prefix', value);
+    const { text: _text, ...base } = message(turnId, 'prefix');
+    return { ...base, kind, tool: { name: 'edit', output: value },
+        ...(kind === 'file_change' ? { fileChange: { schema: 'known' as const, changes: [{ path: 'a', kind: 'update' as const, patch: 'captured' as const, diff }] } } : {}) };
+}
+for (const kind of ['assistant_message', 'tool_call', 'file_change'] as const) test(`accepted prefix stores maximal ${kind} content and replays`, t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const first = prefixItem(admitted.receipt.turnId, kind, 'old');
+    store.commitItem(current, first);
+    const bounded = prefixBudget(db, 600), accepted = prefixItem(admitted.receipt.turnId, kind, 'old' + 'z'.repeat(2000));
+    const ordinaryBefore = db.prepare('SELECT event_bytes - control_event_bytes AS n FROM code_turns').get() as { n: number };
+    const result = bounded.commitAcceptedPrefix(current, accepted);
+    assert.equal(result.truncated, true);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    const value = kind === 'assistant_message' ? row.text! : row.tool!.output!;
+    assert.ok(value.length > 3 && value.length < 2003 && accepted[kind === 'assistant_message' ? 'text' : 'tool']);
+    assert.ok(('old' + 'z'.repeat(2000)).startsWith(value));
+    assert.equal(row.truncation?.reason, 'turn_budget');
+    assert.ok(row.truncation!.storedChars <= row.truncation!.sourceChars);
+    const ordinaryAfter = db.prepare('SELECT event_bytes - control_event_bytes AS n FROM code_turns').get() as { n: number };
+    assert.ok(600 - (ordinaryAfter.n - ordinaryBefore.n) < 16);
+    assertPrefixReplay(bounded);
+});
+
+test('accepted replacement and surrogate-safe multibyte prefix use the new value', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    store.commitItem(current, message(admitted.receipt.turnId, 'prefix', 'old'));
+    const bounded = prefixBudget(db, 480), source = '한😀'.repeat(1000);
+    const result = bounded.commitAcceptedPrefix(current, message(admitted.receipt.turnId, 'prefix', source));
+    assert.equal(result.truncated, true);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.ok(row.text!.length > 0 && source.startsWith(row.text!));
+    assert.ok(!/[\uD800-\uDBFF]$/.test(row.text!));
+    const nextLength = row.text!.length + (source.codePointAt(row.text!.length)! > 0xffff ? 2 : 1);
+    const next = structuredClone(result.events[0]!);
+    next.item!.text = source.slice(0, nextLength);
+    next.item!.truncation!.storedChars = nextLength;
+    assert.ok(Buffer.byteLength(JSON.stringify(next)) > 480, 'the next valid Unicode prefix cannot fit');
+    assertPrefixReplay(bounded);
+});
+
+test('accepted new item can be prefixed or omitted at zero budget', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    let bounded = prefixBudget(db, 550);
+    const item = message(admitted.receipt.turnId, 'fresh', 'x'.repeat(2000));
+    assert.equal(bounded.commitAcceptedPrefix(current, item).truncated, true);
+    assert.ok(bounded.snapshot('session-a').items.find(row => row.itemId === 'fresh')!.text!.length > 0);
+    bounded = prefixBudget(db, 0);
+    const before = bounded.snapshot('session-a');
+    assert.deepEqual(bounded.commitAcceptedPrefix(current, { ...item, itemId: 'missing' }).events, []);
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assertPrefixReplay(bounded);
+});
+
+for (const kind of ['tool_call', 'file_change'] as const) test(`zero-budget ${kind} marker rides settlement frame`, t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = prefixItem(admitted.receipt.turnId, kind, 'old');
+    if (kind === 'file_change') delete item.tool!.output;
+    store.commitItem(current, item);
+    const bounded = prefixBudget(db, 0), before = bounded.snapshot('session-a');
+    const budgetBefore = db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get();
+    const accepted = kind === 'file_change' ? { ...item, fileChange: prefixItem(admitted.receipt.turnId, kind, '', 'new').fileChange } : prefixItem(admitted.receipt.turnId, kind, 'old-more');
+    assert.deepEqual(bounded.commitAcceptedPrefix(current, accepted).events, []);
+    assert.deepEqual(bounded.commitAcceptedPrefix(current, accepted).events, []);
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assert.deepEqual(db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get(), budgetBefore);
+    const settled = bounded.settleTurn(current, { status: 'failed' });
+    const update = settled.events.find(event => event.update?.itemId === 'prefix')!.update!;
+    assert.equal(update.status, 'error');
+    assert.match(update.truncation!.reason, /turn_budget/);
+    const budget = db.prepare('SELECT control_event_bytes, settlement_bytes FROM code_turns').get() as { control_event_bytes: number; settlement_bytes: number };
+    assert.equal(budget.settlement_bytes, 0);
+    assert.ok(budget.control_event_bytes <= CODE_TERMINAL_RESERVE_BYTES);
+    assertPrefixReplay(bounded);
+});
+
+test('file change family B preserves old diff and maximizes output despite new diff', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    store.commitItem(current, prefixItem(admitted.receipt.turnId, 'file_change', 'old', 'prior'));
+    const bounded = prefixBudget(db, 600), accepted = prefixItem(admitted.receipt.turnId, 'file_change', 'old' + 'x'.repeat(2000), 'n'.repeat(2000));
+    assert.equal(bounded.commitAcceptedPrefix(current, accepted).truncated, true);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.equal(row.fileChange!.changes[0]!.diff, 'prior');
+    assert.ok(row.tool!.output!.length > 3);
+    assert.ok(row.truncation!.storedChars <= row.truncation!.sourceChars);
+    assertPrefixReplay(bounded);
+});
+
+test('marker and prefix storage failures roll back', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = message(admitted.receipt.turnId, 'prefix', 'old');
+    store.commitItem(current, item);
+    let bounded = prefixBudget(db, 500);
+    let before = bounded.snapshot('session-a');
+    const budgetBefore = db.prepare('SELECT * FROM code_turns').get();
+    db.exec("CREATE TRIGGER fail_event BEFORE INSERT ON code_events BEGIN SELECT RAISE(ABORT, 'event failure'); END");
+    assert.throws(() => bounded.commitAcceptedPrefix(current, { ...item, text: 'old' + 'x'.repeat(2000) }), (e: unknown) => !(e instanceof CodeStoreError) && e instanceof Error && /event failure/.test(e.message));
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assert.deepEqual(db.prepare('SELECT * FROM code_turns').get(), budgetBefore);
+    db.exec('DROP TRIGGER fail_event');
+    bounded = prefixBudget(db, 0); before = bounded.snapshot('session-a');
+    db.exec("CREATE TRIGGER fail_marker BEFORE UPDATE ON code_items BEGIN SELECT RAISE(ABORT, 'marker failure'); END");
+    assert.throws(() => bounded.commitAcceptedPrefix(current, { ...item, text: 'old-more' }), (e: unknown) => !(e instanceof CodeStoreError) && e instanceof Error && /marker failure/.test(e.message));
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assert.deepEqual(db.prepare('SELECT * FROM code_turns').get(), budgetBefore);
+    assertPrefixReplay(bounded);
+});
+
+
+for (const [oldDiff, newDiff, expectNew] of [[1200, 10, true], [10, 1200, false]] as const) test(`file change prioritizes output length when ${expectNew ? 'new patch is absent' : 'new diff is longer'}`, t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const first = prefixItem(admitted.receipt.turnId, 'file_change', 'old', 'o'.repeat(oldDiff));
+    if (expectNew) first.truncation = { storedChars: 0, sourceChars: 1, reason: 'a'.repeat(32) + ',' + 'b'.repeat(32) + ',' + 'c'.repeat(32) };
+    store.commitItem(current, first);
+    const bounded = prefixBudget(db, 800), accepted = prefixItem(admitted.receipt.turnId, 'file_change', 'old' + 'x'.repeat(3000), 'n'.repeat(newDiff));
+    if (expectNew) delete accepted.fileChange;
+    assert.equal(bounded.commitAcceptedPrefix(current, accepted).truncated, true);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.equal(row.fileChange?.changes[0]?.diff, expectNew ? undefined : 'o'.repeat(oldDiff));
+    assert.ok(row.tool!.output!.length > 3);
+    assertPrefixReplay(bounded);
+});
+
+test('terminal markers reserve a frame and release it at settlement', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = { ...prefixItem(admitted.receipt.turnId, 'tool_call', 'old'), status: 'done' as const };
+    store.commitItem(current, item);
+    const bounded = prefixBudget(db, 0);
+    const before = db.prepare('SELECT settlement_bytes FROM code_turns').get() as { settlement_bytes: number };
+    assert.deepEqual(bounded.commitAcceptedPrefix(current, { ...item, tool: { ...item.tool!, output: 'old-more' } }).events, []);
+    const middle = db.prepare('SELECT settlement_bytes FROM code_turns').get() as { settlement_bytes: number };
+    assert.ok(middle.settlement_bytes > before.settlement_bytes);
+    const settlement = bounded.settleTurn(current, { status: 'failed' });
+    const update = settlement.events.find(event => event.update?.itemId === 'prefix')!.update!;
+    assert.equal(update.status, undefined);
+    assert.match(update.truncation!.reason, /turn_budget/);
+    assert.equal((db.prepare('SELECT settlement_bytes FROM code_turns').get() as { settlement_bytes: number }).settlement_bytes, 0);
+    assertPrefixReplay(bounded);
+});
+
+test('terminal marker reserve shortage does not throw or mutate the row', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = { ...prefixItem(admitted.receipt.turnId, 'tool_call', 'old'), status: 'done' as const };
+    store.commitItem(current, item);
+    const bounded = prefixBudget(db, 0), before = bounded.snapshot('session-a');
+    db.prepare('UPDATE code_turns SET settlement_bytes = ?').run(CODE_TERMINAL_RESERVE_BYTES);
+    const budget = db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get();
+    assert.equal(bounded.commitAcceptedPrefix(current, { ...item, tool: { ...item.tool!, output: 'old-more' } }).truncated, true);
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assert.deepEqual(db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get(), budget);
+    assertPrefixReplay(bounded);
+});
+
+test('many pending items carry markers through settlement and hide private state', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    for (let i = 0; i < 24; i++) store.commitItem(current, message(admitted.receipt.turnId, `item-${i}`, 'old'));
+    const bounded = prefixBudget(db, 0);
+    const before = bounded.snapshot('session-a');
+    const budget = db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get();
+    for (let i = 0; i < 24; i++) assert.equal(bounded.commitAcceptedPrefix(current, message(admitted.receipt.turnId, `item-${i}`, 'old more')).truncated, true);
+    assert.deepEqual(bounded.snapshot('session-a'), before);
+    assert.deepEqual(db.prepare('SELECT event_bytes, settlement_bytes FROM code_turns').get(), budget);
+    const settlement = bounded.settleTurn(current, { status: 'failed' });
+    assert.equal(settlement.events.filter(event => event.update?.itemId.startsWith('item-') && event.update.truncation?.reason === 'turn_budget').length, 24);
+    assert.equal((db.prepare('SELECT settlement_bytes FROM code_turns').get() as { settlement_bytes: number }).settlement_bytes, 0);
+    assert.ok(!JSON.stringify(db.prepare('SELECT item_json FROM code_items').all()).includes('pendingTruncation'));
+    assertPrefixReplay(bounded);
+});
+
+test('late tool name and input are excluded from retained accepted character count', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = { ...prefixItem(admitted.receipt.turnId, 'tool_call', 'old'), status: 'done' as const };
+    store.commitItem(current, item);
+    const bounded = prefixBudget(db, 0), accepted: CodeItem = { ...item, tool: { name: 'new-name', input: 'late input', output: 'oldmore' } };
+    bounded.commitAcceptedPrefix(current, accepted);
+    const settlement = bounded.settleTurn(current, { status: 'failed' });
+    const truncation = settlement.events.find(event => event.update?.itemId === 'prefix')!.update!.truncation!;
+    assert.equal(truncation.storedChars, 3);
+    assert.equal(truncation.sourceChars, 'new-name'.length + 'late input'.length + 'oldmore'.length);
+    assertPrefixReplay(bounded);
+});
+
+test('accepted full item behaves exactly like a normal commit and validates ownership', t => {
+    const { store } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = message(admitted.receipt.turnId, 'fresh', 'hello');
+    const result = store.commitAcceptedPrefix(current, item);
+    assert.equal(result.truncated, false);
+    assert.equal(result.events[0]!.item!.text, 'hello');
+    assert.equal(result.session.sequence, result.events[0]!.sequence);
+    expectError(() => store.commitAcceptedPrefix({ ...current, epoch: current.epoch + 1 }, item), 'stale_owner');
+    expectError(() => store.commitAcceptedPrefix(current, { ...item, kind: 'turn_failed' }), 'terminal_item_owned');
+    assertPrefixReplay(store);
+});
+
+
+test('file change family B may retain all output when only the new patch exceeds the budget', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    store.commitItem(current, prefixItem(admitted.receipt.turnId, 'file_change', 'old', 'old'));
+    const bounded = prefixBudget(db, 600);
+    const accepted = prefixItem(admitted.receipt.turnId, 'file_change', 'old-plus', 'x'.repeat(3000));
+    assert.equal(bounded.commitAcceptedPrefix(current, accepted).truncated, true);
+    const row = bounded.snapshot('session-a').items.find(item => item.itemId === 'prefix')!;
+    assert.equal(row.tool!.output, 'old-plus');
+    assert.equal(row.fileChange!.changes[0]!.diff, 'old');
+    assertPrefixReplay(bounded);
+});
+
+
+test('new accepted item admits the empty prefix when only its frame fits', t => {
+    const { store, db } = fixture(t), admitted = admit(store), current = owner(admitted.session);
+    const item = message(admitted.receipt.turnId, 'empty-prefix', 'x'.repeat(1000));
+    const sequence = store.snapshot('session-a').sequence + 1;
+    const frame = { topic: 'code', event: 'code_item', sessionId: 'session-a', sequence, epoch: current.epoch,
+        item: { itemId: item.itemId, firstSequence: sequence, turnId: item.turnId, kind: item.kind, status: item.status,
+            createdAt: item.createdAt, updatedAt: item.updatedAt, text: '', truncation: { storedChars: 0, sourceChars: 1000, reason: 'turn_budget' } } };
+    const bounded = prefixBudget(db, Buffer.byteLength(JSON.stringify(frame)));
+    assert.equal(bounded.commitAcceptedPrefix(current, item).truncated, true);
+    assert.equal(bounded.snapshot('session-a').items.find(row => row.itemId === item.itemId)!.text, '');
+    assertPrefixReplay(bounded);
 });

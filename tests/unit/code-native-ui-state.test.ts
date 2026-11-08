@@ -158,3 +158,12 @@ test('a session event with a higher history generation discards held items throu
     const older = reduceCodeSession(seeded(), { type: 'event', event: { ...rolled, session: { ...rolled.session!, historyGeneration: undefined as never } } });
     assert.equal(older.needsSnapshot, false, 'an older server without the field is generation 0');
 });
+
+test('compact truncation update matches the authoritative snapshot item', () => {
+    const truncation = { storedChars: 2, sourceChars: 10, reason: 'turn_budget' };
+    const expected = { ...item('answer', 'AB'), updatedAt: 4, status: 'error' as const, truncation };
+    const event = { topic: 'code', event: 'code_item_update', sessionId: 's', sequence: 4, epoch: 1,
+        update: { itemId: 'answer', turnId: 't', firstSequence: 3, updatedAt: 4, appendText: 'B', status: 'error', truncation } } as CodeWireEvent;
+    const state = reduceCodeSession(seeded(), { type: 'event', event });
+    assert.deepEqual(state.items[0], expected);
+});

@@ -612,9 +612,14 @@ truncation is explicit. Materialized items remain complete. Sequence-ordered
 `code_item_update` events carry append suffixes or status/phase changes, while
 full replacements use `code_item`. Production coalesces intermediate content for
 50ms and flushes final/control changes. Interruption seals native callbacks, then
-synchronously persists already accepted pending content while the captured
-session/epoch/turn still owns each write. Late callbacks stay rejected; failed
-persistence or exhausted event capacity cannot retry content through the terminal
+persists the largest accepted content prefix that fits the remaining ordinary budget
+under the captured session/epoch/turn, marking loss as `turn_budget`; late callbacks
+stay rejected. With no room,
+no content bytes are written; truncation rides the item's settlement update inside
+its already reserved terminal frame. A never-stored item that cannot fit is not
+created, and the turn fails with the limit. Structured payloads, including file
+changes, are never cut. Snapshots and compact replay surface the same prefix and
+truncation. Real storage failures fail closed, and content never uses the terminal
 reserve. Store settlement remains the sole turn-terminal authority. Replay and
 snapshots are byte-bounded;
 snapshots include the complete active turn or fail explicitly. Hard bounds are
