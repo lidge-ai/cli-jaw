@@ -142,8 +142,23 @@ test('validated Slack permalinks survive Markdown and angle-link boundaries', ()
     }
 });
 
+test('Slack permalinks copied from message text and bare channel links survive', () => {
+    for (const channel of ['C123ABC', 'G123ABC', 'D123ABC']) {
+        const channelLink = `https://team-name.slack.com/archives/${channel}`;
+        const message = `${channelLink}/p1725800000123456`;
+        for (const link of [channelLink, channelLink.replace('.com/', '.com:443/'),
+            `${message}?thread_ts=1725800000.123456&amp;cid=${channel}`, `${message}?cid=${channel}&amp;thread_ts=1725800000.123456`]) {
+            for (const input of [link, `[source](${link}).`, `<${link}|source label>`,
+                `**${link}**, next`, `(${link}); next`, `\`${link}\``]) {
+                assert.equal(redactChannelSecrets(input), input);
+            }
+        }
+    }
+});
+
 test('Slack permalink exceptions reject credentials and malformed shapes', () => {
     const base = 'https://team.slack.com/archives/C123ABC/p1725800000123456';
+    const channelLink = 'https://team.slack.com/archives/C123ABC';
     const rejected = [
         base.replace('https:', 'http:'), base.replace('team.', 'user:pass@team.'),
         base.replace('.com/', '.com:444/'), base.replace('/C123ABC/', '/X123ABC/'),
@@ -154,6 +169,12 @@ test('Slack permalink exceptions reject credentials and malformed shapes', () =>
         base.replace('/archives/', '/upload/../archives/'),
         base.replace('/archives/', '/%61rchives/'),
         base.replace('team.slack.com', 'downloads.slack-edge.com'),
+        `${base}?thread_ts=1725800000.123456&amp;signature=QUERYSECRET`,
+        `${base}?cid=C123ABC&amp;cid=C123ABC`, `${base}?thread_ts=1725800000.123456&amp;amp;cid=C123ABC`,
+        `${channelLink}?cid=C123ABC`, `${channelLink}?thread_ts=1725800000.123456`, `${channelLink}/`,
+        `${channelLink}#fragment-secret`, channelLink.replace('team.', 'user:pass@team.'),
+        channelLink.replace('.com/', '.com:444/'), channelLink.replace('/archives/', '/upload/../archives/'),
+        channelLink.replace('/C123ABC', '/X123ABC'),
     ];
     for (const input of rejected) {
         assert.match(redactChannelSecrets(input), /\/\.\.\.redacted$/);

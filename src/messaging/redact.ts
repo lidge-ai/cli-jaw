@@ -436,12 +436,15 @@ export function redactChannelSecrets(input: string): string {
             const isTelegram = host === 'telegram.org' || host.endsWith('.telegram.org');
             const isDiscord = host === 'discord.com' || host.endsWith('.discord.com')
                 || host === 'discordapp.com' || host.endsWith('.discordapp.com');
-            // Only literal workspace permalinks may retain their path. Checking
-            // the spelling as well as the parsed URL rejects dot-segment and
-            // escaped-path normalization, userinfo and nondefault ports.
-            const permalink = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.slack\.com(?::443)?\/archives\/[CGD][A-Z0-9]+\/p[0-9]+(?:\?[^#]*)?$/.test(raw);
+            // Only literal workspace permalinks and channel links may retain
+            // their path. Checking the spelling as well as the parsed URL
+            // rejects dot-segment and escaped-path normalization, userinfo and
+            // nondefault ports. Slack stores `&` as `&amp;` in message text,
+            // so a permalink copied from a message is read with that decoded.
+            const permalinkSpelling = raw.replace(/&amp;/g, '&');
+            const permalink = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.slack\.com(?::443)?\/archives\/[CGD][A-Z0-9]+(?:\/p[0-9]+(?:\?[^#]*)?)?$/.test(permalinkSpelling);
             const queryKeys = new Set<string>();
-            const safeQuery = permalink && [...parsed.searchParams].every(([key, value]) => {
+            const safeQuery = permalink && [...new URL(permalinkSpelling).searchParams].every(([key, value]) => {
                 if (queryKeys.has(key)) return false;
                 queryKeys.add(key);
                 return (key === 'thread_ts' && /^\d+\.\d{6}$/.test(value))
