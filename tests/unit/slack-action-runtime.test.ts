@@ -9,6 +9,7 @@ import { defineAction, type ActionContext, type ActionResult } from '../../src/s
 import { baseAction, requiredText } from '../../src/slack/task-input.ts';
 import { reserveSlackToolGrant, activateSlackToolGrant, resolveSlackToolGrant, revokeSlackToolGrant, revokeSlackToolScope, slackCredentialKey } from '../../src/slack/tool-context.ts';
 import { interactionActions, consumeSlackInteractionCallback } from '../../src/slack/actions-interactions.ts';
+import { messageActions } from '../../src/slack/actions-message.ts';
 import { SlackInteractionStore, configureSlackInteractionStore, type SlackInteraction } from '../../src/slack/interaction-store.ts';
 import { resetVerifiedSlackWorkspace } from '../../src/slack/verified-workspace.ts';
 import { RtsOutputStore, configureRtsOutputStore } from '../../src/slack/rts-output-store.ts';
@@ -550,4 +551,19 @@ test('revoked old authority or malformed intent cannot create a recovery record'
     const fresh = turn('1.1', 'valid');
     await assert.rejects(f.runtime.execute(threadWrite, { ...heldInput, unexpected: true }, fresh), /thread_mismatch/);
     assert.equal((f.db.prepare('SELECT COUNT(*) AS n FROM slack_blocked_actions').get() as { n: number }).n, 0);
+});
+
+test('a refused message edit or delete reports the code Slack answered', async t => {
+    for (const [kind, code] of [['update', 'edit_window_closed'], ['update', 'cant_update_message'], ['delete', 'cant_delete_message']] as const) {
+        const f = fixture(t); configureRtsOutputStore(new RtsOutputStore(f.db));
+        f.reply(async method => method === 'conversations.history'
+            ? json({ ok: true, messages: [{ ts: '1.000001', user: 'UBOT', text: 'old' }], has_more: false })
+            : json({ ok: false, error: code }));
+        const definition = messageActions.find(candidate => candidate.operation === `message.${kind}`)!;
+        const result = await f.runtime.execute(definition, { operation: `message.${kind}`, channel: 'C1', invocationId: code,
+            ts: '1.000001', ...(kind === 'update' ? { text: 'new' } : {}) }, operator);
+        assert.equal(result.error, code);
+        assert.equal(result.verification, 'unknown');
+        assert.equal(f.calls.filter(method => method === `chat.${kind}`).length, 1);
+    }
 });
