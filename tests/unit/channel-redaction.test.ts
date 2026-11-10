@@ -266,13 +266,34 @@ test('an unrelated URL is left readable', () => {
     assert.equal(redactChannelSecrets('see https://example.dev/docs'), 'see https://example.dev/docs');
 });
 
-test('a diagnostic query keeps its keys while losing its values', () => {
-    // Blanking the whole query string also erases the parameters an operator
-    // needs to reproduce a failure. Keys stay, values go.
-    const out = redactChannelSecrets('https://example.dev/docs?page=2&mode=debug');
-    assert.ok(out.includes('page='), 'the key structure survives');
-    assert.ok(out.includes('mode='));
-    assert.equal(out.includes('debug'), false, 'a value could be a signature');
+test('a link whose query carries ordinary ids stays readable', () => {
+    for (const url of ['https://example.dev/docs?page=2&mode=debug',
+        'https://reviews.example.com/r?clientSourceId=8f3a2c91d4e5b6a7c8d9e0f1',
+        'https://ads.example.com/library/?active_status=all&id=1234567890123456',
+        'https://share.example.app/s/abc?t=Ab3xK9q', 'https://example.dev/watch?v=dQw4w9WgXcQ#comments',
+        'https://example.dev/item?uuid=0f8fad5b-d9cb-469f-a165-70867728950e']) {
+        assert.equal(redactChannelSecrets(url), url);
+        assert.equal(redactChannelSecrets(`see [the page](${url}).`), `see [the page](${url}).`);
+        assert.equal(redactChannelSecrets(`<${url}|the page>`), `<${url}|the page>`);
+    }
+});
+
+test('a query value is masked when its key or its shape says credential', () => {
+    const mixed = 'Zx9QmT4vLp2RwK8sNb6YcH3dFj7G';
+    for (const [query, value] of [
+        ['token=plainvalue', 'plainvalue'], ['access_token=plainvalue', 'plainvalue'],
+        ['X-Amz-Signature=deadbeef', 'deadbeef'], ['X-Amz-Credential=AKIDEXAMPLE', 'AKIDEXAMPLE'],
+        ['apiKey=plainvalue', 'plainvalue'], ['client_secret=plainvalue', 'plainvalue'],
+        ['code=plainvalue', 'plainvalue'], ['sig=plainvalue', 'plainvalue'], ['password=hunter2', 'hunter2'],
+        ['auth=plainvalue', 'plainvalue'], ['sessionId=plainvalue', 'plainvalue'], ['access%5Ftoken=plainvalue', 'plainvalue'],
+        [`t=${mixed}`, mixed], [`h=${'a1b2c3d4e5'.repeat(4)}`, 'a1b2c3d4e5'.repeat(4)],
+        ['next=https%3A%2F%2Fb.example.com%2Fcb%3Fstate%3Dplainvalue', 'plainvalue'],
+        ['page=2#access_token=plainvalue', 'plainvalue'],
+    ] as const) {
+        const out = redactChannelSecrets(`https://example.dev/cb?id=42&${query}`);
+        assert.equal(out.includes(value), false, query);
+        assert.ok(out.startsWith('https://example.dev/cb?id=42&'), `the ordinary id survives beside ${query}`);
+    }
 });
 
 test('a short numeric pair is not mistaken for a token', () => {

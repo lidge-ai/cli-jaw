@@ -345,7 +345,14 @@ const CANONICAL_URL_TOKEN = /\/(?:file\/)?bots?(\d{6,12}):([A-Za-z0-9_-]{20,})/g
 
 
 /**
- * Mask query VALUES while keeping the keys, in one linear pass.
+ * Mask credential query VALUES while keeping the keys, in one linear pass.
+ *
+ * Masking every value turned ordinary links into dead ones: a review page's
+ * `?clientSourceId=`, an ad library's `?id=`, a share link's `?t=`. A value
+ * goes when its key names a credential, when it carries an `=` (a nested
+ * query, or a fragment such as OAuth's `#access_token=`), or when its shape
+ * is a signature's: a long run mixing case and digits, or an unpunctuated
+ * run of letters and digits as long as a digest.
  *
  * A regex of the shape /([^&=]+)=([^&]*)/g backtracks quadratically when the
  * query holds a long run with no `=` in it — a 100 KB URL took four seconds,
@@ -357,9 +364,29 @@ function maskQueryValues(query: string): string {
         .split('&')
         .map((pair) => {
             const eq = pair.indexOf('=');
-            return eq < 0 ? pair : `${pair.slice(0, eq)}=${REDACTED}`;
+            if (eq < 0 || !isCredentialPair(pair.slice(0, eq), pair.slice(eq + 1))) return pair;
+            return `${pair.slice(0, eq)}=${REDACTED}`;
         })
         .join('&');
+}
+
+const CREDENTIAL_KEY = /token|secret|signature|passw|credential|auth|session|key$|^(?:code|sig|pwd|pass|otp|jwt|hmac|nonce|state|sid)$/;
+
+function decodeOnce(part: string): string {
+    try {
+        return decodeURIComponent(part.replace(/\+/g, ' '));
+    } catch {
+        return part;
+    }
+}
+
+function isCredentialPair(key: string, value: string): boolean {
+    if (CREDENTIAL_KEY.test(decodeOnce(key).toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
+    const plain = decodeOnce(value);
+    if (/=|%3d/i.test(plain)) return true;
+    const run = plain.split('#', 1)[0]!;
+    return (run.length >= 20 && mixesCharacterClasses(run))
+        || (/^[A-Za-z0-9]{32,}$/.test(run) && /\d/.test(run) && /[A-Za-z]/.test(run));
 }
 
 /**
