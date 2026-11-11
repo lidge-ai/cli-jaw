@@ -356,41 +356,42 @@ const CANONICAL_URL_TOKEN = /\/(?:file\/)?bots?(\d{6,12}):([A-Za-z0-9_-]{20,})/g
  *
  * A regex of the shape /([^&=]+)=([^&]*)/g backtracks quadratically when the
  * query holds a long run with no `=` in it — a 100 KB URL took four seconds,
- * which turns any logged string into a denial of service. Splitting on `&` and
- * taking the first `=` per pair cannot backtrack at all.
+ * which turns any logged string into a denial of service. Fold once with a
+ * bounded budget, scan the rendered boundaries, then copy original ranges once.
  */
 function maskQueryValues(query: string): string {
-    return query
-        .split('&')
-        .map((pair) => {
-            const eq = pair.indexOf('=');
-            if (eq < 0 || !isCredentialPair(pair.slice(0, eq), pair.slice(eq + 1))) return pair;
-            return `${pair.slice(0, eq)}=${REDACTED}`;
-        })
-        .join('&');
+    const folded = canonicalize(query);
+    if (folded.exhausted) return REDACTED;
+    const pieces: string[] = [];
+    let pairStart = 0;
+    let eq = -1;
+    let cursor = 0;
+    for (let at = 0; at <= folded.text.length; at += 1) {
+        const char = folded.text[at];
+        const source = query[folded.origin[at]!];
+        // HTML entities are decoded before a URL is read. Percent-escaped
+        // delimiters belong to the key/value itself, not the query structure.
+        if (char === '=' && eq < 0 && (source === '=' || source === '&')) eq = at;
+        if (at !== folded.text.length && !(char === '&' && source === '&')) continue;
+        if (eq >= 0 && isCredentialPair(folded.text.slice(pairStart, eq), folded.text.slice(eq + 1, at))) {
+            const from = folded.end[eq]!;
+            const to = at === folded.text.length ? query.length : folded.origin[at]!;
+            pieces.push(query.slice(cursor, from), REDACTED);
+            cursor = to;
+        }
+        pairStart = at + 1;
+        eq = -1;
+    }
+    pieces.push(query.slice(cursor));
+    return pieces.join('');
 }
 
 const CREDENTIAL_KEY = /token|secret|signature|passw|credential|auth|session|key$|^(?:code|sig|pwd|pass|otp|jwt|hmac|nonce|state|sid)$/;
 
-function decodeOnce(part: string): string {
-    try {
-        return decodeURIComponent(part.replace(/\+/g, ' '));
-    } catch {
-        return part;
-    }
-}
-
 function isCredentialPair(key: string, value: string): boolean {
-    // Splitting at `&` leaves an HTML separator's tail attached to the key
-    // (`amp;code`, `#38;sig`). Restore the introducer for detection so the
-    // shared bounded fold sees the same key a renderer does, including nested
-    // entities and percent escapes. Keep the original spelling in the output.
-    const foldedKey = canonicalize(`&${key}`);
-    if (foldedKey.exhausted
-        || CREDENTIAL_KEY.test(foldedKey.text.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
-    const plain = decodeOnce(value);
-    if (/=|%3d/i.test(plain)) return true;
-    const run = plain.split('#', 1)[0]!;
+    if (CREDENTIAL_KEY.test(key.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
+    if (/=|%3d/i.test(value)) return true;
+    const run = value.split('#', 1)[0]!;
     return (run.length >= 20 && mixesCharacterClasses(run))
         || (/^[A-Za-z0-9]{32,}$/.test(run) && /\d/.test(run) && /[A-Za-z]/.test(run));
 }

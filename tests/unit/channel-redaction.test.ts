@@ -325,6 +325,27 @@ test('HTML-escaped query separators preserve ids but never credential values', (
     }
 });
 
+test('entities inside query keys and separators cannot fragment credentials', () => {
+    for (const query of ['id=42&amp;co&#100;e=fixture_secret',
+        'id=42&am&#112;;code=fixture_secret', 'id=42&#x26;s&#105;g=fixture_secret',
+        'id=42&amp;%63o&#100;e=fixture_secret', 'id=42&amp;co&amp;#100;e=fixture_secret']) {
+        for (const [input, expected] of [
+            [`https://example.dev/cb?${query}`, `https://example.dev/cb?${query.replace('fixture_secret', '...redacted')}`],
+            [`[page](https://example.dev/cb?${query})`, `[page](https://example.dev/cb?${query.replace('fixture_secret', '...redacted')})`],
+            [`<https://example.dev/cb?${query}|page>`, `<https://example.dev/cb?${query.replace('fixture_secret', '...redacted')}|page>`],
+        ]) assert.equal(redactChannelSecrets(input!), expected);
+    }
+});
+
+test('percent-escaped delimiters stay inside query values', () => {
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=a%26b%3Dc&amp;t=abc'),
+        'https://example.dev/cb?id=...redacted&amp;t=abc');
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=a%26b&amp;t=abc'),
+        'https://example.dev/cb?id=a%26b&amp;t=abc');
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=42&amp;code=fixture%26secret&amp;t=abc'),
+        'https://example.dev/cb?id=42&amp;code=...redacted&amp;t=abc');
+});
+
 test('a short numeric pair is not mistaken for a token', () => {
     assert.equal(redactChannelSecrets('ratio 12345678:9'), 'ratio 12345678:9');
 });
