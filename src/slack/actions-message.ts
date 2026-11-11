@@ -47,7 +47,7 @@ async function modify(ctx: ActionContext, args: MessageArgs, update: boolean) {
             channel: args.channel, ts: args.ts, ...(update ? { ...args.payload, blocks: args.payload?.blocks ?? [] } : {}),
         });
     } catch { return ctx.result('unknown', { reason: 'message_write_unconfirmed' }, [args.ts]); }
-    if (!response.ok) return ctx.result('unknown', { reason: 'message_write_unconfirmed' }, [args.ts]);
+    if (!response.ok) return ctx.fail(response.error ?? 'message_write_unconfirmed', response.status, [args.ts]);
     let after;
     try { after = await lookup(ctx, args); }
     catch { return ctx.result('unknown', { reason: 'message_readback_unavailable' }, [args.ts]); }
