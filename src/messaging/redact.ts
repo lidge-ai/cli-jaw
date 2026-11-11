@@ -345,21 +345,57 @@ const CANONICAL_URL_TOKEN = /\/(?:file\/)?bots?(\d{6,12}):([A-Za-z0-9_-]{20,})/g
 
 
 /**
- * Mask query VALUES while keeping the keys, in one linear pass.
+ * Mask credential query VALUES while keeping the keys, in one linear pass.
+ *
+ * Masking every value turned ordinary links into dead ones: a review page's
+ * `?clientSourceId=`, an ad library's `?id=`, a share link's `?t=`. A value
+ * goes when its key names a credential, when it carries an `=` (a nested
+ * query, or a fragment such as OAuth's `#access_token=`), or when its shape
+ * is a signature's: a long run mixing case and digits, or an unpunctuated
+ * run of letters and digits as long as a digest.
  *
  * A regex of the shape /([^&=]+)=([^&]*)/g backtracks quadratically when the
  * query holds a long run with no `=` in it — a 100 KB URL took four seconds,
- * which turns any logged string into a denial of service. Splitting on `&` and
- * taking the first `=` per pair cannot backtrack at all.
+ * which turns any logged string into a denial of service. Fold once with a
+ * bounded budget, scan the rendered boundaries, then copy original ranges once.
  */
 function maskQueryValues(query: string): string {
-    return query
-        .split('&')
-        .map((pair) => {
-            const eq = pair.indexOf('=');
-            return eq < 0 ? pair : `${pair.slice(0, eq)}=${REDACTED}`;
-        })
-        .join('&');
+    // Only HTML decoding precedes query parsing. Percent/Unicode folding
+    // belongs to fields: `%26`, `＆` and `\u0026` are not URL delimiters.
+    const folded = canonicalize(query, { htmlOnly: true });
+    if (folded.exhausted) return REDACTED;
+    const pieces: string[] = [];
+    let pairStart = 0;
+    let eq = -1;
+    let cursor = 0;
+    for (let at = 0; at <= folded.text.length; at += 1) {
+        const char = folded.text[at];
+        if (char === '=' && eq < 0) eq = at;
+        if (at !== folded.text.length && char !== '&') continue;
+        if (eq >= 0 && isCredentialPair(folded.text.slice(pairStart, eq), folded.text.slice(eq + 1, at))) {
+            const from = folded.end[eq]!;
+            const to = at === folded.text.length ? query.length : folded.origin[at]!;
+            pieces.push(query.slice(cursor, from), REDACTED);
+            cursor = to;
+        }
+        pairStart = at + 1;
+        eq = -1;
+    }
+    pieces.push(query.slice(cursor));
+    return pieces.join('');
+}
+
+const CREDENTIAL_KEY = /token|secret|signature|passw|credential|auth|session|key$|^(?:code|sig|pwd|pass|otp|jwt|hmac|nonce|state|sid)$/;
+
+function isCredentialPair(key: string, value: string): boolean {
+    const foldedKey = canonicalize(key);
+    if (foldedKey.exhausted
+        || CREDENTIAL_KEY.test(foldedKey.text.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
+    const foldedValue = canonicalize(value);
+    if (foldedValue.exhausted || /=|%3d/i.test(foldedValue.text)) return true;
+    const run = foldedValue.text.split('#', 1)[0]!;
+    return (run.length >= 20 && mixesCharacterClasses(run))
+        || (/^[A-Za-z0-9]{32,}$/.test(run) && /\d/.test(run) && /[A-Za-z]/.test(run));
 }
 
 /**
