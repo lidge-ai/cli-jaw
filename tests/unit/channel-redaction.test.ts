@@ -357,8 +357,8 @@ test('percent-escaped delimiters stay inside query values', () => {
 
 test('astral entities before a query credential preserve exact source ranges', () => {
     for (const entity of ['&#x1F600;', '&#x1F600', '&#128512;', '&#128512']) {
-        const folded = canonicalize(`${entity}ab`);
-        assert.equal(folded.text, '😀ab');
+        const folded = canonicalize(`${entity}zz`);
+        assert.equal(folded.text, '😀zz');
         assert.equal(folded.origin.length, folded.text.length);
         assert.equal(folded.end.length, folded.text.length);
         assert.ok(folded.origin.every(Number.isInteger));
