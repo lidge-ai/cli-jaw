@@ -9,7 +9,7 @@ import {
     redactChannelSecrets, userErrorText, logErrorText,
     redactionCopyWork, resetRedactionCopyWork,
 } from '../../src/messaging/redact.js';
-import { foldWork, resetFoldWork } from '../../src/messaging/fold.js';
+import { canonicalize, foldWork, resetFoldWork } from '../../src/messaging/fold.js';
 
 // A realistic Telegram secret: 35 chars after the numeric bot id.
 const TG_SECRET = 'AAHfoobarbazquxquux12345678901234567';
@@ -266,13 +266,124 @@ test('an unrelated URL is left readable', () => {
     assert.equal(redactChannelSecrets('see https://example.dev/docs'), 'see https://example.dev/docs');
 });
 
-test('a diagnostic query keeps its keys while losing its values', () => {
-    // Blanking the whole query string also erases the parameters an operator
-    // needs to reproduce a failure. Keys stay, values go.
-    const out = redactChannelSecrets('https://example.dev/docs?page=2&mode=debug');
-    assert.ok(out.includes('page='), 'the key structure survives');
-    assert.ok(out.includes('mode='));
-    assert.equal(out.includes('debug'), false, 'a value could be a signature');
+test('a link whose query carries ordinary ids stays readable', () => {
+    for (const url of ['https://example.dev/docs?page=2&mode=debug',
+        'https://reviews.example.com/r?clientSourceId=8f3a2c91d4e5b6a7c8d9e0f1',
+        'https://ads.example.com/library/?active_status=all&id=1234567890123456',
+        'https://share.example.app/s/abc?t=Ab3xK9q', 'https://example.dev/watch?v=dQw4w9WgXcQ#comments',
+        'https://example.dev/item?uuid=0f8fad5b-d9cb-469f-a165-70867728950e']) {
+        assert.equal(redactChannelSecrets(url), url);
+        assert.equal(redactChannelSecrets(`see [the page](${url}).`), `see [the page](${url}).`);
+        assert.equal(redactChannelSecrets(`<${url}|the page>`), `<${url}|the page>`);
+    }
+});
+
+test('a query value is masked when its key or its shape says credential', () => {
+    const mixed = 'Zx9QmT4vLp2RwK8sNb6YcH3dFj7G';
+    for (const [query, value] of [
+        ['token=plainvalue', 'plainvalue'], ['access_token=plainvalue', 'plainvalue'],
+        ['X-Amz-Signature=deadbeef', 'deadbeef'], ['X-Amz-Credential=AKIDEXAMPLE', 'AKIDEXAMPLE'],
+        ['apiKey=plainvalue', 'plainvalue'], ['client_secret=plainvalue', 'plainvalue'],
+        ['code=plainvalue', 'plainvalue'], ['sig=plainvalue', 'plainvalue'], ['password=hunter2', 'hunter2'],
+        ['auth=plainvalue', 'plainvalue'], ['sessionId=plainvalue', 'plainvalue'], ['access%5Ftoken=plainvalue', 'plainvalue'],
+        [`t=${mixed}`, mixed], [`h=${'a1b2c3d4e5'.repeat(4)}`, 'a1b2c3d4e5'.repeat(4)],
+        ['next=https%3A%2F%2Fb.example.com%2Fcb%3Fstate%3Dplainvalue', 'plainvalue'],
+        ['page=2#access_token=plainvalue', 'plainvalue'],
+    ] as const) {
+        const out = redactChannelSecrets(`https://example.dev/cb?id=42&${query}`);
+        assert.equal(out.includes(value), false, query);
+        assert.ok(out.startsWith('https://example.dev/cb?id=42&'), `the ordinary id survives beside ${query}`);
+    }
+});
+
+test('HTML-escaped query separators preserve ids but never credential values', () => {
+    const separators = ['&', '&amp;', '&AMP;', '&amp', '&#38;', '&#038;', '&#38', '&#x26;', '&#X0026;',
+        '&amp;amp;', '&#38;amp;', '&amp;#x26;'];
+    const keys = ['code', 'sig', 'token', 'key', 'secret', 'signature', 'password', 'auth',
+        'access_token', 'X-Amz-Signature', 'pwd', 'pass', 'otp', 'jwt', 'hmac', 'nonce', 'state', 'sid'];
+    const wrap = (url: string) => [url, `see [the page](${url}).`, `<${url}|the page>`];
+    for (const separator of separators) {
+        for (const query of ['id=42', 't=abc', `id=42${separator}t=abc`]) {
+            for (const input of wrap(`https://example.dev/cb?${query}`)) {
+                assert.equal(redactChannelSecrets(input), input);
+            }
+        }
+        for (const key of keys) {
+            const encoded = [...key].map(char => `%${char.charCodeAt(0).toString(16)}`).join('');
+            for (const spelling of [key, key.toUpperCase(), encoded, encoded.toUpperCase()]) {
+                const prefix = `https://example.dev/cb?id=42${separator}${spelling}=`;
+                const suffix = `${separator}t=abc`;
+                for (const value of ['fixture_secret', 'fixture%5fsecret']) {
+                    const inputs = wrap(`${prefix}${value}${suffix}`);
+                    const expected = wrap(`${prefix}...redacted${suffix}`);
+                    for (let i = 0; i < inputs.length; i += 1) {
+                        assert.equal(redactChannelSecrets(inputs[i]!), expected[i], `${separator} ${spelling}`);
+                    }
+                }
+            }
+        }
+    }
+});
+
+test('entities inside query keys and separators cannot fragment credentials', () => {
+    for (const query of ['id=42&amp;co&#100;e=fixture_secret',
+        'id=42&am&#112;;code=fixture_secret', 'id=42&#x26;s&#105;g=fixture_secret',
+        'id=42&amp;%63o&#100;e=fixture_secret', 'id=42&amp;co&amp;#100;e=fixture_secret',
+        'id=42&amp;co&#100e=fixture_secret']) {
+        for (const [input, expected] of [
+            [`https://example.dev/cb?${query}`, `https://example.dev/cb?${query.replace('fixture_secret', '...redacted')}`],
+            [`[page](https://example.dev/cb?${query})`, `[page](https://example.dev/cb?${query.replace('fixture_secret', '...redacted')})`],
+            [`<https://example.dev/cb?${query}|page>`, `<https://example.dev/cb?${query.replace('fixture_secret', '...redacted')}|page>`],
+        ]) assert.equal(redactChannelSecrets(input!), expected);
+    }
+});
+
+test('percent-escaped delimiters stay inside query values', () => {
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=a%26b%3Dc&amp;t=abc'),
+        'https://example.dev/cb?id=...redacted&amp;t=abc');
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=a%26b&amp;t=abc'),
+        'https://example.dev/cb?id=a%26b&amp;t=abc');
+    assert.equal(redactChannelSecrets('https://example.dev/cb?id=42&amp;code=fixture%26secret&amp;t=abc'),
+        'https://example.dev/cb?id=42&amp;code=...redacted&amp;t=abc');
+    for (const percent of ['%', '&percnt;', '&#37;', '&#x25;', '&amp;percnt;']) {
+        assert.equal(redactChannelSecrets(`https://example.dev/cb?id=a${percent}26b&amp;t=abc`),
+            `https://example.dev/cb?id=a${percent}26b&amp;t=abc`);
+        for (const prefix of ['&code=', '&amp;code=', '&#38;code=']) {
+            assert.equal(redactChannelSecrets(`https://example.dev/cb?id=42${prefix}${percent}26id=fixture_secret`),
+                `https://example.dev/cb?id=42${prefix}...redacted`);
+        }
+    }
+});
+
+test('astral entities before a query credential preserve exact source ranges', () => {
+    for (const entity of ['&#x1F600;', '&#x1F600', '&#128512;', '&#128512']) {
+        const folded = canonicalize(`${entity}zz`);
+        assert.equal(folded.text, '😀zz');
+        assert.equal(folded.origin.length, folded.text.length);
+        assert.equal(folded.end.length, folded.text.length);
+        assert.ok(folded.origin.every(Number.isInteger));
+        for (const count of [1, 3, 24]) {
+            const prefix = `https://example.dev/cb?q=${entity.repeat(count)}&`;
+            for (const [key, value] of [['code', 'fixture_secret'], ['sig', 'abcdefghijklmnop'],
+                ['access_token', 'ya29_SECRETVALUE_abcdefghij'], ['password', 'hunter2hunter2hunter2']]) {
+                const url = `${prefix}${key}=${value}&t=1`;
+                const expected = `${prefix}${key}=...redacted&t=1`;
+                assert.equal(redactChannelSecrets(url), expected);
+                assert.equal(redactChannelSecrets(`[page](${url})`), `[page](${expected})`);
+                assert.equal(redactChannelSecrets(`<${url}|page>`), `<${expected}|page>`);
+            }
+        }
+    }
+});
+
+test('Unicode lookalike delimiters never expose part of a credential value', () => {
+    for (const separator of ['＆', '﹠', '\\u0026', '&#xFF06;', '&#xFE60;']) {
+        const prefix = 'https://example.dev/cb?id=42&password=';
+        assert.equal(redactChannelSecrets(`${prefix}hunter2${separator}tailpart&t=abc`),
+            `${prefix}...redacted&t=abc`);
+        assert.equal(redactChannelSecrets(`${prefix}hunter2${separator}id=tailpart&t=abc`),
+            `${prefix}...redacted&t=abc`);
+    }
 });
 
 test('a short numeric pair is not mistaken for a token', () => {

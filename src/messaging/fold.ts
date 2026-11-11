@@ -94,15 +94,17 @@ export interface FoldedText {
  * an alternation and the next found another. Folding turns them into one shape.
  *
  * Decoding never throws: a malformed escape is left as written.
+ * Query structure can request HTML-only decoding before splitting fields;
+ * percent escapes and Unicode lookalikes must not become URL delimiters.
  */
-export function canonicalize(input: string): FoldedText {
+export function canonicalize(input: string, options: { htmlOnly?: boolean } = {}): FoldedText {
     let current: FoldedText = {
         text: input,
         origin: Array.from({ length: input.length }, (_, i) => i),
         end: Array.from({ length: input.length }, (_, i) => i + 1),
     };
     charsFolded += input.length; // the initial strip walks the whole input
-    current = stripInvisible(current);
+    current = stripInvisible(current, !options.htmlOnly);
     // Fold to a FIXED POINT. Decoding strictly shrinks — an escape is always
     // longer than the character it denotes — so this terminates on its own,
     // and there is no round cap to nest past.
@@ -115,7 +117,7 @@ export function canonicalize(input: string): FoldedText {
         if (budget <= 0) return { ...current, exhausted: true };
         budget -= current.text.length;
         charsFolded += current.text.length; // every round rescans the whole string
-        const next = stripInvisible(decodeOnce(current));
+        const next = stripInvisible(decodeOnce(current, options.htmlOnly === true), !options.htmlOnly);
         if (next.text === current.text) break;
         current = next;
     }
@@ -134,7 +136,7 @@ function decodeBudgetFor(input: string): number {
     return Math.max(input.length * 8, 64 * 1024);
 }
 
-function stripInvisible(folded: FoldedText): FoldedText {
+function stripInvisible(folded: FoldedText, normalizeUnicode: boolean): FoldedText {
     const text: string[] = [];
     const origin: number[] = [];
     const end: number[] = [];
@@ -151,7 +153,7 @@ function stripInvisible(folded: FoldedText): FoldedText {
         // two. Every later offset then sat one short, which left the first
         // character of a secret behind and ate the character after it —
         // regex indices and String.length are code units throughout.
-        const normalized = char.normalize('NFKC');
+        const normalized = normalizeUnicode ? char.normalize('NFKC') : char;
         for (let unit = 0; unit < normalized.length; unit += 1) {
             text.push(normalized[unit]!);
             origin.push(folded.origin[i]!);
@@ -171,7 +173,8 @@ function spliceFolded(
     const sourceStart = folded.origin[from]!;
     const sourceEnd = folded.end[to - 1]!;
     return {
-        text: [...replacement],
+        // Text and both maps use UTF-16 units, including surrogate pairs.
+        text: replacement.split(''),
         origin: replacement.split('').map(() => sourceStart),
         end: replacement.split('').map(() => sourceEnd),
     };
@@ -183,14 +186,16 @@ function spliceFolded(
  * entities. A log line is rendered by something downstream, and each of those
  * renderers turns its own escape back into the character.
  */
-function decodeOnce(folded: FoldedText): FoldedText {
+function decodeOnce(folded: FoldedText, htmlOnly: boolean): FoldedText {
     // All three escape families in one alternation, so a single left-to-right
     // pass can rebuild the offset map. The HTML entity's semicolon is optional:
     // browsers accept `&#98ot` and so must this.
     // Named references are here for the same reason the numeric ones are: a
     // renderer turns `&colon;` back into ':', which restores the separator the
     // token matcher looks for.
-    const ESCAPE = /(?:%[0-9A-Fa-f]{2})+|\\u([0-9A-Fa-f]{4})|&#(x?)([0-9A-Fa-f]+);?|&([A-Za-z][A-Za-z0-9]{1,31});/gi;
+    // Decimal references stop at a non-decimal digit. HTML text also accepts
+    // the legacy `&amp` spelling without a semicolon, even before a key name.
+    const ESCAPE = /(?:%[0-9A-Fa-f]{2})+|\\u([0-9A-Fa-f]{4})|&#(?:x([0-9A-Fa-f]+)|([0-9]+));?|&([A-Za-z][A-Za-z0-9]{1,31});|&(amp)/gi;
     const text: string[] = [];
     const origin: number[] = [];
     const end: number[] = [];
@@ -207,7 +212,8 @@ function decodeOnce(folded: FoldedText): FoldedText {
     for (const match of folded.text.matchAll(ESCAPE)) {
         const at = match.index ?? 0;
         copyRange(cursor, at);
-        const decoded = decodeEscape(match);
+        const decoded = htmlOnly && (match[0].startsWith('%') || match[1] !== undefined)
+            ? match[0] : decodeEscape(match);
         // Push one element at a time. `push(...array)` passes every element as
         // an argument, which overflows the stack once a hostile input produces
         // enough of them.
@@ -238,13 +244,13 @@ function decodeEscape(match: RegExpMatchArray): string {
         const code = Number.parseInt(match[1], 16);
         return Number.isFinite(code) ? String.fromCharCode(code) : whole;
     }
-    const digits = match[3];
+    const digits = match[2] ?? match[3];
     if (digits === undefined) {
-        const name = match[4];
+        const name = match[4] ?? match[5];
         if (name === undefined) return whole;
         return NAMED_ENTITIES[name.toLowerCase()] ?? whole;
     }
-    const code = Number.parseInt(digits, match[2] ? 16 : 10);
+    const code = Number.parseInt(digits, match[2] !== undefined ? 16 : 10);
     return Number.isFinite(code) && code > 0 && code <= 0x10ffff
         ? String.fromCodePoint(code)
         : whole;
