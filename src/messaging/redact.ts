@@ -360,7 +360,9 @@ const CANONICAL_URL_TOKEN = /\/(?:file\/)?bots?(\d{6,12}):([A-Za-z0-9_-]{20,})/g
  * bounded budget, scan the rendered boundaries, then copy original ranges once.
  */
 function maskQueryValues(query: string): string {
-    const folded = canonicalize(query);
+    // HTML decoding precedes query parsing; percent decoding belongs to the
+    // individual fields. Even an HTML-generated `%26` stays inside its value.
+    const folded = canonicalize(query, { decodePercent: false });
     if (folded.exhausted) return REDACTED;
     const pieces: string[] = [];
     let pairStart = 0;
@@ -368,11 +370,8 @@ function maskQueryValues(query: string): string {
     let cursor = 0;
     for (let at = 0; at <= folded.text.length; at += 1) {
         const char = folded.text[at];
-        const source = query[folded.origin[at]!];
-        // HTML entities are decoded before a URL is read. Percent-escaped
-        // delimiters belong to the key/value itself, not the query structure.
-        if (char === '=' && eq < 0 && (source === '=' || source === '&')) eq = at;
-        if (at !== folded.text.length && !(char === '&' && source === '&')) continue;
+        if (char === '=' && eq < 0) eq = at;
+        if (at !== folded.text.length && char !== '&') continue;
         if (eq >= 0 && isCredentialPair(folded.text.slice(pairStart, eq), folded.text.slice(eq + 1, at))) {
             const from = folded.end[eq]!;
             const to = at === folded.text.length ? query.length : folded.origin[at]!;
@@ -389,9 +388,12 @@ function maskQueryValues(query: string): string {
 const CREDENTIAL_KEY = /token|secret|signature|passw|credential|auth|session|key$|^(?:code|sig|pwd|pass|otp|jwt|hmac|nonce|state|sid)$/;
 
 function isCredentialPair(key: string, value: string): boolean {
-    if (CREDENTIAL_KEY.test(key.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
-    if (/=|%3d/i.test(value)) return true;
-    const run = value.split('#', 1)[0]!;
+    const foldedKey = canonicalize(key);
+    if (foldedKey.exhausted
+        || CREDENTIAL_KEY.test(foldedKey.text.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
+    const foldedValue = canonicalize(value);
+    if (foldedValue.exhausted || /=|%3d/i.test(foldedValue.text)) return true;
+    const run = foldedValue.text.split('#', 1)[0]!;
     return (run.length >= 20 && mixesCharacterClasses(run))
         || (/^[A-Za-z0-9]{32,}$/.test(run) && /\d/.test(run) && /[A-Za-z]/.test(run));
 }

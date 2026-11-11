@@ -94,8 +94,10 @@ export interface FoldedText {
  * an alternation and the next found another. Folding turns them into one shape.
  *
  * Decoding never throws: a malformed escape is left as written.
+ * Query structure can defer percent decoding until after splitting fields;
+ * HTML-generated percent escapes must not become structural delimiters.
  */
-export function canonicalize(input: string): FoldedText {
+export function canonicalize(input: string, options: { decodePercent?: boolean } = {}): FoldedText {
     let current: FoldedText = {
         text: input,
         origin: Array.from({ length: input.length }, (_, i) => i),
@@ -115,7 +117,7 @@ export function canonicalize(input: string): FoldedText {
         if (budget <= 0) return { ...current, exhausted: true };
         budget -= current.text.length;
         charsFolded += current.text.length; // every round rescans the whole string
-        const next = stripInvisible(decodeOnce(current));
+        const next = stripInvisible(decodeOnce(current, options.decodePercent !== false));
         if (next.text === current.text) break;
         current = next;
     }
@@ -183,14 +185,16 @@ function spliceFolded(
  * entities. A log line is rendered by something downstream, and each of those
  * renderers turns its own escape back into the character.
  */
-function decodeOnce(folded: FoldedText): FoldedText {
+function decodeOnce(folded: FoldedText, decodePercent: boolean): FoldedText {
     // All three escape families in one alternation, so a single left-to-right
     // pass can rebuild the offset map. The HTML entity's semicolon is optional:
     // browsers accept `&#98ot` and so must this.
     // Named references are here for the same reason the numeric ones are: a
     // renderer turns `&colon;` back into ':', which restores the separator the
     // token matcher looks for.
-    const ESCAPE = /(?:%[0-9A-Fa-f]{2})+|\\u([0-9A-Fa-f]{4})|&#(x?)([0-9A-Fa-f]+);?|&([A-Za-z][A-Za-z0-9]{1,31});/gi;
+    // Decimal references stop at a non-decimal digit. HTML text also accepts
+    // the legacy `&amp` spelling without a semicolon, even before a key name.
+    const ESCAPE = /(?:%[0-9A-Fa-f]{2})+|\\u([0-9A-Fa-f]{4})|&#(?:x([0-9A-Fa-f]+)|([0-9]+));?|&([A-Za-z][A-Za-z0-9]{1,31});|&(amp)/gi;
     const text: string[] = [];
     const origin: number[] = [];
     const end: number[] = [];
@@ -207,7 +211,7 @@ function decodeOnce(folded: FoldedText): FoldedText {
     for (const match of folded.text.matchAll(ESCAPE)) {
         const at = match.index ?? 0;
         copyRange(cursor, at);
-        const decoded = decodeEscape(match);
+        const decoded = !decodePercent && match[0].startsWith('%') ? match[0] : decodeEscape(match);
         // Push one element at a time. `push(...array)` passes every element as
         // an argument, which overflows the stack once a hostile input produces
         // enough of them.
@@ -238,13 +242,13 @@ function decodeEscape(match: RegExpMatchArray): string {
         const code = Number.parseInt(match[1], 16);
         return Number.isFinite(code) ? String.fromCharCode(code) : whole;
     }
-    const digits = match[3];
+    const digits = match[2] ?? match[3];
     if (digits === undefined) {
-        const name = match[4];
+        const name = match[4] ?? match[5];
         if (name === undefined) return whole;
         return NAMED_ENTITIES[name.toLowerCase()] ?? whole;
     }
-    const code = Number.parseInt(digits, match[2] ? 16 : 10);
+    const code = Number.parseInt(digits, match[2] !== undefined ? 16 : 10);
     return Number.isFinite(code) && code > 0 && code <= 0x10ffff
         ? String.fromCodePoint(code)
         : whole;

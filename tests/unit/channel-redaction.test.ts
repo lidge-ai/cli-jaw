@@ -297,7 +297,7 @@ test('a query value is masked when its key or its shape says credential', () => 
 });
 
 test('HTML-escaped query separators preserve ids but never credential values', () => {
-    const separators = ['&', '&amp;', '&AMP;', '&#38;', '&#038;', '&#x26;', '&#X0026;',
+    const separators = ['&', '&amp;', '&AMP;', '&amp', '&#38;', '&#038;', '&#38', '&#x26;', '&#X0026;',
         '&amp;amp;', '&#38;amp;', '&amp;#x26;'];
     const keys = ['code', 'sig', 'token', 'key', 'secret', 'signature', 'password', 'auth',
         'access_token', 'X-Amz-Signature', 'pwd', 'pass', 'otp', 'jwt', 'hmac', 'nonce', 'state', 'sid'];
@@ -310,7 +310,7 @@ test('HTML-escaped query separators preserve ids but never credential values', (
         }
         for (const key of keys) {
             const encoded = [...key].map(char => `%${char.charCodeAt(0).toString(16)}`).join('');
-            for (const spelling of [key, key.toUpperCase(), encoded]) {
+            for (const spelling of [key, key.toUpperCase(), encoded, encoded.toUpperCase()]) {
                 const prefix = `https://example.dev/cb?id=42${separator}${spelling}=`;
                 const suffix = `${separator}t=abc`;
                 for (const value of ['fixture_secret', 'fixture%5fsecret']) {
@@ -328,7 +328,8 @@ test('HTML-escaped query separators preserve ids but never credential values', (
 test('entities inside query keys and separators cannot fragment credentials', () => {
     for (const query of ['id=42&amp;co&#100;e=fixture_secret',
         'id=42&am&#112;;code=fixture_secret', 'id=42&#x26;s&#105;g=fixture_secret',
-        'id=42&amp;%63o&#100;e=fixture_secret', 'id=42&amp;co&amp;#100;e=fixture_secret']) {
+        'id=42&amp;%63o&#100;e=fixture_secret', 'id=42&amp;co&amp;#100;e=fixture_secret',
+        'id=42&amp;co&#100e=fixture_secret']) {
         for (const [input, expected] of [
             [`https://example.dev/cb?${query}`, `https://example.dev/cb?${query.replace('fixture_secret', '...redacted')}`],
             [`[page](https://example.dev/cb?${query})`, `[page](https://example.dev/cb?${query.replace('fixture_secret', '...redacted')})`],
@@ -344,6 +345,14 @@ test('percent-escaped delimiters stay inside query values', () => {
         'https://example.dev/cb?id=a%26b&amp;t=abc');
     assert.equal(redactChannelSecrets('https://example.dev/cb?id=42&amp;code=fixture%26secret&amp;t=abc'),
         'https://example.dev/cb?id=42&amp;code=...redacted&amp;t=abc');
+    for (const percent of ['%', '&percnt;', '&#37;', '&#x25;', '&amp;percnt;']) {
+        assert.equal(redactChannelSecrets(`https://example.dev/cb?id=a${percent}26b&amp;t=abc`),
+            `https://example.dev/cb?id=a${percent}26b&amp;t=abc`);
+        for (const prefix of ['&code=', '&amp;code=', '&#38;code=']) {
+            assert.equal(redactChannelSecrets(`https://example.dev/cb?id=42${prefix}${percent}26id=fixture_secret`),
+                `https://example.dev/cb?id=42${prefix}...redacted`);
+        }
+    }
 });
 
 test('a short numeric pair is not mistaken for a token', () => {
