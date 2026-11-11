@@ -9,7 +9,7 @@ import {
     redactChannelSecrets, userErrorText, logErrorText,
     redactionCopyWork, resetRedactionCopyWork,
 } from '../../src/messaging/redact.js';
-import { foldWork, resetFoldWork } from '../../src/messaging/fold.js';
+import { canonicalize, foldWork, resetFoldWork } from '../../src/messaging/fold.js';
 
 // A realistic Telegram secret: 35 chars after the numeric bot id.
 const TG_SECRET = 'AAHfoobarbazquxquux12345678901234567';
@@ -351,6 +351,27 @@ test('percent-escaped delimiters stay inside query values', () => {
         for (const prefix of ['&code=', '&amp;code=', '&#38;code=']) {
             assert.equal(redactChannelSecrets(`https://example.dev/cb?id=42${prefix}${percent}26id=fixture_secret`),
                 `https://example.dev/cb?id=42${prefix}...redacted`);
+        }
+    }
+});
+
+test('astral entities before a query credential preserve exact source ranges', () => {
+    for (const entity of ['&#x1F600;', '&#x1F600', '&#128512;', '&#128512']) {
+        const folded = canonicalize(`${entity}ab`);
+        assert.equal(folded.text, '😀ab');
+        assert.equal(folded.origin.length, folded.text.length);
+        assert.equal(folded.end.length, folded.text.length);
+        assert.ok(folded.origin.every(Number.isInteger));
+        for (const count of [1, 3, 24]) {
+            const prefix = `https://example.dev/cb?q=${entity.repeat(count)}&`;
+            for (const [key, value] of [['code', 'fixture_secret'], ['sig', 'abcdefghijklmnop'],
+                ['access_token', 'ya29_SECRETVALUE_abcdefghij'], ['password', 'hunter2hunter2hunter2']]) {
+                const url = `${prefix}${key}=${value}&t=1`;
+                const expected = `${prefix}${key}=...redacted&t=1`;
+                assert.equal(redactChannelSecrets(url), expected);
+                assert.equal(redactChannelSecrets(`[page](${url})`), `[page](${expected})`);
+                assert.equal(redactChannelSecrets(`<${url}|page>`), `<${expected}|page>`);
+            }
         }
     }
 });

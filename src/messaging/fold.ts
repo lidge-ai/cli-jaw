@@ -173,7 +173,8 @@ function spliceFolded(
     const sourceStart = folded.origin[from]!;
     const sourceEnd = folded.end[to - 1]!;
     return {
-        text: [...replacement],
+        // Text and both maps use UTF-16 units, including surrogate pairs.
+        text: replacement.split(''),
         origin: replacement.split('').map(() => sourceStart),
         end: replacement.split('').map(() => sourceEnd),
     };
