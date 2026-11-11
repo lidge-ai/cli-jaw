@@ -360,9 +360,9 @@ const CANONICAL_URL_TOKEN = /\/(?:file\/)?bots?(\d{6,12}):([A-Za-z0-9_-]{20,})/g
  * bounded budget, scan the rendered boundaries, then copy original ranges once.
  */
 function maskQueryValues(query: string): string {
-    // HTML decoding precedes query parsing; percent decoding belongs to the
-    // individual fields. Even an HTML-generated `%26` stays inside its value.
-    const folded = canonicalize(query, { decodePercent: false });
+    // Only HTML decoding precedes query parsing. Percent/Unicode folding
+    // belongs to fields: `%26`, `＆` and `\u0026` are not URL delimiters.
+    const folded = canonicalize(query, { htmlOnly: true });
     if (folded.exhausted) return REDACTED;
     const pieces: string[] = [];
     let pairStart = 0;

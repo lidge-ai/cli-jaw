@@ -376,6 +376,16 @@ test('astral entities before a query credential preserve exact source ranges', (
     }
 });
 
+test('Unicode lookalike delimiters never expose part of a credential value', () => {
+    for (const separator of ['＆', '﹠', '\\u0026', '&#xFF06;', '&#xFE60;']) {
+        const prefix = 'https://example.dev/cb?id=42&password=';
+        assert.equal(redactChannelSecrets(`${prefix}hunter2${separator}tailpart&t=abc`),
+            `${prefix}...redacted&t=abc`);
+        assert.equal(redactChannelSecrets(`${prefix}hunter2${separator}id=tailpart&t=abc`),
+            `${prefix}...redacted&t=abc`);
+    }
+});
+
 test('a short numeric pair is not mistaken for a token', () => {
     assert.equal(redactChannelSecrets('ratio 12345678:9'), 'ratio 12345678:9');
 });

@@ -94,17 +94,17 @@ export interface FoldedText {
  * an alternation and the next found another. Folding turns them into one shape.
  *
  * Decoding never throws: a malformed escape is left as written.
- * Query structure can defer percent decoding until after splitting fields;
- * HTML-generated percent escapes must not become structural delimiters.
+ * Query structure can request HTML-only decoding before splitting fields;
+ * percent escapes and Unicode lookalikes must not become URL delimiters.
  */
-export function canonicalize(input: string, options: { decodePercent?: boolean } = {}): FoldedText {
+export function canonicalize(input: string, options: { htmlOnly?: boolean } = {}): FoldedText {
     let current: FoldedText = {
         text: input,
         origin: Array.from({ length: input.length }, (_, i) => i),
         end: Array.from({ length: input.length }, (_, i) => i + 1),
     };
     charsFolded += input.length; // the initial strip walks the whole input
-    current = stripInvisible(current);
+    current = stripInvisible(current, !options.htmlOnly);
     // Fold to a FIXED POINT. Decoding strictly shrinks — an escape is always
     // longer than the character it denotes — so this terminates on its own,
     // and there is no round cap to nest past.
@@ -117,7 +117,7 @@ export function canonicalize(input: string, options: { decodePercent?: boolean }
         if (budget <= 0) return { ...current, exhausted: true };
         budget -= current.text.length;
         charsFolded += current.text.length; // every round rescans the whole string
-        const next = stripInvisible(decodeOnce(current, options.decodePercent !== false));
+        const next = stripInvisible(decodeOnce(current, options.htmlOnly === true), !options.htmlOnly);
         if (next.text === current.text) break;
         current = next;
     }
@@ -136,7 +136,7 @@ function decodeBudgetFor(input: string): number {
     return Math.max(input.length * 8, 64 * 1024);
 }
 
-function stripInvisible(folded: FoldedText): FoldedText {
+function stripInvisible(folded: FoldedText, normalizeUnicode: boolean): FoldedText {
     const text: string[] = [];
     const origin: number[] = [];
     const end: number[] = [];
@@ -153,7 +153,7 @@ function stripInvisible(folded: FoldedText): FoldedText {
         // two. Every later offset then sat one short, which left the first
         // character of a secret behind and ate the character after it —
         // regex indices and String.length are code units throughout.
-        const normalized = char.normalize('NFKC');
+        const normalized = normalizeUnicode ? char.normalize('NFKC') : char;
         for (let unit = 0; unit < normalized.length; unit += 1) {
             text.push(normalized[unit]!);
             origin.push(folded.origin[i]!);
@@ -186,7 +186,7 @@ function spliceFolded(
  * entities. A log line is rendered by something downstream, and each of those
  * renderers turns its own escape back into the character.
  */
-function decodeOnce(folded: FoldedText, decodePercent: boolean): FoldedText {
+function decodeOnce(folded: FoldedText, htmlOnly: boolean): FoldedText {
     // All three escape families in one alternation, so a single left-to-right
     // pass can rebuild the offset map. The HTML entity's semicolon is optional:
     // browsers accept `&#98ot` and so must this.
@@ -212,7 +212,8 @@ function decodeOnce(folded: FoldedText, decodePercent: boolean): FoldedText {
     for (const match of folded.text.matchAll(ESCAPE)) {
         const at = match.index ?? 0;
         copyRange(cursor, at);
-        const decoded = !decodePercent && match[0].startsWith('%') ? match[0] : decodeEscape(match);
+        const decoded = htmlOnly && (match[0].startsWith('%') || match[1] !== undefined)
+            ? match[0] : decodeEscape(match);
         // Push one element at a time. `push(...array)` passes every element as
         // an argument, which overflows the stack once a hostile input produces
         // enough of them.
