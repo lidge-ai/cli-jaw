@@ -381,7 +381,13 @@ function decodeOnce(part: string): string {
 }
 
 function isCredentialPair(key: string, value: string): boolean {
-    if (CREDENTIAL_KEY.test(decodeOnce(key).toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
+    // Splitting at `&` leaves an HTML separator's tail attached to the key
+    // (`amp;code`, `#38;sig`). Restore the introducer for detection so the
+    // shared bounded fold sees the same key a renderer does, including nested
+    // entities and percent escapes. Keep the original spelling in the output.
+    const foldedKey = canonicalize(`&${key}`);
+    if (foldedKey.exhausted
+        || CREDENTIAL_KEY.test(foldedKey.text.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true;
     const plain = decodeOnce(value);
     if (/=|%3d/i.test(plain)) return true;
     const run = plain.split('#', 1)[0]!;

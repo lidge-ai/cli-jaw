@@ -296,6 +296,35 @@ test('a query value is masked when its key or its shape says credential', () => 
     }
 });
 
+test('HTML-escaped query separators preserve ids but never credential values', () => {
+    const separators = ['&', '&amp;', '&AMP;', '&#38;', '&#038;', '&#x26;', '&#X0026;',
+        '&amp;amp;', '&#38;amp;', '&amp;#x26;'];
+    const keys = ['code', 'sig', 'token', 'key', 'secret', 'signature', 'password', 'auth',
+        'access_token', 'X-Amz-Signature', 'pwd', 'pass', 'otp', 'jwt', 'hmac', 'nonce', 'state', 'sid'];
+    const wrap = (url: string) => [url, `see [the page](${url}).`, `<${url}|the page>`];
+    for (const separator of separators) {
+        for (const query of ['id=42', 't=abc', `id=42${separator}t=abc`]) {
+            for (const input of wrap(`https://example.dev/cb?${query}`)) {
+                assert.equal(redactChannelSecrets(input), input);
+            }
+        }
+        for (const key of keys) {
+            const encoded = [...key].map(char => `%${char.charCodeAt(0).toString(16)}`).join('');
+            for (const spelling of [key, key.toUpperCase(), encoded]) {
+                const prefix = `https://example.dev/cb?id=42${separator}${spelling}=`;
+                const suffix = `${separator}t=abc`;
+                for (const value of ['fixture_secret', 'fixture%5fsecret']) {
+                    const inputs = wrap(`${prefix}${value}${suffix}`);
+                    const expected = wrap(`${prefix}...redacted${suffix}`);
+                    for (let i = 0; i < inputs.length; i += 1) {
+                        assert.equal(redactChannelSecrets(inputs[i]!), expected[i], `${separator} ${spelling}`);
+                    }
+                }
+            }
+        }
+    }
+});
+
 test('a short numeric pair is not mistaken for a token', () => {
     assert.equal(redactChannelSecrets('ratio 12345678:9'), 'ratio 12345678:9');
 });
