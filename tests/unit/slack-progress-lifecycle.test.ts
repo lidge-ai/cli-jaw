@@ -890,7 +890,7 @@ for (const isQueued of [false, true]) test(`operator routing suppresses ${isQueu
             await tick(context);
             broadcast('orchestrate_done', event(admission, { text: 'PRIVATE_STACK', error: true, fromQueue: true }));
         }
-        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Not finished'));
         const posts = calls.filter(call => call.method === 'chat.postMessage');
         assert.equal(posts.length, 1);
         assert.equal(posts[0]?.body['channel'], 'DOPERATORTEST');
@@ -916,7 +916,7 @@ for (const ambiguous of [false, true]) test(`next fresh turn uses the original p
     };
     try {
         await run(context, destination);
-        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        await until(context, () => calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Not finished'));
         collect = async () => ({ text: 'fresh second answer', data: {} });
         await run(context, destination);
         await until(context, () => calls.some(call => call.method === 'chat.postMessage' && call.body['text'] === 'fresh second answer'));
@@ -936,7 +936,7 @@ test('workflow-unconfirmed alone preserves its diagnostic body and progress inst
         await run(context); await until(context, complete);
         assert.equal(calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === 'DOPERATORTEST').length, 0);
         assert.equal(bodyCalls().length, 1);
-        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Not finished'));
     } finally {
         if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
     }
@@ -972,7 +972,7 @@ test('an individual failed tool remains visible when the turn succeeds', async c
         assert.equal(calls.filter(call => call.method === 'chat.postMessage' && call.body['channel'] === 'DOPERATORTEST').length, 0);
         assert.equal(bodyCalls().length, 1);
         assert.match(JSON.stringify(progressMessages()), /Read/);
-        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Finished'));
+        assert.ok(!calls.some(call => call.method === 'chat.update' && call.body['text'] === 'Jaw · Not finished'));
     } finally {
         if (prior === undefined) delete process.env['JAW_SLACK_FAILURE_DM']; else process.env['JAW_SLACK_FAILURE_DM'] = prior;
     }

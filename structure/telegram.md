@@ -785,7 +785,8 @@ Individual failed tools do not declare the whole turn failed. Pre-turn workflow
 selection and file/input validation warnings remain visible. Workflow-unconfirmed
 alone preserves its diagnostic body and progress instead of routing a failed turn.
 Actual turn/delivery failure or expiry stops and neutrally rewrites the known
-progress message to `Jaw · Finished`, never deleting or reposting it. Unavailable
+progress message to `Jaw · Not finished`, never deleting or reposting it; the
+wording never reads as done, and it carries no failure body or reason. Unavailable
 edits retain recovery ownership, so the previous progress message can remain.
 Heartbeat failed reports, execution failures, destination holds and delivery
 failures send a concise operator notification without report/exception text.

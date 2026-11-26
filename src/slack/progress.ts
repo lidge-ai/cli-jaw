@@ -381,7 +381,9 @@ export async function startSlackProgress(
                     if (messageGone) { confirmed = true; return; }
                     const snapshot = model.snapshot();
                     const quietFailure = finishOptions.routeFailure !== false && slackFailureRoutingEnabled() && (outcome === 'error' || outcome === 'expired');
-                    const neutral = { text: 'Jaw · Finished', blocks: [] };
+                    // A failed or expired turn did not finish, so the rewrite must not read as
+                    // done; it still carries no failure body or reason.
+                    const neutral = { text: 'Jaw · Not finished', blocks: [] };
                     if (quietFailure) {
                         // Stop a known stream without publishing failed task chunks, then
                         // replace its known message with neutral text. Never delete it.
