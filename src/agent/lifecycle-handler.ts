@@ -190,6 +190,7 @@ type LifecycleSpawnOptions = {
     target?: RemoteTarget;
     cli?: string;
     model?: string;
+    effort?: string;
     _heartbeatAnchorId?: number;
 };
 
@@ -1186,8 +1187,11 @@ export async function handleAgentExit(params: ExitHandlerParams): Promise<void> 
                 });
                     }
                 } catch {}
+                // The fallback runtime runs on its own model and effort; the failed
+                // runtime's overrides name values only that runtime understands.
+                const { model: _failedModel, effort: _failedEffort, ...fallbackOpts } = opts;
                 const { promise: retryP } = _spawnAgent(prompt, {
-                    ...opts, cli: fallbackCli, _isFallback: true, _skipInsert: true,
+                    ...fallbackOpts, cli: fallbackCli, _isFallback: true, _skipInsert: true,
                 });
                 retryP.then((r) => resolve(r)).catch(() => {
                     broadcast('agent_done', { ...runTag(ctx), ...donePin,
