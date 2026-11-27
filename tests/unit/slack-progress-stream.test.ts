@@ -708,7 +708,7 @@ for (const fallback of [false, true]) test(`operator routing neutralizes ${fallb
         await finish;
         assert.equal(p.terminalConfirmed(), true);
         assert.equal(h.calls.at(-1)?.method, 'chat.update');
-        assert.equal(h.calls.at(-1)?.body['text'], 'Jaw · Finished');
+        assert.equal(h.calls.at(-1)?.body['text'], 'Jaw · Not finished');
         assert.deepEqual(h.calls.at(-1)?.body['blocks'], []);
         assert.ok(h.calls.every(c => c.method !== 'chat.delete'));
         assert.ok(h.calls.filter(c => c.method === 'chat.update').every(c => c.body['ts'] === '111.222'));
