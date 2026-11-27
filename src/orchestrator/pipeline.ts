@@ -555,10 +555,10 @@ export async function orchestrate(
             : {}),
         ...(overrides?.model && !fallback ? { model: overrides.model } : {}),
         ...(overrides?.cli ? { cli: overrides.cli } : {}),
-        ...(overrides?.effort ? { effort: overrides.effort } : {}),
+        ...(overrides?.effort && !fallback ? { effort: overrides.effort } : {}),
         ...(overrides?.systemPrompt ? { sysPrompt: overrides.systemPrompt } : {}),
-        // A fallback runs on another runtime with that runtime's own model; the
-        // per-topic model override above names a model of the runtime that failed.
+        // A fallback runs on another runtime with that runtime's own model and effort;
+        // the per-topic overrides above name values of the runtime that failed.
         ...(fallback ? { cli: fallback.cli, _isFallback: true, _skipInsert: true } : {}),
     });
     const { promise } = withSessionScope({ scope, chatSessionId }, () => spawn());

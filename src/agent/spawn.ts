@@ -1334,8 +1334,11 @@ export function spawnAgent(prompt: string, opts: SpawnOpts = {}): SpawnResult {
             if (fbAvail && st.fallbackCli !== 'aside' && !isRetiredCliSelection(st.fallbackCli)) {
                 console.log(`[jaw:fallback] ${cli} retries exhausted → direct ${st.fallbackCli}`);
                 broadcast('agent_fallback', { from: cli, to: st.fallbackCli, reason: 'retries exhausted', ...empTag }, isEmployee ? 'internal' : 'public');
+                // The fallback runtime runs on its own model and effort; the failed
+                // runtime's overrides name values only that runtime understands.
+                const { model: _failedModel, effort: _failedEffort, ...fallbackOpts } = opts;
                 return spawnAgent(prompt, {
-                    ...opts, cli: st.fallbackCli, _isFallback: true, _skipInsert: true,
+                    ...fallbackOpts, cli: st.fallbackCli, _isFallback: true, _skipInsert: true,
                 });
             }
         }

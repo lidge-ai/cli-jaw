@@ -478,6 +478,33 @@ test('internal native final keeps its text for the projection terminal', async (
     assert.equal(f.result()?.runtimeOutcome?.finalText, raw);
 });
 
+test('a Claude failure hands Codex the request without Claude model or effort overrides', async () => {
+    const savedOrder = settings['fallbackOrder'];
+    settings['fallbackOrder'] = ['codex'];
+    try {
+        const f = fixture();
+        f.params.cli = 'claude';
+        f.params.code = 1;
+        // A run that printed nothing is the one lifecycle hands to the fallback runtime.
+        f.ctx.fullText = '';
+        f.ctx.liveOutputText = '';
+        const overrides = { cli: 'claude', model: 'claude-opus-5-5', effort: 'high', requestId: 'fallback-request' };
+        Object.assign(f.params.opts, overrides);
+        const spawn = mock.fn((_prompt: string, _opts?: ExitHandlerParams['opts']) => ({
+            promise: Promise.resolve({ text: 'ok', code: 0 }),
+        }));
+        setSpawnAgent(spawn);
+        await handleAgentExit(f.params);
+        assert.equal(spawn.mock.callCount(), 1);
+        const opts = spawn.mock.calls[0]!.arguments[1]!;
+        assert.equal(opts.cli, 'codex');
+        assert.equal(opts.requestId, overrides.requestId);
+        assert.deepEqual([opts.model, Reflect.get(opts, 'effort')], [undefined, undefined]);
+    } finally {
+        settings['fallbackOrder'] = savedOrder;
+    }
+});
+
 test('a native failure handed to fallback neither stores nor shows its partial text', async () => {
     settings['fallbackOrder'] = ['cursor'];
     try {
